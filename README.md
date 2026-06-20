@@ -1,8 +1,8 @@
 # mortgage-integration-agent
 
-An AI-native mortgage integration orchestration service built on NestJS and GraphQL. It aggregates data from multiple financial integrations (income verification, credit bureaus, document parsing) in parallel, then routes the combined borrower profile through Claude to produce a structured, auditable underwriting decision — all exposed through a single, clean GraphQL API.
+A backend service that handles mortgage underwriting decisions using Claude. It pulls income data, credit reports, and document verification in parallel, combines everything into a prompt, and gets back a structured decision (approved / conditional / denied) with a plain-English explanation.
 
----
+Built with NestJS, GraphQL, TypeORM, and the Anthropic SDK.
 
 ## Architecture
 
@@ -32,7 +32,7 @@ An AI-native mortgage integration orchestration service built on NestJS and Grap
                           │              │  (claude-sonnet-4-6)    │           │
                           │              │                         │           │
                           │              │  Underwriting prompt +  │           │
-                          │              │  borrower data  →       │           │
+                          │              │  borrower data ->       │           │
                           │              │  JSON decision          │           │
                           │              └────────────┬────────────┘           │
                           │                           │                        │
@@ -44,8 +44,6 @@ An AI-native mortgage integration orchestration service built on NestJS and Grap
                           │              └─────────────────────────┘           │
                           └─────────────────────────────────────────────────────┘
 ```
-
----
 
 ## Tech Stack
 
@@ -60,59 +58,25 @@ An AI-native mortgage integration orchestration service built on NestJS and Grap
 | Validation | class-validator, class-transformer |
 | Testing | Jest, Supertest |
 
----
-
 ## Setup
 
-### Prerequisites
-
-- Node.js 20+
-- PostgreSQL 15+ running locally (or a connection URL)
-- An Anthropic API key
-
-### 1. Install dependencies
+**Prerequisites:** Node.js 20+, PostgreSQL 15+, Anthropic API key
 
 ```bash
 npm install
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-DATABASE_URL=postgresql://postgres:password@localhost:5432/mortgage_agent
-PORT=3000
-NODE_ENV=development
-```
-
-### 3. Create the database
-
-```bash
+cp .env.example .env   # fill in your keys
 createdb mortgage_agent
-```
-
-TypeORM will auto-sync the schema on first run in development mode.
-
-### 4. Start the server
-
-```bash
 npm run start:dev
 ```
 
-GraphQL Playground is available at `http://localhost:3000/graphql`.
+GraphQL Playground at `http://localhost:3000/graphql`.
 
----
+**No API key?** Set `DEMO_MODE=true` in `.env` and skip the `ANTHROPIC_API_KEY`. The service will use a built-in rule-based engine instead of calling Claude.
 
 ## Example Query
 
 ```graphql
-query EvaluateLoan {
+query {
   evaluateLoan(input: {
     borrowerId: "B001"
     requestedAmount: 450000
@@ -131,7 +95,7 @@ query EvaluateLoan {
 }
 ```
 
-**Example response (APPROVED):**
+Example response:
 
 ```json
 {
@@ -140,7 +104,7 @@ query EvaluateLoan {
       "applicationId": "a1b2c3d4-...",
       "decision": "APPROVED",
       "confidence": 0.94,
-      "reasoning": "Strong credit score of 752 with excellent payment history. DTI of 31% is well within conventional guidelines. All four document types verified. Loan-to-income ratio of 3.2x is conservative.",
+      "reasoning": "Credit score of 752 with clean payment history. DTI at 31% is well within conventional limits. All documents verified.",
       "incomeVerified": true,
       "creditScore": 752,
       "documentsValid": true,
@@ -151,47 +115,18 @@ query EvaluateLoan {
 }
 ```
 
-**Example response (CONDITIONAL):**
-
-```json
-{
-  "data": {
-    "evaluateLoan": {
-      "decision": "CONDITIONAL",
-      "confidence": 0.73,
-      "reasoning": "Credit score of 662 is below conventional threshold but qualifies under FHA guidelines. DTI of 47% exceeds standard limit and requires documented compensating factors.",
-      "conditions": [
-        "Provide letter of explanation for credit score below 700",
-        "Document compensating factors for DTI exceeding 43%"
-      ]
-    }
-  }
-}
-```
-
----
-
-## Running Tests
+## Tests
 
 ```bash
-# Unit tests
-npm run test
-
-# E2E tests (no live services required — AgentService is mocked)
-npm run test:e2e
-
-# Coverage report
-npm run test:cov
+npm run test        # unit tests
+npm run test:e2e    # e2e (AgentService is mocked, no live services needed)
+npm run test:cov    # coverage report
 ```
 
----
+## Design Notes
 
-## Why This Architecture
+The three integration calls (Plaid, credit bureau, document parser) run in parallel via `Promise.all` before anything gets sent to Claude. This keeps latency low since the integrations are independent of each other.
 
-**Monolith-first, API-as-product.** Mortgage underwriting involves tightly coupled data dependencies — income, credit, and documents must all be assessed together to make a coherent decision. A distributed microservices split would add network hops and distributed transaction complexity with no benefit at this stage. The monolith lets us fan out to integration vendors in a single `Promise.all`, pass the combined data to Claude in one context window, and persist the result atomically.
+All raw integration responses are stored as JSONB alongside each decision. This makes it straightforward to audit what data Claude actually saw for any given application.
 
-**AI as a first-class underwriting component.** Traditional rules-engine underwriting requires maintaining thousands of if/else conditions across loan programs. By describing underwriting guidelines in a system prompt and giving Claude structured borrower data, the same codebase handles CONVENTIONAL, FHA, VA, and JUMBO logic without conditional sprawl. The LLM produces reasoning and conditions in plain English, which is what loan officers actually need.
-
-**GraphQL as the external contract.** A single `evaluateLoan` query abstracts three integration vendors and an AI model behind a typed, self-documenting API. Callers (loan origination systems, mobile apps, broker portals) never need to know which bureau was called or which Claude model evaluated the file. Integration vendor swaps and model upgrades are invisible to API consumers.
-
-**Audit trail by default.** Every decision writes the full raw integration payloads to `rawIntegrationData (jsonb)`. This satisfies ECOA adverse action notice requirements and supports post-hoc model auditing — you can always replay exactly what data Claude saw for any decision.
+The demo mode (`DEMO_MODE=true`) runs the same underwriting rules locally without hitting the API, so the full GraphQL flow works without any credentials.
