@@ -9,7 +9,7 @@ Built with NestJS, GraphQL, TypeORM, and the Anthropic SDK.
 ```
                           ┌─────────────────────────────────────────────────┐
                           │           mortgage-integration-agent            │
-                          │                                                  │
+                          │                                                 │
   Client (GraphQL)        │   ┌────────────┐      ┌──────────────────────┐  │
   ─────────────────────►  │   │   Loan     │      │    Agent Service     │  │
                           │   │  Resolver  │─────►│  (Orchestration      │  │
