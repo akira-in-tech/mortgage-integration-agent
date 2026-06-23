@@ -58,6 +58,47 @@ Built with NestJS, GraphQL, TypeORM, and the Anthropic SDK.
 | Validation | class-validator, class-transformer |
 | Testing | Jest, Supertest |
 
+## Demo
+
+**No API key, no database, no setup:**
+
+```bash
+npm install
+npm run demo
+```
+
+```
+  Mortgage Integration Agent  demo mode
+  Rule-based underwriter · no API key required · no database
+
+  ────────────────────────────────────────────────────────────────
+  Sarah Chen  (CONVENTIONAL · $420,000)
+  ────────────────────────────────────────────────────────────────
+  Decision    ✓ APPROVED
+  Confidence  ██████████████████████░░ 94%
+  Strong application: score 745 with excellent payment history, DTI 31.0%,
+  verified income $150,000/yr, all documents valid.
+
+  Integration data  (fetched in parallel)
+    Plaid    $150,000/yr · FULL TIME · stability 94/100
+    Credit   score 745 · DTI 31.0% · excellent history · 0 derog
+    Docs     all valid
+
+  ────────────────────────────────────────────────────────────────
+  Marcus Rivera  (FHA · $285,000)
+  ────────────────────────────────────────────────────────────────
+  Decision    ◐ CONDITIONAL
+  Confidence  ██████████████░░░░░░░░░░ 60%
+  ...
+```
+
+**Full GraphQL playground (requires Docker):**
+
+```bash
+docker-compose up
+# open http://localhost:3000/graphql
+```
+
 ## Setup
 
 **Prerequisites:** Node.js 20+, PostgreSQL 15+, Anthropic API key
