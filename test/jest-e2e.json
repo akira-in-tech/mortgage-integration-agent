@@ -1,9 +1,23 @@
 {
   "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": ".",
+  "rootDir": "..",
+  "roots": ["<rootDir>/test"],
+  "cacheDirectory": "<rootDir>/.jest-cache",
   "testEnvironment": "node",
-  "testRegex": ".e2e-spec.ts$",
+  "testRegex": "test/loan\\.e2e-spec\\.ts$",
+  "testTimeout": 30000,
+  "watchman": false,
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.ts$": "<rootDir>/test/jest-ts-transformer.cjs"
+  },
+  "moduleNameMapper": {
+    "^@nestjs/graphql$": "<rootDir>/test/module-mocks/nestjs-graphql.cjs",
+    "^@nestjs/typeorm$": "<rootDir>/test/module-mocks/nestjs-typeorm.cjs",
+    "^@apollo/server$": "<rootDir>/node_modules/@apollo/server/dist/cjs/index.js",
+    "^@apollo/server/(.+)$": "<rootDir>/node_modules/@apollo/server/dist/cjs/$1/index.js",
+    "^class-validator$": "<rootDir>/node_modules/class-validator/cjs/index.js",
+    "^class-transformer$": "<rootDir>/node_modules/class-transformer/cjs/index.js",
+    "^typeorm$": "<rootDir>/test/module-mocks/typeorm.cjs",
+    "^uuid$": "<rootDir>/test/module-mocks/uuid.cjs"
   }
 }

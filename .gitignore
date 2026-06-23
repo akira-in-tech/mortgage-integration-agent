@@ -26,5 +26,11 @@ npm-debug.log*
 # Coverage
 coverage/
 
+# Jest cache
+.jest-cache/
+
+# Claude Code session state
+.claude/
+
 # GraphQL generated schema (regenerated on start)
 src/schema.gql

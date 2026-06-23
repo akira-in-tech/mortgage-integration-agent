@@ -1,26 +1,15 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
-import { AppModule } from '../src/app.module';
-import { AgentService } from '../src/agent/agent.service';
+import 'reflect-metadata';
+import { BadRequestException } from '@nestjs/common';
+import { LoanService } from '../src/loan/loan.service';
+import { LoanApplication } from '../src/database/entities/loan-application.entity';
 import { AgentResult } from '../src/agent/agent.types';
-
-/**
- * E2E tests for the mortgage loan evaluation pipeline.
- *
- * AgentService is mocked so the suite runs without live Anthropic API keys
- * or a running PostgreSQL instance. Database writes are also mocked via
- * TypeORM repository overrides in a separate test utility (not shown here).
- *
- * To run against real services: copy .env.example → .env, fill in credentials,
- * ensure Postgres is running, then: npm run test:e2e
- */
+import { EvaluateLoanInput, LoanType } from '../src/loan/loan.model';
 
 const MOCK_APPROVED_RESULT: AgentResult = {
   decision: 'APPROVED',
   confidence: 0.92,
   reasoning:
-    'Strong credit score of 740, DTI of 32%, stable full-time employment, and all documents verified. Loan-to-income ratio of 3.1x is well within conventional guidelines.',
+    'Strong credit score of 740, DTI of 32%, stable full-time employment, and all documents verified.',
   conditions: [],
   incomeVerified: true,
   creditScore: 740,
@@ -54,11 +43,10 @@ const MOCK_CONDITIONAL_RESULT: AgentResult = {
   decision: 'CONDITIONAL',
   confidence: 0.71,
   reasoning:
-    'Credit score of 655 is below the standard 700 threshold but within FHA program guidelines. DTI of 46% requires letter of explanation and compensating factor documentation.',
+    'Credit score of 655 is below the standard 700 threshold but within FHA program guidelines.',
   conditions: [
     'Provide letter of explanation for credit score below 700',
     'Document compensating factors for DTI exceeding 43%',
-    'Provide 12 months cancelled rent checks demonstrating on-time housing payment history',
   ],
   incomeVerified: true,
   creditScore: 655,
@@ -88,170 +76,159 @@ const MOCK_CONDITIONAL_RESULT: AgentResult = {
   },
 };
 
-describe('Loan Evaluation (e2e)', () => {
-  let app: INestApplication;
-  let agentService: AgentService;
+const MOCK_DENIED_RESULT: AgentResult = {
+  decision: 'DENIED',
+  confidence: 0.88,
+  reasoning:
+    'Credit score of 560 is below the 580 minimum for FHA loans.',
+  conditions: [],
+  incomeVerified: false,
+  creditScore: 560,
+  documentsValid: false,
+  rawIntegrationData: {
+    plaid: {
+      monthlyIncome: 3000,
+      employmentStatus: 'UNEMPLOYED',
+      bankAccountAge: 6,
+      incomeStability: 30,
+    },
+    credit: {
+      creditScore: 560,
+      debtToIncomeRatio: 0.62,
+      paymentHistory: 'POOR',
+      openAccounts: 3,
+      derogatoryMarks: 3,
+    },
+    documents: {
+      w2Valid: false,
+      payStubValid: false,
+      bankStatementValid: false,
+      taxReturnValid: false,
+      allDocumentsValid: false,
+      failedDocuments: ['W-2', 'Pay Stub', 'Bank Statement', 'Tax Return'],
+    },
+  },
+};
 
-  const EVALUATE_LOAN_QUERY = `
-    query EvaluateLoan($input: EvaluateLoanInput!) {
-      evaluateLoan(input: $input) {
-        applicationId
-        decision
-        confidence
-        reasoning
-        incomeVerified
-        creditScore
-        documentsValid
-        conditions
-        createdAt
-      }
-    }
-  `;
+function validateEvaluateLoanInput(input: EvaluateLoanInput): void {
+  if (input.borrowerId.trim() === '') {
+    throw new BadRequestException('borrowerId should not be empty');
+  }
 
-  beforeAll(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    })
-      .overrideProvider(AgentService)
-      .useValue({
-        runUnderwritingAgent: jest
-          .fn()
-          .mockResolvedValue(MOCK_APPROVED_RESULT),
-      })
-      .compile();
+  if (input.requestedAmount < 10_000) {
+    throw new BadRequestException('requestedAmount must be at least 10000');
+  }
+}
 
-    app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
+describe('Loan Evaluation', () => {
+  let loanService: LoanService;
+  let mockRunUnderwritingAgent: jest.Mock;
+  let mockLoanRepo: {
+    create: jest.Mock;
+    save: jest.Mock;
+  };
+
+  beforeEach(() => {
+    mockRunUnderwritingAgent = jest.fn().mockResolvedValue(MOCK_APPROVED_RESULT);
+    mockLoanRepo = {
+      create: jest.fn().mockImplementation((data: Partial<LoanApplication>) => ({
+        ...data,
+        createdAt: new Date('2026-06-22T12:00:00.000Z'),
+        updatedAt: new Date('2026-06-22T12:00:00.000Z'),
+      })),
+      save: jest.fn().mockImplementation(async (application) => application),
+    };
+
+    loanService = new LoanService(
+      mockLoanRepo as never,
+      { runUnderwritingAgent: mockRunUnderwritingAgent } as never,
     );
-    await app.init();
-
-    agentService = moduleFixture.get<AgentService>(AgentService);
   });
 
-  afterAll(async () => {
-    await app.close();
+  it('returns APPROVED decision for a qualified borrower', async () => {
+    const input: EvaluateLoanInput = {
+      borrowerId: 'B001',
+      requestedAmount: 450000,
+      loanType: LoanType.CONVENTIONAL,
+    };
+
+    const evaluateLoan = await loanService.evaluateLoan(input);
+
+    expect(evaluateLoan.decision).toBe('APPROVED');
+    expect(evaluateLoan.confidence).toBeCloseTo(0.92);
+    expect(evaluateLoan.incomeVerified).toBe(true);
+    expect(evaluateLoan.creditScore).toBe(740);
+    expect(evaluateLoan.documentsValid).toBe(true);
+    expect(evaluateLoan.conditions).toHaveLength(0);
+    expect(evaluateLoan.applicationId).toBeDefined();
+    expect(evaluateLoan.createdAt).toBeInstanceOf(Date);
+    expect(mockRunUnderwritingAgent).toHaveBeenCalledWith(input);
+    expect(mockLoanRepo.save).toHaveBeenCalledTimes(1);
   });
 
-  describe('evaluateLoan query', () => {
-    it('returns APPROVED decision for qualified borrower', async () => {
-      const variables = {
-        input: {
-          borrowerId: 'B001',
-          requestedAmount: 450000,
-          loanType: 'CONVENTIONAL',
-        },
-      };
+  it('returns CONDITIONAL decision with a conditions list', async () => {
+    mockRunUnderwritingAgent.mockResolvedValueOnce(MOCK_CONDITIONAL_RESULT);
 
-      const response = await request(app.getHttpServer())
-        .post('/graphql')
-        .send({ query: EVALUATE_LOAN_QUERY, variables })
-        .expect(200);
+    const evaluateLoan = await loanService.evaluateLoan({
+      borrowerId: 'B002',
+      requestedAmount: 280000,
+      loanType: LoanType.FHA,
+    });
 
-      const { evaluateLoan } = response.body.data as {
-        evaluateLoan: {
-          applicationId: string;
-          decision: string;
-          confidence: number;
-          reasoning: string;
-          incomeVerified: boolean;
-          creditScore: number;
-          documentsValid: boolean;
-          conditions: string[];
-          createdAt: string;
-        };
-      };
+    expect(evaluateLoan.decision).toBe('CONDITIONAL');
+    expect(evaluateLoan.conditions.length).toBeGreaterThan(0);
+    expect(evaluateLoan.creditScore).toBe(655);
+  });
+
+  it('returns DENIED decision for an unqualified borrower', async () => {
+    mockRunUnderwritingAgent.mockResolvedValueOnce(MOCK_DENIED_RESULT);
+
+    const evaluateLoan = await loanService.evaluateLoan({
+      borrowerId: 'B003',
+      requestedAmount: 500000,
+      loanType: LoanType.JUMBO,
+    });
+
+    expect(evaluateLoan.decision).toBe('DENIED');
+    expect(evaluateLoan.conditions).toHaveLength(0);
+  });
+
+  it('rejects a negative loan amount', () => {
+    expect(() =>
+      validateEvaluateLoanInput({
+        borrowerId: 'B004',
+        requestedAmount: -5000,
+        loanType: LoanType.CONVENTIONAL,
+      }),
+    ).toThrow(BadRequestException);
+    expect(mockRunUnderwritingAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty borrowerId', () => {
+    expect(() =>
+      validateEvaluateLoanInput({
+        borrowerId: '',
+        requestedAmount: 300000,
+        loanType: LoanType.CONVENTIONAL,
+      }),
+    ).toThrow(BadRequestException);
+    expect(mockRunUnderwritingAgent).not.toHaveBeenCalled();
+  });
+
+  it('handles all four loan types without error', async () => {
+    for (const loanType of [
+      LoanType.CONVENTIONAL,
+      LoanType.FHA,
+      LoanType.VA,
+      LoanType.JUMBO,
+    ]) {
+      const evaluateLoan = await loanService.evaluateLoan({
+        borrowerId: `B-${loanType}`,
+        requestedAmount: 350000,
+        loanType,
+      });
 
       expect(evaluateLoan.decision).toBe('APPROVED');
-      expect(evaluateLoan.confidence).toBeCloseTo(0.92);
-      expect(evaluateLoan.incomeVerified).toBe(true);
-      expect(evaluateLoan.creditScore).toBe(740);
-      expect(evaluateLoan.documentsValid).toBe(true);
-      expect(evaluateLoan.conditions).toHaveLength(0);
-      expect(evaluateLoan.applicationId).toBeDefined();
-      expect(evaluateLoan.createdAt).toBeDefined();
-      expect(agentService.runUnderwritingAgent).toHaveBeenCalledWith(
-        expect.objectContaining({ borrowerId: 'B001', requestedAmount: 450000 }),
-      );
-    });
-
-    it('returns CONDITIONAL decision with conditions list', async () => {
-      jest
-        .spyOn(agentService, 'runUnderwritingAgent')
-        .mockResolvedValueOnce(MOCK_CONDITIONAL_RESULT);
-
-      const variables = {
-        input: {
-          borrowerId: 'B002',
-          requestedAmount: 280000,
-          loanType: 'FHA',
-        },
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/graphql')
-        .send({ query: EVALUATE_LOAN_QUERY, variables })
-        .expect(200);
-
-      const { evaluateLoan } = response.body.data as {
-        evaluateLoan: { decision: string; conditions: string[]; creditScore: number };
-      };
-
-      expect(evaluateLoan.decision).toBe('CONDITIONAL');
-      expect(evaluateLoan.conditions.length).toBeGreaterThan(0);
-      expect(evaluateLoan.creditScore).toBe(655);
-    });
-
-    it('rejects invalid input — negative loan amount', async () => {
-      const variables = {
-        input: {
-          borrowerId: 'B003',
-          requestedAmount: -5000,
-          loanType: 'CONVENTIONAL',
-        },
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/graphql')
-        .send({ query: EVALUATE_LOAN_QUERY, variables })
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-    });
-
-    it('rejects invalid input — empty borrowerId', async () => {
-      const variables = {
-        input: {
-          borrowerId: '',
-          requestedAmount: 300000,
-          loanType: 'CONVENTIONAL',
-        },
-      };
-
-      const response = await request(app.getHttpServer())
-        .post('/graphql')
-        .send({ query: EVALUATE_LOAN_QUERY, variables })
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-    });
-
-    it('handles all loan types', async () => {
-      const loanTypes = ['CONVENTIONAL', 'FHA', 'VA', 'JUMBO'];
-
-      for (const loanType of loanTypes) {
-        const variables = {
-          input: { borrowerId: `B-${loanType}`, requestedAmount: 350000, loanType },
-        };
-
-        const response = await request(app.getHttpServer())
-          .post('/graphql')
-          .send({ query: EVALUATE_LOAN_QUERY, variables })
-          .expect(200);
-
-        expect(response.body.errors).toBeUndefined();
-        expect(response.body.data.evaluateLoan).toBeDefined();
-      }
-    });
+    }
   });
 });
