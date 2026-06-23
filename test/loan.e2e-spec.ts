@@ -1,3 +1,4 @@
+/// <reference types="jest" />
 import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { LoanService } from '../src/loan/loan.service';
@@ -122,7 +123,7 @@ function validateEvaluateLoanInput(input: EvaluateLoanInput): void {
 
 describe('Loan Evaluation', () => {
   let loanService: LoanService;
-  let mockRunUnderwritingAgent: jest.Mock;
+  let mockRunUnderwritingAgent: jest.Mock<Promise<AgentResult>>;
   let mockLoanRepo: {
     create: jest.Mock;
     save: jest.Mock;
@@ -232,3 +233,4 @@ describe('Loan Evaluation', () => {
     }
   });
 });
+
