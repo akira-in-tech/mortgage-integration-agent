@@ -19,7 +19,8 @@ services:
       - '3000:3000'
     environment:
       DATABASE_URL: postgres://mortgage:mortgage_demo@postgres:5432/mortgage_agent
-      DEMO_MODE: 'true'
+      DEMO_MODE: ${DEMO_MODE:-true}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NODE_ENV: development
     depends_on:
       postgres:

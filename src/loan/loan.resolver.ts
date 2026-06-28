@@ -1,10 +1,15 @@
-import { Resolver, Mutation, Args } from '@nestjs/graphql';
+import { Resolver, Mutation, Query, Args } from '@nestjs/graphql';
 import { LoanService } from './loan.service';
 import { EvaluateLoanInput, LoanEvaluationResult } from './loan.model';
 
 @Resolver(() => LoanEvaluationResult)
 export class LoanResolver {
   constructor(private readonly loanService: LoanService) {}
+
+  @Query(() => String, { name: 'health' })
+  health(): string {
+    return 'ok';
+  }
 
   @Mutation(() => LoanEvaluationResult, {
     name: 'evaluateLoan',
