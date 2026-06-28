@@ -1,4 +1,4 @@
-import { Resolver, Query, Args } from '@nestjs/graphql';
+import { Resolver, Mutation, Args } from '@nestjs/graphql';
 import { LoanService } from './loan.service';
 import { EvaluateLoanInput, LoanEvaluationResult } from './loan.model';
 
@@ -6,11 +6,7 @@ import { EvaluateLoanInput, LoanEvaluationResult } from './loan.model';
 export class LoanResolver {
   constructor(private readonly loanService: LoanService) {}
 
-  /**
-   * Entry point for mortgage underwriting. Triggers a full AI-assisted evaluation:
-   * parallel integration checks → Claude decisioning → persisted result.
-   */
-  @Query(() => LoanEvaluationResult, {
+  @Mutation(() => LoanEvaluationResult, {
     name: 'evaluateLoan',
     description:
       'Run an AI-powered mortgage underwriting evaluation for a borrower.',

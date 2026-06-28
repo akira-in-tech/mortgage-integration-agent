@@ -62,6 +62,15 @@ export class LoanApplication {
   @Column({ type: 'text', nullable: true })
   reasoning!: string | null;
 
+  @Column({ type: 'boolean', default: false })
+  incomeVerified!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  documentsValid!: boolean;
+
+  @Column({ type: 'simple-array', nullable: true })
+  conditions!: string[] | null;
+
   /** Full integration API payloads stored as JSONB for compliance audit trail */
   @Column({ type: 'jsonb', nullable: true })
   rawIntegrationData!: RawIntegrationData | null;

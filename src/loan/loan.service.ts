@@ -39,6 +39,9 @@ export class LoanService {
       decision: agentResult.decision as unknown as LoanDecisionEntity,
       confidence: agentResult.confidence,
       reasoning: agentResult.reasoning,
+      incomeVerified: agentResult.incomeVerified,
+      documentsValid: agentResult.documentsValid,
+      conditions: agentResult.conditions,
       rawIntegrationData: agentResult.rawIntegrationData,
     });
 

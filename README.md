@@ -56,7 +56,7 @@ Built with NestJS, GraphQL, TypeORM, and the Anthropic SDK.
 | ORM | TypeORM 0.3 |
 | Database | PostgreSQL 15+ |
 | Validation | class-validator, class-transformer |
-| Testing | Jest, Supertest |
+| Testing | Jest |
 
 ## Demo
 
@@ -114,10 +114,10 @@ GraphQL Playground at `http://localhost:3000/graphql`.
 
 **No API key?** Set `DEMO_MODE=true` in `.env` and skip the `ANTHROPIC_API_KEY`. The service will use a built-in rule-based engine instead of calling Claude.
 
-## Example Query
+## Example Mutation
 
 ```graphql
-query {
+mutation {
   evaluateLoan(input: {
     borrowerId: "B001"
     requestedAmount: 450000
@@ -158,11 +158,14 @@ Example response:
 
 ## Tests
 
+End-to-end tests call the real Claude API and require a live database:
+
 ```bash
-npm run test        # unit tests
-npm run test:e2e    # e2e (AgentService is mocked, no live services needed)
-npm run test:cov    # coverage report
+# Set ANTHROPIC_API_KEY and DATABASE_URL in .env, then:
+npm run test:e2e
 ```
+
+Tests are automatically skipped with a warning if either env var is missing.
 
 ## Design Notes
 
