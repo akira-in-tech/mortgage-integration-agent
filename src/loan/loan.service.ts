@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -8,7 +12,11 @@ import {
   LoanTypeEntity,
   LoanDecisionEntity,
 } from '../database/entities/loan-application.entity';
-import { EvaluateLoanInput, LoanEvaluationResult, LoanDecisionStatus } from './loan.model';
+import {
+  EvaluateLoanInput,
+  LoanEvaluationResult,
+  LoanDecisionStatus,
+} from './loan.model';
 
 @Injectable()
 export class LoanService {
@@ -45,8 +53,9 @@ export class LoanService {
       rawIntegrationData: agentResult.rawIntegrationData,
     });
 
+    let savedApplication: LoanApplication;
     try {
-      await this.loanApplicationRepository.save(application);
+      savedApplication = await this.loanApplicationRepository.save(application);
       this.logger.log(
         `Persisted loan application [applicationId=${applicationId}] [decision=${agentResult.decision}]`,
       );
@@ -64,7 +73,7 @@ export class LoanService {
       creditScore: agentResult.creditScore,
       documentsValid: agentResult.documentsValid,
       conditions: agentResult.conditions,
-      createdAt: application.createdAt,
+      createdAt: savedApplication.createdAt,
     };
   }
 }

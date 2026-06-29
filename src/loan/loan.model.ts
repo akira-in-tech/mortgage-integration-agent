@@ -12,6 +12,8 @@ import {
   IsNumber,
   IsPositive,
   IsString,
+  Matches,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -48,6 +50,8 @@ export class EvaluateLoanInput {
   @Field()
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
+  @Matches(/^\S+$/, { message: 'borrowerId must not contain whitespace' })
   borrowerId!: string;
 
   /** Requested loan amount in USD */

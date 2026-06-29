@@ -68,7 +68,8 @@ export class LoanApplication {
   @Column({ type: 'boolean', default: false })
   documentsValid!: boolean;
 
-  @Column({ type: 'simple-array', nullable: true })
+  // JSON preserves commas and other punctuation inside individual conditions.
+  @Column({ type: 'simple-json', nullable: true })
   conditions!: string[] | null;
 
   /** Full integration API payloads stored as JSONB for compliance audit trail */

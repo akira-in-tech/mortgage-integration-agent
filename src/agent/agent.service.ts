@@ -37,8 +37,10 @@ export class AgentService {
     private readonly creditService: CreditService,
     private readonly documentService: DocumentService,
   ) {
+    const configuredDemoMode = this.configService.get<string>('DEMO_MODE');
     this.isDemoMode =
-      this.configService.get<string>('DEMO_MODE')?.toLowerCase() === 'true';
+      configuredDemoMode === undefined ||
+      configuredDemoMode.trim().toLowerCase() === 'true';
 
     if (this.isDemoMode) {
       this.logger.warn(
@@ -122,7 +124,9 @@ export class AgentService {
         `Credit score ${score} is below the ${thresholds.minScore} minimum for ${loanType}`,
       );
     } else if (score < 700) {
-      conditions.push('Provide letter of explanation for credit score below 700');
+      conditions.push(
+        'Provide letter of explanation for credit score below 700',
+      );
     }
 
     // ── DTI check ─────────────────────────────────────────────────────────
@@ -171,7 +175,10 @@ export class AgentService {
 
     // ── Final decision ─────────────────────────────────────────────────────
     if (problems.length > 0) {
-      const confidence = Math.max(0.72, Math.min(0.96, 0.96 - problems.length * 0.08));
+      const confidence = Math.max(
+        0.72,
+        Math.min(0.96, 0.96 - problems.length * 0.08),
+      );
       return {
         decision: 'DENIED',
         confidence,
@@ -181,7 +188,10 @@ export class AgentService {
     }
 
     if (conditions.length > 0) {
-      const confidence = Math.max(0.60, Math.min(0.82, 0.82 - conditions.length * 0.06));
+      const confidence = Math.max(
+        0.6,
+        Math.min(0.82, 0.82 - conditions.length * 0.06),
+      );
       return {
         decision: 'CONDITIONAL',
         confidence,
@@ -218,7 +228,7 @@ export class AgentService {
       case 'JUMBO':
         return { minScore: 720, maxDti: 0.38, maxLti: 4.0 };
       default: // CONVENTIONAL
-        return { minScore: 620, maxDti: 0.50, maxLti: 4.5 };
+        return { minScore: 620, maxDti: 0.5, maxLti: 4.5 };
     }
   }
 
@@ -296,10 +306,12 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const rawContent = message.content[0];
-    if (rawContent.type !== 'text') {
+    const rawContent = message.content.find(
+      (content) => content.type === 'text',
+    );
+    if (!rawContent) {
       throw new InternalServerErrorException(
-        'Unexpected response type from Claude API',
+        'Claude API returned no text response',
       );
     }
 
@@ -321,6 +333,16 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
       );
     }
 
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new InternalServerErrorException(
+        'AI underwriting engine returned an invalid response format',
+      );
+    }
+
     const response = parsed as Record<string, unknown>;
 
     const validDecisions = new Set(['APPROVED', 'CONDITIONAL', 'DENIED']);
@@ -334,23 +356,53 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
     }
     if (
       typeof response['confidence'] !== 'number' ||
+      !Number.isFinite(response['confidence']) ||
       response['confidence'] < 0 ||
       response['confidence'] > 1
     ) {
-      throw new InternalServerErrorException('Invalid confidence value from AI');
+      throw new InternalServerErrorException(
+        'Invalid confidence value from AI',
+      );
     }
-    if (typeof response['reasoning'] !== 'string') {
+    if (
+      typeof response['reasoning'] !== 'string' ||
+      response['reasoning'].trim().length === 0
+    ) {
       throw new InternalServerErrorException('Missing reasoning from AI');
     }
-    if (!Array.isArray(response['conditions'])) {
-      throw new InternalServerErrorException('Missing conditions array from AI');
+    if (
+      !Array.isArray(response['conditions']) ||
+      !response['conditions'].every(
+        (condition) =>
+          typeof condition === 'string' && condition.trim().length > 0,
+      )
+    ) {
+      throw new InternalServerErrorException(
+        'Missing conditions array from AI',
+      );
+    }
+
+    const decision = response['decision'] as
+      | 'APPROVED'
+      | 'CONDITIONAL'
+      | 'DENIED';
+    const conditions = (response['conditions'] as string[]).map((condition) =>
+      condition.trim(),
+    );
+    if (
+      (decision === 'CONDITIONAL' && conditions.length === 0) ||
+      (decision !== 'CONDITIONAL' && conditions.length > 0)
+    ) {
+      throw new InternalServerErrorException(
+        'Conditions do not match the AI underwriting decision',
+      );
     }
 
     return {
-      decision: response['decision'] as 'APPROVED' | 'CONDITIONAL' | 'DENIED',
+      decision,
       confidence: response['confidence'] as number,
-      reasoning: response['reasoning'] as string,
-      conditions: response['conditions'] as string[],
+      reasoning: response['reasoning'].trim(),
+      conditions,
     };
   }
 }
