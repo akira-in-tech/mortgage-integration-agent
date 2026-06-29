@@ -1,7 +1,6 @@
 /// <reference types="jest" />
 import 'reflect-metadata';
 // Load .env before anything else so process.env is populated for the skip check
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 require('dotenv').config();
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -31,7 +30,11 @@ describeOrSkip('Loan Evaluation — real Claude API (e2e)', () => {
 
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
     );
     await app.init();
   }, 30_000);

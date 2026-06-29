@@ -10,7 +10,9 @@ import { DocumentVerificationResult } from './document.types';
 export class DocumentService {
   private readonly logger = new Logger(DocumentService.name);
 
-  async verifyDocuments(borrowerId: string): Promise<DocumentVerificationResult> {
+  async verifyDocuments(
+    borrowerId: string,
+  ): Promise<DocumentVerificationResult> {
     this.logger.debug(`Verifying document package for borrower ${borrowerId}`);
 
     // Document parsing is the most latency-intensive step — 200–600 ms in production
@@ -21,8 +23,8 @@ export class DocumentService {
     // Most applicants pass most documents; use a 0.85 threshold for validity
     const w2Valid = seed > 0.15;
     const payStubValid = seed > 0.12;
-    const bankStatementValid = seed > 0.10;
-    const taxReturnValid = seed > 0.20;
+    const bankStatementValid = seed > 0.1;
+    const taxReturnValid = seed > 0.2;
 
     const failed: string[] = [];
     if (!w2Valid) failed.push('W-2');
