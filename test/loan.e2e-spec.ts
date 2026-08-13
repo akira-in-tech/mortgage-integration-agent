@@ -5,10 +5,10 @@ require('dotenv').config();
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 
-const REQUIRED_VARS = ['ANTHROPIC_API_KEY', 'DATABASE_URL'];
+const REQUIRED_VARS = ['DATABASE_URL'];
 const missingVars = REQUIRED_VARS.filter((v) => !process.env[v]);
 
 if (missingVars.length > 0) {
@@ -20,10 +20,11 @@ if (missingVars.length > 0) {
 
 const describeOrSkip = missingVars.length > 0 ? describe.skip : describe;
 
-describeOrSkip('Loan Evaluation — real Claude API (e2e)', () => {
+describeOrSkip('Loan Evaluation GraphQL API (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
+    process.env.DEMO_MODE ??= 'true';
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();

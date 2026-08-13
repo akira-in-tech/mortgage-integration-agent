@@ -3,11 +3,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { join } from 'path';
 import { LoanModule } from './loan/loan.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AgentModule } from './agent/agent.module';
 import { DatabaseModule } from './database/database.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -16,13 +18,17 @@ import { DatabaseModule } from './database/database.module';
       envFilePath: '.env',
     }),
 
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 30 }],
+    }),
+
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
       sortSchema: true,
-      // Expose playground in all environments for demo purposes
-      playground: true,
-      introspection: true,
+      context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
+      playground: process.env.NODE_ENV !== 'production',
+      introspection: process.env.NODE_ENV !== 'production',
     }),
 
     TypeOrmModule.forRootAsync({
@@ -31,8 +37,9 @@ import { DatabaseModule } from './database/database.module';
         type: 'postgres',
         url: configService.get<string>('DATABASE_URL'),
         entities: [join(__dirname, '**', '*.entity.{ts,js}')],
-        // synchronize: true only for development — use migrations in production
-        synchronize: configService.get<string>('NODE_ENV') !== 'production',
+        synchronize: false,
+        migrationsRun: configService.get<string>('RUN_MIGRATIONS') === 'true',
+        migrations: [join(__dirname, 'database', 'migrations', '*.{ts,js}')],
         logging: configService.get<string>('NODE_ENV') === 'development',
       }),
       inject: [ConfigService],
@@ -42,6 +49,7 @@ import { DatabaseModule } from './database/database.module';
     LoanModule,
     IntegrationsModule,
     AgentModule,
+    HealthModule,
   ],
 })
 export class AppModule {}
