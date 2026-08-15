@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.1 |
+| Version | 2.2 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -72,6 +72,20 @@ The current implementation remains an MVP. The following target capabilities are
 - real provider or official underwriting integrations.
 
 The legacy `APPROVED`, `CONDITIONAL`, and `DENIED` demo vocabulary is not the target product contract and will be migrated before launch.
+
+The implemented `evaluateLoan` path is a one-shot synthetic readiness demo, not an end-to-end mortgage origination or production underwriting workflow. It does not currently implement policy confirmation, regulated milestone clocks, disclosures, appraisal, formal action notices, closing, funding, or post-closing quality control.
+
+### 3.1 Current workflow audit
+
+| Area | Implemented behavior | Production implication |
+|---|---|---|
+| Intake | GraphQL receives borrower identifier, requested amount, and loan type. | Insufficient to establish a complete application, legal milestone, jurisdiction, property, purpose, occupancy, or consent context. |
+| Evidence | Three deterministic simulators return income, credit, and document summaries concurrently. | Useful for a demo; not authorized, complete, normalized, freshness-governed provider evidence. |
+| Policy | Thresholds exist in source code and a local-model prompt. | No immutable release, jurisdiction scope, effective dating, approval, confirmation, or exception governance. |
+| Evaluation | One request performs retrieval and returns a readiness-shaped decision. | No durable wait/resume, re-evaluation, workflow recovery, or mandatory current-policy guard. |
+| Outcome | Legacy `APPROVED`, `CONDITIONAL`, and `DENIED` labels are persisted. | These labels are not supported as formal credit actions and must be migrated to readiness vocabulary. |
+| Persistence | A single application row is saved after evaluation with raw simulator payloads. | No case aggregate, evidence lineage, condition history, policy receipt, outbox, review record, or true request idempotency. |
+| Coverage | Income, credit, documents, DTI, and loan-to-income are simulated. | Assets, property and collateral, appraisal, title, insurance, disclosures, formal notices, closing, funding, and post-close QC are absent. |
 
 ## 4. Product position
 
@@ -219,6 +233,26 @@ Every satisfied, waived, or escalated condition includes evidence or reviewer pr
 5. Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides.
 6. Model output never silently overrides policy, source evidence, or a human decision.
 
+### 6.4 Mortgage lifecycle alignment and product boundary
+
+Mortgage production is not one universal linear workflow: product, channel, jurisdiction, lender policy, and case facts change the required path. The platform therefore records authoritative milestone events and coordinates a bounded operations segment rather than pretending to own the lender's entire origination process.
+
+| Lifecycle area | Representative milestones | Initial product relationship | Authority boundary |
+|---|---|---|---|
+| Shopping, inquiry, and prequalification | Product exploration, inquiry, prequalification | Outside launch scope; may enter as context | The platform must not infer that a regulated application was received. |
+| Application intake and initial disclosure triggers | Application-received event, required initial disclosures, intent to proceed | Integration boundary; record downstream-confirmed events and deadlines | The lender or authorized system determines legal application status and performs disclosures. |
+| Processing and evidence assembly | Collect and verify income, assets, credit, identity, occupancy, and documents | Core launch scope with synthetic evidence | The platform may identify evidence gaps but does not make a credit decision. |
+| Collateral and third-party work | Appraisal or valuation, title, flood, insurance, fraud, and other required services | Selected simulators later; real orders require authorized adapters | Provider and lender results remain attributable and authoritative. |
+| Underwriting | Evaluate capacity, credit, collateral, eligibility, and approved exceptions | Prepare an evidence-complete package and ingest downstream conditions | An authorized lender or underwriting system owns formal approval, suspension, or denial. |
+| Conditions and re-evaluation | Operational conditions, underwriter conditions, new evidence, changed circumstances | Core conditions-resolution loop | The platform may resolve operational work; only the authorized owner clears decision conditions. |
+| Action and consumer notification | Approval, counteroffer, incompleteness, withdrawal, or adverse action and required notices | Track external status; protected drafting may be added later | Formal action and legally required communication remain outside autonomous Agent authority. |
+| Clear-to-close, closing, and funding | Final verification, closing disclosure, consummation, settlement, funding | Outside initial launch scope | Authorized lender, settlement, and funding systems remain authoritative. |
+| Post-closing and servicing handoff | Quality control, delivery, boarding, servicing, corrections | Outside initial launch scope | Downstream operational and compliance owners retain authority. |
+
+`READY_FOR_UNDERWRITING` means only that configured evidence-readiness checks passed. `CONDITIONS_OPEN` means operational work remains. Neither status means conditional approval, final approval, clear-to-close, funding authorization, or satisfaction of a legal notice obligation.
+
+This lifecycle map is a product-scope baseline, not a legal checklist. Authorized lending, legal, compliance, and operations owners must configure the actual milestones, notices, clocks, evidence, and decision authorities for each product and jurisdiction.
+
 ## 7. Launch product and vertical slice
 
 ### 7.1 Launch scenario
@@ -231,19 +265,20 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 4. Start an asynchronous workflow and return `202 Accepted`.
 5. Extract candidate facts and retain source locations.
 6. Run simulated income, asset, credit, identity, and document capabilities.
-7. Normalize findings and compare application, document, and provider evidence.
-8. Resolve and execute the released synthetic policy snapshot for the case's jurisdiction, product, lifecycle event, and relevant date.
-9. Create prioritized conditions for missing or contradictory evidence.
-10. Let the Agent select the next approved tool within budget.
-11. Pause durably for information or human approval when required.
-12. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
-13. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
-14. Resolve a new snapshot only when the approved transition requires it, then re-evaluate affected conditions and derive workflow readiness.
-15. Publish signed status events and display the full timeline, including why each policy version did or did not apply.
+7. Normalize findings and compare case-intake, document, and provider evidence.
+8. Request an evaluation; the mandatory system guard confirms the currently applicable released synthetic policy and issues an evaluation-bound receipt.
+9. Execute deterministic calculations and policy only against the confirmed snapshot.
+10. Create prioritized operational conditions for missing or contradictory evidence.
+11. Let the Agent select the next approved tool within budget.
+12. Pause durably for information or human approval when required.
+13. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
+14. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
+15. Before every re-evaluation, run policy confirmation again; an unchanged result still creates a new evaluation receipt, while a changed or ambiguous result creates a new snapshot or review task.
+16. Publish signed status events and display the full timeline, including every policy confirmation and why each version did or did not apply.
 
 ### 7.2 Included synthetic capabilities
 
-- application completeness;
+- case-intake completeness without inferring regulated application status;
 - income and employment evidence;
 - asset evidence;
 - credit-profile summary;
@@ -251,6 +286,7 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 - document classification and structured field extraction;
 - qualified-income, DTI, and LTV calculations using synthetic policy;
 - jurisdiction and relevant-event-aware policy snapshot resolution;
+- mandatory current-policy confirmation before every evaluation;
 - future-effective policy scheduling and open-case impact simulation;
 - evidence comparison and contradiction detection;
 - condition creation and resolution;
@@ -297,7 +333,7 @@ Observes case state, selects registered tools, proposes safe next actions, expla
 
 ### 8.3 Policy-as-Code Studio
 
-Manages authorized source coverage, jurisdiction overlays, immutable synthetic policy versions, applicability, effective dates, transition rules, DSL validation, tests, impact review, scheduled activation, correction, withdrawal, and retirement.
+Manages authorized source coverage, jurisdiction overlays, immutable synthetic policy versions, applicability, per-evaluation confirmation, effective dates, transition rules, DSL validation, tests, impact review, scheduled activation, correction, withdrawal, and retirement.
 
 ### 8.4 Provider Gateway
 
@@ -354,7 +390,8 @@ interface LendingOperationsAgentState {
   openConditions: ConditionSummary[];
   providerHealth: ProviderHealthSummary[];
   attemptedTools: ToolAttemptSummary[];
-  policySnapshotId: string;
+  lastPolicySnapshotId?: string;
+  lastPolicyConfirmationId?: string;
   modelVersion?: string;
   promptVersion?: string;
   remainingStepBudget: number;
@@ -375,29 +412,33 @@ interface LendingOperationsAgentState {
 | `fetch_asset_evidence` | Request asset capability | Provider submission | Consent and budget required |
 | `fetch_credit_evidence` | Request credit-summary capability | Provider submission | Consent and budget required |
 | `check_identity_consistency` | Compare synthetic identity evidence | Provider submission | Consent required |
-| `calculate_qualified_income` | Execute deterministic calculation | Versioned calculation | No |
+| `calculate_qualified_income` | Request a policy-bound income calculation | Versioned calculation | Mandatory policy confirmation |
 | `calculate_dti` | Execute deterministic calculation | Versioned calculation | No |
 | `calculate_ltv` | Execute deterministic calculation | Versioned calculation | No |
 | `compare_evidence` | Detect missing, stale, or conflicting facts | None | No |
-| `resolve_policy_snapshot` | Resolve already approved rules for the case context | Creates immutable snapshot | No; deterministic resolver owns result |
 | `check_policy_change_impact` | Compare an approved policy change with open cases | Creates impact assessment | No; cannot change case applicability |
-| `evaluate_policy` | Execute an immutable case policy snapshot | Creates assessment | No; policy owns result |
-| `create_condition` | Materialize policy-supported condition | Case mutation | Schema and policy required |
+| `evaluate_policy` | Request guarded evaluation of current applicable policy | Creates assessment | Mandatory policy confirmation |
+| `create_condition` | Materialize a policy-supported operational condition | Case mutation | Valid evaluation receipt required |
 | `draft_information_request` | Prepare a remediation request | Draft only | No |
 | `send_information_request` | Deliver an external message | External communication | Human or configured policy approval |
 | `escalate_to_reviewer` | Pause and create review task | Workflow transition | No |
 | `publish_case_update` | Deliver a signed webhook | External communication | Policy-controlled and idempotent |
 
+`confirm_policy_for_evaluation` is deliberately not an Agent tool. It is an unavoidable application-service guard invoked server-side for every evaluation request, including re-evaluations and retries. The Agent cannot omit it, supply its result, or choose an older snapshot.
+
 ### 9.5 Agent loop
 
 ```text
 LOAD VERSIONED CASE
-  -> VERIFY TENANT, CONSENT, POLICY SNAPSHOT, AND BUDGET
+  -> VERIFY TENANT, CONSENT, AND BUDGET
   -> INSPECT CURRENT EVIDENCE AND CONDITIONS
   -> SELECT ONE OR MORE APPROVED READ-ONLY TOOLS
   -> REQUEST SIDE-EFFECTING TOOL THROUGH WORKFLOW GATE
   -> NORMALIZE AND VALIDATE OBSERVATIONS
-  -> EXECUTE DETERMINISTIC CALCULATIONS AND POLICY
+  -> REQUEST POLICY-BOUND EVALUATION
+       -> SYSTEM GUARD CONFIRMS CURRENT APPLICABLE POLICY
+       -> ISSUE EVALUATION-BOUND CONFIRMATION RECEIPT
+       -> EXECUTE DETERMINISTIC CALCULATIONS AND POLICY
        -> sufficient evidence: propose condition transitions
        -> more information: draft request and wait
        -> ambiguity or protected action: interrupt for review
@@ -511,11 +552,57 @@ interface CasePolicySnapshot {
 }
 ```
 
-The resolver receives server-owned tenant and case facts, then selects only released policy versions whose reviewed applicability constraints match. It returns an immutable `CasePolicySnapshot`, not a mutable global policy pointer. The workflow pins that snapshot for one deterministic evaluation. A later workflow step resolves again only when a declared policy-relevant event, approved change event, or reviewer action requires it.
+The resolver receives server-owned tenant and case facts, then selects only released policy versions whose reviewed applicability constraints match. It returns an immutable `CasePolicySnapshot`, not a mutable global policy pointer. The workflow pins that snapshot for one deterministic evaluation. Every later evaluation invokes the confirmation guard again; when nothing relevant changed, the guard confirms the same snapshot and still records a new evaluation-bound receipt.
 
 The same resolution context, policy catalog knowledge time, and resolver version must reproduce the same snapshot. Missing jurisdiction data, overlapping versions, a gap around an effective boundary, or unresolved precedence produces `REVIEW_REQUIRED`; the system never asks the model to guess.
 
-### 10.4 Change detection and open-case impact
+### 10.4 Mandatory confirmation before every evaluation
+
+Resolution is required on every evaluation attempt, not only when a known policy-change event occurs. An unchanged snapshot may be reused as evaluation input only after the guard has rechecked the current catalog revision, effective boundary, relevant case-event dates, jurisdiction coverage, source freshness, approval state, transition rules, and policy-relevant case facts.
+
+```ts
+interface PolicyConfirmationReceipt {
+  id: string;
+  evaluationRequestId: string;
+  tenantId: string;
+  caseId: string;
+  caseFactVersion: number;
+  evaluationIntent: string;
+  contextHash: string;
+  policySnapshotId: string;
+  catalogRevision: string;
+  policyKnowledgeAsOf: string;
+  confirmedAt: string;
+  validUntil: string;
+  status: 'CONFIRMED_UNCHANGED' | 'CONFIRMED_NEW_SNAPSHOT';
+}
+```
+
+```text
+BEGIN EVALUATION REQUEST
+  -> derive policy context from server-owned case facts
+  -> read one approved catalog revision at evaluation start
+  -> verify jurisdiction coverage, source freshness, and approvals
+  -> verify relevant dates, effective boundaries, and transitions
+  -> resolve the current applicable snapshot
+       -> ambiguity, gap, stale source, or conflict: stop and create review task
+       -> unchanged: issue a new confirmation receipt for this evaluation
+       -> changed: persist a new snapshot and issue a new confirmation receipt
+  -> execute against that receipt and snapshot in one consistency boundary
+  -> persist evaluation, receipt, snapshot, evidence, and outcome links
+```
+
+The receipt is bound to one evaluation request, case-fact version, context hash, catalog revision, and snapshot. A retry of the same idempotent request may reuse the same receipt and result; a new evaluation request must confirm again. Any policy-relevant case mutation, catalog revision, scheduled activation boundary, withdrawal, freshness deadline, or mismatched hash invalidates reuse.
+
+Confirmation and execution share a database snapshot or equivalent consistency boundary so a policy activation cannot create an unrecorded time-of-check/time-of-use gap. The evaluator rejects direct calls without a valid receipt. Confirmation is deterministic infrastructure, not a human click and not an LLM judgment.
+
+The confirmation receipt is this platform's auditable implementation of policy and change-control discipline; it is not a regulator-prescribed mortgage form. Production organizations may implement the same control through other approved rules engines, configuration services, and audit mechanisms.
+
+Confirmation reads the approved internal catalog; it does not scrape or reinterpret external legal sources in the evaluation critical path. Source monitors update freshness and candidate revisions asynchronously. If declared jurisdiction coverage is incomplete or its freshness objective has expired, confirmation stops and routes to review. “Current” therefore means current within explicitly approved, fresh source coverage, never an unsupported claim that the platform knows every policy change everywhere.
+
+For a live evaluation, `evaluationAsOf` and `policyKnowledgeAsOf` come from trusted server time. Historical values are accepted only by a separately authorized replay operation that cannot create a live case outcome.
+
+### 10.5 Change detection and open-case impact
 
 ```text
 authorized source revision detected
@@ -537,7 +624,7 @@ An open case does not silently inherit the newest version, and it is not permane
 
 Initial launch uses curated synthetic policy sources and change events. Future official-source connectors are read-only ingestion adapters with per-jurisdiction coverage, freshness objectives, schema-drift alerts, and manual fallback. No connector is described as complete coverage until that coverage is reviewed and tested.
 
-### 10.5 Example synthetic DSL
+### 10.6 Example synthetic DSL
 
 ```yaml
 rule:
@@ -559,13 +646,15 @@ rule:
     route: MANUAL_REVIEW
 ```
 
-### 10.6 Policy invariants
+### 10.7 Policy invariants
 
 - Policy identifiers and released versions are immutable.
 - Every released rule has source provenance, jurisdiction, valid-time boundaries, system-time history, and approval evidence.
 - Units, money, ratios, dates, and rounding behavior are explicit.
 - Every condition links to the rule and evidence that created it.
 - Every evaluation links to an immutable case policy snapshot and resolver version.
+- Every evaluation attempt first produces a valid, request-bound policy confirmation receipt; coverage is `100%` by construction.
+- A previously confirmed snapshot is never reused for a new evaluation without a new confirmation action.
 - Policy activation never mutates a running evaluation or silently reinterprets an open case.
 - A policy change requires regression evidence, effective-date boundary tests, transition approval, and an open-case impact summary.
 - Future-effective policy never activates early; expired, withdrawn, conflicting, or coverage-unknown policy fails closed.
@@ -755,8 +844,9 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `policy_applicability` | Typed scope, triggering event, precedence, and approved transition criteria. |
 | `policy_change_events` | Detected, scheduled, activated, corrected, withdrawn, or superseded change history. |
 | `case_policy_snapshots` | Immutable resolved versions, source revisions, context hash, and resolution reasons. |
+| `policy_confirmation_receipts` | Request-bound proof that current applicability, coverage, freshness, approvals, and hashes were checked immediately before evaluation. |
 | `policy_impact_assessments` | Dry-run comparison and disposition for potentially affected open cases. |
-| `policy_evaluations` | Snapshot-bound rule execution and evidence references. |
+| `policy_evaluations` | Confirmation-receipt-bound rule execution and evidence references. |
 | `loan_conditions` | Condition lifecycle and required evidence. |
 | `condition_transitions` | Actor-attributed condition state history. |
 | `provider_connections` | Tenant provider mode and credential reference. |
@@ -785,6 +875,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Evidence retains source location, observed time, validity interval, and transformation history.
 - Policy data retains separate valid-time and system-time fields so historical execution can be reproduced as both effective and known at a declared instant.
 - Policy source coverage and freshness are explicit per jurisdiction; missing coverage is an operational state, not an implicit default.
+- Policy confirmation receipts are append-only, single-evaluation artifacts and cannot be supplied by a client or model.
 - Raw provider payloads are encrypted, access-controlled, and short-lived.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
@@ -851,6 +942,8 @@ policy_version.scheduled
 policy_version.activated
 policy_change.detected
 case_policy_snapshot.resolved
+policy_confirmation.completed
+policy_confirmation.review_required
 policy_impact.review_required
 provider_submission.failed
 ```
@@ -918,6 +1011,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - duplicate provider callbacks after workflow cancellation;
 - malicious file content and decompression abuse;
 - unauthorized review override or audit tampering.
+- bypass, replay, substitution, or time-of-check/time-of-use race involving a policy confirmation receipt.
 
 ## 17. Reliability and observability
 
@@ -929,6 +1023,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - Retries use explicit classifications, bounded attempts, backoff, and jitter.
 - Circuit breakers prevent repeated calls to unhealthy providers.
 - Workflow replay does not duplicate completed external effects.
+- Workflow replay cannot bypass policy confirmation; a new evaluation confirms again, while an idempotent replay of the same completed request returns its recorded result.
 - Versioned workflow code preserves deterministic replay compatibility.
 - Failed work remains inspectable and recoverable through operations tooling.
 - Provider fallback never changes the semantic capability contract silently.
@@ -962,6 +1057,7 @@ Required telemetry includes:
 - policy source freshness and coverage gaps by jurisdiction;
 - time from detected source revision to reviewed version and scheduled activation;
 - policy snapshot resolution conflicts, failures, and version distribution;
+- policy confirmation coverage, latency, invalidation, reuse rejection, and review-required rate;
 - open cases awaiting change-impact review and changes approaching an effective date without approved treatment;
 - policy evaluation failures;
 - webhook backlog and terminal delivery failures;
@@ -984,6 +1080,7 @@ Required telemetry includes:
 10. **Load and soak tests**: declared environment and reproducible workload.
 11. **Agent evaluation**: golden cases, adversarial documents, tool constraints, and model comparisons.
 12. **Policy time-travel tests**: jurisdiction matrices, effective-boundary instants, scheduled activation, grandfathering, corrections, withdrawals, late or out-of-order source revisions, and deterministic as-of replay.
+13. **Policy confirmation tests**: no-receipt rejection, one confirmation per evaluation request, context and case-version mismatch, catalog activation races, expiry, idempotent same-request retry, and mandatory confirmation on every re-evaluation.
 
 ### 18.2 Evaluation corpus
 
@@ -1010,6 +1107,8 @@ The first release target is at least 150 synthetic cases across normal, boundary
 - mandatory-review recall: `100%` on designated release cases;
 - deterministic policy repeatability: `100%` for identical versioned inputs;
 - policy snapshot repeatability: `100%` for identical context, catalog knowledge time, and resolver version;
+- evaluations with a valid request-bound policy confirmation receipt: `100%`;
+- new evaluation requests that reuse an earlier receipt: `0`;
 - future-effective policy activated early: `0`;
 - malformed output accepted as valid: `0`;
 - tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
@@ -1128,13 +1227,14 @@ Exit evidence:
 
 ### M3 — Policy and Agent vertical slice
 
-**User-visible outcome:** the Agent inspects evidence, selects allowed tools, resolves the approved synthetic policy for the case's jurisdiction and event time, pauses for review, and resumes after a decision.
+**User-visible outcome:** the Agent inspects evidence and selects allowed tools; every policy-bound evaluation first confirms the currently applicable synthetic policy, then pauses for review or resumes safely.
 
 Scope:
 
 - policy source registry, jurisdiction catalog, and explicit coverage status;
 - policy DSL parser, validator, evaluator, immutable versions, and golden tests;
 - bitemporal applicability resolver and immutable case policy snapshots;
+- unavoidable `PolicyEvaluationService` confirmation guard and request-bound receipts;
 - future-effective scheduling, transition approval, and open-case impact assessment;
 - change fixtures covering state overlays, corrections, withdrawals, and relevant lifecycle events;
 - `AgentRuntime` port and LangGraph.js v1 adapter;
@@ -1150,6 +1250,8 @@ Exit evidence:
 - designated review cases always interrupt;
 - repeated versioned inputs produce the same policy result;
 - the same as-of context reproduces the same policy snapshot, including at effective-date boundaries;
+- every evaluation and re-evaluation has exactly one valid confirmation receipt, while direct evaluator calls without one fail closed;
+- a catalog activation racing with evaluation produces one internally consistent, auditable result;
 - a future-effective or jurisdiction-mismatched version is never selected;
 - an ambiguous transition or policy-layer conflict always creates a review task;
 - malformed model output routes safely.
@@ -1265,6 +1367,7 @@ Exit evidence:
 - policy source coverage and freshness by jurisdiction;
 - time from source-change detection to reviewed, scheduled policy version;
 - policy snapshot resolution conflict and failure rate;
+- policy confirmation coverage, latency, invalidation, and review-required rate;
 - open cases awaiting policy-impact disposition;
 - steps, latency, tokens, and cost by model configuration.
 
@@ -1284,6 +1387,7 @@ Exit evidence:
 
 - end-to-end synthetic conditions journey is usable through documented APIs and the console;
 - every condition links to evidence and an immutable case policy snapshot;
+- workflow and UI distinguish evidence readiness, operational conditions, downstream underwriting status, and formal credit action;
 - review, wait, resume, cancellation, and recovery paths are demonstrated;
 - API, SDK, webhook, and sandbox quickstarts are current;
 - all user-visible capabilities distinguish synthetic from official results.
@@ -1311,6 +1415,7 @@ Exit evidence:
 - unauthorized-tool, mandatory-review, evidence-coverage, malformed-output, and unsupported-claim gates pass;
 - every released policy version has approval and regression evidence;
 - every evaluated case records the exact applicable versions, source revisions, jurisdiction context, effective boundaries, resolver version, and resolution reasons;
+- every evaluation and re-evaluation records a current, request-bound confirmation receipt; missing, stale, reused, or mismatched receipts are rejected;
 - historical replay reproduces the same snapshot for the declared valid time and system knowledge time;
 - future-effective versions never activate early, and unresolved coverage or transition states fail closed to review;
 - approaching effective dates with stale sources or incomplete impact review trigger an operational alert;
@@ -1335,6 +1440,8 @@ Exit evidence:
 | Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
 | Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
 | Policy drift or wrong jurisdiction changes case treatment | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity. |
+| Evaluation bypasses or races policy confirmation | Make confirmation an internal application-service guard, bind its receipt to request and hashes, execute in one consistency boundary, and reject direct evaluator calls. |
+| Readiness automation is mistaken for the full approval process | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority. |
 | Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
 | Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
 | PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
@@ -1415,10 +1522,12 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 6. Versioned internal policy DSL and release lifecycle.
 7. Bitemporal, jurisdiction-aware policy resolution with immutable case snapshots.
 8. Policy-change impact assessment and approved open-case transition handling.
-9. Provider modes: simulator, authorized sandbox, and production BYOC.
-10. Synthetic-only public launch and real-data approval boundary.
-11. Terraform/OpenTofu and ECS Fargate before Kubernetes.
-12. Stable repository name with product identity expressed through documentation.
+9. Mandatory policy confirmation before every evaluation with request-bound receipts.
+10. Mortgage lifecycle milestones and explicit readiness-versus-decision boundaries.
+11. Provider modes: simulator, authorized sandbox, and production BYOC.
+12. Synthetic-only public launch and real-data approval boundary.
+13. Terraform/OpenTofu and ECS Fargate before Kubernetes.
+14. Stable repository name with product identity expressed through documentation.
 
 ## 29. Immediate next implementation slice
 
@@ -1451,5 +1560,10 @@ Technology choices are based on official project documentation and are revalidat
 - eCFR API documentation: <https://www.ecfr.gov/developers/documentation/api/v1>
 - Federal Register API documentation: <https://www.federalregister.gov/developers/documentation/api/v1>
 - CFPB Regulation Z current and historical versions: <https://www.consumerfinance.gov/rules-policy/regulations/1026/>
+- CFPB mortgage origination examination procedures: <https://www.consumerfinance.gov/compliance/supervision-examinations/mortgage-origination-examination-procedures/>
+- CFPB TILA-RESPA Integrated Disclosure FAQs: <https://www.consumerfinance.gov/compliance/compliance-resources/mortgage-resources/tila-respa-integrated-disclosures/tila-respa-integrated-disclosure-faqs/>
+- CFPB Regulation B action-notification requirements: <https://www.consumerfinance.gov/rules-policy/regulations/1002/9/>
+- OCC Mortgage Banking handbook: <https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/mortgage-banking/pub-ch-mortgage-banking.pdf>
+- OCC Residential Real Estate Lending handbook: <https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/residential-real-estate-lending/pub-ch-residential-real-estate.pdf>
 
 Technology references justify maturity and compatibility only. Regulatory references illustrate source versioning, effective-date, relevant-event, and federal/state interaction requirements; they are not legal interpretation, complete jurisdiction coverage, or proof that target capabilities are implemented.

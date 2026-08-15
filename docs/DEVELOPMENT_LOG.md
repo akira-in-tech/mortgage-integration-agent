@@ -399,3 +399,99 @@ No application test was required because this feature changes architecture docum
 ### Next safe step
 
 Continue with M1 and M2 as sequenced. When M3 begins, implement the smallest policy slice first: jurisdiction and source schemas, two synthetic time-bounded versions, a pure applicability resolver, effective-boundary and replay tests, and one open-case impact-review path before adding Agent-assisted authoring or external source ingestion.
+
+## M0-006: Per-evaluation policy confirmation and lifecycle audit
+
+### Status
+
+Architecture and current-workflow audit completed and locally validated; the mandatory policy-confirmation guard and expanded lifecycle domain remain planned implementation work.
+
+### Acceptance criterion
+
+Every policy-bound evaluation and re-evaluation must execute an unavoidable server-side action that confirms the currently applicable approved policy before calculation or rule execution. The charter must also distinguish the current repository workflow, the product's intended conditions-operations scope, and the broader mortgage production lifecycle without presenting readiness automation as formal loan approval.
+
+### Research and repository review
+
+- Reviewed the current GraphQL input, `LoanService`, `AgentService`, persistence entity, test vocabulary, and README workflow.
+- Confirmed that the implemented path accepts only borrower identifier, requested amount, and loan type; retrieves three synthetic findings; applies hard-coded rules or a local-model prompt; returns legacy decision labels; and persists one result row.
+- Confirmed that the current code has no policy catalog, version, confirmation receipt, jurisdiction context, regulated milestone event, durable wait/resume, formal action-notice workflow, appraisal, closing, funding, or post-closing quality-control flow.
+- Compared the target workflow with CFPB mortgage-origination examination modules, mortgage application and disclosure triggers, Regulation B notification handling, and OCC mortgage production and underwriting-control guidance.
+- Confirmed that origination, processing, underwriting, and closing are distinct controlled areas, while this product's launch value lies primarily in evidence processing and conditions resolution around underwriting readiness.
+
+### Implementation
+
+- Added a code-backed current-workflow audit to the charter instead of treating target architecture as implemented behavior.
+- Added an end-to-end mortgage lifecycle scope map covering inquiry, application and disclosure triggers, processing, collateral work, underwriting, conditions, action notification, closing and funding, and post-closing handoff.
+- Explicitly separated `READY_FOR_UNDERWRITING` and operational `CONDITIONS_OPEN` from conditional approval, final approval, clear-to-close, funding authority, and legal notices.
+- Required the system to record authoritative downstream milestone events rather than infer regulated application receipt from partial case data.
+- Replaced event-trigger-only policy re-resolution with mandatory confirmation before every evaluation and re-evaluation.
+- Defined a request-bound `PolicyConfirmationReceipt` containing the evaluation request, case-fact version, context hash, snapshot, catalog revision, knowledge time, confirmation time, validity boundary, and status.
+- Made confirmation an internal `PolicyEvaluationService` guard rather than an Agent-selectable tool or manual per-loan click.
+- Bound confirmation and execution to one consistency boundary to prevent unrecorded time-of-check/time-of-use races.
+- Kept external source monitoring asynchronous; the evaluation guard confirms against the approved catalog and fails closed when declared coverage is incomplete or stale instead of scraping and interpreting law during a loan workflow.
+- Reserved historical policy clocks for an authorized replay path; live evaluations use trusted server time.
+- Defined idempotent same-request replay while prohibiting receipt reuse for a new evaluation request.
+- Added confirmation persistence, events, security threats, reliability rules, telemetry, test cases, metrics, launch gates, risks, roadmap scope, and ADRs.
+- Added regulator and bank-supervision references as workflow and control baselines without representing them as a complete legal checklist.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Confirm on every evaluation over change-event-only resolution**: change notifications improve readiness, but only an evaluation-time guard can prove which approved policy was checked for that specific execution.
+- **Automated guard over repeated human confirmation**: approved policy interpretation remains human-governed; routine current-version confirmation is deterministic infrastructure so it cannot be forgotten or inconsistently performed.
+- **Request-bound receipt over a mutable current-policy pointer**: binding the request, case facts, context, catalog revision, and snapshot makes substitution and stale reuse detectable.
+- **One consistency boundary over check-then-call**: confirmation and execution use the same catalog view so an activation race cannot silently change semantics.
+- **Milestone graph over one rigid approval sequence**: lenders and products vary, but authoritative events and ownership boundaries remain explicit and auditable.
+- **Conditions operations over full origination replacement**: the initial product coordinates evidence and conditions while existing authorized systems retain disclosures, formal decisions, notices, closing, and funding.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 34 fence markers
+  DEVELOPMENT_LOG.md: 12 fence markers
+
+current implementation and target-state language inspection
+  one-shot MVP gaps are explicit; new confirmation and lifecycle capabilities are planned
+
+policy-confirmation invariant inspection
+  every evaluation and re-evaluation requires a request-bound receipt;
+  missing, stale, reused, mismatched, or ambiguous confirmation fails closed
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+```
+
+No application test was required because this feature changes architecture and audit documentation only. Application code was read to establish current behavior, not modified.
+
+### Security, compliance, and operational boundaries
+
+- Clients and models cannot provide or select a policy confirmation receipt.
+- A confirmation failure stops evaluation and creates review work rather than falling back to an older or guessed policy.
+- Formal credit action, consumer notices, and policy interpretation remain authorized human or downstream-system responsibilities.
+- The receipt is an internal audit control, not a regulator-prescribed form or a claim of legal compliance.
+- Public launch remains synthetic-only.
+
+### Known gaps
+
+- The current `evaluateLoan` code still uses hard-coded thresholds and legacy formal-sounding decision labels.
+- `PolicyEvaluationService`, policy receipts, lifecycle milestones, durable conditions, and downstream decision-status ingestion are not implemented yet.
+- The review establishes a defensible high-level production lifecycle, not a complete fifty-state legal and operational requirements matrix.
+- Product-specific, jurisdiction-specific, channel-specific, and organization-specific workflows still require authorized domain and compliance review.
+
+### Next safe step
+
+Preserve the M1 and M2 sequence. In M3, make the first policy acceptance test prove that direct evaluation without confirmation is impossible, two consecutive evaluations produce two receipts even when the snapshot is unchanged, and a policy activation concurrent with evaluation yields one internally consistent audited result.
