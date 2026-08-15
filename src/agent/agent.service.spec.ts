@@ -6,7 +6,7 @@ import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
 
-const mockCreate = jest.fn();
+const mockFetch = jest.fn();
 
 // ── Helper factories ─────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ describe('AgentService', () => {
   let mockDocument: { verifyDocuments: jest.Mock };
 
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockFetch.mockReset();
     mockPlaid = { getIncomeData: jest.fn() };
     mockCredit = { getCreditData: jest.fn() };
     mockDocument = { verifyDocuments: jest.fn() };
@@ -65,27 +65,49 @@ describe('AgentService', () => {
 
   function buildDemoService(): AgentService {
     return new AgentService(
-      { get: jest.fn().mockReturnValue('true'), getOrThrow: jest.fn() } as any,
+      {
+        get: jest.fn((key: string) =>
+          key === 'DECISION_PROVIDER' ? 'rules' : undefined,
+        ),
+      } as any,
       mockPlaid as any,
       mockCredit as any,
       mockDocument as any,
     );
   }
 
-  function buildClaudeService(): AgentService {
+  function buildOllamaService(): AgentService {
     const service = new AgentService(
       {
-        get: jest.fn().mockReturnValue('false'),
-        getOrThrow: jest.fn().mockReturnValue('test-key'),
+        get: jest.fn((key: string) => {
+          const values: Record<string, string> = {
+            DECISION_PROVIDER: 'ollama',
+            OLLAMA_BASE_URL: 'http://ollama.test:11434',
+            OLLAMA_MODEL: 'qwen3.5:9b',
+            OLLAMA_TIMEOUT_MS: '5000',
+          };
+          return values[key];
+        }),
       } as any,
       mockPlaid as any,
       mockCredit as any,
       mockDocument as any,
     );
-    Object.defineProperty(service, 'anthropic', {
-      value: { messages: { create: mockCreate } },
+    Object.defineProperty(service, 'httpClient', {
+      value: mockFetch,
     });
     return service;
+  }
+
+  function ollamaResponse(content: unknown, ok = true): Response {
+    return {
+      ok,
+      status: ok ? 200 : 500,
+      statusText: ok ? 'OK' : 'Internal Server Error',
+      json: jest.fn().mockResolvedValue({
+        message: content === undefined ? undefined : { content },
+      }),
+    } as unknown as Response;
   }
 
   function setIntegrations(
@@ -101,7 +123,7 @@ describe('AgentService', () => {
   // ── Demo underwriter — APPROVED decisions ───────────────────────────────────
 
   describe('demo mode — APPROVED decisions', () => {
-    it('defaults to demo mode when DEMO_MODE is not configured', async () => {
+    it('defaults to rules mode when DECISION_PROVIDER is not configured', async () => {
       setIntegrations();
       const config = {
         get: jest.fn().mockReturnValue(undefined),
@@ -120,8 +142,7 @@ describe('AgentService', () => {
       });
 
       expect(result.decision).toBe('APPROVED');
-      expect(config.getOrThrow).not.toHaveBeenCalled();
-      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('approves a strong CONVENTIONAL application', async () => {
@@ -434,242 +455,156 @@ describe('AgentService', () => {
     });
   });
 
-  // ── Claude API mode ───────────────────────────────────────────────────────────
+  // ── Local Ollama mode ────────────────────────────────────────────────────────
 
-  describe('Claude API mode — parseClaudeResponse', () => {
+  describe('Ollama mode — structured local-model response', () => {
     beforeEach(() => {
       setIntegrations();
     });
 
-    it('parses a valid JSON response from Claude', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'APPROVED',
-              confidence: 0.91,
-              reasoning: 'Solid app.',
-              conditions: [],
-            }),
-          },
-        ],
-      });
-      const result = await buildClaudeService().runUnderwritingAgent({
+    async function runWithModelContent(content: unknown) {
+      mockFetch.mockResolvedValueOnce(ollamaResponse(content));
+      return buildOllamaService().runUnderwritingAgent({
         ...BASE_INPUT,
         loanType: LoanType.CONVENTIONAL,
       });
+    }
+
+    it('calls the local Ollama chat API with a JSON schema', async () => {
+      const content = JSON.stringify({
+        decision: 'APPROVED',
+        confidence: 0.91,
+        reasoning: 'Solid app.',
+        conditions: [],
+      });
+
+      const result = await runWithModelContent(content);
+
       expect(result.decision).toBe('APPROVED');
       expect(result.confidence).toBe(0.91);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://ollama.test:11434/api/chat',
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      const request = mockFetch.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(request.body as string) as Record<string, any>;
+      expect(body.model).toBe('qwen3.5:9b');
+      expect(body.stream).toBe(false);
+      expect(body.format.properties.decision.enum).toEqual([
+        'APPROVED',
+        'CONDITIONAL',
+        'DENIED',
+      ]);
     });
 
     it('strips markdown code fences before parsing', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: '```json\n{ "decision": "CONDITIONAL", "confidence": 0.72, "reasoning": "Borderline.", "conditions": ["Provide letter"] }\n```',
-          },
-        ],
-      });
-      const result = await buildClaudeService().runUnderwritingAgent({
-        ...BASE_INPUT,
-        loanType: LoanType.CONVENTIONAL,
-      });
+      const result = await runWithModelContent(
+        '```json\n{ "decision": "CONDITIONAL", "confidence": 0.72, "reasoning": "Borderline.", "conditions": ["Provide letter"] }\n```',
+      );
       expect(result.decision).toBe('CONDITIONAL');
       expect(result.conditions).toEqual(['Provide letter']);
     });
 
-    it('throws InternalServerErrorException on non-JSON response', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: 'I cannot provide that information.' }],
-      });
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
+    it('rejects malformed or semantically invalid model responses', async () => {
+      const invalidResponses = [
+        'I cannot provide that information.',
+        JSON.stringify({
+          decision: 'MAYBE',
+          confidence: 0.5,
+          reasoning: 'Unclear.',
+          conditions: [],
         }),
-      ).rejects.toThrow(InternalServerErrorException);
+        JSON.stringify({
+          decision: 'APPROVED',
+          confidence: 1.5,
+          reasoning: 'Great.',
+          conditions: [],
+        }),
+        JSON.stringify({
+          decision: 'APPROVED',
+          confidence: 0.9,
+          conditions: [],
+        }),
+        JSON.stringify({
+          decision: 'APPROVED',
+          confidence: 0.9,
+          reasoning: 'Good.',
+          conditions: 'none',
+        }),
+        'null',
+        JSON.stringify({
+          decision: 'CONDITIONAL',
+          confidence: 0.7,
+          reasoning: 'Borderline.',
+          conditions: [42],
+        }),
+        JSON.stringify({
+          decision: 'APPROVED',
+          confidence: 0.9,
+          reasoning: 'Approved.',
+          conditions: ['Provide another document'],
+        }),
+        JSON.stringify({
+          decision: 'CONDITIONAL',
+          confidence: 0.7,
+          reasoning: 'Borderline.',
+          conditions: [],
+        }),
+      ];
+
+      for (const invalidResponse of invalidResponses) {
+        await expect(runWithModelContent(invalidResponse)).rejects.toThrow(
+          InternalServerErrorException,
+        );
+      }
     });
 
-    it('throws on invalid decision value', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'MAYBE',
-              confidence: 0.5,
-              reasoning: 'Unclear.',
-              conditions: [],
-            }),
-          },
-        ],
-      });
+    it('throws when Ollama is unavailable', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+
       await expect(
-        buildClaudeService().runUnderwritingAgent({
+        buildOllamaService().runUnderwritingAgent({
           ...BASE_INPUT,
           loanType: LoanType.CONVENTIONAL,
         }),
-      ).rejects.toThrow(InternalServerErrorException);
+      ).rejects.toThrow('Local AI provider is unavailable');
     });
 
-    it('throws on confidence out of [0,1] range', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'APPROVED',
-              confidence: 1.5,
-              reasoning: 'Great.',
-              conditions: [],
-            }),
-          },
-        ],
-      });
+    it('throws when Ollama returns an HTTP error', async () => {
+      mockFetch.mockResolvedValueOnce(ollamaResponse(undefined, false));
+
       await expect(
-        buildClaudeService().runUnderwritingAgent({
+        buildOllamaService().runUnderwritingAgent({
           ...BASE_INPUT,
           loanType: LoanType.CONVENTIONAL,
         }),
-      ).rejects.toThrow(InternalServerErrorException);
+      ).rejects.toThrow('Local AI provider returned an error response');
     });
 
-    it('throws on missing reasoning field', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'APPROVED',
-              confidence: 0.9,
-              conditions: [],
-            }),
-          },
-        ],
-      });
+    it('throws when Ollama returns no message content', async () => {
+      mockFetch.mockResolvedValueOnce(ollamaResponse(undefined));
+
       await expect(
-        buildClaudeService().runUnderwritingAgent({
+        buildOllamaService().runUnderwritingAgent({
           ...BASE_INPUT,
           loanType: LoanType.CONVENTIONAL,
         }),
-      ).rejects.toThrow(InternalServerErrorException);
+      ).rejects.toThrow('Local AI provider returned no message content');
     });
+  });
 
-    it('throws when conditions is not an array', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'APPROVED',
-              confidence: 0.9,
-              reasoning: 'Good.',
-              conditions: 'none',
-            }),
-          },
-        ],
-      });
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
-    });
-
-    it('throws when the response is JSON null', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: 'null' }],
-      });
-
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
-    });
-
-    it('throws when a condition is not a non-empty string', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'CONDITIONAL',
-              confidence: 0.7,
-              reasoning: 'Borderline.',
-              conditions: [42],
-            }),
-          },
-        ],
-      });
-
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
-    });
-
-    it('throws when conditions conflict with the decision', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'APPROVED',
-              confidence: 0.9,
-              reasoning: 'Approved.',
-              conditions: ['Provide another document'],
-            }),
-          },
-        ],
-      });
-
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
-    });
-
-    it('throws when a conditional decision has no conditions', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              decision: 'CONDITIONAL',
-              confidence: 0.7,
-              reasoning: 'Borderline.',
-              conditions: [],
-            }),
-          },
-        ],
-      });
-
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
-    });
-
-    it('throws when Claude returns no text content', async () => {
-      mockCreate.mockResolvedValueOnce({ content: [] });
-
-      await expect(
-        buildClaudeService().runUnderwritingAgent({
-          ...BASE_INPUT,
-          loanType: LoanType.CONVENTIONAL,
-        }),
-      ).rejects.toThrow(InternalServerErrorException);
+  describe('provider configuration', () => {
+    it('rejects an unsupported provider', () => {
+      expect(
+        () =>
+          new AgentService(
+            { get: jest.fn().mockReturnValue('unknown') } as any,
+            mockPlaid as any,
+            mockCredit as any,
+            mockDocument as any,
+          ),
+      ).toThrow('DECISION_PROVIDER must be either "rules" or "ollama"');
     });
   });
 });

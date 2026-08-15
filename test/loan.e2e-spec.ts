@@ -8,7 +8,7 @@ import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 
-const REQUIRED_VARS = ['ANTHROPIC_API_KEY', 'DATABASE_URL'];
+const REQUIRED_VARS = ['DATABASE_URL'];
 const missingVars = REQUIRED_VARS.filter((v) => !process.env[v]);
 
 if (missingVars.length > 0) {
@@ -20,7 +20,7 @@ if (missingVars.length > 0) {
 
 const describeOrSkip = missingVars.length > 0 ? describe.skip : describe;
 
-describeOrSkip('Loan Evaluation — real Claude API (e2e)', () => {
+describeOrSkip('Loan Evaluation — configured decision provider (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {

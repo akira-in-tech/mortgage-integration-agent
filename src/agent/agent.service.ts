@@ -4,16 +4,24 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Anthropic from '@anthropic-ai/sdk';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
 import { EvaluateLoanInput } from '../loan/loan.model';
 import {
   AgentResult,
-  ClaudeUnderwritingResponse,
+  UnderwritingModelResponse,
   UnderwritingContext,
 } from './agent.types';
+
+type DecisionProvider = 'rules' | 'ollama';
+
+interface OllamaChatResponse {
+  message?: {
+    content?: unknown;
+  };
+  error?: unknown;
+}
 
 /**
  * AgentService is the orchestration core of the mortgage underwriting pipeline.
@@ -21,15 +29,18 @@ import {
  * Flow:
  *  1. Fan out to Plaid, Credit Bureau, and Document Parser in parallel
  *  2. Assemble a structured underwriting context
- *  3. Send that context to Claude as a decisioning prompt  (or demo engine if DEMO_MODE=true)
+ *  3. Evaluate it with deterministic rules or a local Ollama model
  *  4. Parse and validate the JSON response
  *  5. Return a typed AgentResult to the caller
  */
 @Injectable()
 export class AgentService {
   private readonly logger = new Logger(AgentService.name);
-  private readonly isDemoMode: boolean;
-  private anthropic: Anthropic | null = null;
+  private readonly decisionProvider: DecisionProvider;
+  private readonly ollamaBaseUrl: string;
+  private readonly ollamaModel: string;
+  private readonly ollamaTimeoutMs: number;
+  private httpClient: typeof fetch = fetch;
 
   constructor(
     private readonly configService: ConfigService,
@@ -37,19 +48,36 @@ export class AgentService {
     private readonly creditService: CreditService,
     private readonly documentService: DocumentService,
   ) {
-    const configuredDemoMode = this.configService.get<string>('DEMO_MODE');
-    this.isDemoMode =
-      configuredDemoMode === undefined ||
-      configuredDemoMode.trim().toLowerCase() === 'true';
+    const configuredProvider = (
+      this.configService.get<string>('DECISION_PROVIDER') ?? 'rules'
+    )
+      .trim()
+      .toLowerCase();
 
-    if (this.isDemoMode) {
+    if (configuredProvider !== 'rules' && configuredProvider !== 'ollama') {
+      throw new Error('DECISION_PROVIDER must be either "rules" or "ollama"');
+    }
+
+    this.decisionProvider = configuredProvider;
+    this.ollamaBaseUrl = (
+      this.configService.get<string>('OLLAMA_BASE_URL') ??
+      'http://127.0.0.1:11434'
+    ).replace(/\/+$/, '');
+    this.ollamaModel =
+      this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen3.5:9b';
+    this.ollamaTimeoutMs = this.readPositiveIntegerConfig(
+      'OLLAMA_TIMEOUT_MS',
+      60_000,
+    );
+
+    if (this.decisionProvider === 'rules') {
       this.logger.warn(
-        '*** DEMO MODE ACTIVE — Claude API will not be called ***',
+        '*** RULES PROVIDER ACTIVE — no model server or API key required ***',
       );
     } else {
-      this.anthropic = new Anthropic({
-        apiKey: this.configService.getOrThrow<string>('ANTHROPIC_API_KEY'),
-      });
+      this.logger.log(
+        `Local model provider active [model=${this.ollamaModel}, endpoint=${this.ollamaBaseUrl}]`,
+      );
     }
   }
 
@@ -76,10 +104,11 @@ export class AgentService {
       documents,
     };
 
-    // ── Step 2: Decisioning — demo engine or Claude API ────────────────────
-    const decision = this.isDemoMode
-      ? this.runDemoUnderwriter(context)
-      : await this.invokeClaudeUnderwriter(context);
+    // ── Step 2: Decisioning — deterministic rules or local Ollama ──────────
+    const decision =
+      this.decisionProvider === 'rules'
+        ? this.runRulesUnderwriter(context)
+        : await this.invokeOllamaUnderwriter(context);
 
     // ── Step 3: Assemble final result ──────────────────────────────────────
     return {
@@ -95,15 +124,15 @@ export class AgentService {
     };
   }
 
-  // ── Demo underwriter ──────────────────────────────────────────────────────
-  // Mirrors the same rules in the Claude system prompt so demo output is
+  // ── Deterministic rules provider ──────────────────────────────────────────
+  // Mirrors the same policy boundaries used in the local-model prompt so output is
   // realistic and consistent. No API key required.
 
-  private runDemoUnderwriter(
+  private runRulesUnderwriter(
     ctx: UnderwritingContext,
-  ): ClaudeUnderwritingResponse {
+  ): UnderwritingModelResponse {
     this.logger.log(
-      `[DEMO] Running rule-based underwriter [borrowerId=${ctx.borrowerId}]`,
+      `[RULES] Running simulated readiness rules [borrowerId=${ctx.borrowerId}]`,
     );
 
     const { credit, income, documents, requestedAmount, loanType } = ctx;
@@ -232,18 +261,14 @@ export class AgentService {
     }
   }
 
-  // ── Claude API underwriter ────────────────────────────────────────────────
+  // ── Local open-weight model underwriter via Ollama ────────────────────────
 
-  private async invokeClaudeUnderwriter(
+  private async invokeOllamaUnderwriter(
     context: UnderwritingContext,
-  ): Promise<ClaudeUnderwritingResponse> {
-    if (!this.anthropic) {
-      throw new InternalServerErrorException(
-        'Anthropic client not initialised — set ANTHROPIC_API_KEY or enable DEMO_MODE=true',
-      );
-    }
+  ): Promise<UnderwritingModelResponse> {
+    const systemPrompt = `You are an AI assistant producing a simulated mortgage readiness assessment for a loan officer.
 
-    const systemPrompt = `You are an AI mortgage underwriting decisioning engine for a regulated US lender.
+This is not a legally binding credit decision and you must not claim it is an official AUS, lender, Fannie Mae, or Freddie Mac result.
 
 Your job is to analyze loan application data and return a structured JSON underwriting decision.
 
@@ -299,26 +324,84 @@ Document Verification:
 
 Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthlyIncome * 12)).toFixed(2)}x`;
 
-    const message = await this.anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.ollamaTimeoutMs);
 
-    const rawContent = message.content.find(
-      (content) => content.type === 'text',
-    );
-    if (!rawContent) {
+    let response: Response;
+    try {
+      response = await this.httpClient(`${this.ollamaBaseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: this.ollamaModel,
+          stream: false,
+          think: false,
+          format: {
+            type: 'object',
+            properties: {
+              decision: {
+                type: 'string',
+                enum: ['APPROVED', 'CONDITIONAL', 'DENIED'],
+              },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              reasoning: { type: 'string', minLength: 1 },
+              conditions: {
+                type: 'array',
+                items: { type: 'string', minLength: 1 },
+              },
+            },
+            required: ['decision', 'confidence', 'reasoning', 'conditions'],
+            additionalProperties: false,
+          },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          options: { temperature: 0 },
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Ollama request failed: ${detail}`);
       throw new InternalServerErrorException(
-        'Claude API returned no text response',
+        'Local AI provider is unavailable; start Ollama or use DECISION_PROVIDER=rules',
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      this.logger.error(
+        `Ollama returned HTTP ${response.status} ${response.statusText}`,
+      );
+      throw new InternalServerErrorException(
+        'Local AI provider returned an error response',
       );
     }
 
-    return this.parseClaudeResponse(rawContent.text);
+    let payload: OllamaChatResponse;
+    try {
+      payload = (await response.json()) as OllamaChatResponse;
+    } catch {
+      throw new InternalServerErrorException(
+        'Local AI provider returned invalid JSON',
+      );
+    }
+
+    if (typeof payload.message?.content !== 'string') {
+      const providerError =
+        typeof payload.error === 'string' ? `: ${payload.error}` : '';
+      this.logger.error(`Ollama returned no message content${providerError}`);
+      throw new InternalServerErrorException(
+        'Local AI provider returned no message content',
+      );
+    }
+
+    return this.parseModelResponse(payload.message.content);
   }
 
-  private parseClaudeResponse(rawText: string): ClaudeUnderwritingResponse {
+  private parseModelResponse(rawText: string): UnderwritingModelResponse {
     let parsed: unknown;
     try {
       const cleaned = rawText
@@ -327,7 +410,7 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
         .trim();
       parsed = JSON.parse(cleaned);
     } catch {
-      this.logger.error(`Claude returned non-JSON response: ${rawText}`);
+      this.logger.error(`Local model returned non-JSON response: ${rawText}`);
       throw new InternalServerErrorException(
         'AI underwriting engine returned an invalid response format',
       );
@@ -404,5 +487,18 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
       reasoning: response['reasoning'].trim(),
       conditions,
     };
+  }
+
+  private readPositiveIntegerConfig(key: string, fallback: number): number {
+    const rawValue = this.configService.get<string>(key);
+    if (rawValue === undefined) {
+      return fallback;
+    }
+
+    const value = Number(rawValue);
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`${key} must be a positive integer`);
+    }
+    return value;
   }
 }

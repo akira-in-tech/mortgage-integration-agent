@@ -13,8 +13,8 @@ export interface UnderwritingContext {
   documents: DocumentVerificationResult;
 }
 
-/** Shape of JSON we instruct Claude to return */
-export interface ClaudeUnderwritingResponse {
+/** Validated decision shape returned by either the rules or local-model provider. */
+export interface UnderwritingModelResponse {
   decision: UnderwritingDecision;
   /** Confidence in the decision, 0.0–1.0 */
   confidence: number;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Standalone demo — no database, no API key, no Docker required.
-// Runs the same rule-based underwriter used by DEMO_MODE=true in the full app.
+// Runs the same rule-based underwriter used by DECISION_PROVIDER=rules.
 
 'use strict';
 
@@ -17,7 +17,7 @@ const c = {
   gray:   '\x1b[90m',
 };
 
-// ─── Rule-based underwriter (mirrors agent.service.ts DEMO_MODE logic) ────────
+// ─── Rule-based underwriter (mirrors the AgentService rules provider) ─────────
 
 function getLoanThresholds(loanType) {
   switch (loanType) {

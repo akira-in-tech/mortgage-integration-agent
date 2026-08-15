@@ -29,7 +29,7 @@ coverage/
 # Jest cache
 .jest-cache/
 
-# Claude Code session state
+# Local agent session state
 .claude/
 
 # GraphQL generated schema (regenerated on start)
