@@ -131,13 +131,29 @@ DECISION_PROVIDER=ollama npm run start:dev
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (`postgres://` or `postgresql://`) |
+| `NODE_ENV` | No | `development` (default) / `test` / `staging` / `production` |
+| `PORT` | No | TCP port, `1`-`65535`; defaults to `3000` |
 | `DECISION_PROVIDER` | No | `rules` (default) or `ollama` |
 | `OLLAMA_BASE_URL` | With `ollama` | Local Ollama endpoint; defaults to `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL` | With `ollama` | Local model tag; defaults to `qwen3.5:9b` |
 | `OLLAMA_TIMEOUT_MS` | No | Positive request timeout in milliseconds; defaults to `60000` |
 
+All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=production` disables the GraphQL playground/introspection and TypeORM schema auto-synchronization — see [Database migrations](#database-migrations).
+
 When `DECISION_PROVIDER=ollama`, the app logs the selected local model and endpoint. Ollama structured output is constrained by a JSON schema and then validated again before the result is accepted.
+
+### Database migrations
+
+Local development (`NODE_ENV=development`, the default) still auto-synchronizes the schema from entities — `createdb mortgage_agent && npm run start:dev` above is unchanged. Any environment running with `NODE_ENV=production` has auto-sync disabled and must have its schema created by migrations instead:
+
+```bash
+npm run migration:run       # apply pending migrations
+npm run migration:revert    # roll back the most recently applied migration
+npm run migration:generate -- src/database/migrations/<Name>   # after changing an entity, against an up-to-date target database
+```
+
+Migrations live in `src/database/migrations/`; the CLI reads connection settings from `DATABASE_URL` via `src/database/data-source.ts`, a standalone `DataSource` kept separate from `AppModule` because the CLI runs outside Nest's dependency-injection container.
 
 ## Example Mutation
 

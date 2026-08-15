@@ -1087,3 +1087,88 @@ Running against the repository's own `.env`, a real PostgreSQL instance was reac
 ### Next safe step
 
 Proceed to the explicit initial TypeORM migration and `synchronize: false` production default (Section 29, item 4).
+
+## M1-003: Explicit initial TypeORM migration and CLI tooling
+
+### Status
+
+Implemented and locally verified against a real Postgres instance (both the migration itself and an automated test of it). Local development behavior is unchanged.
+
+### Acceptance criterion
+
+The repository must contain an explicit, reviewable migration that reproduces the schema `LoanApplication` + `synchronize: true` currently produces, plus the CLI tooling to generate/run/revert future migrations, so any environment running with `synchronize` disabled (already the case for `NODE_ENV=production` since M1-001) has a concrete way to create and evolve its schema.
+
+### Problem
+
+The only entity, `LoanApplication`, had no corresponding migration — the schema existed solely as whatever `synchronize: true` happened to produce on each developer's machine. Nothing in the repository could create the `loan_applications` table (or its two Postgres enum types) in an environment where auto-sync is off, which is already the production default. There was also no `DataSource` the TypeORM CLI could load, since `TypeOrmModule.forRootAsync`'s config lives inside a Nest factory function that needs `ConfigService`, unavailable outside the DI container.
+
+### Implementation
+
+- Added `src/database/data-source.ts`: a standalone `DataSource` (single default export, as the TypeORM CLI requires) that reads `DATABASE_URL` directly via `dotenv` — already a transitive dependency of both `@nestjs/config` and `typeorm` — for use by the CLI only.
+- Added `migration:generate` / `migration:create` / `migration:run` / `migration:revert` / `typeorm` scripts to `package.json`, using the bundled `typeorm-ts-node-commonjs` binary so migrations can be authored and run directly against `.ts` source without a separate compile step.
+- Generated `src/database/migrations/1786804717435-InitialSchema.ts` by diffing the current entities against an empty database, then hand-verified its `up()`/`down()` against a disposable scratch database created on the same Postgres server (never the real `mortgage_agent` database): `up()` produces exactly the `loan_applications` table and its two enum types with the same columns, types, defaults, and primary key `synchronize: true` currently creates; `down()` cleanly drops the table and both enum types.
+- Added `src/database/migrations/initial-schema.migration.spec.ts`, an automated integration test (same "skip without `DATABASE_URL`" convention as `test/loan.e2e-spec.ts`) that creates its own disposable database, runs the migration, asserts the resulting columns/types/primary key via `information_schema`/`pg_type`, reverts it, asserts the database is empty again, and always drops the disposable database in `afterAll`.
+- Documented the migration commands and the unchanged local dev flow in `README.md`, and added the previously-undocumented `NODE_ENV`/`PORT` rows to the environment variable table.
+
+### Affected files
+
+- `src/database/data-source.ts` (new)
+- `src/database/migrations/1786804717435-InitialSchema.ts` (new, generated)
+- `src/database/migrations/initial-schema.migration.spec.ts` (new)
+- `package.json`
+- `README.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **A whole disposable database for the migration test, not just a dedicated schema**: an isolated-schema attempt was tried first and failed — TypeORM's Postgres migration generator hardcodes an explicit `"public".` qualifier on `CREATE TYPE` statements for enum columns, so an isolated schema within the *same* database still collided with the real application's already-existing `loan_applications_*_enum` types. A separate database has its own independent `public` schema, so the generated migration's hardcoded qualifier is correct there.
+- **Explicit `npm run migration:run` over `migrationsRun: true` at boot**: auto-running migrations from application bootstrap risks concurrent migration attempts if multiple instances start together during a deploy; an explicit, single, ordered CLI step (run before the new instances start) is the safer default until the deploy pipeline itself owns that ordering (M7).
+- **Left `synchronize` policy unchanged (`development`/`test`/`staging` still sync, `production` does not)**: this slice's acceptance criterion, per Section 29 item 4, was adding the explicit migration and confirming the production-safe default already set in M1-001 — not changing which environments use which strategy. The existing local dev database (already schema-synced) was intentionally left untouched; the migration exists for any fresh database, starting with production.
+- **Generated, then hand-verified, over hand-written from scratch**: letting TypeORM diff the entity against an empty database avoids a manually-authored migration silently drifting from what `synchronize` actually produces; the follow-up automated test exists specifically to catch that drift on every future entity change.
+
+### Verification
+
+```text
+npm run lint / npm run build
+  both passed
+
+npm test -- --runInBand --no-cache --silent
+  10 suites passed, 76 tests passed (2 new, in initial-schema.migration.spec.ts)
+
+npm run test:e2e
+  1 suite passed, 4 tests passed
+
+Manual migration round-trip against a disposable scratch database
+(mortgage_agent_migration_scratch, created and dropped on the same
+Postgres server as the real mortgage_agent database, which was never
+modified):
+  migration:run    -> loan_applications table + 2 enum types created,
+                       columns/types/defaults/PK match the entity exactly
+  migration:revert -> table and both enum types dropped, database empty
+
+Automated test run against DATABASE_URL, then re-run with DATABASE_URL
+unset to confirm the skip path:
+  with DATABASE_URL:    2 tests passed
+  without DATABASE_URL: 2 tests skipped (no false failure)
+
+Post-run check (`psql ... \l`)
+  only the pre-existing mortgage_agent database remains; no scratch
+  database left behind by either the manual verification or the
+  automated test's own cleanup
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new production dependency was added; `dotenv` was already a transitive dependency of both `@nestjs/config` and `typeorm`.
+- All verification against a real database used a disposable, immediately-dropped scratch database on the existing local Postgres server; the real `mortgage_agent` database and its data were never read, written, or dropped.
+- The migration contains only schema DDL — no data, no credentials, no synthetic fixtures.
+
+### Known gaps
+
+- The real local `mortgage_agent` database (already schema-synced from prior `synchronize: true` runs) does not have this migration's bookkeeping row in a `typeorm_migrations` table; it was intentionally left alone rather than force-reconciled, since local dev continues to rely on auto-sync under the unchanged policy. A production or staging database, which starts from `synchronize: false`, will apply this migration cleanly from empty.
+- No CI pipeline exists yet to run `migration:run` automatically against a fresh database on every change (M7 — CI/CD).
+- `docker-compose.yml`'s `app` service still starts with `NODE_ENV: development`, so it continues to rely on auto-sync rather than exercising the migration path; wiring an explicit migration step into the Docker/deploy flow is deferred until a production-shaped environment definition exists (M7).
+
+### Next safe step
+
+Continue Section 29's M1 list: liveness/readiness endpoints, graceful shutdown, secure headers, CORS allowlist, rate limiting, and request body limits (item 5), then record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (item 6) that closes out Milestone 1.
