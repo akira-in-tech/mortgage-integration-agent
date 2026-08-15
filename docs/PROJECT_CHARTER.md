@@ -1,487 +1,691 @@
-# Mortgage Integration Agent — Project Charter
+# Mortgage Integration Agent — Product and Engineering Charter
 
-> AI-assisted Loan Readiness & Integration Orchestration Platform
+> Mortgage-first, lending-extensible autonomous operations platform
 
 | Field | Value |
 |---|---|
-| Document status | Target-state charter; approved implementation plan, not a claim of current production readiness |
-| Version | 1.0 |
-| Date | 2026-08-14 |
-| Maintainer | Repository owner |
+| Document status | Target-state charter; implementation plan, not a production-readiness claim |
+| Version | 2.0 |
 | Repository | `mortgage-integration-agent` |
-| Delivery model | Free local development, synthetic-data launch demo, productizable provider adapters |
+| Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
+| Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
 
-## 1. Charter purpose
+## 1. Purpose and status language
 
-This charter defines the product, technical architecture, delivery plan, operating model, and launch gates required to turn the current mortgage orchestration MVP into a production-quality Fintech portfolio product.
+This charter defines the independent product position, architecture, delivery sequence, operating boundaries, and launch gates for Mortgage Integration Agent. It is the source of truth for what the repository is becoming and for the evidence required before a capability is described as complete.
 
-It is the source of truth for target scope. It deliberately separates the current implementation from planned capabilities.
+The project is designed for the broader lending and Fintech ecosystem. It is not tailored to, endorsed by, or presented as a copy of any company, lender, government-sponsored enterprise, automated underwriting system, or proprietary platform.
 
-Status labels used throughout this document:
+Capability status is expressed consistently:
 
-- **Implemented**: present in the repository and previously validated.
-- **In progress**: local changes exist but have not yet been published as a completed release.
-- **Planned**: target capability; it must not be described as implemented on a resume, README, demo, or interview.
+- **Implemented**: present in the repository.
+- **Verified**: implemented and supported by current, recorded test or operational evidence.
+- **Deployed**: running in an identified environment with a reproducible source revision.
+- **Production-approved**: passed the security, privacy, reliability, compliance, and operational gates required for real customer data.
+- **Planned**: target capability without implementation evidence.
+
+These states are independent. A working local demo is not a production deployment, and a successful deployment is not proof of production approval.
 
 ## 2. Executive summary
 
-Mortgage Integration Agent is a vendor-neutral platform for assembling a loan case, checking data completeness, orchestrating financial-data providers, explaining findings, requesting missing information, and routing cases to human reviewers.
+Mortgage Integration Agent is a vendor-neutral autonomous lending operations platform that coordinates loan cases, evidence, policies, providers, AI-assisted actions, and human review across existing Fintech systems.
 
-The platform is **mortgage-first and lending-extensible**. It is not a lender, credit bureau, automated underwriting system, or replacement for an authorized decision-maker. It is an independently positioned integration and workflow product whose core value is reliable orchestration across fragmented lending systems.
+The initial product is **mortgage-first and lending-extensible**. Its first vertical slice resolves routine mortgage evidence and underwriting-readiness conditions using synthetic data. The core platform is designed so that future product packs can support other lending workflows without replacing the workflow, provider, governance, or audit foundations.
 
-The product launches with synthetic borrower data and deterministic provider simulators. Future customers can connect authorized sandbox or production providers through the same adapter contracts and supply their own credentials.
+The platform does not issue credit, originate loans, move money, reproduce an official underwriting result, or replace an authorized decision-maker. It advances a case toward an actionable, evidence-backed operational state and escalates protected or ambiguous actions to a person.
 
 ### Product promise
 
-> Convert fragmented borrower data and provider findings into an explainable, auditable, human-reviewable loan-readiness workflow.
+> Turn fragmented lending evidence and operational conditions into an auditable action plan that resolves routine work automatically and escalates exceptions safely.
 
 ### Launch outcome
 
-A partner developer or lending-operations user can create a synthetic loan case, observe the Agent select and execute approved tools, receive a readiness assessment, resolve missing information, perform human review, and inspect a complete audit trail through APIs and an operations dashboard.
+A developer or operations user can create a synthetic loan case, add evidence, start a durable workflow, observe approved Agent tools execute, resolve conditions, approve protected actions, recover from injected provider failures, and inspect the complete history through APIs and an operations console.
 
-## 3. Current baseline
+## 3. Current implementation baseline
 
-The repository currently provides:
+The repository currently contains:
 
-- **Implemented**: NestJS and TypeScript application.
-- **Implemented**: GraphQL/Apollo API with an `evaluateLoan` flow.
-- **Implemented**: simulated income, credit, and document integrations.
-- **Implemented**: concurrent integration retrieval with `Promise.all`.
-- **Implemented**: deterministic readiness rules.
-- **Implemented**: TypeORM/PostgreSQL persistence with raw JSONB integration data.
-- **Implemented**: Jest unit and end-to-end test foundations.
+- **Implemented**: NestJS and TypeScript backend.
+- **Implemented**: GraphQL/Apollo `evaluateLoan` request path.
+- **Implemented**: deterministic income, credit, and document simulators.
+- **Implemented**: concurrent integration retrieval through `Promise.all`.
+- **Implemented**: deterministic decision rules.
+- **Implemented**: provider-neutral rules and local Ollama/Qwen decision modes.
+- **Implemented**: schema-constrained local-model responses with application validation.
+- **Implemented**: TypeORM/PostgreSQL persistence with JSONB integration payloads.
+- **Implemented**: Jest unit and end-to-end foundations.
 - **Implemented**: Docker and Docker Compose development path.
-- **In progress**: provider-neutral local model support through Ollama and Qwen, replacing the paid-model dependency.
+- **Implemented**: no-paid-model default execution.
 
-The following are not yet implemented and remain **Planned**:
+The current implementation remains an MVP. The following target capabilities are **Planned**:
 
-- tenant isolation, OIDC authentication, RBAC, and API-client credentials;
-- explicit database migrations and normalized lending-domain tables;
-- durable asynchronous workflows, queues, outbox processing, and dead-letter recovery;
-- idempotent partner APIs and signed webhooks;
-- stateful tool-using Agent execution with checkpointing and human interruption;
-- consent, PII controls, document object storage, retention, and deletion workflows;
-- production observability, CI/CD deployment, infrastructure as code, and restore drills;
-- a lender-operations dashboard;
-- real provider, sandbox, or official underwriting integrations.
+- case, evidence, condition, policy, workflow, and review domain models;
+- explicit database migrations and tenant-first schema design;
+- durable Temporal workflows, transactional outbox, safe replay, and signed webhooks;
+- versioned policy-as-code DSL with validation, approval, and regression testing;
+- stateful, tool-using Agent execution with budgets and human interruption;
+- provider registry, normalized contracts, fault injection, sandbox, and BYOC modes;
+- OIDC, API clients, RBAC, row-level security, consent, PII controls, and retention;
+- React operations console and developer sandbox;
+- OpenTelemetry, release evaluation, CI/CD, infrastructure as code, and restore drills;
+- real provider or official underwriting integrations.
 
-## 4. Product positioning
+The legacy `APPROVED`, `CONDITIONAL`, and `DENIED` demo vocabulary is not the target product contract and will be migrated before launch.
 
-### 4.1 Target users
+## 4. Product position
+
+### 4.1 Category
+
+Mortgage Integration Agent is an **Autonomous Lending Operations Platform**. It sits between existing borrower experiences, loan systems, data providers, policy owners, and human operations teams.
+
+It is not a replacement for every system in the lending stack. Customers retain their systems of record, provider contracts, policies, and decision authority while the platform coordinates the work between them.
+
+### 4.2 Initial target users
 
 1. **Fintech integration developer**
-   - Needs a stable API across multiple external providers.
-   - Needs idempotency, test fixtures, webhooks, and traceable failures.
+   - Needs stable contracts across inconsistent providers.
+   - Needs idempotency, SDKs, fixtures, webhooks, and traceable failures.
 
-2. **Loan operations specialist**
-   - Needs to understand case readiness and missing information.
-   - Needs an actionable timeline instead of raw provider payloads.
+2. **Lending operations specialist**
+   - Needs prioritized conditions and next actions rather than raw payloads.
+   - Needs cases to resume correctly after missing information arrives.
 
-3. **Human reviewer or underwriter**
-   - Needs evidence, policy results, provenance, and override controls.
-   - Must retain authority over material decisions.
+3. **Reviewer or underwriter**
+   - Needs evidence, policy provenance, comparison tools, and explicit override controls.
+   - Retains authority over protected decisions and communications.
 
-4. **Compliance or risk reviewer**
-   - Needs immutable audit history, consent evidence, version history, and data lineage.
+4. **Risk, compliance, or audit reviewer**
+   - Needs consent history, policy versions, data lineage, model versions, and actor attribution.
 
 5. **Tenant administrator**
-   - Manages users, API clients, provider connections, webhook endpoints, and retention settings.
+   - Manages users, API clients, provider connections, policy releases, budgets, retention, and webhooks.
 
-### 4.2 Jobs to be done
+### 4.3 Jobs to be done
 
-- When a loan case arrives, determine whether required data is complete enough for review.
-- Choose the approved provider tools needed for that case.
-- Normalize heterogeneous provider findings into one internal contract.
-- Detect missing, stale, contradictory, or failed evidence.
-- Request remediation or route the case to a human.
-- Explain conclusions using traceable facts and policy versions.
-- Notify partner systems without requiring synchronous long-running requests.
+- Assemble a coherent case from fragmented application, document, and provider data.
+- Determine which evidence is present, missing, stale, contradictory, or unsupported.
+- Evaluate evidence against a versioned operational policy pack.
+- Create and prioritize resolvable conditions.
+- Select approved tools and providers within cost, permission, and time constraints.
+- Wait for information or review without losing workflow state.
+- Re-evaluate only the affected facts and conditions when new evidence arrives.
+- Explain each material result using evidence and policy provenance.
+- Notify partner systems through reliable asynchronous contracts.
+- Export an audit package without exposing unnecessary sensitive data.
 
-### 4.3 Differentiation
+### 4.4 Differentiation
 
-- Vendor-neutral provider contracts rather than provider-specific business logic.
-- Free, deterministic simulators with fault injection for development and demos.
-- Agent-assisted orchestration with deterministic policy authority.
-- Durable workflow state, replay, and human-in-the-loop review.
-- Evidence provenance and operational auditability built into the domain model.
-- A migration path from local demo to sandbox and customer-owned production credentials.
+- Works alongside existing loan and Fintech systems instead of requiring a full-stack replacement.
+- Provider-neutral capability contracts with simulator, sandbox, and customer-owned production modes.
+- Exception-first automation for the conditions loop, not only straight-through happy paths.
+- Deterministic policy authority with AI-assisted extraction, planning, and explanation.
+- Durable workflow execution separated from bounded Agent reasoning.
+- Policy-as-code lifecycle with diff, testing, approval, release, and rollback.
+- Agent governance with tool permissions, budgets, evaluation, replay, and human approval.
+- Synthetic developer sandbox with deterministic fault injection.
+- Mortgage-first domain depth with a path to reusable lending product packs.
 
-## 5. Goals, non-goals, and principles
+### 4.5 Commercial model
+
+The product is designed for a usage-based platform model:
+
+- platform access and operations console;
+- usage per active case, workflow run, or provider action;
+- enterprise controls for SSO, audit export, retention, policy governance, and support;
+- customer-owned provider contracts and credentials for production integrations;
+- optional product packs and adapter packages.
+
+Billing is outside the initial launch scope. Cost attribution is part of the domain from the first productized workflow.
+
+## 5. Goals, non-goals, and engineering principles
 
 ### 5.1 Goals
 
-- Deliver a launchable synthetic-data product demonstration with production-grade engineering controls.
-- Provide REST/OpenAPI partner contracts and GraphQL operations APIs.
-- Support multi-tenant isolation and least-privilege access.
-- Execute long-running work asynchronously and recover safely from failure.
-- Implement a stateful AI Agent that can only use approved tools.
-- Keep readiness conclusions explainable, versioned, and reviewable.
-- Run locally without paid AI or provider credentials.
-- Allow future sandbox and production providers without redesigning the core domain.
-- Produce measurable reliability, security, and Agent-quality evidence.
+- Deliver one end-to-end synthetic conventional-mortgage conditions workflow.
+- Make long-running work recoverable, idempotent, observable, and safely replayable.
+- Expose ergonomic partner APIs and an operable human-review experience.
+- Make evidence, policies, model behavior, and overrides traceable.
+- Run locally without paid model or provider credentials.
+- Add providers without changing case, policy, or Agent domain logic.
+- Support tenant isolation and least-privilege access before any shared deployment.
+- Produce measurable product, reliability, security, and Agent-quality evidence.
+- Preserve a modular architecture that can extend beyond mortgage through product packs.
 
 ### 5.2 Non-goals
 
-- Issuing credit, originating loans, moving money, or making binding approval decisions.
-- Claiming to reproduce an official automated underwriting result.
+- Issuing credit or producing a binding approve/deny decision.
+- Claiming equivalence with an official automated underwriting system.
+- Moving funds, locking real rates, ordering paid services, or delivering loans to capital markets in the public launch.
+- Publishing copied proprietary guidelines or reverse-engineered vendor behavior.
 - Training a proprietary foundation model.
-- Building a broad consumer chatbot.
-- Supporting every lending product in the first launch.
-- Creating microservices or Kubernetes infrastructure before scale requires them.
+- Building a general-purpose consumer chatbot.
+- Supporting every mortgage or lending product in the first release.
+- Replacing a customer's full loan origination system.
+- Adopting microservices, Kubernetes, or multiple Agent frameworks without measured need.
 - Ingesting real consumer PII into the public demo.
-- Claiming legal or regulatory certification solely from engineering controls.
+- Claiming legal, regulatory, security, or fairness certification from software controls alone.
 
 ### 5.3 Engineering principles
 
-1. Deterministic policy outranks model output.
-2. Humans retain authority for material or ambiguous outcomes.
-3. Every external write is idempotent and auditable.
-4. Every model or provider call has provenance, timeout, and failure handling.
-5. Synthetic data is the default; real credentials are opt-in and tenant-owned.
-6. PII is minimized before storage, logging, and model inference.
-7. A modular monolith is preferred until independent scaling or ownership justifies extraction.
-8. Planned, implemented, tested, deployed, and production-approved are distinct states.
+1. Correctness and evidence outrank model fluency.
+2. Deterministic policy owns operational status; models propose bounded actions.
+3. Humans retain authority over material, ambiguous, or externally communicated outcomes.
+4. Every external effect is idempotent, attributable, and auditable.
+5. Durable business state lives outside model context.
+6. Every provider and model call has provenance, validation, timeout, and failure handling.
+7. Synthetic data is the default; real credentials are explicit, tenant-owned, and environment-scoped.
+8. Sensitive data is minimized before storage, logging, and inference.
+9. A modular monolith remains the default until scale, security, or team ownership proves another boundary.
+10. Product behavior is delivered in runnable vertical slices with proportional verification.
 
-## 6. Product terminology and decision boundary
+## 6. Product language and authority boundary
 
-The target product must not present its output as a formal lending decision.
+### 6.1 Case statuses
 
-### 6.1 Target readiness outcomes
-
-| Outcome | Meaning |
+| Status | Meaning |
 |---|---|
-| `READY` | Required evidence is present and deterministic checks passed for the configured readiness policy. |
-| `NEEDS_INFORMATION` | Specific evidence is missing, expired, unreadable, or inconsistent. |
-| `MANUAL_REVIEW` | Conflicting findings, policy boundary, model uncertainty, or a protected action requires a person. |
-| `NOT_READY` | Deterministic readiness requirements are not satisfied and cannot be resolved by simple supplementation. |
+| `DRAFT` | Case exists but required intake data has not been submitted. |
+| `COLLECTING_EVIDENCE` | Approved evidence-gathering work is active. |
+| `CONDITIONS_OPEN` | One or more operational conditions require resolution. |
+| `WAITING_FOR_INFORMATION` | Workflow is durably paused for additional evidence. |
+| `WAITING_FOR_REVIEW` | A protected or ambiguous action requires a person. |
+| `READY_FOR_UNDERWRITING` | Configured evidence and readiness conditions are satisfied. |
+| `MANUAL_REVIEW` | The case cannot proceed safely within the configured automation boundary. |
+| `CLOSED` | Work ended by an authorized actor or downstream lifecycle event. |
 
-The current demo's `APPROVED`, `CONDITIONAL`, and `DENIED` values are legacy MVP terminology. They must be migrated before public launch.
+These statuses describe workflow readiness, not formal credit decisions.
 
-### 6.2 Authority order
+### 6.2 Condition statuses
 
-1. Consent and security controls may stop processing.
-2. Deterministic validation and policy rules determine readiness status.
-3. Official external findings, when eventually connected, remain unmodified source findings.
-4. The Agent may select tools, summarize evidence, identify gaps, and recommend routing.
-5. A human reviewer may approve, reject, or edit an Agent recommendation within their role.
-6. The model may never silently override deterministic policy or human decisions.
+```ts
+type ConditionStatus =
+  | 'OPEN'
+  | 'IN_PROGRESS'
+  | 'WAITING_FOR_EVIDENCE'
+  | 'SATISFIED'
+  | 'WAIVED'
+  | 'ESCALATED';
+```
 
-## 7. Launch scope
+Every satisfied, waived, or escalated condition includes evidence or reviewer provenance and the policy version that governed the transition.
 
-### 7.1 Launch vertical slice
+### 6.3 Authority order
 
-The first production-quality demonstration covers one synthetic conventional mortgage-readiness workflow:
+1. Consent, authorization, and security controls may stop processing.
+2. Validated source evidence remains attributable to its origin.
+3. Deterministic calculations and released policy packs determine condition state and readiness.
+4. The Agent may select approved tools, compare evidence, propose actions, and draft explanations.
+5. Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides.
+6. Model output never silently overrides policy, source evidence, or a human decision.
 
-1. Create a tenant-scoped loan case using an idempotency key.
-2. Record synthetic borrower consent.
-3. Validate case completeness and data formats.
-4. Enqueue the workflow and return `202 Accepted` with a case identifier.
-5. Execute simulated income, credit, asset, and document providers.
-6. Normalize provider findings and record provenance.
-7. Let the Agent decide whether more approved tools are needed.
-8. Apply deterministic readiness policy.
-9. Pause for human review when required.
-10. Publish signed case-status webhooks.
-11. Display the case, workflow timeline, evidence, and audit history in the dashboard.
+## 7. Launch product and vertical slice
 
-### 7.2 Included provider simulators
+### 7.1 Launch scenario
 
-- Income and employment verification.
-- Credit-profile summary.
-- Asset verification.
-- Document classification and field extraction.
-- Identity consistency check using synthetic identities.
-- Readiness policy engine.
+The first launch scenario uses a synthetic conventional mortgage with W-2-style employment and generated documents. It demonstrates a meaningful evidence discrepancy and a full conditions loop:
 
-Every simulator must support deterministic fixtures and failure injection:
+1. Create a tenant-scoped loan case with an idempotency key.
+2. Record synthetic consent and intake data.
+3. Upload generated documents to local S3-compatible storage.
+4. Start an asynchronous workflow and return `202 Accepted`.
+5. Extract candidate facts and retain source locations.
+6. Run simulated income, asset, credit, identity, and document capabilities.
+7. Normalize findings and compare application, document, and provider evidence.
+8. Execute a released synthetic policy pack.
+9. Create prioritized conditions for missing or contradictory evidence.
+10. Let the Agent select the next approved tool within budget.
+11. Pause durably for information or human approval when required.
+12. Resume when a signal supplies new evidence or a review decision.
+13. Re-evaluate affected conditions and derive workflow readiness.
+14. Publish signed status events and display the full timeline.
+
+### 7.2 Included synthetic capabilities
+
+- application completeness;
+- income and employment evidence;
+- asset evidence;
+- credit-profile summary;
+- identity consistency;
+- document classification and structured field extraction;
+- qualified-income, DTI, and LTV calculations using synthetic policy;
+- evidence comparison and contradiction detection;
+- condition creation and resolution;
+- human review and override;
+- audit package export.
+
+### 7.3 Simulator failure modes
+
+Every simulator supports deterministic fixtures for:
 
 - success;
 - incomplete response;
 - inconsistent response;
+- stale evidence;
 - timeout;
 - temporary unavailability;
 - rate limiting;
 - malformed payload;
-- duplicate delivery.
+- duplicate delivery;
+- callback arriving after cancellation;
+- provider recovery after fallback.
 
-### 7.3 Deferred after launch
+### 7.4 Deferred from initial launch
 
-- Additional lending products and policy packs.
-- Real document OCR provider.
-- Authorized provider sandboxes.
-- Customer-owned production provider credentials.
-- Multi-region disaster recovery.
-- Billing and commercial subscription management.
-- High-volume batch case submission.
+- real consumer data;
+- real credit pulls or paid provider orders;
+- official underwriting or government-sponsored enterprise integrations;
+- rate locking, disclosures with legal effect, closing, settlement, or capital delivery;
+- production document OCR contracts;
+- additional lending product packs;
+- billing and subscription management;
+- multi-region disaster recovery;
+- high-volume batch submission.
 
-## 8. Functional requirements
+## 8. Product modules
 
-### 8.1 Tenant and identity
+### 8.1 Case and Evidence Hub
 
-- **FR-001**: Every business record must belong to exactly one tenant.
-- **FR-002**: Human users authenticate through OIDC/OAuth 2.0.
-- **FR-003**: Partner systems authenticate with scoped API clients.
-- **FR-004**: Roles include `TENANT_ADMIN`, `CASE_OPERATOR`, `REVIEWER`, `AUDITOR`, and `API_CLIENT`.
-- **FR-005**: Authorization is enforced in the service layer and covered by cross-tenant negative tests.
+Owns the canonical case aggregate, borrowers, consent references, documents, extracted facts, normalized findings, evidence conflicts, versions, and lineage.
 
-### 8.2 Case management
+### 8.2 Conditions Resolution Agent
 
-- **FR-010**: Create, retrieve, list, and archive loan cases.
-- **FR-011**: Accept an `Idempotency-Key` for every externally initiated mutation.
-- **FR-012**: Reject a reused idempotency key when its request hash differs.
-- **FR-013**: Expose case status, readiness result, outstanding conditions, and last workflow activity.
-- **FR-014**: Preserve a case version and optimistic concurrency token for reviewer updates.
+Observes case state, selects registered tools, proposes safe next actions, explains unresolved gaps, and routes protected or ambiguous work to human review.
 
-### 8.3 Consent and documents
+### 8.3 Policy-as-Code Studio
 
-- **FR-020**: Record consent purpose, scope, actor, method, policy version, and timestamps.
-- **FR-021**: Prevent provider execution when required consent is absent or expired.
-- **FR-022**: Store documents in S3-compatible object storage, not in relational rows.
-- **FR-023**: Store checksums, media types, classification results, and retention metadata.
-- **FR-024**: Scan uploads and treat document content as untrusted data, never as Agent instructions.
+Manages synthetic policy packs, DSL validation, test cases, impact analysis, review, release, deprecation, and rollback.
 
-### 8.4 Provider orchestration
+### 8.4 Provider Gateway
 
-- **FR-030**: Resolve providers by capability, tenant configuration, and operating mode.
-- **FR-031**: Normalize responses into internal findings without losing the encrypted raw payload.
-- **FR-032**: Enforce timeout, retry, concurrency, and circuit-breaker policies per provider.
-- **FR-033**: Persist every submission and attempt before publishing workflow progress.
-- **FR-034**: Route exhausted failures to a dead-letter queue and operations view.
+Resolves provider capabilities, credentials, operating modes, routing policy, health, retries, normalization, and provenance.
 
-### 8.5 Agent and policy
+### 8.5 Durable Workflow Runtime
 
-- **FR-040**: Persist Agent graph state by tenant, case, workflow run, and thread ID.
-- **FR-041**: Permit only registered, schema-validated tools.
-- **FR-042**: Limit execution by maximum steps, duration, provider calls, and model tokens.
-- **FR-043**: Require human review for configured risk and uncertainty conditions.
-- **FR-044**: Record model, prompt, tool, policy, and schema versions for every assessment.
-- **FR-045**: Reject malformed or unsupported model output and fall back to safe routing.
+Owns cross-hour and cross-day orchestration, timers, retries, signals, compensation, workflow versioning, and safe replay.
 
-### 8.6 Webhooks and operations
+### 8.6 Human Review Console
 
-- **FR-050**: Publish signed, timestamped, replay-protected webhooks.
-- **FR-051**: Retry webhook delivery with exponential backoff and retain delivery history.
-- **FR-052**: Provide dashboard views for cases, workflow steps, provider attempts, reviews, and audit events.
-- **FR-053**: Permit authorized replay from a safe checkpoint without duplicating completed external effects.
+Shows cases, evidence, conditions, workflow history, proposed actions, review queues, overrides, and actor-attributed decisions.
+
+### 8.7 Agent Governance and Evaluation
+
+Controls tool permissions, budgets, model and prompt versions, release evaluations, adversarial fixtures, shadow runs, and replay reports.
+
+### 8.8 Developer Sandbox
+
+Provides generated cases and documents, simulator configuration, webhook inspection, API credentials, deterministic scenarios, and integration quickstarts.
 
 ## 9. Agent charter
 
-### 9.1 Agent mission
+### 9.1 Mission
 
-The Agent advances a loan case toward a complete, explainable readiness assessment by selecting approved information-gathering tools, detecting unresolved gaps, and routing ambiguous cases to a human.
+The Agent advances a case toward an evidence-complete operational state by choosing approved information-gathering and comparison tools, proposing condition-resolution actions, and escalating uncertainty without claiming decision authority.
 
-### 9.2 Agent state
+### 9.2 Runtime separation
+
+```text
+Temporal workflow
+  owns durable lifecycle, waiting, retries, and external effects
+        |
+        `-- bounded Agent run
+              owns short-lived planning and approved tool selection
+                    |
+                    `-- deterministic policy engine
+                          owns calculations, conditions, and readiness
+```
+
+Temporal and PostgreSQL hold authoritative state. LangGraph is an Agent runtime adapter, not the system of record. Model conversation history is neither a workflow database nor an audit record.
+
+### 9.3 Agent state
 
 ```ts
-interface LoanReadinessAgentState {
+interface LendingOperationsAgentState {
   tenantId: string;
   caseId: string;
-  workflowRunId: string;
   caseVersion: number;
+  workflowRunId: string;
+  workflowStatus: string;
   consentStatus: 'VALID' | 'MISSING' | 'EXPIRED';
-  availableEvidence: EvidenceSummary[];
-  providerFindings: ProviderFindingSummary[];
-  unresolvedConditions: Condition[];
+  evidenceSummary: EvidenceSummary[];
+  openConditions: ConditionSummary[];
+  providerHealth: ProviderHealthSummary[];
   attemptedTools: ToolAttemptSummary[];
+  policyPackId: string;
   policyVersion: string;
   modelVersion?: string;
   promptVersion?: string;
   remainingStepBudget: number;
-  nextAction?: AgentAction;
-  humanReview?: HumanReviewState;
+  remainingProviderBudget: number;
+  remainingTokenBudget: number;
+  proposedAction?: AgentAction;
+  reviewState?: HumanReviewState;
 }
 ```
 
-### 9.3 Approved tools
+### 9.4 Registered tools
 
-| Tool | Side effect | Human approval |
-|---|---|---|
-| `check_case_completeness` | None | No |
-| `fetch_income_evidence` | Provider submission | Consent required |
-| `fetch_credit_evidence` | Provider submission | Consent required |
-| `fetch_asset_evidence` | Provider submission | Consent required |
-| `inspect_documents` | Document processing | Consent required |
-| `compare_evidence` | None | No |
-| `calculate_readiness` | Creates versioned assessment | No; deterministic engine owns result |
-| `request_missing_information` | Creates task/draft notification | Human approval for external delivery |
-| `escalate_to_human` | Pauses graph and creates review | No |
-| `publish_case_update` | External webhook | Policy-controlled; delivery is idempotent |
+| Tool | Purpose | Side effect | Approval boundary |
+|---|---|---|---|
+| `check_case_completeness` | Validate required intake fields | None | No |
+| `inspect_documents` | Extract candidate facts from synthetic documents | Document processing | Consent required |
+| `fetch_income_evidence` | Request income capability | Provider submission | Consent and budget required |
+| `fetch_asset_evidence` | Request asset capability | Provider submission | Consent and budget required |
+| `fetch_credit_evidence` | Request credit-summary capability | Provider submission | Consent and budget required |
+| `check_identity_consistency` | Compare synthetic identity evidence | Provider submission | Consent required |
+| `calculate_qualified_income` | Execute deterministic calculation | Versioned calculation | No |
+| `calculate_dti` | Execute deterministic calculation | Versioned calculation | No |
+| `calculate_ltv` | Execute deterministic calculation | Versioned calculation | No |
+| `compare_evidence` | Detect missing, stale, or conflicting facts | None | No |
+| `evaluate_policy` | Execute released policy pack | Creates assessment | No; policy owns result |
+| `create_condition` | Materialize policy-supported condition | Case mutation | Schema and policy required |
+| `draft_information_request` | Prepare a remediation request | Draft only | No |
+| `send_information_request` | Deliver an external message | External communication | Human or configured policy approval |
+| `escalate_to_reviewer` | Pause and create review task | Workflow transition | No |
+| `publish_case_update` | Deliver a signed webhook | External communication | Policy-controlled and idempotent |
 
-### 9.4 Required Agent loop
-
-```text
-LOAD CASE
-  -> CHECK CONSENT
-  -> CHECK COMPLETENESS
-  -> SELECT APPROVED TOOL(S)
-  -> EXECUTE THROUGH PROVIDER GATEWAY
-  -> OBSERVE AND NORMALIZE FINDINGS
-  -> CHECK CONTRADICTIONS / MISSING DATA / BUDGET
-       -> more evidence required: select next tool
-       -> ambiguous or protected action: interrupt for human review
-       -> sufficient evidence: execute deterministic readiness policy
-  -> EXPLAIN WITH PROVENANCE
-  -> PUBLISH STATUS
-  -> END
-```
-
-### 9.5 Mandatory human-review triggers
-
-- Contradictory identity, income, asset, or document evidence.
-- Agent confidence below the configured threshold.
-- Model output rejected by schema or policy validation.
-- Provider result requiring interpretation outside the configured policy pack.
-- Manual override of a deterministic result.
-- External communication containing material negative findings.
-- Step, token, time, or provider-call budget exhausted.
-- Any policy-controlled category designated by risk or compliance review.
-
-### 9.6 Agent safety controls
-
-- Tool allowlist and JSON-schema validation on all arguments and outputs.
-- Treat retrieved documents and provider payloads as untrusted content.
-- No arbitrary HTTP, shell, SQL, code execution, credential retrieval, or dynamic tool installation.
-- Tenant-scoped credentials resolved server-side; never exposed to prompts.
-- Maximum graph steps, wall-clock duration, token budget, and provider spend.
-- Prompt-injection test corpus and adversarial document fixtures.
-- Deterministic fallback to `MANUAL_REVIEW` on uncertainty or runtime failure.
-
-## 10. Target architecture
-
-### 10.1 Architecture style
-
-Use a modular monolith with two independently deployable processes:
-
-- **API service**: authentication, partner REST API, operations GraphQL API, validation, idempotency, and status retrieval.
-- **Worker service**: durable jobs, provider orchestration, Agent execution, policy evaluation, and webhook delivery.
-
-This preserves one codebase and transaction model while allowing API and worker capacity to scale separately. Microservice extraction is deferred until a measured scaling, security, or ownership boundary appears.
-
-### 10.2 Logical architecture
+### 9.5 Agent loop
 
 ```text
-Partners / Operations Dashboard
-             |
-        ALB + WAF
-             |
-   +---------+----------+
-   | API Service        |
-   | REST/OpenAPI       |
-   | GraphQL Operations |
-   +---------+----------+
-             |
-   PostgreSQL transaction
-   case + idempotency + outbox
-             |
-      Outbox Dispatcher
-             |
-      Valkey/Redis Queue
-             |
-   +---------+----------+
-   | Worker Service     |
-   | Workflow Runtime   |
-   | LangGraph Agent    |
-   | Policy Engine      |
-   +----+----------+----+
-        |          |
- Provider       Model Gateway
- Gateway        |-- Ollama: local development
- |              `-- private vLLM: production option
- |-- Simulator
- |-- Sandbox adapter
- `-- BYOC production adapter
-
-PostgreSQL: transactional state, audit, outbox, Agent checkpoints
-S3 + KMS: documents and encrypted large/raw payloads
-OpenTelemetry: traces and metrics; redacted structured application logs
+LOAD VERSIONED CASE
+  -> VERIFY TENANT, CONSENT, POLICY, AND BUDGET
+  -> INSPECT CURRENT EVIDENCE AND CONDITIONS
+  -> SELECT ONE OR MORE APPROVED READ-ONLY TOOLS
+  -> REQUEST SIDE-EFFECTING TOOL THROUGH WORKFLOW GATE
+  -> NORMALIZE AND VALIDATE OBSERVATIONS
+  -> EXECUTE DETERMINISTIC CALCULATIONS AND POLICY
+       -> sufficient evidence: propose condition transitions
+       -> more information: draft request and wait
+       -> ambiguity or protected action: interrupt for review
+       -> budget or runtime failure: route to manual review
+  -> EXPLAIN USING EVIDENCE AND POLICY REFERENCES
+  -> COMMIT STATE AND OUTBOX EVENT
+  -> END BOUNDED RUN
 ```
 
-### 10.3 Module boundaries
+### 9.6 Mandatory review triggers
+
+- contradictory identity, income, asset, credit, or document evidence;
+- evidence confidence below the configured threshold for a material fact;
+- unsupported policy interpretation or rule conflict;
+- malformed model or tool output;
+- manual waiver or override of a deterministic condition;
+- material negative external communication;
+- provider result outside the normalized contract;
+- step, token, time, or provider-cost budget exhaustion;
+- prompt-injection or tool-manipulation signal;
+- any category configured by tenant risk policy.
+
+### 9.7 Safety controls
+
+- allowlisted tools with schema-validated arguments and results;
+- server-side tenant context and credential resolution;
+- no arbitrary HTTP, SQL, shell, code execution, secret retrieval, or tool installation;
+- documents and provider payloads treated as untrusted content, never as instructions;
+- explicit step, duration, token, provider-call, and cost budgets;
+- deterministic fallback to human review on uncertainty or runtime failure;
+- no storage or display of private chain-of-thought;
+- complete model, prompt, policy, tool, input-hash, and result provenance;
+- dry-run and shadow modes for unapproved model or policy versions.
+
+## 10. Policy-as-Code
+
+### 10.1 Policy lifecycle
 
 ```text
-src/
-  identity/          tenant context, OIDC/API clients, RBAC
-  cases/             case aggregate and lifecycle
-  borrowers/         synthetic borrower profiles and PII boundary
-  consents/          purpose and authorization records
-  documents/         metadata, storage, scan and classification
-  providers/         registry, adapters, simulator and normalized findings
-  workflows/         jobs, outbox, checkpoints and state transitions
-  agent/             graph, tools, budgets and model gateway
-  policy/            deterministic readiness policies
-  reviews/           human review and override workflow
-  webhooks/          endpoints, signatures, delivery and replay protection
-  audit/             append-only domain and security events
-  observability/     telemetry, health, readiness and redaction
+author synthetic rule
+  -> validate DSL schema and types
+  -> lint references and units
+  -> detect conflicts and unreachable branches
+  -> generate or attach test cases
+  -> run regression and impact analysis
+  -> reviewer approval
+  -> immutable release
+  -> case version pinning
+  -> observe outcomes
+  -> deprecate or roll back
 ```
 
-Dependencies point inward toward domain contracts. Provider SDKs, queue clients, model clients, cloud storage, and web frameworks remain adapters.
+AI may draft a candidate rule from authorized text, but generated rules never publish automatically. A released policy pack is human-reviewed, versioned, immutable, and covered by executable tests.
 
-## 11. Target technology stack
+### 10.2 Example synthetic DSL
+
+```yaml
+rule:
+  id: synthetic-income-discrepancy-review
+  version: 1.0.0
+  when:
+    difference_percent:
+      left: application.monthly_income
+      right: evidence.verified_monthly_income
+      greater_than: 10
+  outcome:
+    condition: VERIFY_INCOME_DISCREPANCY
+    route: MANUAL_REVIEW
+```
+
+### 10.3 Policy invariants
+
+- Policy identifiers and released versions are immutable.
+- Units, money, ratios, dates, and rounding behavior are explicit.
+- Every condition links to the rule and evidence that created it.
+- Case evaluation pins a policy version and never silently changes mid-run.
+- A policy upgrade requires regression evidence and an impact summary.
+- Official or proprietary guidelines are not copied into the public repository.
+
+## 11. Provider platform
+
+### 11.1 Operating modes
+
+```ts
+type ProviderMode = 'SIMULATOR' | 'AUTHORIZED_SANDBOX' | 'PRODUCTION_BYOC';
+```
+
+- `SIMULATOR`: free default with deterministic synthetic fixtures.
+- `AUTHORIZED_SANDBOX`: optional provider test environment enabled through authorized credentials.
+- `PRODUCTION_BYOC`: customer supplies the contract, authority, credentials, and configuration.
+
+### 11.2 Capability contract
+
+```ts
+interface ProviderAdapter<TRequest, TReceipt, TFinding> {
+  readonly providerId: string;
+  readonly capability: ProviderCapability;
+  readonly mode: ProviderMode;
+  submit(request: TRequest, context: ProviderContext): Promise<TReceipt>;
+  poll?(receipt: TReceipt, context: ProviderContext): Promise<ProviderStatus>;
+  normalize(payload: unknown, context: ProviderContext): TFinding;
+  cancel?(receipt: TReceipt, context: ProviderContext): Promise<void>;
+  healthCheck(): Promise<ProviderHealth>;
+}
+```
+
+Adapters never write case state directly. Workflow activities validate and normalize provider output, then the domain layer commits state and an outbox event transactionally.
+
+### 11.3 Routing
+
+Provider selection uses deterministic constraints before optimization:
+
+1. tenant authorization and operating mode;
+2. product, jurisdiction, and capability eligibility;
+3. consent and permissible-use configuration;
+4. provider health and circuit state;
+5. data freshness requirements;
+6. latency, cost, and reliability score;
+7. configured fallback order.
+
+LLMs do not choose a provider by unconstrained preference. More advanced optimization may be added after the routing inputs and objectives are measurable.
+
+### 11.4 Contract tests
+
+Every adapter passes the same reusable suite:
+
+- input and output schema validation;
+- request idempotency;
+- authentication and authorization failure mapping;
+- timeout and retry classification;
+- rate-limit handling;
+- malformed, partial, stale, and contradictory payload behavior;
+- duplicate and out-of-order callback handling;
+- cancellation race behavior;
+- normalized provenance;
+- log and error redaction;
+- health and fallback behavior.
+
+## 12. Target architecture
+
+### 12.1 Architecture style
+
+Use a modular monolith with independently deployable API, worker, and web processes from one repository:
+
+- **API service**: partner REST API, operations GraphQL API, authentication, validation, idempotency, and status retrieval.
+- **Worker service**: Temporal workers, provider activities, Agent runs, policy execution, and webhook delivery.
+- **Web application**: operations console, review experience, policy and sandbox surfaces.
+
+This structure preserves one domain model and release train while allowing independent runtime scaling. Service extraction follows measured boundaries rather than speculative architecture.
+
+### 12.2 Logical architecture
+
+```text
+Partner Systems                      Operations Users
+ REST / OpenAPI                             React Web
+       |                                        |
+       +----------------+-----------------------+
+                        |
+                 API Service
+        REST + GraphQL + Auth + Idempotency
+                        |
+             PostgreSQL transaction
+           domain state + audit + outbox
+                        |
+        +---------------+----------------+
+        |                                |
+ Outbox dispatcher                 Temporal client
+        |                                |
+ Signed webhooks                  Temporal service
+                                         |
+                                  Worker Service
+                           workflow + activities + signals
+                              |          |          |
+                         AgentRuntime  Policy     Provider
+                         port/adapter   Engine     Gateway
+                              |                     |
+                    LangGraph.js / rules       Simulator
+                    Model Gateway              Sandbox
+                    Ollama or vLLM             BYOC
+
+ PostgreSQL: domain, versions, audit, idempotency, outbox, Agent metadata
+ S3/MinIO: documents and encrypted large or raw payloads
+ OpenTelemetry: correlated traces, metrics, and redacted logs
+```
+
+### 12.3 Module boundaries
+
+```text
+apps/
+  api/                 REST, GraphQL, auth, validation, status
+  worker/              Temporal workers and activities
+  web/                 operations console
+libs/
+  domain/              cases, evidence, conditions, policy contracts
+  application/         use cases, ports, authorization decisions
+  workflows/           workflow definitions, signals, versioning
+  agent/               graph, tools, budgets, runtime port
+  policy/              DSL, compiler, evaluator, release lifecycle
+  providers/           registry, routing, adapters, simulators
+  reviews/             review tasks, decisions, overrides
+  audit/               append-only domain and security events
+  platform/            database, storage, telemetry, configuration
+```
+
+The repository remains a single package until the API, worker, and web boundaries exist. Workspace or task-graph tooling is introduced only when it removes measured build or dependency-management friction.
+
+### 12.4 Dependency direction
+
+Domain and application contracts do not import web frameworks, model SDKs, queue clients, cloud SDKs, or provider packages. Infrastructure adapters depend inward on ports owned by the application core.
+
+## 13. Target technology stack
 
 | Layer | Target | Rationale |
 |---|---|---|
-| Runtime | Node.js 24 LTS | Supported production LTS; Node 20 is EOL. |
-| Language | TypeScript 6 stable | Compatibility-stable target for Nest CLI; TypeScript 7.0 is released but is not adopted until the programmatic compiler API/toolchain is compatible. |
-| Backend | NestJS 11 + Express 5 | Mainstream upgrade path with measured migration scope. |
-| Partner API | REST + OpenAPI | Stable integration contract, SDK generation, and webhook-friendly semantics. |
-| Operations API | GraphQL + Apollo Server 5 | Flexible dashboard querying; disabled public playground/introspection in production. |
-| Database | PostgreSQL 18 | Durable domain data, RLS defense in depth, outbox, and Agent checkpoints. |
-| ORM | TypeORM 0.3 latest patched | Preserve current investment; explicit migrations required. |
-| Queue | BullMQ + managed Valkey/Redis | Background work, delayed retry, concurrency control, and DLQ patterns. |
-| Agent runtime | LangGraph.js v1 + PostgreSQL checkpointer | Stateful execution, resume, replay, and human interruption. |
-| Local model | Ollama + Qwen3.5-9B | Apache-2.0 model with tool-use, structured-response, multilingual, and future document-vision capability at a size suitable for the target development machine. |
-| Production model | Private vLLM through Model Gateway | OpenAI-compatible serving, provider neutrality, and open-weight deployment path. |
-| Object storage | S3-compatible storage + KMS | Durable documents, encryption, lifecycle, and signed access. |
-| Identity | Managed OIDC/OAuth 2.0 | Avoid implementing password and token security in the product core. |
-| Telemetry | OpenTelemetry + CloudWatch-compatible backend | Vendor-neutral traces and metrics with correlated logs. |
-| Tests | Jest 30, Supertest, Testcontainers, contract tests | Unit, integration, end-to-end, migration, and provider verification. |
-| Infrastructure | Terraform/OpenTofu + AWS ECS Fargate | Reproducible infrastructure without premature Kubernetes operations. |
-| CI/CD | GitHub Actions with OIDC | Short-lived cloud credentials and auditable deployment gates. |
+| Runtime | Node.js 24 LTS | Active LTS production baseline; non-LTS Current releases are deferred. |
+| Language | TypeScript 6, strict | Stable bridge for tools requiring the programmatic compiler API; TypeScript 7 adoption is compatibility-gated. |
+| Backend | NestJS 11 + Express 5 | Mature modular TypeScript framework and supported migration path. |
+| Partner API | REST + OpenAPI 3.1 | Broad Fintech interoperability and SDK generation. |
+| Operations API | GraphQL + Apollo Server | Flexible case, evidence, and timeline querying for the console. |
+| Database | PostgreSQL 18 | Supported relational system of record with transactions, JSON, RLS, and indexing. |
+| Data access | TypeORM 0.3 patched + explicit SQL where warranted | Preserve current investment; migrations and transaction boundaries stay explicit. |
+| Durable execution | Temporal + TypeScript SDK | Long-running waits, retries, signals, recovery, and workflow versioning. |
+| Agent runtime | `AgentRuntime` port with LangGraph.js v1 adapter | Stateful bounded Agent execution without framework lock-in. |
+| Policy | Versioned internal DSL + deterministic evaluator | Testable authority independent of model behavior. |
+| Local inference | Ollama + Qwen3.5-9B | Free local structured inference for the target development machine. |
+| Production inference | Model Gateway + private vLLM-compatible serving | OpenAI-compatible, model-neutral serving boundary. |
+| Web | React 19 + TypeScript + query/state tooling | Mainstream operations UI with explicit loading, error, and recovery states. |
+| Object storage | S3-compatible storage; MinIO locally | Durable document and raw-payload boundary with lifecycle support. |
+| Identity | Managed OIDC/OAuth 2.0 + scoped API clients | Avoid implementing credential security in the domain core. |
+| Telemetry | OpenTelemetry | Vendor-neutral traces, metrics, logs, and context propagation. |
+| Tests | Jest, Supertest, Testcontainers, property and contract tests | Layered correctness and integration evidence. |
+| Infrastructure | Terraform/OpenTofu + AWS ECS Fargate target | Portable infrastructure definitions without premature Kubernetes. |
+| CI/CD | GitHub Actions + OIDC | Short-lived cloud credentials and auditable gates. |
 
-Exact patch versions must be locked, security-scanned, and refreshed during each upgrade PR. Major versions in this table are architecture targets, not evidence that the repository already uses them.
+Exact patch versions are selected, locked, security-scanned, and compatibility-tested in the implementation commit. Newest is not synonymous with safest: Active LTS and ecosystem support take precedence over version numbers.
 
-## 12. Data architecture
+TypeScript 7 is released but does not yet expose the same programmatic API used by parts of the current JavaScript toolchain. The migration proceeds through TypeScript 6 and may evaluate TypeScript 7 side-by-side before making it the repository default.
 
-### 12.1 Core entities
+## 14. Data architecture
+
+### 14.1 Core entities
 
 | Entity | Purpose |
 |---|---|
 | `tenants` | Organization boundary and configuration. |
 | `users` | OIDC-linked human identity. |
-| `tenant_memberships` | User roles per tenant. |
-| `api_clients` | Scoped machine credentials and key metadata. |
-| `loan_cases` | Case aggregate, lifecycle, version, and current readiness summary. |
+| `tenant_memberships` | Role assignment by tenant. |
+| `api_clients` | Scoped machine identity and key metadata. |
+| `loan_cases` | Versioned aggregate and current workflow readiness. |
 | `borrowers` | Minimized borrower profile with encrypted sensitive fields. |
-| `consent_records` | Purpose, scope, version, grant and expiration evidence. |
-| `documents` | Object metadata, hash, classification, retention, and scan state. |
-| `provider_connections` | Tenant-owned provider mode and encrypted credential reference. |
-| `provider_submissions` | Idempotent external request and attempt state. |
-| `provider_findings` | Normalized findings and provenance. |
-| `readiness_assessments` | Versioned deterministic result and supporting evidence. |
-| `workflow_runs` | Durable workflow instance and aggregate status. |
-| `workflow_steps` | Individual execution steps, attempts, latency, and errors. |
-| `agent_runs` | Agent configuration, budget, versions, and final route. |
-| `human_reviews` | Reviewer decision, reason, version, and override history. |
+| `consent_records` | Purpose, scope, policy version, grant, and expiration evidence. |
+| `documents` | Object metadata, checksum, media type, scan, and retention state. |
+| `evidence_facts` | Typed facts with source, confidence, validity, and lineage. |
+| `evidence_conflicts` | Contradictory fact relationships and resolution state. |
+| `policy_packs` | Product and policy package metadata. |
+| `policy_versions` | Immutable released DSL and test manifest. |
+| `policy_evaluations` | Versioned rule execution and evidence references. |
+| `loan_conditions` | Condition lifecycle and required evidence. |
+| `condition_transitions` | Actor-attributed condition state history. |
+| `provider_connections` | Tenant provider mode and credential reference. |
+| `provider_submissions` | Idempotent provider request and aggregate status. |
+| `provider_attempts` | Attempt, latency, error, retry, and cost metadata. |
+| `provider_findings` | Normalized results and provenance. |
+| `workflow_runs` | Durable business workflow identity and status. |
+| `workflow_steps` | User-facing activity timeline and failure state. |
+| `agent_runs` | Runtime, model, prompt, budgets, tools, and final route. |
+| `tool_attempts` | Arguments hash, result hash, side effect, and outcome. |
+| `review_tasks` | Pending protected action or exception review. |
+| `review_decisions` | Reviewer result, rationale, version, and override history. |
 | `idempotency_keys` | Tenant, route, key, request hash, and response reference. |
-| `webhook_endpoints` | Destination, secret reference, event subscriptions, and state. |
-| `webhook_deliveries` | Signed delivery attempts and outcomes. |
-| `audit_events` | Append-only actor/action/resource/security history. |
+| `webhook_endpoints` | Destination, secret reference, subscriptions, and state. |
+| `webhook_deliveries` | Signed attempt history and replay state. |
+| `audit_events` | Append-only actor, action, resource, and security history. |
 | `outbox_events` | Transactionally committed events awaiting publication. |
 
-### 12.2 Data rules
+### 14.2 Data rules
 
 - Every tenant-owned table includes `tenant_id` and tenant-first indexes.
-- Database row-level security provides defense in depth; service-layer authorization remains mandatory.
-- Money is stored as integer minor units plus currency, or through an explicit decimal transformer.
-- Every mutable aggregate includes `version`, `created_at`, `updated_at`, and actor provenance.
-- Raw provider payloads are encrypted, access-controlled, and subject to short retention.
-- Logs contain identifiers and hashes, not full borrower PII or document text.
-- Demo and automated-test datasets are synthetic and visibly labeled.
+- Service authorization is primary; PostgreSQL row-level security provides defense in depth.
+- Money uses integer minor units plus currency or an explicit decimal type and rounding policy.
+- Ratios store defined scale and rounding behavior.
+- Every mutable aggregate includes version and actor provenance.
+- Evidence retains source location, observed time, validity interval, and transformation history.
+- Raw provider payloads are encrypted, access-controlled, and short-lived.
+- Documents live in object storage rather than relational binary columns.
+- Logs contain identifiers, classifications, and hashes instead of full borrower data.
+- Public demos and automated tests use visibly synthetic data only.
+- Deletion and retention workflows preserve only the audit metadata legally and operationally permitted.
 
-## 13. API contract
+## 15. API and developer experience
 
-### 13.1 Partner REST API
+### 15.1 Partner REST API
 
 ```text
 POST   /v1/loan-cases
@@ -490,35 +694,36 @@ POST   /v1/loan-cases/{caseId}/consents
 POST   /v1/loan-cases/{caseId}/documents
 POST   /v1/loan-cases/{caseId}/workflow-runs
 GET    /v1/loan-cases/{caseId}/workflow-runs/{runId}
-GET    /v1/loan-cases/{caseId}/readiness-assessments/latest
+GET    /v1/loan-cases/{caseId}/conditions
+GET    /v1/loan-cases/{caseId}/evidence
 POST   /v1/loan-cases/{caseId}/reviews
+GET    /v1/loan-cases/{caseId}/audit-export
 POST   /v1/webhook-endpoints
 GET    /v1/webhook-deliveries/{deliveryId}
 ```
 
-Long-running operations return `202 Accepted`:
+Long-running commands return `202 Accepted` with stable status URLs.
 
-```json
-{
-  "caseId": "case_...",
-  "workflowRunId": "run_...",
-  "status": "QUEUED",
-  "statusUrl": "/v1/loan-cases/case_.../workflow-runs/run_..."
-}
-```
+### 15.2 Operations GraphQL API
 
-### 13.2 API requirements
+GraphQL serves case lists, evidence graphs, timelines, review queues, policy releases, provider health, Agent runs, and evaluation reports. Production environments disable public introspection and interactive explorers unless explicitly authorized.
 
-- OpenAPI schema generated and checked into release artifacts.
-- Consistent problem-details error format.
-- Request ID and trace ID returned on all responses.
-- Cursor pagination for collections.
-- API-version and deprecation policy.
-- Payload size and upload limits.
-- Per-tenant and per-client rate limits.
-- Idempotency required for mutations with external effects.
+### 15.3 API standards
 
-### 13.3 Webhook events
+- checked and published OpenAPI artifact;
+- stable operation identifiers for SDK generation;
+- consistent RFC 9457-style problem details;
+- request and trace identifiers on all responses;
+- cursor pagination and explicit filtering;
+- API version and deprecation policy;
+- request, upload, and query-complexity limits;
+- tenant and client rate limits;
+- idempotency for every externally initiated mutation with side effects;
+- timestamped HMAC webhook signatures and replay protection;
+- stable event identifiers across retries;
+- contract tests for backward compatibility.
+
+### 15.4 Event catalog
 
 ```text
 loan_case.created
@@ -527,638 +732,578 @@ workflow_run.waiting_for_information
 workflow_run.waiting_for_review
 workflow_run.completed
 workflow_run.failed
-readiness_assessment.created
-human_review.completed
+evidence.updated
+condition.opened
+condition.satisfied
+condition.escalated
+review.completed
+policy_version.released
+provider_submission.failed
 ```
 
-Signatures use a timestamped HMAC over the raw body. Receivers can reject stale timestamps, and each event ID is stable across retries.
+### 15.5 Sandbox and SDKs
 
-## 14. Provider platform
+The launch includes a TypeScript SDK or generated client, runnable examples, deterministic API fixtures, webhook inspector, scenario catalog, and a one-command local environment. A generated Python example client may follow after the OpenAPI contract stabilizes.
 
-### 14.1 Operating modes
+MCP is an optional adapter over the same registered tools and authorization layer. It is not a separate source of business logic or an early launch dependency.
 
-```ts
-type ProviderMode = 'SIMULATOR' | 'OFFICIAL_SANDBOX' | 'PRODUCTION_BYOC';
+## 16. Security, privacy, and responsible AI
+
+### 16.1 Security controls
+
+- OIDC/OAuth 2.0 for people and scoped credentials for machines;
+- service-layer RBAC and tenant-context enforcement;
+- PostgreSQL RLS as defense in depth;
+- envelope encryption or managed KMS for sensitive fields and objects;
+- centralized secret references without prompt or log exposure;
+- secure headers, strict CORS, body and upload limits, and rate limiting;
+- production GraphQL explorer and broad introspection disabled;
+- malware scanning and media verification for uploads;
+- signed URLs with short expiry;
+- dependency, secret, container, and infrastructure scanning;
+- append-only security audit events;
+- documented incident response, key rotation, backup, and restore procedures.
+
+### 16.2 Privacy controls
+
+- purpose-bound consent checked before provider and document processing;
+- data minimization and field-level access policy;
+- configurable retention and deletion workflows;
+- redacted logs, traces, errors, prompts, and evaluation artifacts;
+- environment and tenant separation;
+- no real consumer data in public demos, fixtures, screenshots, or evaluation corpora;
+- data export and deletion operations recorded with actor provenance.
+
+### 16.3 Responsible-AI controls
+
+- deterministic policy authority and visible human-review boundary;
+- protected characteristics excluded from model inputs unless an approved, documented use requires them;
+- evidence references for material claims;
+- model, prompt, schema, tool, and policy versioning;
+- output schema and semantic validation;
+- uncertainty and contradiction routed to a person;
+- no private chain-of-thought retention or display;
+- adversarial evaluation for prompt injection, unsupported claims, and unsafe tools;
+- model changes gated by evaluation rather than anecdotal examples;
+- synthetic policy results never represented as legal or official underwriting findings.
+
+### 16.4 Threat scenarios
+
+- cross-tenant object reference and query leakage;
+- forged tenant or role context;
+- webhook replay and signature confusion;
+- idempotency-key reuse with a changed request;
+- prompt injection embedded in documents or provider payloads;
+- tool argument manipulation and privilege escalation;
+- SSRF through provider or webhook configuration;
+- raw PII in logs, traces, model requests, or error messages;
+- stale policy or model version execution;
+- duplicate provider callbacks after workflow cancellation;
+- malicious file content and decompression abuse;
+- unauthorized review override or audit tampering.
+
+## 17. Reliability and observability
+
+### 17.1 Reliability behavior
+
+- API acknowledgment occurs only after durable state is committed.
+- Temporal owns workflow retries and waits; activities remain idempotent.
+- External delivery uses outbox-backed publication and stable event identifiers.
+- Retries use explicit classifications, bounded attempts, backoff, and jitter.
+- Circuit breakers prevent repeated calls to unhealthy providers.
+- Workflow replay does not duplicate completed external effects.
+- Versioned workflow code preserves deterministic replay compatibility.
+- Failed work remains inspectable and recoverable through operations tooling.
+- Provider fallback never changes the semantic capability contract silently.
+- Graceful shutdown stops new work and safely finishes or abandons leased activity work.
+
+### 17.2 Initial SLO targets
+
+Targets are release objectives, not current measurements:
+
+- monthly API availability: `99.9%` for the synthetic staging service;
+- acknowledged case and review mutations lost: `0`;
+- duplicate externally visible effects from idempotent replay: `0`;
+- p95 non-workflow API latency: below `500 ms` under the published load profile;
+- p95 workflow-start acknowledgment: below `1 s` under the published load profile;
+- signed webhook eventual delivery: at least `99.9%` within the configured retry window for healthy receivers;
+- cross-tenant authorization failures that expose data: `0`.
+
+The load profile, environment, sample size, and measurement method accompany every reported result.
+
+### 17.3 Telemetry
+
+Every request, workflow, Agent run, provider attempt, policy evaluation, review, and webhook carries correlated tenant-safe identifiers.
+
+Required telemetry includes:
+
+- request rate, errors, duration, and saturation;
+- workflow state, schedule-to-start, activity retries, and stuck executions;
+- provider latency, errors, rate limits, fallback, and circuit state;
+- condition age, reopen rate, and time waiting for evidence;
+- Agent steps, tool choices, schema failures, escalation, tokens, and cost;
+- policy version distribution and evaluation failures;
+- webhook backlog and terminal delivery failures;
+- database pool, query latency, locks, and migration state;
+- redaction failures and security events.
+
+## 18. Testing and evaluation
+
+### 18.1 Test strategy
+
+1. **Unit tests**: calculations, domain transitions, authorization, redaction, and pure policy rules.
+2. **Property-based tests**: money, ratios, policy invariants, idempotency, and condition-state machines.
+3. **Migration tests**: clean installation, forward migration, data preservation, and compatibility checks.
+4. **Integration tests**: PostgreSQL, Temporal, object storage, provider adapters, and outbox behavior.
+5. **Contract tests**: API compatibility, webhooks, and reusable provider expectations.
+6. **Workflow tests**: timers, signals, retries, cancellation, versioning, and replay.
+7. **End-to-end tests**: complete synthetic case and review journeys.
+8. **Security tests**: tenant isolation, authorization, injection, SSRF, upload, and webhook abuse.
+9. **Reliability tests**: crash, timeout, duplicate, partial failure, and recovery scenarios.
+10. **Load and soak tests**: declared environment and reproducible workload.
+11. **Agent evaluation**: golden cases, adversarial documents, tool constraints, and model comparisons.
+
+### 18.2 Evaluation corpus
+
+```text
+evaluation/
+  cases/                 synthetic case inputs
+  documents/             generated and adversarial documents
+  expected-facts/        extraction ground truth
+  expected-conditions/   policy and condition ground truth
+  provider-failures/     timeout, duplicate, stale, malformed scenarios
+  prompt-injection/      untrusted content fixtures
+  model-configs/         model and prompt manifests
+  reports/               reproducible release reports
 ```
 
-- `SIMULATOR`: free default using deterministic synthetic fixtures.
-- `OFFICIAL_SANDBOX`: optional adapter enabled only with authorized access.
-- `PRODUCTION_BYOC`: tenant supplies its own contract, credentials, and authorization.
+The first release target is at least 150 synthetic cases across normal, boundary, contradiction, missing-data, provider-failure, and adversarial categories.
 
-### 14.2 Provider contract
+### 18.3 Agent release gates
 
-```ts
-interface ProviderAdapter<TRequest, TNormalizedFinding> {
-  readonly capability: ProviderCapability;
-  readonly mode: ProviderMode;
-  submit(request: TRequest, context: ProviderContext): Promise<ProviderReceipt>;
-  poll?(receipt: ProviderReceipt, context: ProviderContext): Promise<ProviderStatus>;
-  normalize(payload: unknown): TNormalizedFinding;
-  healthCheck(): Promise<ProviderHealth>;
-}
-```
+- unauthorized tool execution: `0`;
+- material unsupported claims: `0` on the release corpus;
+- evidence reference coverage for material output: `100%`;
+- mandatory-review recall: `100%` on designated release cases;
+- deterministic policy repeatability: `100%` for identical versioned inputs;
+- malformed output accepted as valid: `0`;
+- tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
+- model, prompt, policy, dataset, and code revisions are pinned in every report.
 
-Adapters do not write loan-case state directly. They return normalized results to the workflow layer, which commits state and outbox events transactionally.
+Failed or partial results remain visible. Evaluation reports distinguish cache hits and replayed results from new inference cost.
 
-### 14.3 Contract-test suite
+## 19. Deployment and cost strategy
 
-Every adapter must pass the same reusable tests:
+### 19.1 Free local profile
 
-- schema validation;
-- deterministic idempotency behavior;
-- authentication failure mapping;
-- timeout and retry classification;
-- rate-limit handling;
-- malformed and partial payload rejection;
-- duplicate callback handling;
-- normalized provenance fields;
-- PII redaction in logs and errors.
+Local development uses:
 
-## 15. Security, privacy, and responsible AI
+- Docker Compose;
+- PostgreSQL;
+- Temporal development service;
+- MinIO or filesystem-backed S3-compatible storage;
+- deterministic provider simulators;
+- rules as the default decision provider;
+- optional Ollama and Qwen local inference;
+- local OpenTelemetry-compatible collection where practical.
 
-This section defines engineering launch gates, not a claim of legal compliance. Production use with real consumer data requires qualified legal, security, privacy, and compliance review.
-
-### 15.1 Security controls
-
-- OIDC authentication, short-lived sessions, scoped API credentials, and RBAC.
-- Tenant isolation tests plus PostgreSQL RLS defense in depth.
-- TLS in transit; managed encryption at rest; field-level envelope encryption for designated PII.
-- Secrets stored in a managed secret service, never repository variables or model prompts.
-- WAF, request-size limits, schema validation, rate limiting, and abuse protection.
-- Read-only container root filesystem where compatible; non-root runtime user.
-- Immutable container tags tied to commit SHA; signed provenance and dependency inventory.
-- Dependency, secret, container, infrastructure, and static-code scanning in CI.
-- Centralized, access-controlled security events and alerting.
-
-### 15.2 Privacy controls
-
-- Synthetic data only in public demo and automated tests.
-- Purpose-bound consent checked before provider access.
-- Data minimization before model inference.
-- No full government identifiers, account numbers, or raw documents in prompts or logs.
-- Configurable retention and deletion workflows.
-- Signed, time-limited object access.
-- Document and provider-payload access audited separately from ordinary case access.
-
-### 15.3 Responsible-AI controls
-
-- Model output is advisory and never the sole authority for material readiness results.
-- Deterministic policy produces reason codes from versioned input facts.
-- Protected characteristics are excluded from readiness policies and model prompts unless explicitly required and approved for a lawful control.
-- Explanations cite internal evidence IDs, not invented facts.
-- Model, prompt, tool schema, policy, and evaluation-dataset versions are recorded.
-- Human overrides require reason codes and remain visible in history.
-- Drift and regression evaluations block deployment when guardrails fail.
-
-### 15.4 Threat scenarios covered in testing
-
-- Cross-tenant identifier enumeration.
-- Prompt injection embedded in a document.
-- Tool-argument injection and schema bypass.
-- Webhook replay or signature downgrade.
-- Duplicate partner submission.
-- Provider timeout storm and queue exhaustion.
-- Poisoned or malformed provider payload.
-- Excessive model/tool loop.
-- Credential leakage through logs, traces, exceptions, or prompts.
-- Reviewer race and stale override.
-
-## 16. Reliability objectives
-
-These are target service-level objectives and must not be reported as achieved until measured in a deployed environment.
-
-| Signal | Launch target |
-|---|---|
-| API availability | 99.9% monthly, excluding announced maintenance |
-| Accepted-command latency | p95 under 300 ms excluding document upload transfer |
-| Case-read latency | p95 under 500 ms |
-| Simulator workflow completion | p95 under 60 seconds |
-| Durable job loss | 0 acknowledged jobs lost |
-| Duplicate external effect | 0 in idempotency and replay test suites |
-| Webhook successful delivery | 99.5% within retry window for healthy receivers |
-| Recovery point objective | 15 minutes |
-| Recovery time objective | 60 minutes |
-| Critical security findings | 0 open at launch |
-| High dependency findings | 0 open unless documented, mitigated, and time-bound |
-
-### 16.1 Failure behavior
-
-- Liveness reports only process viability.
-- Readiness fails when required database or queue dependencies cannot support traffic.
-- Provider degradation does not crash the API.
-- Model degradation routes eligible workflows to deterministic or human-review paths.
-- Exhausted jobs enter a DLQ with a visible operational action.
-- Graceful shutdown stops new work and returns/requeues unfinished jobs safely.
-
-## 17. Observability
-
-### 17.1 Required telemetry
-
-- Distributed traces across API, outbox, queue, Agent steps, providers, model, and webhooks.
-- Metrics for request rate, error rate, latency, queue depth, job age, retries, circuit state, Agent steps, token usage, and human-review duration.
-- Structured logs containing tenant-safe identifiers, trace IDs, event names, and redacted errors.
-- Audit events for security and business actions; audit is separate from diagnostic logging.
-
-### 17.2 Required dashboards
-
-- API health and latency.
-- Queue depth, oldest job age, retries, and DLQ count.
-- Provider latency, error class, and circuit-breaker state.
-- Agent completion, escalation, invalid-action, and budget-exhaustion rates.
-- Webhook delivery success and retry backlog.
-- Database connection, query latency, storage, and replication/backup signals.
-
-### 17.3 Required alerts
-
-- Elevated 5xx or authentication failures.
-- Queue oldest-job age above objective.
-- DLQ nonzero for longer than the response threshold.
-- Provider circuit open or material timeout increase.
-- Webhook failure spike.
-- Backup failure or restore verification failure.
-- Suspected cross-tenant access or secret exposure.
-
-## 18. Testing and Agent evaluation
-
-### 18.1 Test pyramid
-
-1. Unit tests for domain rules, value objects, redaction, signatures, and Agent routing functions.
-2. Integration tests with real PostgreSQL and Valkey/Redis through Testcontainers.
-3. Migration tests from an empty database and the previous released schema.
-4. Provider contract tests shared by simulator and future adapters.
-5. API end-to-end tests for auth, tenancy, idempotency, and error contracts.
-6. Workflow tests for retries, resume, timeout, DLQ, replay, and human interruption.
-7. Security tests for tenant isolation, authorization, prompt injection, and webhook replay.
-8. Load and soak tests for API and worker scaling.
-9. Backup restore and disaster-recovery exercises.
-
-### 18.2 Agent evaluation dataset
-
-Maintain a versioned set of at least 150 synthetic cases across:
-
-- complete low-risk evidence;
-- missing and expired evidence;
-- contradictory income or asset evidence;
-- unreadable and adversarial documents;
-- provider timeout, rate limit, malformed response, and duplicate callback;
-- model invalid JSON, unsupported assertion, and tool-selection error;
-- human-review boundaries and policy-version changes.
-
-### 18.3 Agent release metrics
-
-| Metric | Initial release gate |
-|---|---|
-| Tool-selection accuracy | >= 95% on approved evaluation set |
-| Missing-information recall | >= 95% |
-| Required-human-review recall | 100% for designated mandatory scenarios |
-| Unauthorized-tool rate | 0% |
-| Unsupported factual claim rate | <= 1% |
-| Schema-valid final output | 100%, including fallback behavior |
-| Workflow completion | >= 99% for simulator cases without injected terminal failure |
-| Deterministic replay match | 100% for rules-only fixtures |
-
-Thresholds are provisional product targets. Baseline measurements must be recorded before they become release gates; no unmeasured metric may appear as an achieved claim.
-
-## 19. Infrastructure and deployment
-
-### 19.1 Local zero-cost profile
-
-- Docker Compose.
-- PostgreSQL.
-- Valkey/Redis.
-- MinIO or filesystem-backed S3-compatible development storage.
-- Provider simulators.
-- Deterministic policy engine.
-- Optional Ollama/Qwen.
-
-The complete launch workflow must work without a paid model key or paid provider account.
+The primary demo path requires no paid model key or provider credential.
 
 ### 19.2 Cloud target
 
-- ALB, TLS certificate, WAF, and private networking.
-- ECS Fargate services for API and worker.
-- RDS PostgreSQL 18 with Multi-AZ for production.
-- Managed Valkey/Redis.
-- S3 with KMS, versioning, lifecycle, and blocked public access.
-- Secrets Manager or equivalent.
-- Immutable ECR images tagged by commit SHA.
-- OpenTelemetry collector and CloudWatch-compatible telemetry backend.
-- Managed OIDC provider.
+The first cloud architecture targets AWS ECS Fargate with managed PostgreSQL, S3, KMS, managed secrets, load balancing, WAF, and OpenTelemetry-compatible telemetry. Temporal may be self-hosted for controlled staging evaluation or consumed as a managed service after cost and operational review.
 
-The model server is a separate private capability. Ollama is for local development; production vLLM must sit behind private networking, authentication, authorization, request limits, and a reverse proxy/API gateway.
+Kubernetes is deferred until measured scheduling, portability, or organizational needs justify its control-plane cost.
 
 ### 19.3 Environments
 
-| Environment | Data | Purpose |
+- `local`: synthetic data, local dependencies, developer-owned.
+- `test`: ephemeral dependencies and deterministic fixtures.
+- `staging`: synthetic data only, production-like controls and deployment path.
+- `production`: absent until real-data, legal, provider, security, privacy, and operational approval exists.
+
+### 19.4 Cost controls
+
+- per-tenant and per-workflow step, provider, token, storage, and concurrency budgets;
+- immutable finding reuse when consent, freshness, and policy permit;
+- idempotency prevents duplicate provider and model cost;
+- model and provider usage attributed to workflow runs;
+- local and staging model services can remain off outside evaluation windows;
+- cost-bearing infrastructure requires a documented budget and teardown path;
+- business metrics include cost per workflow and per resolved condition.
+
+## 20. Delivery strategy
+
+Delivery proceeds through runnable vertical slices. Each milestone ends with a demonstrable user or developer outcome, current verification evidence, and a separately reviewable set of commits.
+
+### Milestone status
+
+| Milestone | Outcome | Status |
 |---|---|---|
-| Local | Synthetic | Development and deterministic demos. |
-| CI | Ephemeral synthetic | Tests, migrations, security scans, and evaluation subset. |
-| Staging | Synthetic only | Release candidate, load, failure, restore, and demo verification. |
-| Production | Disabled for real PII until approval | Operational target after security/compliance launch gates. |
+| M0 | Stable free model baseline and independent product charter | Implemented |
+| M1 | Supported runtime, migrations, and security baseline | Planned |
+| M2 | Durable loan case, evidence, and condition workflow | Planned |
+| M3 | Policy DSL, bounded Agent tools, and human review | Planned |
+| M4 | Provider gateway, partner API, webhooks, and sandbox | Planned |
+| M5 | Tenant trust boundary and audit controls | Planned |
+| M6 | Operations console and release evaluation | Planned |
+| M7 | Synthetic staging and launch evidence | Planned |
 
-### 19.4 CI/CD gates
+### M0 — Product foundation
 
-- Format, lint, typecheck, unit, integration, and end-to-end tests.
-- Database migration up/down compatibility check where safe.
-- Agent evaluation regression subset on every PR; full evaluation before release.
-- Dependency, secret, SAST, IaC, license, and container scans.
-- Build once; promote the same immutable artifact.
-- GitHub Actions authenticates to cloud through OIDC, not long-lived access keys.
-- Staging smoke test verifies health and a real synthetic loan-case workflow.
-- Production promotion requires release approval and successful backup/rollback checks.
+**Outcome:** the repository runs without a paid model credential and has an independent, vendor-neutral product contract.
 
-## 20. Cost strategy
+Evidence:
 
-### 20.1 Free-by-default development
+- deterministic rules default;
+- optional local Qwen/Ollama provider;
+- structured-output validation and safe failure behavior;
+- current MVP tests and build evidence recorded in the development journal;
+- this target-state charter and public engineering guidelines.
 
-- Simulators replace paid provider calls.
-- Rules mode is the default decision path.
-- Ollama is optional for local Agent/model development.
-- CI uses deterministic rules for most tests and a bounded local-model evaluation where infrastructure permits.
+### M1 — Supported runtime and security baseline
 
-### 20.2 Productizable cost controls
+**User-visible outcome:** the existing demo retains behavior on a supported, hardened runtime with explicit database lifecycle.
 
-- Per-tenant model token, Agent step, provider-call, storage, and concurrency budgets.
-- Cached immutable findings when consent and freshness policy permit.
-- Idempotency prevents duplicate provider spend.
-- Provider and model costs recorded per workflow run.
-- GPU model serving can remain off outside scheduled evaluation or demand windows.
-- Staging auto-scales to zero where supported, with documented cold-start tradeoffs.
+Scope:
 
-Cloud infrastructure, real providers, and production model serving are not assumed to be free. Any cost-bearing deployment requires an explicit approved budget.
+- Node.js 24 LTS;
+- NestJS 11, Express 5, compatible Apollo and GraphQL packages;
+- TypeScript 6 bridge and Jest migration;
+- patched dependencies and lockfile review;
+- environment schema validation;
+- explicit TypeORM migrations and production `synchronize: false`;
+- secure headers, CORS allowlist, rate limiting, body limits, and graceful shutdown;
+- liveness and dependency-aware readiness endpoints;
+- production GraphQL explorer and broad introspection controls.
 
-## 21. Delivery roadmap
+Exit evidence:
 
-The sequence below is dependency-based. Durations are estimates for planning, not delivery promises.
+- clean install, build, lint, unit, end-to-end, migration, Docker, and vulnerability checks;
+- current compatibility decisions recorded with exact versions.
 
-### Phase status
+### M2 — Durable conditions vertical slice
 
-| Phase | Scope | Status |
-|---|---|---|
-| Milestone 0 | Open-model baseline | In progress |
-| Milestone 1 | Runtime and security baseline | Planned |
-| Milestone 2 | Domain, tenancy, consent, and audit | Planned |
-| Milestone 3 | Durable asynchronous workflow | Planned |
-| Milestone 4 | Provider platform | Planned |
-| Milestone 5 | Stateful Agent and human review | Planned |
-| Milestone 6 | Operations dashboard and launch | Planned |
+**User-visible outcome:** a synthetic case enters a condition workflow, waits, receives evidence, resumes after restart, and reaches a readiness state.
 
-### Development execution protocol
+Scope:
 
-Every implementation follows this loop:
+- tenant-keyed case, evidence, condition, audit, workflow, and idempotency schema;
+- REST workflow-start and status endpoints;
+- API and worker process boundaries;
+- Temporal workflow, activities, signals, retry classification, and replay tests;
+- transactional outbox and signed status event foundation;
+- deterministic synthetic discrepancy scenario.
 
-```text
-select one acceptance criterion
-  -> write or update the test
-  -> implement one coherent feature slice
-  -> add rationale-focused code comments
-  -> run proportional verification
-  -> update docs/DEVELOPMENT_LOG.md
-  -> review the exact diff
-  -> create one atomic commit
-  -> move to the next feature
-```
+Exit evidence:
 
-Rules:
+- injected process restart loses no acknowledged work;
+- duplicate command and signal tests produce no duplicate domain effect;
+- workflow history and condition transitions are inspectable.
 
-- One independently understandable and revertible feature slice maps to one commit.
-- Implementation, tests, migration, documentation, and development-log evidence for that slice belong in the same commit when practical.
-- Unrelated changes are never mixed into a feature commit.
-- Large features are split by acceptance criterion, not by arbitrary file count.
-- Temporary local work may be incomplete, but committed feature branches should remain buildable and testable.
-- A failing or partially verified commit is labeled explicitly and is not presented as completed work.
+### M3 — Policy and Agent vertical slice
 
-### Milestone 0 — Preserve and finish the open-model baseline
+**User-visible outcome:** the Agent inspects evidence, selects allowed tools, applies a released synthetic policy, pauses for review, and resumes after a decision.
 
-**Objective:** complete the existing paid-model removal without mixing it with the architecture migration.
+Scope:
 
-Deliverables:
+- policy DSL parser, validator, evaluator, versioning, and golden tests;
+- `AgentRuntime` port and LangGraph.js v1 adapter;
+- registered tools, schemas, budgets, and side-effect gates;
+- reviewer interrupt and resume flow;
+- minimal review surface sufficient to operate the workflow;
+- evidence-backed explanations and Agent run timeline;
+- initial release evaluation corpus and report command.
 
-- rules/Ollama provider abstraction;
-- structured output validation and safe failure behavior;
-- updated tests and documentation;
-- clean build, lint, unit, demo, and applicable e2e evidence.
+Exit evidence:
 
-Exit gate:
+- unauthorized tools remain unreachable;
+- designated review cases always interrupt;
+- repeated versioned inputs produce the same policy result;
+- malformed model output routes safely.
 
-- no paid model credential required for default execution;
-- current uncommitted scope reviewed and released as a separate, auditable change.
+### M4 — Provider and developer platform vertical slice
 
-### Milestone 1 — Runtime and security baseline
+**Developer-visible outcome:** an integration developer can use the REST API, SDK, simulator, and signed webhooks while exercising provider failures deterministically.
 
-**Objective:** move onto supported runtime and framework versions.
+Scope:
 
-Deliverables:
+- provider registry, capability contracts, health, routing, and normalization;
+- income, asset, credit, identity, and document simulators;
+- reusable adapter contract suite;
+- REST/OpenAPI contract and TypeScript client;
+- webhook subscriptions, delivery retries, history, and replay protection;
+- sandbox scenarios, webhook inspector, and quickstart;
+- safe replay and provider fallback operations.
 
-- Node.js 24 LTS, NestJS 11, Express 5, Apollo Server 5, GraphQL supported baseline, TypeScript 6, Jest 30;
-- dependency remediation;
-- environment-schema validation;
-- Helmet, CORS allowlist, rate limiting, body limits, graceful shutdown;
-- production GraphQL playground/introspection disabled;
-- real liveness and readiness endpoints;
-- explicit TypeORM migrations and `synchronize: false` everywhere except disposable tests.
+Exit evidence:
 
-Exit gate:
+- a new simulator adapter is added without domain or Agent changes;
+- every documented failure mode is covered by a deterministic test;
+- generated client completes the published quickstart.
 
-- clean install, build, lint, unit, e2e, migration, Docker, and vulnerability gates.
+### M5 — Fintech trust boundary
 
-### Milestone 2 — Domain, tenancy, consent, and audit
+**User-visible outcome:** multiple tenants can use the platform without crossing identity, data, provider, policy, or audit boundaries.
 
-**Objective:** establish the Fintech trust boundary.
+Scope:
 
-Deliverables:
-
-- normalized case schema;
-- tenant context, OIDC/API-client authentication, RBAC, and RLS;
+- OIDC and scoped API-client authentication;
+- RBAC, tenant context, and PostgreSQL RLS;
 - consent enforcement;
-- append-only audit events;
-- target readiness terminology;
-- encrypted PII boundary and synthetic-data generator.
+- encrypted field and object boundaries;
+- retention, deletion, and audit export workflows;
+- tenant-owned provider, policy, webhook, and budget configuration;
+- threat-model tests and negative authorization suite.
 
-Exit gate:
+Exit evidence:
 
-- cross-tenant access tests fail closed;
-- every material action has actor, tenant, resource, timestamp, and correlation provenance.
+- cross-tenant tests fail closed at API, service, and database layers;
+- every material mutation records actor, tenant, resource, correlation, and reason provenance.
 
-### Milestone 3 — Durable asynchronous workflow
+### M6 — Operations and evaluation vertical slice
 
-**Objective:** make provider work recoverable and idempotent.
+**User-visible outcome:** operations users can understand, review, and recover every synthetic case without direct database access.
 
-Deliverables:
+Scope:
 
-- REST/OpenAPI partner API returning `202`;
-- API/worker process split;
-- transactional outbox;
-- BullMQ queue, retry, timeout, circuit breaker, and DLQ;
-- status retrieval, SSE or event stream for dashboard, and signed webhooks;
-- safe replay and idempotency behavior.
+- React case list and detail;
+- evidence, condition, policy, provider, Agent, workflow, review, and audit views;
+- explicit empty, loading, degraded, retrying, stale, unauthorized, and disconnected states;
+- accessible interaction and keyboard navigation;
+- evaluation dashboard and downloadable release report;
+- OpenTelemetry dashboards and alerts;
+- operational replay, cancellation, and recovery controls.
 
-Exit gate:
+Exit evidence:
 
-- injected crashes, timeouts, duplicates, and restarts do not lose acknowledged work or duplicate effects.
+- the launch scenario and injected failure scenario are operable through the UI;
+- accessibility and unhappy-path checks pass;
+- no sensitive fixture content appears in telemetry or unauthorized views.
 
-### Milestone 4 — Provider platform
+### M7 — Synthetic staging launch
 
-**Objective:** replace hard-coded mocks with product-grade simulator adapters.
+**Outcome:** the product is reproducibly deployed with synthetic data and production-like engineering controls.
 
-Deliverables:
+Scope:
 
-- provider registry and capability resolution;
-- simulator/sandbox/BYOC modes;
-- income, credit, asset, and document contracts;
-- deterministic fixtures and fault injection;
-- reusable provider contract suite.
-
-Exit gate:
-
-- a new adapter can be added without changing case or Agent domain logic.
-
-### Milestone 5 — Stateful Agent and human review
-
-**Objective:** implement a defensible AI Agent rather than a single model call.
-
-Deliverables:
-
-- LangGraph state graph and PostgreSQL checkpointer;
-- approved tools and execution budgets;
-- Model Gateway for rules, Ollama, and private vLLM-compatible inference;
-- interrupts and reviewer resume flow;
-- provenance-backed explanations;
-- 150-case Agent evaluation dataset and release report.
-
-Exit gate:
-
-- Agent release metrics pass; mandatory review recall and unauthorized-tool rate meet gates.
-
-### Milestone 6 — Operations dashboard and launch
-
-**Objective:** make the workflow understandable and operable.
-
-Deliverables:
-
-- case list/detail, evidence, workflow timeline, human review, audit, provider, and webhook views;
 - Terraform/OpenTofu environment definitions;
 - GitHub Actions OIDC deployment;
-- staging deployment with synthetic data;
-- telemetry dashboards and alerts;
-- load, soak, security, backup, restore, and runbook evidence;
-- architecture decision records and demo walkthrough.
+- synthetic staging data and access controls;
+- load, soak, security, backup, restore, and failure-recovery evidence;
+- SLO dashboards, alerts, runbooks, and incident exercise;
+- architecture decision records and demo walkthrough;
+- release artifact, dependency, and source-revision traceability.
 
-Exit gate:
+Exit evidence:
 
-- all launch gates in Section 24 pass in staging.
+- all launch gates in Section 22 pass in staging;
+- live health, workflow, review, webhook, and recovery paths are verified;
+- the release remains explicitly synthetic and is not represented as approved for real borrower data.
 
-## 22. Product metrics
+## 21. Product and operational metrics
 
-These metrics evaluate whether the platform improves the workflow, not whether it approves loans.
+### 21.1 Primary product outcome
 
-### Primary outcome
+- Median time from case creation to the first actionable evidence-and-condition plan.
 
-- Median time from case creation to actionable readiness status.
+### 21.2 Workflow metrics
 
-### Supporting product metrics
+- time spent waiting for information;
+- time from new evidence to affected-condition re-evaluation;
+- manual touches per case;
+- percentage of conditions resolved without manual interpretation;
+- condition reopen rate;
+- human-review rate and duration;
+- workflow completion, cancellation, and terminal-failure rates;
+- provider retry, fallback, and terminal-failure rates;
+- signed webhook delivery latency and success;
+- cost per workflow and resolved condition.
 
-- Percentage of cases receiving an actionable status without workflow failure.
-- Time spent waiting for missing information.
-- Human-review rate and median review duration.
-- Percentage of conditions linked to supporting evidence.
-- Provider retry and terminal-failure rates.
-- Webhook delivery success and latency.
-- Agent tool-selection accuracy and escalation quality.
-- Cost per synthetic workflow and, later, per tenant workflow.
+### 21.3 Agent and policy metrics
 
-### Guardrails
+- tool-selection accuracy;
+- mandatory-review recall;
+- condition precision and recall;
+- evidence reference coverage;
+- unsupported material claim rate;
+- unauthorized tool rate;
+- malformed output rejection rate;
+- policy conflict and regression rate;
+- steps, latency, tokens, and cost by model configuration.
 
-- Cross-tenant access incidents: zero.
-- Unauthorized Agent tool execution: zero.
-- Unsupported material factual claims: within release threshold.
-- Lost acknowledged workflow jobs: zero.
-- Unattributed human overrides: zero.
+### 21.4 Guardrails
 
-## 23. Risks and mitigations
+- cross-tenant data exposure: `0`;
+- unauthorized Agent tool execution: `0`;
+- unsupported material claim accepted by a release gate: `0`;
+- lost acknowledged workflow work: `0`;
+- duplicate external side effects caused by replay: `0`;
+- unattributed human override: `0`;
+- real consumer data in public demo or evaluation artifacts: `0`.
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Product appears to make official approval decisions | Legal, trust, and positioning risk | Readiness terminology, explicit disclaimers, deterministic/human authority. |
-| Model fabricates or misreads evidence | Incorrect routing | Evidence IDs, schema validation, policy engine, HITL, evaluations. |
-| Provider unavailable or unaffordable | Workflow failure or cost | Simulator default, BYOC, timeouts, circuit breakers, budgets. |
-| Sensitive data leaks to model/logs | Severe privacy risk | Synthetic demo, minimization, redaction, private inference, access audit. |
-| Duplicate requests create duplicate effects | Cost and data inconsistency | Idempotency records, request hashes, outbox, stable event IDs. |
-| Queue or worker crash loses work | Reliability failure | Durable queue, checkpointing, leases, retry, DLQ, recovery tests. |
-| Premature microservices slow delivery | Complexity and operational burden | Modular monolith and evidence-based extraction. |
-| Open-weight model quality is insufficient | Poor Agent routing | Rules baseline, model gateway, eval gates, human fallback. |
-| Real provider access remains gated | Demo cannot prove real integration | Contract-tested simulator and optional sandbox/BYOC adapters. |
-| Resume overstates implementation | Credibility risk | Status labels and evidence-linked release notes. |
+## 22. Launch gates
 
-## 24. Launch gates
+### 22.1 Product gates
 
-The product is **ready to launch as a synthetic-data staging product** only when every gate below has objective evidence.
+- end-to-end synthetic conditions journey is usable through documented APIs and the console;
+- every condition links to evidence and a policy version;
+- review, wait, resume, cancellation, and recovery paths are demonstrated;
+- API, SDK, webhook, and sandbox quickstarts are current;
+- all user-visible capabilities distinguish synthetic from official results.
 
-### Product gates
+### 22.2 Security and privacy gates
 
-- The complete launch vertical slice works through API and dashboard.
-- All user-visible loading, empty, failure, retry, stale-data, and permission-denied states are designed.
-- The interface always labels synthetic and simulated results.
-- No public copy describes readiness as official approval or underwriting.
+- tenant-isolation and authorization suites pass;
+- secrets, dependency, container, and infrastructure scans pass at the declared threshold;
+- threat model and abuse-case tests are current;
+- logs, traces, prompts, errors, screenshots, and fixtures pass PII review;
+- backup, restore, retention, deletion, and key-rotation procedures are exercised;
+- no real borrower data is accepted by the public launch environment.
 
-### Security and privacy gates
+### 22.3 Reliability gates
 
-- Threat model reviewed and critical/high findings resolved or formally time-bound.
-- Tenant-isolation test suite passes.
-- No secrets in repository history introduced by the release.
-- No real PII in demo, fixtures, telemetry, screenshots, or evaluation data.
-- Encryption, access, retention, and deletion controls are tested.
+- migration, workflow replay, crash recovery, duplicate delivery, and webhook retry tests pass;
+- declared load and soak profiles meet release objectives;
+- alerts fire in injected provider, queue, database, and webhook failure scenarios;
+- operations users can recover documented failures without database mutation;
+- runbooks identify owners, detection, mitigation, rollback, and verification.
 
-### Reliability gates
+### 22.4 AI and policy gates
 
-- Idempotency, retry, restart, duplicate callback, DLQ, and replay tests pass.
-- Load test meets stated staging objectives.
-- Backup completes and a restore drill succeeds.
-- Runbooks cover provider outage, queue backlog, database degradation, model outage, webhook failures, and rollback.
+- pinned evaluation corpus and configuration produce a reproducible report;
+- unauthorized-tool, mandatory-review, evidence-coverage, malformed-output, and unsupported-claim gates pass;
+- every released policy version has approval and regression evidence;
+- Agent and policy failures route to safe states;
+- no model output is represented as private reasoning or official underwriting authority.
 
-### AI gates
+### 22.5 Delivery gates
 
-- Agent evaluation report is reproducible from a versioned dataset.
-- Mandatory-human-review recall is 100% on designated cases.
-- Unauthorized-tool executions are zero.
-- Every explanation maps material statements to evidence or deterministic policy.
-- Model outage and invalid output degrade safely.
+- source, dependencies, migrations, infrastructure, release artifact, and deployed revision are traceable;
+- CI is green from a clean checkout;
+- rollback and restore paths are documented and exercised;
+- known limitations and unverified boundaries are published with the release.
 
-### Delivery gates
+## 23. Risks and mitigation
 
-- CI passes on the exact deployed commit.
-- Container and infrastructure artifacts are immutable and traceable to that commit.
-- Staging health endpoint and one real synthetic API workflow are verified after deployment.
-- Release approval records the target environment, cost settings, deployed commit, and rollback scope.
+| Risk | Mitigation |
+|---|---|
+| Product becomes a generic Agent demo | Keep the conditions loop, evidence graph, policy lifecycle, and provider failures central. |
+| Product becomes a copy of one company | Maintain independent positioning, public standards, provider neutrality, and a multi-lending extension model. |
+| Model output is mistaken for a lending decision | Use workflow-readiness vocabulary, deterministic authority, visible provenance, and human review. |
+| Architecture grows faster than evidence | Deliver vertical slices and defer service extraction, Kubernetes, and secondary frameworks. |
+| Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
+| Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
+| Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
+| Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
+| PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
+| Latest versions destabilize delivery | Prefer LTS and supported compatibility; gate major upgrades separately. |
+| Expansion breadth obscures product depth | Complete one conventional-mortgage vertical slice before additional product packs. |
+| Cloud cost expands without value | Keep local free defaults, attribute usage, require budgets, and avoid idle model infrastructure. |
 
-## 25. Definition of done
+## 24. Definition of done
 
-A feature is done only when:
+A feature slice is complete when applicable evidence includes:
 
-- acceptance criteria are met;
-- authorization and tenant behavior are defined;
-- happy and unhappy paths are tested;
-- migrations and rollback/forward strategy are documented;
-- telemetry and redaction are included;
-- API and event contracts are versioned;
-- operational failure and recovery behavior are documented;
-- documentation reflects the implemented state;
-- non-obvious business, security, reliability, and Agent-routing decisions have maintained code comments;
-- `docs/DEVELOPMENT_LOG.md` records the scope, decisions, files, verification, failures, and remaining gaps;
-- the implementation is captured in an atomic, descriptive commit;
-- no planned capability is presented as completed;
-- the change is reviewed and released according to repository governance.
+- acceptance criterion and user or developer outcome;
+- domain and architecture fit;
+- implementation and migration;
+- unit, property, integration, contract, workflow, security, or end-to-end tests proportional to risk;
+- authorization, privacy, failure, idempotency, and observability behavior;
+- API and documentation changes;
+- development-journal entry with commands and exact results;
+- reviewed diff without unrelated changes;
+- one coherent, independently revertible commit;
+- explicit disclosure of untested, undeployed, or deferred boundaries.
 
-## 26. Ten-point portfolio scorecard
+Passing unit tests alone does not establish production readiness.
 
-| Dimension | Points | Evidence required for full points |
-|---|---:|---|
-| Product clarity | 1.0 | Clear users, problem, workflow, non-goals, and readiness terminology. |
-| Fintech domain model | 1.0 | Consent, cases, findings, assessments, reviews, audit, and provenance. |
-| Backend architecture | 1.5 | REST/OpenAPI, GraphQL ops, migrations, tenancy, API/worker split. |
-| Distributed reliability | 1.5 | Outbox, queue, idempotency, retries, DLQ, replay, webhooks. |
-| AI Agent quality | 1.5 | Stateful tool loop, budgets, HITL, model gateway, reproducible eval. |
-| Security and privacy | 1.5 | OIDC/RBAC/RLS, encryption, redaction, synthetic demo, threat tests. |
-| Testing and operations | 1.0 | Testcontainers, contract/load/security tests, telemetry, runbooks, restore. |
-| Launch evidence | 1.0 | CI-gated synthetic staging, verified workflow, dashboard, demo and ADRs. |
-| **Total** | **10.0** | All evidence is present and reproducible. |
+## 25. Release and repository governance
 
-No single framework, model, cloud deployment, or feature awards ten points. The score comes from a coherent product plus trustworthy evidence.
+- One coherent, independently understandable feature slice maps to one commit.
+- Implementation, migration, tests, documentation, and journal evidence stay in the same commit when practical.
+- Unrelated changes are not mixed into a feature commit.
+- Large features are divided by acceptance criterion and observable outcome.
+- Material changes are reviewed through pull requests with linked verification evidence.
+- Protected branches require current CI and review before merge.
+- Release artifacts are immutable and traceable to source and lockfile revisions.
+- Cost-bearing infrastructure requires a budget, scaling limits, and teardown procedure.
+- Real providers and real data require explicit authorization, credentials, legal and compliance review, and environment approval.
 
-## 27. Release governance
+## 26. Development journal
 
-- Material changes are delivered through reviewable pull requests with linked acceptance evidence.
-- Each coherent feature is committed separately with a conventional subject such as `feat(scope): ...`, `fix(scope): ...`, `test(scope): ...`, or `docs(scope): ...`.
-- Commits must remain narrowly scoped, independently reviewable, and safely revertible.
-- Protected branches require passing CI and review before merge.
-- Release artifacts are immutable and traceable to a source commit and dependency lockfile.
-- Staging promotion requires automated smoke tests against a real synthetic workflow.
-- Production promotion requires explicit release approval, a rollback plan, and successful backup checks.
-- Cloud and provider permissions follow least privilege and use short-lived credentials.
-- Cost-bearing infrastructure requires a documented budget, scaling limits, and teardown procedure.
+`docs/DEVELOPMENT_LOG.md` is an append-only engineering record organized by milestone and feature identifier rather than calendar date.
 
-### Development journal
-
-`docs/DEVELOPMENT_LOG.md` is an append-only engineering journal. Every feature entry records:
+Each feature entry records:
 
 - milestone, status, and acceptance criterion;
 - problem and intended outcome;
-- implementation details and affected files;
+- implementation and affected files;
 - architecture and product decisions, including rejected alternatives;
-- commands executed and exact verification results;
-- failures encountered, root cause, and resolution;
+- commands and exact verification results;
+- failures, root cause, and resolution;
 - security, privacy, data, cost, and compatibility considerations;
 - known gaps and the next safe step.
 
-Entries are organized by milestone and feature identifier rather than calendar date. The journal records evidence, not a polished retrospective. Failed experiments and unverified boundaries remain visible.
+The journal preserves evidence rather than polishing history. Failed experiments, stale assumptions, and unverified boundaries remain visible.
 
-### Code documentation guidelines
+## 27. Code documentation guidelines
 
-Useful comments and JSDoc preserve context that is difficult to infer from code alone. They are especially valuable around:
+Useful comments and JSDoc preserve context that is difficult to infer from syntax. They are especially valuable around:
 
-- lending-policy intent and readiness boundaries;
+- lending-policy intent, units, rounding, and authority boundaries;
 - tenant, consent, privacy, and authorization constraints;
-- idempotency, transaction, retry, timeout, circuit-breaker, and replay reasoning;
+- transaction, idempotency, retry, timeout, cancellation, replay, and compensation reasoning;
 - provider normalization assumptions and lossy transformations;
-- Agent tool permissions, routing conditions, budgets, fallback, and human-review triggers;
-- non-obvious compatibility workarounds and performance tradeoffs;
-- public interfaces, provider adapters, Agent tools, and domain invariants.
+- workflow versioning and deterministic replay constraints;
+- Agent permissions, budgets, routing, fallback, and review triggers;
+- public interfaces, adapters, policy contracts, and domain invariants;
+- non-obvious compatibility workarounds and performance tradeoffs.
 
-A good comment explains **why** a design exists, which assumptions it relies on, and how it behaves when something fails. Comments that merely restate syntax, narrate each line, preserve dead code, or imply unsupported compliance guarantees add noise instead of context. When behavior changes, the related documentation evolves with it so that the code and its rationale remain aligned.
+A good comment explains why a design exists, which assumptions it relies on, and what failure behavior protects. Comments that repeat syntax, narrate every line, preserve dead code, or imply unsupported compliance guarantees add noise. Related documentation evolves with behavior so the implementation and rationale remain aligned.
 
-## 28. Decision records
+## 28. Architecture decision records
 
-The following architecture decisions are established by this charter and should receive dedicated ADR files when implementation begins:
+Implementation creates focused ADRs for decisions with durable consequences, beginning with:
 
-1. Modular monolith with separately deployed API and worker.
-2. REST/OpenAPI for partners and GraphQL for internal operations.
-3. PostgreSQL as system of record and transactional outbox store.
-4. BullMQ/Valkey for background execution; LangGraph for Agent state and HITL.
-5. Deterministic readiness policy is authoritative over model recommendations.
-6. Provider modes are simulator, authorized sandbox, and production BYOC.
-7. Ollama is local-only; production open-weight inference uses a protected Model Gateway and private serving layer.
-8. Synthetic-only public launch before any real-PII production approval.
-9. ECS Fargate before Kubernetes.
-10. Existing repository name remains stable; product identity is expressed through the subtitle and documentation.
+1. Modular monolith with separately deployed API, worker, and web processes.
+2. REST/OpenAPI for partners and GraphQL for operations.
+3. PostgreSQL as system of record with transactional outbox.
+4. Temporal as durable workflow owner and LangGraph behind an `AgentRuntime` port.
+5. Deterministic policy authority over model proposals.
+6. Versioned internal policy DSL and release lifecycle.
+7. Provider modes: simulator, authorized sandbox, and production BYOC.
+8. Synthetic-only public launch and real-data approval boundary.
+9. Terraform/OpenTofu and ECS Fargate before Kubernetes.
+10. Stable repository name with product identity expressed through documentation.
 
 ## 29. Immediate next implementation slice
 
-The next change after the current Ollama work should be **Milestone 1 only**, not the entire charter in one pull request.
+The next implementation milestone is **M1: supported runtime and security baseline**. It remains separate from the domain and workflow migration.
 
-Recommended pull-request acceptance criteria:
+Recommended first acceptance-criterion commits:
 
-1. Runtime upgraded to Node.js 24 LTS.
-2. NestJS 11/Express 5 and compatible Apollo Server 5/GraphQL packages installed.
-3. TypeScript 6 and Jest 30 migration completed; TypeScript 7 remains a later compatibility-gated upgrade.
-4. TypeORM upgraded to a patched version with an initial explicit migration.
-5. `synchronize` disabled outside isolated tests.
-6. Environment variables validated at startup.
-7. Production GraphQL playground and introspection disabled.
-8. Helmet, allowlisted CORS, bounded request bodies, and rate limiting enabled.
-9. `/health/live` and `/health/ready` implemented with database checks.
-10. Graceful shutdown and non-root production container implemented.
-11. Clean install, build, lint, unit, e2e, migration, Docker, and dependency-audit evidence recorded.
+1. Upgrade Node.js and NestJS/Express/Apollo runtime packages with compatibility tests.
+2. Migrate TypeScript and Jest tooling without changing product behavior.
+3. Add startup environment validation and production-safe defaults.
+4. Add explicit initial TypeORM migration and disable production schema synchronization.
+5. Add liveness, readiness, graceful shutdown, secure headers, CORS, rate limiting, and request limits.
+6. Record clean-install, build, lint, test, migration, Docker, and dependency evidence.
 
-This gives the project a supported, secure foundation before domain and Agent complexity is added.
+M2 begins only after the supported baseline is verified. Its first vertical slice is a tenant-keyed `LoanCase -> Evidence -> Condition -> Temporal wait -> Signal -> Resume` workflow using synthetic data.
 
 ## 30. Reference baseline
 
-Architecture choices should be refreshed during implementation against primary documentation:
+Technology choices are based on official project documentation and are revalidated during implementation:
 
-- [Node.js release schedule](https://nodejs.org/en/about/previous-releases)
-- [NestJS 11 migration guide](https://docs.nestjs.com/migration-guide)
-- [Apollo Server 5 migration guidance](https://www.apollographql.com/docs/apollo-server/migration)
-- [TypeScript 6 stable release](https://devblogs.microsoft.com/typescript/announcing-typescript-6-0/)
-- [TypeScript 7 stable release](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/)
-- [Nest CLI TypeScript 7.0 compatibility issue](https://github.com/nestjs/nest-cli/issues/3477)
-- [Jest 30 release](https://jestjs.io/blog/2025/06/04/jest-30)
-- [PostgreSQL versioning policy](https://www.postgresql.org/support/versioning/)
-- [LangGraph JavaScript persistence](https://docs.langchain.com/oss/javascript/langgraph/persistence)
-- [LangGraph.js npm package and release history](https://www.npmjs.com/package/@langchain/langgraph?activeTab=versions)
-- [Qwen3.5-9B model card](https://huggingface.co/Qwen/Qwen3.5-9B)
-- [Ollama tool-calling support](https://docs.ollama.com/capabilities/tool-calling)
-- [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
-- [vLLM OpenAI-compatible server](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/)
-- [vLLM security guidance](https://docs.vllm.ai/en/latest/usage/security/)
-- [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
-- [Amazon ECS architecture guidance](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-configuration.html)
+- Node.js release schedule: <https://github.com/nodejs/release>
+- NestJS 11 migration guide: <https://docs.nestjs.com/migration-guide>
+- TypeScript release notes: <https://devblogs.microsoft.com/typescript/>
+- PostgreSQL version policy: <https://www.postgresql.org/support/versioning/>
+- Temporal documentation: <https://docs.temporal.io/>
+- LangGraph.js v1 release notes: <https://docs.langchain.com/oss/javascript/releases/langgraph-v1>
+- React versions: <https://react.dev/versions>
+- OpenAPI specification: <https://spec.openapis.org/oas/>
+- OpenTelemetry documentation: <https://opentelemetry.io/docs/>
+
+External references justify technology maturity and compatibility only. They do not prove that target capabilities are implemented in this repository.

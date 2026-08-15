@@ -219,3 +219,93 @@ No application test is required because this change affects documentation only.
 ### Next safe step
 
 Begin Milestone 1 with the supported runtime and framework upgrade, documenting each coherent feature slice under its milestone identifier.
+
+## M0-004: Autonomous lending operations charter
+
+### Status
+
+Product and engineering charter rewritten and locally validated; the new capabilities described by the charter remain planned until their milestone evidence exists.
+
+### Acceptance criterion
+
+The public charter defines an independent, vendor-neutral, mortgage-first and lending-extensible product; centers the launch on an evidence-and-conditions workflow; uses broadly applicable Fintech architecture; separates durable workflow, bounded Agent reasoning, deterministic policy, and human authority; and organizes delivery as runnable vertical slices.
+
+### Problem
+
+The previous charter described a capable loan-readiness integration platform, but it did not make the conditions loop, policy lifecycle, developer sandbox, or Agent control plane central enough to the product. Its roadmap was organized primarily by architecture layer, which delayed the first complete operational workflow and made the product easier to interpret as a generic AI integration demo.
+
+### Implementation
+
+- Repositioned the product as an Autonomous Lending Operations Platform that works alongside existing Fintech systems.
+- Defined the product promise around evidence, conditions, routine resolution, and safe exception escalation.
+- Added product modules for the Case and Evidence Hub, Conditions Resolution Agent, Policy-as-Code Studio, Provider Gateway, Durable Workflow Runtime, Human Review Console, Agent Governance and Evaluation, and Developer Sandbox.
+- Replaced generic readiness flow with one synthetic conventional-mortgage conditions loop that waits, resumes, re-evaluates affected evidence, and records provenance.
+- Added stable case and condition vocabularies that avoid formal credit-decision claims.
+- Separated Temporal's durable workflow ownership from bounded LangGraph Agent execution and deterministic policy authority.
+- Added a human-reviewed policy DSL lifecycle with validation, conflict detection, regression testing, release pinning, and rollback.
+- Expanded provider modes, deterministic routing, failure fixtures, adapter contracts, and contract-test requirements.
+- Reworked the target architecture into API, worker, and web processes from one modular repository.
+- Updated the mainstream technology baseline to Node.js 24 LTS, NestJS 11, TypeScript 6 as a compatibility bridge, PostgreSQL 18, Temporal, LangGraph.js v1, React 19, OpenTelemetry, Terraform/OpenTofu, and ECS Fargate.
+- Added explicit data, API, event, security, privacy, responsible-AI, reliability, observability, testing, evaluation, cost, and deployment contracts.
+- Replaced the layer-first roadmap with Milestones M1 through M7, each ending in a runnable user or developer outcome.
+- Preserved public development-journal and code-documentation guidelines without private collaboration or identity instructions.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Operations control plane over full-stack replacement**: the platform coordinates existing systems, providers, policies, and reviewers rather than requiring customers to replace their complete lending stack.
+- **Conditions loop over one-shot decisioning**: evidence discrepancies, waiting, resumption, and exception handling create a more defensible operational Agent than a single model response.
+- **Mortgage-first and lending-extensible**: one mortgage vertical slice provides domain depth while product packs preserve a path to other lending workflows.
+- **Temporal outside, Agent runtime inside**: Temporal owns cross-day durability and side effects; LangGraph remains replaceable behind an application port and never becomes the system of record.
+- **REST for partners and GraphQL for operations**: this serves broad integration compatibility without discarding the repository's GraphQL investment.
+- **TypeScript 6 before TypeScript 7**: TypeScript 7 is released, but its programmatic compiler API transition still affects dependent tooling; compatibility evidence takes precedence over adopting the newest major number.
+- **Terraform/OpenTofu over company-specific infrastructure choices**: portable infrastructure and broad Fintech applicability take priority over matching any individual employer's stack.
+- **Vertical slices over layer-first delivery**: each milestone produces a demonstrable workflow while retaining production-quality gates.
+- **Synthetic policy and provider behavior only**: the public repository does not copy proprietary guidelines, claim official findings, or require paid credentials.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  passed with 26 fence markers
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+
+milestone status inspection
+  M0 marked Implemented; M1 through M7 marked Planned
+```
+
+No application test was required because this feature changes product and engineering documentation only. Implemented and planned claims were compared with the active repository structure, package manifest, source modules, and recent commit history.
+
+### Security, privacy, cost, and compatibility
+
+- Public launch remains synthetic-only and does not claim approval for real borrower data.
+- Deterministic policy and human authority remain above model output.
+- Default development continues to require no paid model or provider credential.
+- Current LTS and supported stable versions are favored over newer but compatibility-incomplete releases.
+- Cost-bearing infrastructure, real provider credentials, and real-data processing remain separately authorized future work.
+
+### Known gaps
+
+- The rewritten charter is a target-state contract; Milestones M1 through M7 are not implemented by this documentation change.
+- README positioning still reflects the current MVP and should evolve with the first implementation milestone rather than advertising planned capabilities as present.
+- Exact dependency patch versions will be selected and verified in their implementation commits.
+- Product metrics and Agent release thresholds remain targets until a reproducible evaluation report exists.
+
+### Next safe step
+
+Begin M1 with an isolated supported-runtime upgrade, preserving current behavior and recording clean installation, compatibility, build, lint, test, migration, Docker, and dependency evidence before starting the durable conditions workflow.
