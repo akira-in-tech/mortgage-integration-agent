@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.2 |
+| Version | 2.3 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -21,6 +21,7 @@ Capability status is expressed consistently:
 - **Implemented**: present in the repository.
 - **Verified**: implemented and supported by current, recorded test or operational evidence.
 - **Deployed**: running in an identified environment with a reproducible source revision.
+- **Provider-integration-ready**: simulator and authorized provider modes use the same domain workflow and adapter contract; sandbox certification evidence exists, but production credentials and real consumer data remain disabled.
 - **Production-approved**: passed the security, privacy, reliability, compliance, and operational gates required for real customer data.
 - **Planned**: target capability without implementation evidence.
 
@@ -73,7 +74,9 @@ The current implementation remains an MVP. The following target capabilities are
 
 The legacy `APPROVED`, `CONDITIONAL`, and `DENIED` demo vocabulary is not the target product contract and will be migrated before launch.
 
-The implemented `evaluateLoan` path is a one-shot synthetic readiness demo, not an end-to-end mortgage origination or production underwriting workflow. It does not currently implement policy confirmation, regulated milestone clocks, disclosures, appraisal, formal action notices, closing, funding, or post-closing quality control.
+The implemented `evaluateLoan` path is a one-shot synthetic readiness demo, not an end-to-end mortgage origination or production underwriting workflow. It does not currently implement policy-binding validation, regulated milestone clocks, disclosures, appraisal, formal action notices, closing, funding, or post-closing quality control.
+
+The current simulator services also predate the target `ProviderAdapter` contract. They have not passed reusable adapter contracts or an authorized provider sandbox, so the repository is not yet provider-integration-ready.
 
 ### 3.1 Current workflow audit
 
@@ -81,10 +84,10 @@ The implemented `evaluateLoan` path is a one-shot synthetic readiness demo, not 
 |---|---|---|
 | Intake | GraphQL receives borrower identifier, requested amount, and loan type. | Insufficient to establish a complete application, legal milestone, jurisdiction, property, purpose, occupancy, or consent context. |
 | Evidence | Three deterministic simulators return income, credit, and document summaries concurrently. | Useful for a demo; not authorized, complete, normalized, freshness-governed provider evidence. |
-| Policy | Thresholds exist in source code and a local-model prompt. | No immutable release, jurisdiction scope, effective dating, approval, confirmation, or exception governance. |
+| Policy | Thresholds exist in source code and a local-model prompt. | No immutable release, jurisdiction scope, effective dating, approval, binding validation, or exception governance. |
 | Evaluation | One request performs retrieval and returns a readiness-shaped decision. | No durable wait/resume, re-evaluation, workflow recovery, or mandatory current-policy guard. |
 | Outcome | Legacy `APPROVED`, `CONDITIONAL`, and `DENIED` labels are persisted. | These labels are not supported as formal credit actions and must be migrated to readiness vocabulary. |
-| Persistence | A single application row is saved after evaluation with raw simulator payloads. | No case aggregate, evidence lineage, condition history, policy receipt, outbox, review record, or true request idempotency. |
+| Persistence | A single application row is saved after evaluation with raw simulator payloads. | No case aggregate, evidence lineage, condition history, policy binding, outbox, review record, or true request idempotency. |
 | Coverage | Income, credit, documents, DTI, and loan-to-income are simulated. | Assets, property and collateral, appraisal, title, insurance, disclosures, formal notices, closing, funding, and post-close QC are absent. |
 
 ## 4. Product position
@@ -162,6 +165,7 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 - Make evidence, policies, model behavior, and overrides traceable.
 - Run locally without paid model or provider credentials.
 - Add providers without changing case, policy, or Agent domain logic.
+- Keep simulator and real-provider modes on the same workflow, canonical contracts, and deployable artifact.
 - Support tenant isolation and least-privilege access before any shared deployment.
 - Produce measurable product, reliability, security, and Agent-quality evidence.
 - Preserve a modular architecture that can extend beyond mortgage through product packs.
@@ -178,6 +182,7 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 - Replacing a customer's full loan origination system.
 - Adopting microservices, Kubernetes, or multiple Agent frameworks without measured need.
 - Ingesting real consumer PII into the public demo.
+- Treating a simulator-only pass as proof of provider-integration readiness or real-data production approval.
 - Claiming legal, regulatory, security, or fairness certification from software controls alone.
 
 ### 5.3 Engineering principles
@@ -266,15 +271,15 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 5. Extract candidate facts and retain source locations.
 6. Run simulated income, asset, credit, identity, and document capabilities.
 7. Normalize findings and compare case-intake, document, and provider evidence.
-8. Request an evaluation; the mandatory system guard confirms the currently applicable released synthetic policy and issues an evaluation-bound receipt.
-9. Execute deterministic calculations and policy only against the confirmed snapshot.
+8. Request an evaluation; the mandatory system guard validates or refreshes the case's current policy binding using the authoritative scope generation and relevant-facts hash.
+9. Execute deterministic calculations and policy only against the validated immutable snapshot.
 10. Create prioritized operational conditions for missing or contradictory evidence.
 11. Let the Agent select the next approved tool within budget.
 12. Pause durably for information or human approval when required.
 13. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
 14. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
-15. Before every re-evaluation, run policy confirmation again; an unchanged result still creates a new evaluation receipt, while a changed or ambiguous result creates a new snapshot or review task.
-16. Publish signed status events and display the full timeline, including every policy confirmation and why each version did or did not apply.
+15. Before every re-evaluation, validate the binding again; reuse it when all validity predicates still hold, otherwise refresh it or create a review task.
+16. Publish signed status events and display the full timeline, including the binding and validation outcome used by every evaluation.
 
 ### 7.2 Included synthetic capabilities
 
@@ -286,7 +291,7 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 - document classification and structured field extraction;
 - qualified-income, DTI, and LTV calculations using synthetic policy;
 - jurisdiction and relevant-event-aware policy snapshot resolution;
-- mandatory current-policy confirmation before every evaluation;
+- mandatory current-policy binding validation before every evaluation;
 - future-effective policy scheduling and open-case impact simulation;
 - evidence comparison and contradiction detection;
 - condition creation and resolution;
@@ -321,6 +326,8 @@ Every simulator supports deterministic fixtures for:
 - multi-region disaster recovery;
 - high-volume batch submission.
 
+Deferred capabilities are disabled in the public synthetic launch, not omitted from the target integration architecture. Real providers must enter through the same capability ports, workflow, canonical findings, and release artifact after the gates in Sections 11.7 and 22.6 pass.
+
 ## 8. Product modules
 
 ### 8.1 Case and Evidence Hub
@@ -333,7 +340,7 @@ Observes case state, selects registered tools, proposes safe next actions, expla
 
 ### 8.3 Policy-as-Code Studio
 
-Manages authorized source coverage, jurisdiction overlays, immutable synthetic policy versions, applicability, per-evaluation confirmation, effective dates, transition rules, DSL validation, tests, impact review, scheduled activation, correction, withdrawal, and retirement.
+Manages authorized source coverage, jurisdiction overlays, immutable synthetic policy versions, applicability, efficient binding validation, effective dates, transition rules, DSL validation, tests, impact review, scheduled activation, correction, withdrawal, and retirement.
 
 ### 8.4 Provider Gateway
 
@@ -390,8 +397,7 @@ interface LendingOperationsAgentState {
   openConditions: ConditionSummary[];
   providerHealth: ProviderHealthSummary[];
   attemptedTools: ToolAttemptSummary[];
-  lastPolicySnapshotId?: string;
-  lastPolicyConfirmationId?: string;
+  policyBindingId?: string;
   modelVersion?: string;
   promptVersion?: string;
   remainingStepBudget: number;
@@ -412,19 +418,19 @@ interface LendingOperationsAgentState {
 | `fetch_asset_evidence` | Request asset capability | Provider submission | Consent and budget required |
 | `fetch_credit_evidence` | Request credit-summary capability | Provider submission | Consent and budget required |
 | `check_identity_consistency` | Compare synthetic identity evidence | Provider submission | Consent required |
-| `calculate_qualified_income` | Request a policy-bound income calculation | Versioned calculation | Mandatory policy confirmation |
+| `calculate_qualified_income` | Request a policy-bound income calculation | Versioned calculation | Mandatory policy-binding validation |
 | `calculate_dti` | Execute deterministic calculation | Versioned calculation | No |
 | `calculate_ltv` | Execute deterministic calculation | Versioned calculation | No |
 | `compare_evidence` | Detect missing, stale, or conflicting facts | None | No |
 | `check_policy_change_impact` | Compare an approved policy change with open cases | Creates impact assessment | No; cannot change case applicability |
-| `evaluate_policy` | Request guarded evaluation of current applicable policy | Creates assessment | Mandatory policy confirmation |
-| `create_condition` | Materialize a policy-supported operational condition | Case mutation | Valid evaluation receipt required |
+| `evaluate_policy` | Request guarded evaluation of current applicable policy | Creates assessment | Mandatory policy-binding validation |
+| `create_condition` | Materialize a policy-supported operational condition | Case mutation | Validated binding and evaluation required |
 | `draft_information_request` | Prepare a remediation request | Draft only | No |
 | `send_information_request` | Deliver an external message | External communication | Human or configured policy approval |
 | `escalate_to_reviewer` | Pause and create review task | Workflow transition | No |
 | `publish_case_update` | Deliver a signed webhook | External communication | Policy-controlled and idempotent |
 
-`confirm_policy_for_evaluation` is deliberately not an Agent tool. It is an unavoidable application-service guard invoked server-side for every evaluation request, including re-evaluations and retries. The Agent cannot omit it, supply its result, or choose an older snapshot.
+`validate_policy_binding` is deliberately not an Agent tool. It is an unavoidable application-service guard invoked server-side for every evaluation request, including re-evaluations and retries. The Agent cannot omit it, supply its result, or choose an older snapshot.
 
 ### 9.5 Agent loop
 
@@ -436,8 +442,8 @@ LOAD VERSIONED CASE
   -> REQUEST SIDE-EFFECTING TOOL THROUGH WORKFLOW GATE
   -> NORMALIZE AND VALIDATE OBSERVATIONS
   -> REQUEST POLICY-BOUND EVALUATION
-       -> SYSTEM GUARD CONFIRMS CURRENT APPLICABLE POLICY
-       -> ISSUE EVALUATION-BOUND CONFIRMATION RECEIPT
+       -> SYSTEM GUARD VALIDATES OR REFRESHES POLICY BINDING
+       -> RECORD BINDING ID AND VALIDATION OUTCOME ON EVALUATION
        -> EXECUTE DETERMINISTIC CALCULATIONS AND POLICY
        -> sufficient evidence: propose condition transitions
        -> more information: draft request and wait
@@ -552,53 +558,67 @@ interface CasePolicySnapshot {
 }
 ```
 
-The resolver receives server-owned tenant and case facts, then selects only released policy versions whose reviewed applicability constraints match. It returns an immutable `CasePolicySnapshot`, not a mutable global policy pointer. The workflow pins that snapshot for one deterministic evaluation. Every later evaluation invokes the confirmation guard again; when nothing relevant changed, the guard confirms the same snapshot and still records a new evaluation-bound receipt.
+The resolver receives server-owned tenant and case facts, then selects only released policy versions whose reviewed applicability constraints match. It returns an immutable `CasePolicySnapshot`, not a mutable global policy pointer. The workflow binds a case scope and relevant-facts hash to that snapshot. Every later evaluation validates the binding; full applicability resolution runs again only when a validity predicate fails.
 
 The same resolution context, policy catalog knowledge time, and resolver version must reproduce the same snapshot. Missing jurisdiction data, overlapping versions, a gap around an effective boundary, or unresolved precedence produces `REVIEW_REQUIRED`; the system never asks the model to guess.
 
-### 10.4 Mandatory confirmation before every evaluation
+### 10.4 Efficient mandatory validation before every evaluation
 
-Resolution is required on every evaluation attempt, not only when a known policy-change event occurs. An unchanged snapshot may be reused as evaluation input only after the guard has rechecked the current catalog revision, effective boundary, relevant case-event dates, jurisdiction coverage, source freshness, approval state, transition rules, and policy-relevant case facts.
+Every evaluation must confirm that its policy is still current, but confirmation does not require full resolution or a new receipt every time. The policy control plane publishes approved immutable snapshots and increments a generation only for affected scope keys. The evaluation data plane performs a constant-size validation against the authoritative generation pointer, trusted time, and a hash of policy-relevant case facts.
 
 ```ts
-interface PolicyConfirmationReceipt {
+interface CasePolicyBinding {
   id: string;
-  evaluationRequestId: string;
   tenantId: string;
   caseId: string;
-  caseFactVersion: number;
-  evaluationIntent: string;
-  contextHash: string;
+  scopeKey: string;
+  scopeGeneration: number;
+  relevantFactsHash: string;
   policySnapshotId: string;
-  catalogRevision: string;
-  policyKnowledgeAsOf: string;
-  confirmedAt: string;
-  validUntil: string;
-  status: 'CONFIRMED_UNCHANGED' | 'CONFIRMED_NEW_SNAPSHOT';
+  boundAt: string;
+  validFrom: string;
+  revalidateAfter: string;
+  invalidatedAt?: string;
+}
+
+interface PolicyBindingValidation {
+  bindingId: string;
+  validatedAt: string;
+  observedScopeGeneration: number;
+  observedFactsHash: string;
+  outcome: 'REUSED' | 'REFRESHED' | 'REVIEW_REQUIRED';
 }
 ```
 
+`scopeKey` is derived from tenant, jurisdiction, product, optional program or investor overlay, and lifecycle event. `revalidateAfter` is the earliest known scheduled activation boundary, source-freshness deadline, or configured maximum validation interval.
+
 ```text
 BEGIN EVALUATION REQUEST
-  -> derive policy context from server-owned case facts
-  -> read one approved catalog revision at evaluation start
-  -> verify jurisdiction coverage, source freshness, and approvals
-  -> verify relevant dates, effective boundaries, and transitions
-  -> resolve the current applicable snapshot
-       -> ambiguity, gap, stale source, or conflict: stop and create review task
-       -> unchanged: issue a new confirmation receipt for this evaluation
-       -> changed: persist a new snapshot and issue a new confirmation receipt
-  -> execute against that receipt and snapshot in one consistency boundary
-  -> persist evaluation, receipt, snapshot, evidence, and outcome links
+  -> derive scope key and relevant-facts hash from server-owned state
+  -> read the indexed authoritative scope generation
+  -> validate binding predicates
+       generation unchanged
+       relevant-facts hash unchanged
+       trusted time before revalidateAfter
+       binding not invalidated or withdrawn
+       jurisdiction coverage still fresh
+  -> all valid: reuse immutable binding and snapshot
+  -> any invalid: perform full applicability resolution
+       -> resolved: atomically refresh binding
+       -> ambiguity, gap, stale coverage, or conflict: create review task
+  -> record binding ID and validation outcome on the evaluation
+  -> execute against that binding in the same consistency boundary
 ```
 
-The receipt is bound to one evaluation request, case-fact version, context hash, catalog revision, and snapshot. A retry of the same idempotent request may reuse the same receipt and result; a new evaluation request must confirm again. Any policy-relevant case mutation, catalog revision, scheduled activation boundary, withdrawal, freshness deadline, or mismatched hash invalidates reuse.
+This design keeps the correctness property while eliminating per-evaluation source reads, full rule scans, and duplicate receipt writes. A successful fast path performs one indexed generation read plus in-memory hash and time comparisons. Redis or process caches may reduce latency, but they are hints only; the authoritative scope generation is read transactionally whenever an evaluation can create a material state transition.
 
-Confirmation and execution share a database snapshot or equivalent consistency boundary so a policy activation cannot create an unrecorded time-of-check/time-of-use gap. The evaluator rejects direct calls without a valid receipt. Confirmation is deterministic infrastructure, not a human click and not an LLM judgment.
+Policy activation atomically increments only affected scope generations and emits invalidation events. A new evaluation may safely reuse a binding while every predicate remains valid. It must refresh after a relevant case mutation, affected generation change, scheduled boundary, withdrawal, coverage-freshness deadline, or hash mismatch. The invariant is therefore **validation coverage `100%` and invalid binding acceptance `0`**, not zero reuse.
 
-The confirmation receipt is this platform's auditable implementation of policy and change-control discipline; it is not a regulator-prescribed mortgage form. Production organizations may implement the same control through other approved rules engines, configuration services, and audit mechanisms.
+The evaluation row itself is the audit record: it stores the binding ID, observed scope generation, validation time, outcome, and evaluator version. A same-request idempotent replay returns the recorded result. A new request may reuse the binding after validation without creating a separate confirmation artifact.
 
-Confirmation reads the approved internal catalog; it does not scrape or reinterpret external legal sources in the evaluation critical path. Source monitors update freshness and candidate revisions asynchronously. If declared jurisdiction coverage is incomplete or its freshness objective has expired, confirmation stops and routes to review. “Current” therefore means current within explicitly approved, fresh source coverage, never an unsupported claim that the platform knows every policy change everywhere.
+Validation and execution share a database snapshot or equivalent consistency boundary so a policy activation cannot create an unrecorded time-of-check/time-of-use gap. The evaluator rejects direct calls that bypass validation. The guard is deterministic infrastructure, not a human click and not an LLM judgment.
+
+Validation reads the approved internal catalog; it does not scrape or reinterpret external legal sources in the evaluation critical path. Source monitors update freshness and candidate revisions asynchronously. If declared jurisdiction coverage is incomplete or its freshness objective has expired, validation stops and routes to review. “Current” means current within explicitly approved, fresh source coverage, never an unsupported claim that the platform knows every policy change everywhere.
 
 For a live evaluation, `evaluationAsOf` and `policyKnowledgeAsOf` come from trusted server time. Historical values are accepted only by a separately authorized replay operation that cannot create a live case outcome.
 
@@ -653,8 +673,8 @@ rule:
 - Units, money, ratios, dates, and rounding behavior are explicit.
 - Every condition links to the rule and evidence that created it.
 - Every evaluation links to an immutable case policy snapshot and resolver version.
-- Every evaluation attempt first produces a valid, request-bound policy confirmation receipt; coverage is `100%` by construction.
-- A previously confirmed snapshot is never reused for a new evaluation without a new confirmation action.
+- Every evaluation validates a policy binding; validation coverage is `100%` and invalid binding acceptance is `0`.
+- A valid binding may be reused across evaluations only while its scope generation, relevant-facts hash, time boundary, invalidation state, and source coverage remain valid.
 - Policy activation never mutates a running evaluation or silently reinterprets an open case.
 - A policy change requires regression evidence, effective-date boundary tests, transition approval, and an open-case impact summary.
 - Future-effective policy never activates early; expired, withdrawn, conflicting, or coverage-unknown policy fails closed.
@@ -673,7 +693,15 @@ type ProviderMode = 'SIMULATOR' | 'AUTHORIZED_SANDBOX' | 'PRODUCTION_BYOC';
 - `AUTHORIZED_SANDBOX`: optional provider test environment enabled through authorized credentials.
 - `PRODUCTION_BYOC`: customer supplies the contract, authority, credentials, and configuration.
 
-### 11.2 Capability contract
+### 11.2 Simulator-to-production parity
+
+Simulator, authorized sandbox, and production adapters implement the same capability port and return the same canonical findings. Domain, workflow, policy, and Agent code cannot branch on a provider brand or operating mode. Environment-specific authentication, endpoints, bootstrap calls, and payload quirks stay inside the adapter and credential boundary.
+
+Changing from simulator to a real provider is a reviewed configuration and secret activation, not a source-code edit, rebuild, or alternate business workflow. The same immutable application artifact is promoted across environments.
+
+Sandbox parity has limits: a provider test environment may not reproduce institution-specific authentication, data quality, latency, rate limits, or failure behavior. Production readiness therefore requires both deterministic simulator coverage and an authorized provider-certification sequence before live traffic.
+
+### 11.3 Capability contract
 
 ```ts
 interface ProviderAdapter<TRequest, TReceipt, TFinding> {
@@ -690,7 +718,31 @@ interface ProviderAdapter<TRequest, TReceipt, TFinding> {
 
 Adapters never write case state directly. Workflow activities validate and normalize provider output, then the domain layer commits state and an outbox event transactionally.
 
-### 11.3 Routing
+### 11.4 Promotion manifest
+
+```ts
+interface ProviderPromotionManifest {
+  tenantId: string;
+  providerId: string;
+  adapterVersion: string;
+  mode: ProviderMode;
+  capabilities: ProviderCapability[];
+  endpointAllowlist: string[];
+  credentialRef: string;
+  webhookSecretRef?: string;
+  dataClassifications: string[];
+  consentAndPurposePolicyId: string;
+  timeoutPolicyId: string;
+  retryPolicyId: string;
+  rateAndCostBudgetId: string;
+  certificationReportId: string;
+  enabled: boolean;
+}
+```
+
+Manifests contain references and policy identifiers, never raw credentials. Enabling `PRODUCTION_BYOC` requires an approved manifest, isolated secret reference, explicit tenant authorization, and an attributable change record. A kill switch can disable a provider or capability without redeploying the application.
+
+### 11.5 Routing
 
 Provider selection uses deterministic constraints before optimization:
 
@@ -704,7 +756,7 @@ Provider selection uses deterministic constraints before optimization:
 
 LLMs do not choose a provider by unconstrained preference. More advanced optimization may be added after the routing inputs and objectives are measurable.
 
-### 11.4 Contract tests
+### 11.6 Contract and certification tests
 
 Every adapter passes the same reusable suite:
 
@@ -719,6 +771,23 @@ Every adapter passes the same reusable suite:
 - normalized provenance;
 - log and error redaction;
 - health and fallback behavior.
+
+The same suite runs against simulators and authorized sandboxes. A production certification run additionally verifies endpoint and credential isolation, real authentication behavior, representative schema variance, webhook signatures, documented rate limits, support correlation identifiers, canary routing, kill-switch behavior, and rollback to a safe provider state.
+
+### 11.7 Real-data enablement boundary
+
+The codebase is **provider-integration-ready** only when real providers can be enabled through a promotion manifest and secret activation with no domain or workflow code change. It becomes **production-approved** for real data only after all of the following are evidenced for the specific tenant, provider, capability, product, jurisdiction, and environment:
+
+- executed contract and production access approval;
+- consent and permissible-purpose configuration;
+- data-flow, classification, minimization, retention, deletion, and residency review;
+- managed credentials, rotation, revocation, egress allowlist, and webhook verification;
+- tenant isolation, field authorization, encryption, redaction, and audit tests;
+- provider-specific certification, rate-limit and cost budgets, canary plan, kill switch, and incident runbook;
+- legal, compliance, privacy, security, and operations approval with named owners;
+- monitored first-live workflow and verified rollback.
+
+Real data is never copied into public fixtures, model-evaluation corpora, screenshots, local development, or shared staging. Production adapters receive only the minimum authorized fields, and model access remains independently governed from provider access.
 
 ## 12. Target architecture
 
@@ -810,7 +879,7 @@ Domain and application contracts do not import web frameworks, model SDKs, queue
 | Production inference | Model Gateway + private vLLM-compatible serving | OpenAI-compatible, model-neutral serving boundary. |
 | Web | React 19 + TypeScript + query/state tooling | Mainstream operations UI with explicit loading, error, and recovery states. |
 | Object storage | S3-compatible storage; MinIO locally | Durable document and raw-payload boundary with lifecycle support. |
-| Identity | Managed OIDC/OAuth 2.0 + scoped API clients | Avoid implementing credential security in the domain core. |
+| Identity | Managed OIDC/OAuth 2.0 + scoped API clients; FAPI 2.0 profile where ecosystem-compatible | Use established high-security financial API patterns without implementing authorization security in the domain core. |
 | Telemetry | OpenTelemetry | Vendor-neutral traces, metrics, logs, and context propagation. |
 | Tests | Jest, Supertest, Testcontainers, property and contract tests | Layered correctness and integration evidence. |
 | Infrastructure | Terraform/OpenTofu + AWS ECS Fargate target | Portable infrastructure definitions without premature Kubernetes. |
@@ -843,10 +912,11 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `policy_versions` | Immutable DSL, valid-time interval, release status, approvals, and test manifest. |
 | `policy_applicability` | Typed scope, triggering event, precedence, and approved transition criteria. |
 | `policy_change_events` | Detected, scheduled, activated, corrected, withdrawn, or superseded change history. |
+| `policy_scope_generations` | Authoritative generation and next boundary for each affected tenant, jurisdiction, product, program, and lifecycle scope. |
 | `case_policy_snapshots` | Immutable resolved versions, source revisions, context hash, and resolution reasons. |
-| `policy_confirmation_receipts` | Request-bound proof that current applicability, coverage, freshness, approvals, and hashes were checked immediately before evaluation. |
+| `case_policy_bindings` | Reusable case-to-snapshot binding with scope generation, relevant-facts hash, time boundary, and invalidation state. |
 | `policy_impact_assessments` | Dry-run comparison and disposition for potentially affected open cases. |
-| `policy_evaluations` | Confirmation-receipt-bound rule execution and evidence references. |
+| `policy_evaluations` | Binding ID, validation observation, evaluator version, rule execution, and evidence references. |
 | `loan_conditions` | Condition lifecycle and required evidence. |
 | `condition_transitions` | Actor-attributed condition state history. |
 | `provider_connections` | Tenant provider mode and credential reference. |
@@ -875,7 +945,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Evidence retains source location, observed time, validity interval, and transformation history.
 - Policy data retains separate valid-time and system-time fields so historical execution can be reproduced as both effective and known at a declared instant.
 - Policy source coverage and freshness are explicit per jurisdiction; missing coverage is an operational state, not an implicit default.
-- Policy confirmation receipts are append-only, single-evaluation artifacts and cannot be supplied by a client or model.
+- Policy bindings and their observed generations are server-owned; clients and models cannot supply, select, or extend them.
 - Raw provider payloads are encrypted, access-controlled, and short-lived.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
@@ -942,8 +1012,9 @@ policy_version.scheduled
 policy_version.activated
 policy_change.detected
 case_policy_snapshot.resolved
-policy_confirmation.completed
-policy_confirmation.review_required
+policy_binding.validated
+policy_binding.refreshed
+policy_binding.review_required
 policy_impact.review_required
 provider_submission.failed
 ```
@@ -1011,7 +1082,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - duplicate provider callbacks after workflow cancellation;
 - malicious file content and decompression abuse;
 - unauthorized review override or audit tampering.
-- bypass, replay, substitution, or time-of-check/time-of-use race involving a policy confirmation receipt.
+- bypass, stale reuse, substitution, or time-of-check/time-of-use race involving a policy binding.
 
 ## 17. Reliability and observability
 
@@ -1023,7 +1094,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - Retries use explicit classifications, bounded attempts, backoff, and jitter.
 - Circuit breakers prevent repeated calls to unhealthy providers.
 - Workflow replay does not duplicate completed external effects.
-- Workflow replay cannot bypass policy confirmation; a new evaluation confirms again, while an idempotent replay of the same completed request returns its recorded result.
+- Workflow replay cannot bypass policy-binding validation; a new evaluation validates again, while an idempotent replay of the same completed request returns its recorded result.
 - Versioned workflow code preserves deterministic replay compatibility.
 - Failed work remains inspectable and recoverable through operations tooling.
 - Provider fallback never changes the semantic capability contract silently.
@@ -1051,13 +1122,13 @@ Required telemetry includes:
 
 - request rate, errors, duration, and saturation;
 - workflow state, schedule-to-start, activity retries, and stuck executions;
-- provider latency, errors, rate limits, fallback, and circuit state;
+- provider mode, adapter and certification version, latency, normalization failures, authentication expiry, webhook verification, rate limits, fallback, canary allocation, kill-switch state, and circuit state;
 - condition age, reopen rate, and time waiting for evidence;
 - Agent steps, tool choices, schema failures, escalation, tokens, and cost;
 - policy source freshness and coverage gaps by jurisdiction;
 - time from detected source revision to reviewed version and scheduled activation;
 - policy snapshot resolution conflicts, failures, and version distribution;
-- policy confirmation coverage, latency, invalidation, reuse rejection, and review-required rate;
+- policy-binding validation coverage, fast-path reuse, refresh rate, latency, invalid-binding rejection, and review-required rate;
 - open cases awaiting change-impact review and changes approaching an effective date without approved treatment;
 - policy evaluation failures;
 - webhook backlog and terminal delivery failures;
@@ -1080,7 +1151,7 @@ Required telemetry includes:
 10. **Load and soak tests**: declared environment and reproducible workload.
 11. **Agent evaluation**: golden cases, adversarial documents, tool constraints, and model comparisons.
 12. **Policy time-travel tests**: jurisdiction matrices, effective-boundary instants, scheduled activation, grandfathering, corrections, withdrawals, late or out-of-order source revisions, and deterministic as-of replay.
-13. **Policy confirmation tests**: no-receipt rejection, one confirmation per evaluation request, context and case-version mismatch, catalog activation races, expiry, idempotent same-request retry, and mandatory confirmation on every re-evaluation.
+13. **Policy-binding tests**: validation-bypass rejection, safe unchanged-binding reuse, facts and scope-generation mismatch, scheduled-boundary expiry, invalidation events, catalog activation races, idempotent same-request replay, and mandatory validation on every re-evaluation.
 
 ### 18.2 Evaluation corpus
 
@@ -1107,8 +1178,8 @@ The first release target is at least 150 synthetic cases across normal, boundary
 - mandatory-review recall: `100%` on designated release cases;
 - deterministic policy repeatability: `100%` for identical versioned inputs;
 - policy snapshot repeatability: `100%` for identical context, catalog knowledge time, and resolver version;
-- evaluations with a valid request-bound policy confirmation receipt: `100%`;
-- new evaluation requests that reuse an earlier receipt: `0`;
+- evaluations with a validated policy binding: `100%`;
+- invalid or stale policy bindings accepted: `0`;
 - future-effective policy activated early: `0`;
 - malformed output accepted as valid: `0`;
 - tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
@@ -1144,7 +1215,8 @@ Kubernetes is deferred until measured scheduling, portability, or organizational
 - `local`: synthetic data, local dependencies, developer-owned.
 - `test`: ephemeral dependencies and deterministic fixtures.
 - `staging`: synthetic data only, production-like controls and deployment path.
-- `production`: absent until real-data, legal, provider, security, privacy, and operational approval exists.
+- `provider-certification`: isolated authorized sandboxes and, only when separately approved, a controlled provider canary with restricted real data.
+- `production`: the same immutable artifact and domain workflow, with real adapters disabled by default and enabled per tenant only through an approved promotion manifest and secret activation.
 
 ### 19.4 Cost controls
 
@@ -1155,6 +1227,14 @@ Kubernetes is deferred until measured scheduling, portability, or organizational
 - local and staging model services can remain off outside evaluation windows;
 - cost-bearing infrastructure requires a documented budget and teardown path;
 - business metrics include cost per workflow and per resolved condition.
+
+### 19.5 Production-readiness levels
+
+1. **Synthetic launch ready**: the production-shaped stack, complete workflow, security controls, observability, recovery, and release gates pass using generated data and deterministic simulators.
+2. **Provider-integration-ready**: the same artifact passes reusable adapter contracts and authorized sandbox certification; production endpoints, production credentials, and real consumer data remain disabled.
+3. **Production-approved**: a specific tenant, provider, capability, product, jurisdiction, and environment pass the real-data enablement gates in Section 11.7 and Section 22.6.
+
+Level 2 is the repository engineering target. Level 3 is an environment and organizational approval state, not a claim that can be established from public source code alone.
 
 ## 20. Delivery strategy
 
@@ -1171,7 +1251,7 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 | M4 | Provider gateway, partner API, webhooks, and sandbox | Planned |
 | M5 | Tenant trust boundary and audit controls | Planned |
 | M6 | Operations console and release evaluation | Planned |
-| M7 | Synthetic staging and launch evidence | Planned |
+| M7 | Synthetic staging and provider-integration-readiness evidence | Planned |
 
 ### M0 — Product foundation
 
@@ -1227,14 +1307,14 @@ Exit evidence:
 
 ### M3 — Policy and Agent vertical slice
 
-**User-visible outcome:** the Agent inspects evidence and selects allowed tools; every policy-bound evaluation first confirms the currently applicable synthetic policy, then pauses for review or resumes safely.
+**User-visible outcome:** the Agent inspects evidence and selects allowed tools; every policy-bound evaluation first validates or refreshes the current synthetic policy binding, then pauses for review or resumes safely.
 
 Scope:
 
 - policy source registry, jurisdiction catalog, and explicit coverage status;
 - policy DSL parser, validator, evaluator, immutable versions, and golden tests;
 - bitemporal applicability resolver and immutable case policy snapshots;
-- unavoidable `PolicyEvaluationService` confirmation guard and request-bound receipts;
+- unavoidable `PolicyEvaluationService` binding-validation guard, scope generations, and invalidation events;
 - future-effective scheduling, transition approval, and open-case impact assessment;
 - change fixtures covering state overlays, corrections, withdrawals, and relevant lifecycle events;
 - `AgentRuntime` port and LangGraph.js v1 adapter;
@@ -1250,7 +1330,8 @@ Exit evidence:
 - designated review cases always interrupt;
 - repeated versioned inputs produce the same policy result;
 - the same as-of context reproduces the same policy snapshot, including at effective-date boundaries;
-- every evaluation and re-evaluation has exactly one valid confirmation receipt, while direct evaluator calls without one fail closed;
+- every evaluation and re-evaluation records a binding-validation outcome, while direct evaluator calls that bypass validation fail closed;
+- unchanged valid bindings use the fast path; affected generations, facts, or time boundaries force refresh or review;
 - a catalog activation racing with evaluation produces one internally consistent, auditable result;
 - a future-effective or jurisdiction-mismatched version is never selected;
 - an ambiguous transition or policy-layer conflict always creates a review task;
@@ -1264,6 +1345,7 @@ Scope:
 
 - provider registry, capability contracts, health, routing, and normalization;
 - income, asset, credit, identity, and document simulators;
+- promotion manifests and configuration-only simulator, sandbox, and production modes;
 - reusable adapter contract suite;
 - REST/OpenAPI contract and TypeScript client;
 - webhook subscriptions, delivery retries, history, and replay protection;
@@ -1273,6 +1355,8 @@ Scope:
 Exit evidence:
 
 - a new simulator adapter is added without domain or Agent changes;
+- an authorized sandbox adapter runs the same workflow and canonical contracts as its simulator;
+- changing provider mode requires configuration and secret activation, not a different application build;
 - every documented failure mode is covered by a deterministic test;
 - generated client completes the published quickstart.
 
@@ -1283,6 +1367,7 @@ Exit evidence:
 Scope:
 
 - OIDC and scoped API-client authentication;
+- FAPI 2.0 security profile compatibility where required by the provider or customer ecosystem;
 - RBAC, tenant context, and PostgreSQL RLS;
 - consent enforcement;
 - encrypted field and object boundaries;
@@ -1315,9 +1400,9 @@ Exit evidence:
 - accessibility and unhappy-path checks pass;
 - no sensitive fixture content appears in telemetry or unauthorized views.
 
-### M7 — Synthetic staging launch
+### M7 — Synthetic staging and provider-integration readiness
 
-**Outcome:** the product is reproducibly deployed with synthetic data and production-like engineering controls.
+**Outcome:** the product is reproducibly deployed with synthetic data and production-like controls, and the same artifact is certifiably ready for authorized real-provider configuration.
 
 Scope:
 
@@ -1327,12 +1412,15 @@ Scope:
 - load, soak, security, backup, restore, and failure-recovery evidence;
 - SLO dashboards, alerts, runbooks, and incident exercise;
 - architecture decision records and demo walkthrough;
+- provider promotion manifests, certification reports, kill-switch exercise, and configuration-only mode-switch evidence;
 - release artifact, dependency, and source-revision traceability.
 
 Exit evidence:
 
 - all launch gates in Section 22 pass in staging;
 - live health, workflow, review, webhook, and recovery paths are verified;
+- provider-integration-ready status is claimed only after at least one authorized sandbox integration passes the same contract suite and end-to-end workflow as its simulator;
+- absence of optional provider credentials does not block synthetic-launch-ready status, but it prevents a provider-integration-ready claim and remains an explicit unverified boundary;
 - the release remains explicitly synthetic and is not represented as approved for real borrower data.
 
 ## 21. Product and operational metrics
@@ -1367,7 +1455,7 @@ Exit evidence:
 - policy source coverage and freshness by jurisdiction;
 - time from source-change detection to reviewed, scheduled policy version;
 - policy snapshot resolution conflict and failure rate;
-- policy confirmation coverage, latency, invalidation, and review-required rate;
+- policy-binding validation coverage, fast-path reuse, refresh, latency, invalid-binding rejection, and review-required rate;
 - open cases awaiting policy-impact disposition;
 - steps, latency, tokens, and cost by model configuration.
 
@@ -1415,7 +1503,7 @@ Exit evidence:
 - unauthorized-tool, mandatory-review, evidence-coverage, malformed-output, and unsupported-claim gates pass;
 - every released policy version has approval and regression evidence;
 - every evaluated case records the exact applicable versions, source revisions, jurisdiction context, effective boundaries, resolver version, and resolution reasons;
-- every evaluation and re-evaluation records a current, request-bound confirmation receipt; missing, stale, reused, or mismatched receipts are rejected;
+- every evaluation and re-evaluation records a validated policy binding and observed scope generation; bypassed, stale, invalidated, or mismatched bindings are rejected;
 - historical replay reproduces the same snapshot for the declared valid time and system knowledge time;
 - future-effective versions never activate early, and unresolved coverage or transition states fail closed to review;
 - approaching effective dates with stale sources or incomplete impact review trigger an operational alert;
@@ -1429,6 +1517,17 @@ Exit evidence:
 - rollback and restore paths are documented and exercised;
 - known limitations and unverified boundaries are published with the release.
 
+### 22.6 Provider-integration and real-data gates
+
+- simulator and authorized sandbox adapters pass the same canonical capability contract and end-to-end workflow tests;
+- the identical application artifact runs all provider modes; only reviewed configuration and secret references differ;
+- sandbox-only behavior is isolated inside adapters and cannot enter production routing;
+- promotion manifest, endpoint allowlist, credential rotation, webhook verification, rate and cost budgets, canary, kill switch, and rollback are exercised;
+- provider-specific schema variance, partial results, authentication expiry, rate limits, duplicate callbacks, delayed callbacks, and outages are tested;
+- consent, permissible purpose, minimization, retention, deletion, residency, model-access, and audit controls are approved for the exact data flow;
+- production routing remains disabled until tenant, provider, capability, product, jurisdiction, environment, and named approvers match the approved manifest;
+- provider-integration-ready and production-approved status are reported separately.
+
 ## 23. Risks and mitigation
 
 | Risk | Mitigation |
@@ -1440,9 +1539,11 @@ Exit evidence:
 | Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
 | Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
 | Policy drift or wrong jurisdiction changes case treatment | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity. |
-| Evaluation bypasses or races policy confirmation | Make confirmation an internal application-service guard, bind its receipt to request and hashes, execute in one consistency boundary, and reject direct evaluator calls. |
+| Evaluation bypasses or races policy validation | Make binding validation an internal application-service guard, use authoritative scope generations and hashes, execute in one consistency boundary, and reject direct evaluator calls. |
 | Readiness automation is mistaken for the full approval process | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority. |
 | Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
+| Simulator success hides production-provider behavior | Run the same contracts in authorized sandboxes, document parity gaps, certify provider-specific failures, and use controlled canaries with a kill switch. |
+| Real data is enabled by an unsafe environment toggle | Require an approved promotion manifest, managed secret reference, exact scope match, attributable activation, and default-deny production routing. |
 | Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
 | PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
 | Latest versions destabilize delivery | Prefer LTS and supported compatibility; gate major upgrades separately. |
@@ -1522,9 +1623,9 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 6. Versioned internal policy DSL and release lifecycle.
 7. Bitemporal, jurisdiction-aware policy resolution with immutable case snapshots.
 8. Policy-change impact assessment and approved open-case transition handling.
-9. Mandatory policy confirmation before every evaluation with request-bound receipts.
+9. Efficient mandatory policy-binding validation with scoped generations and safe reuse.
 10. Mortgage lifecycle milestones and explicit readiness-versus-decision boundaries.
-11. Provider modes: simulator, authorized sandbox, and production BYOC.
+11. Provider modes with contract parity, promotion manifests, certification, and configuration-only activation.
 12. Synthetic-only public launch and real-data approval boundary.
 13. Terraform/OpenTofu and ECS Fargate before Kubernetes.
 14. Stable repository name with product identity expressed through documentation.
@@ -1565,5 +1666,7 @@ Technology choices are based on official project documentation and are revalidat
 - CFPB Regulation B action-notification requirements: <https://www.consumerfinance.gov/rules-policy/regulations/1002/9/>
 - OCC Mortgage Banking handbook: <https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/mortgage-banking/pub-ch-mortgage-banking.pdf>
 - OCC Residential Real Estate Lending handbook: <https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/residential-real-estate-lending/pub-ch-residential-real-estate.pdf>
+- OpenID Foundation FAPI 2.0 Security Profile: <https://openid.net/specs/fapi-security-profile-2_0.html>
+- Example provider sandbox and production environment guidance: <https://plaid.com/docs/sandbox/>
 
 Technology references justify maturity and compatibility only. Regulatory references illustrate source versioning, effective-date, relevant-event, and federal/state interaction requirements; they are not legal interpretation, complete jurisdiction coverage, or proof that target capabilities are implemented.

@@ -495,3 +495,98 @@ No application test was required because this feature changes architecture and a
 ### Next safe step
 
 Preserve the M1 and M2 sequence. In M3, make the first policy acceptance test prove that direct evaluation without confirmation is impossible, two consecutive evaluations produce two receipts even when the snapshot is unchanged, and a policy activation concurrent with evaluation yields one internally consistent audited result.
+
+## M0-007: Efficient policy binding and provider-ready parity
+
+### Status
+
+Target architecture revised and locally validated. Policy bindings, scope generations, promotion manifests, production adapters, and provider certification remain planned implementation work.
+
+This entry supersedes M0-006's per-evaluation receipt design. M0-006 remains unchanged as an append-only record of the earlier decision and the reason it was revisited.
+
+### Acceptance criterion
+
+Every evaluation and re-evaluation must validate that its immutable policy snapshot is still applicable without requiring a full policy resolution or a new audit artifact when nothing relevant changed. The simulator path must also share the domain workflow, canonical capability contracts, and deployable artifact required by authorized sandbox and production providers, while real credentials and data remain disabled until separately approved.
+
+### Problem
+
+The per-evaluation receipt design in M0-006 was safe but unnecessarily expensive. It required a distinct receipt for every new evaluation even when the approved policy scope, policy-relevant case facts, time boundary, and source coverage were unchanged. It also made zero receipt reuse appear to be a quality metric, even though safe reuse after deterministic validation is both more efficient and equally auditable.
+
+The previous synthetic-staging language also did not fully define what it means for simulated development to be ready for real providers. A simulator-only workflow can hide real authentication, schema, webhook, latency, rate-limit, and failure behavior. Conversely, requiring provider-specific business workflows would make each live integration a redesign instead of a controlled configuration promotion.
+
+### Implementation
+
+- Replaced request-bound `PolicyConfirmationReceipt` with a server-owned `CasePolicyBinding` and per-evaluation validation observation.
+- Added scoped policy generations so an approved change invalidates only bindings in affected tenant, jurisdiction, product, overlay, and lifecycle scopes rather than every case globally.
+- Added a policy-relevant facts hash, trusted validation time, scheduled revalidation boundary, invalidation state, and source-coverage freshness predicates.
+- Defined a fast path that performs one indexed authoritative generation read plus hash and time comparisons; full applicability resolution runs only when a validity predicate fails.
+- Required validation and evaluation to share a database snapshot or equivalent consistency boundary to prevent an unrecorded time-of-check/time-of-use race.
+- Made the evaluation row the audit record for binding ID, observed generation, validation time, outcome, and evaluator version instead of writing a duplicate receipt.
+- Changed the quality invariants to `100%` binding-validation coverage and `0` accepted invalid or stale bindings while explicitly allowing safe reuse.
+- Added simulator, authorized-sandbox, and production-BYOC modes behind one `ProviderAdapter` capability contract and canonical finding model.
+- Required the domain, policy, workflow, and Agent layers to remain independent of provider brand and operating mode.
+- Added provider promotion manifests containing reviewed scope, adapter version, endpoint allowlist, secret references, consent controls, budgets, certification evidence, and an attributable enablement state.
+- Added reusable contract tests, provider-specific certification, canary routing, kill-switch, rollback, and real-data approval gates.
+- Separated synthetic-launch-ready, provider-integration-ready, and production-approved status so passing local fixtures cannot imply approval for real consumer data.
+- Updated the current-state audit to state that existing simulators do not yet implement or pass the target adapter contract.
+- Added FAPI 2.0 compatibility where a provider or customer ecosystem requires a high-security OAuth profile, without making it a universal integration requirement.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Scoped generation over a global catalog revision**: unrelated policy releases do not invalidate every active case, while affected scopes still fail the fast-path check immediately.
+- **Validated binding reuse over one new receipt per evaluation**: every execution checks current applicability, but unchanged state does not trigger duplicate resolution or persistence.
+- **Authoritative indexed read over cache authority**: Redis and process caches may reduce latency, but material state transitions use the transactional policy-generation record for correctness.
+- **Control plane plus data plane over source access in the evaluation path**: reviewed policy publication and source monitoring update snapshots and generations asynchronously; evaluation performs deterministic validation against approved state.
+- **Same contracts and artifact over provider-specific forks**: simulator, sandbox, and production modes differ inside adapters, credentials, and reviewed configuration rather than core business logic.
+- **Certification over assumed sandbox parity**: a provider sandbox is useful integration evidence but cannot prove production authentication, data distribution, rate limits, callbacks, or operational behavior.
+- **Promotion manifest over an unrestricted environment flag**: live routing requires an exact tenant, provider, capability, product, jurisdiction, environment, credential, and approval match.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 36 fence markers
+  DEVELOPMENT_LOG.md: 14 fence markers
+
+obsolete receipt language inspection
+  no active charter references to PolicyConfirmationReceipt or zero-reuse gates
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+```
+
+No application test was required because this feature changes architecture and audit documentation only. The revised capabilities are explicitly marked planned rather than implemented.
+
+### Security, compliance, and operational boundaries
+
+- Clients, models, and adapters cannot supply, select, extend, or bypass a policy binding.
+- A scope-generation mismatch, relevant-facts mismatch, expired boundary, invalidation, withdrawal, incomplete coverage, or stale source fails closed to refresh or human review.
+- Production endpoints, credentials, and real data remain disabled by default and are not included in public fixtures, local development, or shared staging.
+- Provider-integration-ready describes code and certification evidence; production-approved remains a scoped organizational authorization for a specific data flow.
+- Provider access and model access are independently governed, minimized, attributable, and revocable.
+
+### Known gaps
+
+- `CasePolicyBinding`, scoped generations, invalidation events, and the guarded evaluation service are not implemented in application code.
+- Existing simulator services do not implement the target `ProviderAdapter` contract or canonical finding schemas.
+- No authorized provider sandbox, production credential, certification report, promotion manifest, or real-data approval exists in the repository.
+- Simulator behavior cannot validate every provider-specific production variance; controlled certification and canary evidence remain mandatory.
+- Production approval still depends on customer contracts and authorized legal, compliance, privacy, security, and operations owners outside the public codebase.
+
+### Next safe step
+
+Continue with the planned M1 and M2 vertical slices. In M3, implement scoped generations, policy-relevant fact hashing, an immutable binding, the guarded fast path, invalidation, race tests, and fail-closed refresh. In M4, first migrate every simulator to the shared adapter contract and contract suite, then demonstrate configuration-only activation against an authorized sandbox before making any provider-integration-ready claim.
