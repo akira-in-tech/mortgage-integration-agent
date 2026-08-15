@@ -857,3 +857,94 @@ No application test is required for this documentation-only consistency correcti
 ### Next safe step
 
 Preserve M1 as the supported runtime foundation. In M2, introduce the versioned budget-ledger schema and optimistic reservation primitive without adding real costs or communications. In M3, add trusted Agent deadlines and a synthetic routine-versus-protected communication classifier with exact-render review tests. In M4, enforce the structural capability denylist across simulator registration, promotion validation, routing, and Agent tool exposure before any authorized sandbox integration.
+
+## M0-010: Consent-revocation state and provider-authorization granularity audit
+
+### Status
+
+Two cross-section specification gaps were identified, reproduced against the active charter, and corrected. The revoked-consent lifecycle and the provider-authorization field refinement remain target architecture rather than implemented application behavior.
+
+### Acceptance criterion
+
+The charter must express one enforceable answer to each of the following questions:
+
+- Is consent revocation, which is legally distinct from simple expiration or absence, representable anywhere in the Agent's runtime state or mandatory-review triggers?
+- Does the charter's repeated claim that provider authorization is "field-bound" match the only authorization structure it defines?
+
+No Agent-state contract, mandatory-review list, data entity, event, or authorization description may contradict those answers.
+
+### Findings
+
+1. **Missing consent-revocation state**
+   - Section 6.3's Authority order places consent above every other control, but `LendingOperationsAgentState.consentStatus` only distinguished `VALID`, `MISSING`, and `EXPIRED`.
+   - A borrower who affirmatively withdraws consent mid-case had no distinct representable state, even though `ProviderAuthorizationGrant` already models `revokedAt` for the adjacent concept of grant revocation.
+   - Mandatory review triggers listed lower-priority conditions (for example, provider results outside the normalized contract) but never named consent revocation.
+   - Neither the `consent_records` entity description nor the event catalog distinguished revocation from ordinary expiration.
+
+2. **"Field-bound" authorization versus the only defined authorization structure**
+   - Section 11.5's prose and Section 16.2 both asserted "field-"/"field-level" authorization granularity for provider access.
+   - `ProviderAuthorizationGrant`, the only structure defined for this purpose, exposed `permittedDataClasses: string[]` — a data-class list, not an addressable field list — and the Section 14.1 entity description already (correctly) said "data-," not "field-."
+   - Grant revalidation before dispatch was not explicitly required to reconfirm that the grant's referenced consent records remained unrevoked.
+
+### Implementation
+
+- Added `'REVOKED'` to `consentStatus`, added a mandatory-review trigger for mid-case consent revocation and its effect on already-collected evidence and dependent provider grants, and added a `consent.revoked` event.
+- Added a Section 14.2 data rule stating that revocation stops new processing immediately, invalidates dependent provider authorization grants, and opens a data-disposition review, distinguishing it from an ordinary missing- or stale-consent condition.
+- Extended the `consent_records` entity description to name revocation evidence explicitly.
+- Added a Section 16.4 threat scenario for revoked consent being read back as merely missing or expired while a dependent grant or in-flight processing stays active.
+- Added `permittedFields?: string[]` to `ProviderAuthorizationGrant` as an optional narrowing of `permittedDataClasses`, used only when a capability's contract exposes field-addressable data; class-level scope remains the enforced floor otherwise.
+- Reworded Section 11.5 and the Section 14.1 entity description to "data-class-, optionally field-, and time-bound," removing the unqualified "field-bound" claim that outran the schema.
+- Required authorization-grant revalidation to reconfirm every referenced consent record is still granted and unrevoked, failing closed on a stale, mismatched, expired, or revoked reference.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Add a `REVOKED` state over overloading `EXPIRED`**: revocation is an affirmative borrower action with distinct legal consequences (potential retroactive deletion obligations) that a passive time-based expiry state cannot represent.
+- **Class-level authorization as the enforced floor, with optional field narrowing, over silently weakening the "field-level" promise**: the charter's existing engineering style resolves this kind of gap by adding precision rather than by lowering a stated privacy control, and Section 16.1/16.2 already use "field authorization" for the separate, unaffected concept of internal RBAC.
+- **Revalidation checks the consent reference, not just the grant's own expiry**: a grant issued while consent was valid must not keep dispatching after that consent is later revoked; the grant's own `expiresAt`/`revokedAt` fields do not by themselves guarantee this without an explicit cross-check requirement.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 40 fence markers
+
+consent-revocation and field-granularity consistency search
+  REVOKED consent state, mandatory review trigger, consent.revoked event,
+  data-disposition linkage, permittedFields refinement, and data-class-bound
+  wording are present; unqualified "field-bound"/"field-level" claims for
+  provider authorization are absent
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+```
+
+No application test is required for this documentation-only consistency correction. The revised consent-revocation and field-refinement controls are not represented as implemented, verified, deployed, or legally approved.
+
+### Security, compliance, and operational boundaries
+
+- Consent revocation handling is a charter-level design commitment, not a claim that any deletion, disposition, or downstream notification is currently implemented.
+- The optional field-level authorization refinement depends on a provider capability actually exposing field-addressable contracts; its absence is not a compliance gap, since class-level scope remains the enforced boundary either way.
+
+### Known gaps
+
+- No consent-revocation propagation, dependent-grant invalidation, or disposition-review trigger exists in application code.
+- No provider capability in the current simulator set exposes field-addressable contracts, so `permittedFields` remains unused until a real capability contract defines addressable fields.
+- Activity-specific consent, privacy, and retention review still requires authorized legal, compliance, and privacy owners before any real-data deployment.
+
+### Next safe step
+
+Preserve the M1–M4 sequence already recorded. In M2, include `REVOKED` in the initial consent-status domain model and schema from the start rather than retrofitting it later. In M5, implement consent-revocation propagation to dependent provider authorization grants and the data-disposition workflow alongside the other tenant-trust-boundary controls.

@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.5 |
+| Version | 2.6 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -419,7 +419,7 @@ interface LendingOperationsAgentState {
   caseVersion: number;
   workflowRunId: string;
   workflowStatus: string;
-  consentStatus: 'VALID' | 'MISSING' | 'EXPIRED';
+  consentStatus: 'VALID' | 'MISSING' | 'EXPIRED' | 'REVOKED';
   evidenceSummary: EvidenceSummary[];
   openConditions: ConditionSummary[];
   providerHealth: ProviderHealthSummary[];
@@ -493,6 +493,7 @@ LOAD VERSIONED CASE
 
 ### 9.6 Mandatory review triggers
 
+- consent revoked mid-case, including its effect on already-collected evidence and any dependent provider authorization grant;
 - contradictory identity, income, asset, credit, or document evidence;
 - evidence confidence below the configured threshold for a material fact;
 - unsupported policy interpretation or rule conflict;
@@ -911,6 +912,7 @@ interface ProviderAuthorizationGrant {
   capability: ProviderCapability;
   purposeCode: string;
   permittedDataClasses: string[];
+  permittedFields?: string[];
   consentRecordIds: string[];
   permissiblePurposeDecisionId?: string;
   issuedAt: string;
@@ -939,7 +941,7 @@ interface ProviderOperationIntent {
 }
 ```
 
-The platform persists the operation intent before dispatch and revalidates the authorization grant immediately before every external request. Authorization is case-, borrower-, provider-, capability-, purpose-, field-, and time-bound. For consumer-report capabilities, the permissible-purpose decision is consumer- and transaction-specific; a tenant-wide setting or disclaimer is insufficient.
+The platform persists the operation intent before dispatch and revalidates the authorization grant immediately before every external request. Authorization is case-, borrower-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound: `permittedDataClasses` sets the enforced coarse boundary, and `permittedFields` narrows disclosure further only when the capability's contract exposes field-addressable data; absent that contract support, class-level scope remains the enforced limit. Revalidation also confirms every referenced consent record is still granted and unrevoked; a stale, mismatched, expired, or revoked reference fails closed instead of dispatching. For consumer-report capabilities, the permissible-purpose decision is consumer- and transaction-specific; a tenant-wide setting or disclaimer is insufficient.
 
 A stable platform idempotency key and request fingerprint are reused only for the same logical intent. They prevent duplicate platform commands but do not prove that a provider enforces idempotency. Retry is automatic only when the adapter's certified semantics establish that the request was not transmitted or that the same provider key/status resource safely reconciles the original operation. After an ambiguous timeout, the state becomes `OUTCOME_UNKNOWN`; the workflow polls, consumes a verified callback, or creates reconciliation work before any new order.
 
@@ -1109,7 +1111,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `api_clients` | Scoped machine identity and key metadata. |
 | `loan_cases` | Versioned aggregate and current workflow readiness. |
 | `borrowers` | Minimized borrower profile with encrypted sensitive fields. |
-| `consent_records` | Purpose, scope, policy version, grant, and expiration evidence. |
+| `consent_records` | Purpose, scope, policy version, grant, expiration, and revocation evidence. |
 | `documents` | Object metadata, checksum, media type, scan, and retention state. |
 | `evidence_facts` | Typed facts with source, confidence, validity, and lineage. |
 | `evidence_conflicts` | Contradictory fact relationships and resolution state. |
@@ -1129,7 +1131,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `loan_conditions` | Condition lifecycle and required evidence. |
 | `condition_transitions` | Actor-attributed condition state history. |
 | `provider_connections` | Tenant provider mode and credential reference. |
-| `provider_authorization_grants` | Case-, subject-, provider-, capability-, purpose-, data-, and time-bound external-call authority. |
+| `provider_authorization_grants` | Case-, subject-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound external-call authority. |
 | `provider_operation_intents` | Durable request fingerprint, effect class, idempotency key, authorization, and dispatch outcome. |
 | `provider_attempts` | Attempt, latency, error, retry, and cost metadata. |
 | `provider_reconciliations` | Evidence and resolution of ambiguous, delayed, cancelled, or externally completed operations. |
@@ -1171,6 +1173,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Policy bindings and their observed generations are server-owned; clients and models cannot supply, select, or extend them.
 - Evaluation input manifests are immutable and reference exact versions; an evaluation never follows mutable latest-value pointers.
 - Provider operation intents are persisted before dispatch; `OUTCOME_UNKNOWN` is a first-class state that blocks a new effect until reconciliation or authorized review.
+- Consent revocation is a distinct case state from expiration: it stops new processing immediately, invalidates every dependent provider authorization grant, and opens a data-disposition review for evidence already collected under that consent rather than being treated as an ordinary missing- or stale-consent condition.
 - Agent budget observations are derived from trusted deadlines and a versioned ledger; models and clients cannot supply, extend, reset, or race a budget reservation.
 - Protected communication approval is bound to the exact rendered-content hash, recipient, channel, locale, attachments, sender, and validity interval; changing any bound field invalidates reuse.
 - Routine communication delivery requires an exact active template version and allowlisted variable set; classification uncertainty fails closed to human review.
@@ -1247,6 +1250,7 @@ policy_binding.refreshed
 policy_binding.review_required
 evaluation_input_manifest.created
 policy_impact.review_required
+consent.revoked
 agent_budget.reserved
 agent_budget.exhausted
 communication.review_required
@@ -1330,6 +1334,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - provider timeout is misclassified as failure and retried into a duplicate paid or consumer-impacting operation;
 - cross-provider fallback reuses an authorization or permissible-purpose decision outside its approved scope;
 - production manifest self-approval, artifact mismatch, stale activation race, or unsafe re-enable;
+- revoked consent is read back as merely missing or expired, leaving a dependent provider authorization grant or in-flight case processing active past revocation;
 - provider capability or Agent tool configuration attempts to expose a structurally excluded funds, rate-lock, settlement, disclosure, decision, or capital-delivery command;
 - model output, template variables, or free-form text downgrade a protected communication into a routine message;
 - protected-message approval is replayed after content, recipient, channel, locale, attachment, sender, or validity changes;
