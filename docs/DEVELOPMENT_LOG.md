@@ -1344,3 +1344,57 @@ local Postgres):
 ### Next safe step
 
 Fix the `nest build` incremental-cache issue found while smoke-testing this slice (recorded as its own follow-up entry), then record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes out Milestone 1.
+
+## M1-006: Fix silent no-op `nest build` from a stale incremental cache
+
+### Status
+
+Implemented and verified.
+
+### Acceptance criterion
+
+`npm run build` must never report success while leaving `dist/` empty or stale.
+
+### Problem
+
+Discovered while smoke-testing M1-005: `npm run build` reported success (exit `0`, no errors) but `dist/` did not exist. `nest-cli.json` sets `deleteOutDir: true`, which wipes `dist/` before every build; `tsconfig.build.json` (extending the base `tsconfig.json`, which sets `"incremental": true`) writes its `.tsbuildinfo` cache outside `dist/`, where the wipe doesn't touch it. With a stale cache present and `dist/` freshly emptied, `tsc` incorrectly concluded no output needed to be (re)written. Reproduced deterministically: build once, then build again immediately with no source changes — the second build always came back empty.
+
+### Implementation
+
+- Set `"incremental": false` in `tsconfig.build.json`, scoped to the build config only (the base `tsconfig.json` used by `ts-node`/Jest is untouched, so local dev/test iteration speed is unaffected).
+
+### Affected files
+
+- `tsconfig.build.json`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Disable incremental compilation for the build over relocating the cache into `dist/`**: pointing `tsBuildInfoFile` inside `dist/` would also fix the immediate symptom, but leaves the underlying fragility (an output directory that gets wiped out from under a cache that's supposed to describe it) in place for any future change to `deleteOutDir`/`outDir`. Turning off incremental for the one config that's paired with `deleteOutDir: true` removes the failure mode outright, at a build-speed cost that's negligible at this project's current size.
+- **Left `.gitignore`'s existing `*.tsbuildinfo` entry as-is**: already correctly excluded, confirmed via `git ls-files`; this was a local-environment footgun, not a risk to what CI checks out.
+
+### Verification
+
+```text
+Reproduction, before the fix:
+  rm -rf dist && npm run build  -> dist/main.js present (build 1, fresh)
+  npm run build again           -> dist/ empty (build 2, bug reproduced)
+
+After the fix:
+  rm -rf dist tsconfig.build.tsbuildinfo && npm run build
+    -> dist/main.js present
+  npm run build again immediately
+    -> dist/main.js still present
+  no tsconfig.build.tsbuildinfo file reappears
+
+npm run lint / npm test / npm run test:e2e
+  all still passing (unaffected — this change only affects the build config)
+```
+
+### Known gaps
+
+- None specific to this fix; the underlying `deleteOutDir`-plus-incremental interaction is a general TypeScript/Nest CLI footgun worth remembering if incremental builds are reconsidered later (e.g., for build-speed reasons at larger scale).
+
+### Next safe step
+
+Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.
