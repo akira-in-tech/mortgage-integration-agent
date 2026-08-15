@@ -16,22 +16,16 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { LoanType } from '../database/enums/loan-type.enum';
+import { LoanDecisionStatus } from '../database/enums/loan-decision.enum';
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
+//
+// LoanType and LoanDecisionStatus are defined once in src/database/enums and
+// re-exported here so existing `from './loan.model'` imports keep working —
+// GraphQL registration is wiring, not ownership of the vocabulary.
 
-export enum LoanType {
-  CONVENTIONAL = 'CONVENTIONAL',
-  FHA = 'FHA',
-  VA = 'VA',
-  JUMBO = 'JUMBO',
-}
-
-export enum LoanDecisionStatus {
-  APPROVED = 'APPROVED',
-  CONDITIONAL = 'CONDITIONAL',
-  DENIED = 'DENIED',
-  PENDING = 'PENDING',
-}
+export { LoanType, LoanDecisionStatus };
 
 registerEnumType(LoanType, {
   name: 'LoanType',

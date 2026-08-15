@@ -8,13 +8,14 @@ import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
 import { EvaluateLoanInput } from '../loan/loan.model';
+import { LoanDecisionStatus } from '../database/enums/loan-decision.enum';
+import { DecisionProvider } from '../config/env.validation';
 import {
   AgentResult,
   UnderwritingModelResponse,
   UnderwritingContext,
+  UnderwritingDecision,
 } from './agent.types';
-
-type DecisionProvider = 'rules' | 'ollama';
 
 interface OllamaChatResponse {
   message?: {
@@ -48,29 +49,29 @@ export class AgentService {
     private readonly creditService: CreditService,
     private readonly documentService: DocumentService,
   ) {
-    const configuredProvider = (
-      this.configService.get<string>('DECISION_PROVIDER') ?? 'rules'
-    )
-      .trim()
-      .toLowerCase();
-
-    if (configuredProvider !== 'rules' && configuredProvider !== 'ollama') {
-      throw new Error('DECISION_PROVIDER must be either "rules" or "ollama"');
-    }
-
-    this.decisionProvider = configuredProvider;
-    this.ollamaBaseUrl = (
-      this.configService.get<string>('OLLAMA_BASE_URL') ??
-      'http://127.0.0.1:11434'
-    ).replace(/\/+$/, '');
-    this.ollamaModel =
-      this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen3.5:9b';
-    this.ollamaTimeoutMs = this.readPositiveIntegerConfig(
+    // DECISION_PROVIDER/OLLAMA_* are validated once at bootstrap
+    // (src/config/env.validation.ts), so a value read here is always
+    // already well-formed — no re-validation needed at this internal
+    // boundary. The default values passed below only matter for tests that
+    // construct AgentService directly against a partial mock ConfigService.
+    this.decisionProvider = this.configService.get<DecisionProvider>(
+      'DECISION_PROVIDER',
+      DecisionProvider.Rules,
+    );
+    this.ollamaBaseUrl = this.configService.get<string>(
+      'OLLAMA_BASE_URL',
+      'http://127.0.0.1:11434',
+    );
+    this.ollamaModel = this.configService.get<string>(
+      'OLLAMA_MODEL',
+      'qwen3.5:9b',
+    );
+    this.ollamaTimeoutMs = this.configService.get<number>(
       'OLLAMA_TIMEOUT_MS',
       60_000,
     );
 
-    if (this.decisionProvider === 'rules') {
+    if (this.decisionProvider === DecisionProvider.Rules) {
       this.logger.warn(
         '*** RULES PROVIDER ACTIVE — no model server or API key required ***',
       );
@@ -106,7 +107,7 @@ export class AgentService {
 
     // ── Step 2: Decisioning — deterministic rules or local Ollama ──────────
     const decision =
-      this.decisionProvider === 'rules'
+      this.decisionProvider === DecisionProvider.Rules
         ? this.runRulesUnderwriter(context)
         : await this.invokeOllamaUnderwriter(context);
 
@@ -209,7 +210,7 @@ export class AgentService {
         Math.min(0.96, 0.96 - problems.length * 0.08),
       );
       return {
-        decision: 'DENIED',
+        decision: LoanDecisionStatus.DENIED,
         confidence,
         reasoning: `Application denied due to the following underwriting deficiencies: ${problems.join('; ')}. Borrower may reapply after addressing these issues.`,
         conditions: [],
@@ -222,7 +223,7 @@ export class AgentService {
         Math.min(0.82, 0.82 - conditions.length * 0.06),
       );
       return {
-        decision: 'CONDITIONAL',
+        decision: LoanDecisionStatus.CONDITIONAL,
         confidence,
         reasoning: `Application is conditionally approved pending resolution of ${conditions.length} item(s). Credit score is ${score}, DTI is ${(dti * 100).toFixed(1)}%, and income qualifies at $${annualIncome.toLocaleString()} annually.`,
         conditions,
@@ -237,7 +238,7 @@ export class AgentService {
         (documents.allDocumentsValid ? 0.05 : 0),
     );
     return {
-      decision: 'APPROVED',
+      decision: LoanDecisionStatus.APPROVED,
       confidence,
       reasoning: `Strong application: credit score ${score} with ${credit.paymentHistory.toLowerCase()} payment history, DTI of ${(dti * 100).toFixed(1)}% well within guidelines, verified ${income.employmentStatus.toLowerCase().replace('_', ' ')} income of $${annualIncome.toLocaleString()}/year, and all documents validated. Loan-to-income ratio of ${lti.toFixed(2)}x is within program limits.`,
       conditions: [],
@@ -428,7 +429,11 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
 
     const response = parsed as Record<string, unknown>;
 
-    const validDecisions = new Set(['APPROVED', 'CONDITIONAL', 'DENIED']);
+    const validDecisions = new Set<string>([
+      LoanDecisionStatus.APPROVED,
+      LoanDecisionStatus.CONDITIONAL,
+      LoanDecisionStatus.DENIED,
+    ]);
     if (
       typeof response['decision'] !== 'string' ||
       !validDecisions.has(response['decision'])
@@ -465,14 +470,16 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
       );
     }
 
-    const decision = response['decision'] as
-      'APPROVED' | 'CONDITIONAL' | 'DENIED';
+    // Validated above against validDecisions (every LoanDecisionStatus
+    // member except PENDING, which UnderwritingDecision excludes by type).
+    const decision = response['decision'] as UnderwritingDecision;
     const conditions = (response['conditions'] as string[]).map((condition) =>
       condition.trim(),
     );
     if (
-      (decision === 'CONDITIONAL' && conditions.length === 0) ||
-      (decision !== 'CONDITIONAL' && conditions.length > 0)
+      (decision === LoanDecisionStatus.CONDITIONAL &&
+        conditions.length === 0) ||
+      (decision !== LoanDecisionStatus.CONDITIONAL && conditions.length > 0)
     ) {
       throw new InternalServerErrorException(
         'Conditions do not match the AI underwriting decision',
@@ -485,18 +492,5 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
       reasoning: response['reasoning'].trim(),
       conditions,
     };
-  }
-
-  private readPositiveIntegerConfig(key: string, fallback: number): number {
-    const rawValue = this.configService.get<string>(key);
-    if (rawValue === undefined) {
-      return fallback;
-    }
-
-    const value = Number(rawValue);
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new Error(`${key} must be a positive integer`);
-    }
-    return value;
   }
 }

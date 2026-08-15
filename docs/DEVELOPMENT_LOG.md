@@ -1730,3 +1730,89 @@ npm run test:e2e
 ### Next safe step
 
 Stand up Temporal for local development (add to `docker-compose.yml`, add the TypeScript SDK) and implement the first durable workflow: create a case, wait for evidence, resume, reach a readiness state — the M2 user-visible outcome.
+
+## M2-002: Fix enum triplication and split env-validation strategy
+
+### Status
+
+Implemented and verified. Prompted by a direct architecture review requested mid-session (not tied to a specific charter milestone item), covering two concrete findings against the real, running code.
+
+### Acceptance criterion
+
+There must be exactly one definition of the loan-type and loan-decision vocabularies shared by the GraphQL layer, the legacy `LoanApplication` entity, and the new M2-001 `LoanCase` entity — not three independently maintained copies bridged by unsafe casts. Every environment variable the application reads must be validated in exactly one place (`src/config/env.validation.ts`), not partly there and partly re-validated ad hoc inside a service constructor.
+
+### Findings
+
+1. **Loan type had three parallel enum definitions**: `LoanType` in `loan.model.ts` (GraphQL), `LoanTypeEntity` in `loan-application.entity.ts` (TypeORM), and `CaseLoanType` in `loan-case.entity.ts` (TypeORM, added this session in M2-001) — same four values, three independent declarations. `loan.service.ts` bridged the first two with `input.loanType as unknown as LoanTypeEntity`, a cast that defeats type-checking: if the enums' values ever drifted, TypeScript would not catch it.
+2. **Loan decision status had the same problem**: `LoanDecisionStatus` (GraphQL) and `LoanDecisionEntity` (TypeORM) were separately declared, bridged with the same `as unknown as X` pattern in `loan.service.ts`.
+3. **`DECISION_PROVIDER`/`OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_TIMEOUT_MS` were validated inside `AgentService`'s constructor** (manual parsing, trimming, `throw new Error(...)`), independently of the M1-001 centralized `env.validation.ts` DTO that validates every other environment variable. Two different validation mechanisms coexisted for no functional reason.
+
+### Implementation
+
+- Added `src/database/enums/loan-type.enum.ts` and `loan-decision.enum.ts` — single canonical `LoanType` and `LoanDecisionStatus` enums.
+- `loan.model.ts` now imports and re-exports them (GraphQL `registerEnumType` is wiring, not ownership); `loan-application.entity.ts` and `loan-case.entity.ts` both import them directly, replacing `LoanTypeEntity`/`LoanDecisionEntity`/`CaseLoanType`.
+- `loan.service.ts`'s two `as unknown as X` casts are gone — the types are now identical, so plain assignment type-checks correctly (verified: removing the casts produced zero compiler errors).
+- `agent.types.ts`'s `UnderwritingDecision` is now `Exclude<LoanDecisionStatus, LoanDecisionStatus.PENDING>` — a narrower view of the same shared vocabulary (the agent never returns `PENDING`) rather than a fourth independent type. Updated `agent.service.ts`'s three literal decision returns and its JSON-response validation to use `LoanDecisionStatus` members instead of raw string literals.
+- Added `DecisionProvider` enum and `DECISION_PROVIDER`/`OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_TIMEOUT_MS` fields to `EnvironmentVariables` in `env.validation.ts`, including the case-insensitive trim and trailing-slash-strip transforms `AgentService` used to do itself.
+- `AgentService`'s constructor now just reads `this.configService.get('DECISION_PROVIDER', DecisionProvider.Rules)` etc. — no parsing, no throwing, no `readPositiveIntegerConfig` helper (deleted, now dead code).
+
+### Failures and resolution
+
+- Removing `AgentService`'s own `DECISION_PROVIDER` validation removed the specific behavior a unit test (`'rejects an unsupported provider'`) was checking — that test asserted the *constructor* throws, which is no longer where that validation happens. Deleted it from `agent.service.spec.ts` and added equivalent (and additional: malformed URL, non-positive timeout) coverage to `env.validation.spec.ts`, where the behavior now actually lives, rather than leaving the safety net untested or leaving a now-false assertion in place.
+- The existing mocks in `agent.service.spec.ts` (`get: jest.fn((key) => ...)`) didn't implement `ConfigService.get(key, defaultValue)`'s two-argument fallback contract — they ignored whatever default `AgentService` passed and returned `undefined` for unmocked keys. This didn't matter while `AgentService` did its own `?? fallback` logic, but does now that it relies on the real default-parameter behavior. Updated every mock to accept and return `defaultValue` for unmatched keys, which also made the `'defaults to rules mode when DECISION_PROVIDER is not configured'` test a more accurate test of the actual mechanism instead of an artifact of the old code path.
+- One existing `env.validation.spec.ts` test (`'preserves unrelated environment variables untouched'`) used `DECISION_PROVIDER`/`OLLAMA_MODEL` as its "unrelated" example — accurate when written, no longer accurate now that those became real schema fields. Renamed and switched it to genuinely unrelated variables (`ANTHROPIC_API_KEY`, `DEMO_MODE`) so the test still tests what its name says.
+
+### Affected files
+
+- `src/database/enums/loan-type.enum.ts`, `loan-decision.enum.ts` (new)
+- `src/loan/loan.model.ts`, `loan.service.ts`
+- `src/database/entities/loan-application.entity.ts`, `loan-case.entity.ts`
+- `src/agent/agent.types.ts`, `agent.service.ts`, `agent.service.spec.ts`
+- `src/config/env.validation.ts`, `env.validation.spec.ts`
+
+### Decisions and alternatives
+
+- **Shared enums live under `src/database/enums/`, not `src/loan/`**: `src/loan/loan.service.ts` already imports domain types from `src/database/entities/`, so this keeps the existing dependency direction (API layer depends on the lower/persistence layer) instead of introducing a new one where entities would import from the GraphQL module.
+- **`UnderwritingDecision` as `Exclude<LoanDecisionStatus, PENDING>`, not a fourth copy**: preserves a real, valuable type-level guarantee (the agent can never claim `PENDING`, a state that only makes sense before evaluation) while still eliminating the redundant duplication of the other three values.
+- **Confirmed empirically, not assumed, that the enum rename caused zero schema drift**: renaming a TS enum identifier doesn't change the Postgres type name TypeORM generates (that's derived from table/column name). Verified by applying both existing migrations to a scratch database and running `migration:generate` again — "No changes in database schema were found." No new migration was needed for this refactor.
+- **Deleted the redundant test rather than keeping a duplicate assertion in two places**: `AgentService` no longer performs this validation, so a test asserting it does would either need to be fake (mocking around the real behavior) or misleading (implying a safety net that no longer exists at that layer).
+
+### Verification
+
+```text
+npm run build / npm run lint:check     -> both passed
+npm test -- --runInBand --no-cache --silent
+  13 suites passed, 91 tests passed (net +4: -1 removed from
+  agent.service.spec.ts, +5 added to env.validation.spec.ts)
+npm run test:e2e                        -> 1 suite passed, 4 tests passed
+
+grep -rl "LoanTypeEntity|LoanDecisionEntity|CaseLoanType" src test
+  -> no matches (fully removed, not just unused)
+
+Schema-drift check: applied both existing migrations to a disposable
+scratch database, then ran migration:generate again
+  -> "No changes in database schema were found" (confirms the enum
+     rename is purely a TypeScript-level refactor)
+
+Manual boot test against the real built app (node dist/main.js):
+  default config          -> starts normally, logs the RULES warning
+  DECISION_PROVIDER=nonsense -> fails immediately at bootstrap with
+    "Invalid environment configuration: - DECISION_PROVIDER must be
+    either "rules" or "ollama"", thrown from env.validation.js via
+    ConfigModule.forRoot — confirms validation now happens centrally
+    at startup, not deep inside AgentService's constructor
+```
+
+### Security, privacy, cost, and compatibility
+
+- No behavior change for a correctly-configured deployment — every default value (`rules`, `http://127.0.0.1:11434`, `qwen3.5:9b`, `60000`) is unchanged from what `AgentService` used to hard-code.
+- An invalid `DECISION_PROVIDER`/`OLLAMA_*` value now fails at the same bootstrap point as every other misconfiguration (before any HTTP listener or database connection), rather than at first-request time when Nest instantiates `AgentService` — a strictly earlier, clearer failure.
+
+### Known gaps
+
+- `AgentService` itself remains a single ~470-line class mixing HTTP client, prompt construction, JSON-schema definition, response parsing, and the deterministic rules engine — a separate, larger decomposition (already tracked as a known M3 direction: `AgentRuntime` port, deterministic policy engine, bounded Agent execution) and out of scope for this consistency-focused slice.
+- The M2-001 `LoanCase`/`EvidenceFact`/`LoanCondition` schema remains unconnected to any service — unaffected by this slice, still pending the Temporal workflow work.
+
+### Next safe step
+
+Stand up Temporal for local development and implement the first durable workflow (unchanged from before this slice — M2's next step). Separately, consider decomposing `AgentService` into an HTTP/model client, a prompt/response layer, and the rules engine as its own dedicated slice given its size and mixed responsibilities.

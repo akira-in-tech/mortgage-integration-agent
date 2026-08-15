@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import { NodeEnvironment, validateEnvironment } from './env.validation';
+import {
+  DecisionProvider,
+  NodeEnvironment,
+  validateEnvironment,
+} from './env.validation';
 
 function baseConfig(
   overrides: Record<string, unknown> = {},
@@ -64,12 +68,62 @@ describe('validateEnvironment', () => {
     ).toThrow(/NODE_ENV[\s\S]*PORT|PORT[\s\S]*NODE_ENV/);
   });
 
-  it('preserves unrelated environment variables untouched', () => {
+  it('preserves environment variables outside this schema untouched', () => {
     const result = validateEnvironment(
-      baseConfig({ DECISION_PROVIDER: 'ollama', OLLAMA_MODEL: 'qwen3.5:9b' }),
+      baseConfig({
+        ANTHROPIC_API_KEY: 'unused-in-this-app',
+        DEMO_MODE: 'true',
+      }),
     ) as unknown as Record<string, unknown>;
 
-    expect(result.DECISION_PROVIDER).toBe('ollama');
-    expect(result.OLLAMA_MODEL).toBe('qwen3.5:9b');
+    expect(result.ANTHROPIC_API_KEY).toBe('unused-in-this-app');
+    expect(result.DEMO_MODE).toBe('true');
+  });
+
+  describe('agent decisioning (DECISION_PROVIDER / OLLAMA_*)', () => {
+    it('defaults to rules with no model server configured', () => {
+      const result = validateEnvironment(baseConfig());
+
+      expect(result.DECISION_PROVIDER).toBe(DecisionProvider.Rules);
+      expect(result.OLLAMA_BASE_URL).toBe('http://127.0.0.1:11434');
+      expect(result.OLLAMA_MODEL).toBe('qwen3.5:9b');
+      expect(result.OLLAMA_TIMEOUT_MS).toBe(60_000);
+    });
+
+    it('accepts an explicit ollama configuration, trimming and lowercasing DECISION_PROVIDER', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          DECISION_PROVIDER: '  Ollama  ',
+          OLLAMA_BASE_URL: 'http://ollama.internal:11434/',
+          OLLAMA_MODEL: 'qwen3.5:4b',
+          OLLAMA_TIMEOUT_MS: '30000',
+        }),
+      );
+
+      expect(result.DECISION_PROVIDER).toBe(DecisionProvider.Ollama);
+      // Trailing slash stripped so `${OLLAMA_BASE_URL}/api/chat` never
+      // ends up with a double slash.
+      expect(result.OLLAMA_BASE_URL).toBe('http://ollama.internal:11434');
+      expect(result.OLLAMA_MODEL).toBe('qwen3.5:4b');
+      expect(result.OLLAMA_TIMEOUT_MS).toBe(30_000);
+    });
+
+    it('rejects a DECISION_PROVIDER that is neither rules nor ollama', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ DECISION_PROVIDER: 'unknown' })),
+      ).toThrow(/DECISION_PROVIDER/);
+    });
+
+    it('rejects a non-http(s) OLLAMA_BASE_URL', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ OLLAMA_BASE_URL: 'not-a-url' })),
+      ).toThrow(/OLLAMA_BASE_URL/);
+    });
+
+    it('rejects a non-positive OLLAMA_TIMEOUT_MS', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ OLLAMA_TIMEOUT_MS: '0' })),
+      ).toThrow();
+    });
   });
 });

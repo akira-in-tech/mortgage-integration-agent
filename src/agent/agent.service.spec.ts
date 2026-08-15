@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { InternalServerErrorException } from '@nestjs/common';
 import { AgentService } from './agent.service';
 import { LoanType } from '../loan/loan.model';
+import { DecisionProvider } from '../config/env.validation';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
@@ -63,11 +64,15 @@ describe('AgentService', () => {
     mockDocument = { verifyDocuments: jest.fn() };
   });
 
+  // Mocks ConfigService.get(key, defaultValue)'s real contract — returning
+  // the caller's default when a key is absent — since AgentService now
+  // relies on that fallback rather than doing its own `?? fallback` logic
+  // (validation and defaulting both moved to src/config/env.validation.ts).
   function buildDemoService(): AgentService {
     return new AgentService(
       {
-        get: jest.fn((key: string) =>
-          key === 'DECISION_PROVIDER' ? 'rules' : undefined,
+        get: jest.fn((key: string, defaultValue?: unknown) =>
+          key === 'DECISION_PROVIDER' ? DecisionProvider.Rules : defaultValue,
         ),
       } as any,
       mockPlaid as any,
@@ -79,14 +84,14 @@ describe('AgentService', () => {
   function buildOllamaService(): AgentService {
     const service = new AgentService(
       {
-        get: jest.fn((key: string) => {
-          const values: Record<string, string> = {
-            DECISION_PROVIDER: 'ollama',
+        get: jest.fn((key: string, defaultValue?: unknown) => {
+          const values: Record<string, unknown> = {
+            DECISION_PROVIDER: DecisionProvider.Ollama,
             OLLAMA_BASE_URL: 'http://ollama.test:11434',
             OLLAMA_MODEL: 'qwen3.5:9b',
-            OLLAMA_TIMEOUT_MS: '5000',
+            OLLAMA_TIMEOUT_MS: 5000,
           };
-          return values[key];
+          return key in values ? values[key] : defaultValue;
         }),
       } as any,
       mockPlaid as any,
@@ -125,8 +130,10 @@ describe('AgentService', () => {
   describe('demo mode — APPROVED decisions', () => {
     it('defaults to rules mode when DECISION_PROVIDER is not configured', async () => {
       setIntegrations();
+      // Nothing configured: ConfigService.get(key, defaultValue) falls back
+      // to whatever default the caller passed, same as the real ConfigService.
       const config = {
-        get: jest.fn().mockReturnValue(undefined),
+        get: jest.fn((_key: string, defaultValue?: unknown) => defaultValue),
         getOrThrow: jest.fn(),
       };
       const service = new AgentService(
@@ -591,20 +598,6 @@ describe('AgentService', () => {
           loanType: LoanType.CONVENTIONAL,
         }),
       ).rejects.toThrow('Local AI provider returned no message content');
-    });
-  });
-
-  describe('provider configuration', () => {
-    it('rejects an unsupported provider', () => {
-      expect(
-        () =>
-          new AgentService(
-            { get: jest.fn().mockReturnValue('unknown') } as any,
-            mockPlaid as any,
-            mockCredit as any,
-            mockDocument as any,
-          ),
-      ).toThrow('DECISION_PROVIDER must be either "rules" or "ollama"');
     });
   });
 });

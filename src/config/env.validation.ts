@@ -1,7 +1,8 @@
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Transform } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
@@ -23,6 +24,12 @@ export enum NodeEnvironment {
   Test = 'test',
   Staging = 'staging',
   Production = 'production',
+}
+
+/** Which underwriting decisioning backend AgentService uses (src/agent). */
+export enum DecisionProvider {
+  Rules = 'rules',
+  Ollama = 'ollama',
 }
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
@@ -66,6 +73,36 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   RATE_LIMIT_MAX: number = 100;
+
+  // ── Agent decisioning (src/agent/agent.service.ts) ──────────────────────
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEnum(DecisionProvider, {
+    message: `DECISION_PROVIDER must be either "${DecisionProvider.Rules}" or "${DecisionProvider.Ollama}"`,
+  })
+  DECISION_PROVIDER: DecisionProvider = DecisionProvider.Rules;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.replace(/\/+$/, '') : value,
+  )
+  @IsString()
+  @Matches(/^https?:\/\/\S+$/, {
+    message: 'OLLAMA_BASE_URL must be an http(s) URL',
+  })
+  OLLAMA_BASE_URL: string = 'http://127.0.0.1:11434';
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OLLAMA_MODEL: string = 'qwen3.5:9b';
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  OLLAMA_TIMEOUT_MS: number = 60_000;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

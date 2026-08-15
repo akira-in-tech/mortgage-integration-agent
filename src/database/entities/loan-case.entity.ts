@@ -11,6 +11,7 @@ import {
   Index,
 } from 'typeorm';
 import { Tenant } from './tenant.entity';
+import { LoanType } from '../enums/loan-type.enum';
 
 /** Section 6.1 — describes workflow readiness, not a formal credit decision. */
 export enum CaseStatus {
@@ -22,13 +23,6 @@ export enum CaseStatus {
   READY_FOR_UNDERWRITING = 'READY_FOR_UNDERWRITING',
   MANUAL_REVIEW = 'MANUAL_REVIEW',
   CLOSED = 'CLOSED',
-}
-
-export enum CaseLoanType {
-  CONVENTIONAL = 'CONVENTIONAL',
-  FHA = 'FHA',
-  VA = 'VA',
-  JUMBO = 'JUMBO',
 }
 
 /**
@@ -62,8 +56,8 @@ export class LoanCase {
   @Column({ type: 'decimal', precision: 14, scale: 2 })
   requestedAmount!: number;
 
-  @Column({ type: 'enum', enum: CaseLoanType })
-  loanType!: CaseLoanType;
+  @Column({ type: 'enum', enum: LoanType })
+  loanType!: LoanType;
 
   @Column({ type: 'enum', enum: CaseStatus, default: CaseStatus.DRAFT })
   status!: CaseStatus;
