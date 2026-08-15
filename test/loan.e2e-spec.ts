@@ -5,7 +5,11 @@ require('dotenv').config();
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import * as request from 'supertest';
+// supertest's CJS export is the request function itself (no `.default`,
+// no `__esModule` flag) — a namespace import (`import * as request`) gets
+// wrapped into a plain object by the esModuleInterop helper and is not
+// callable; only a default import resolves to the actual function.
+import request from 'supertest';
 import { AppModule } from '../src/app.module';
 
 const REQUIRED_VARS = ['DATABASE_URL'];

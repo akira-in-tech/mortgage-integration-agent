@@ -1027,3 +1027,63 @@ npm run test:e2e
 ### Next safe step
 
 Fix the `test/loan.e2e-spec.ts` supertest import as its own small M1 slice so e2e evidence is available again, then proceed to the explicit initial TypeORM migration and `synchronize: false` production default (Section 29, item 4).
+
+## M1-002: Fix broken supertest import in the e2e suite
+
+### Status
+
+Implemented and locally verified.
+
+### Acceptance criterion
+
+`npm run test:e2e` must execute its HTTP assertions instead of failing with `TypeError: request is not a function` before making a request.
+
+### Problem
+
+`test/loan.e2e-spec.ts` imported supertest as `import * as request from 'supertest'`. Supertest's CommonJS export is the request function itself, with no `.default` property and no `__esModule` marker. Under the e2e transformer's `esModuleInterop: true` (`test/jest-ts-transformer.cjs`), a namespace import (`import * as X`) of a plain CJS function export is wrapped into a plain object by TypeScript's `__importStar` helper rather than resolving to the callable function, so every `request(app.getHttpServer())` call in the suite threw `TypeError: request is not a function` before any assertion ran. Reproduced identically against the pre-existing code via `git stash`, confirming this predates the M1-001 slice and is not a regression from it.
+
+### Implementation
+
+- Changed the import to `import request from 'supertest'` (a default import), which correctly resolves to the callable function through the same `esModuleInterop` helper (`__importDefault`, which wraps a non-`__esModule` export as `{ default: <export> }`).
+- Added a short comment above the import recording why a namespace import doesn't work here, since the failure mode is non-obvious from the syntax alone.
+
+### Affected files
+
+- `test/loan.e2e-spec.ts`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Default import over changing the transformer's `esModuleInterop` setting**: the failure is in how the specific import statement interacts with an already-correct interop setting, not a problem with the setting itself; changing the transformer would risk affecting every other test file.
+- **Fix in place over rewriting to `require('supertest')`**: the codebase otherwise uses ES module import syntax throughout `test/` and `src/`; a default import is the idiomatic, minimal fix and matches supertest's own documented usage.
+
+### Verification
+
+```text
+npm run test:e2e
+  1 suite passed, 4 tests passed (previously: 1 suite failed, 4 tests failed)
+
+npm run lint
+  passed, no errors
+
+npm run build
+  passed
+
+npm test -- --runInBand --no-cache --silent
+  9 suites passed, 74 tests passed (unchanged from M1-001)
+```
+
+Running against the repository's own `.env`, a real PostgreSQL instance was reachable, so this run also exercised the M1-001 environment-validation and TypeORM `synchronize`/`logging` behavior against a live database connection for the first time, closing that slice's previously recorded "not exercised against a real database" gap.
+
+### Security, privacy, cost, and compatibility
+
+- Test-only change; no production code path affected.
+- No new dependency added.
+
+### Known gaps
+
+- `test/tsconfig.json` reports a pre-existing `rootDir` diagnostic (`src/app.module.ts` is outside `test/`'s configured `rootDir` despite being included via `../src/**/*.ts`) in editor/`tsc` type-checking. It does not affect `npm run test:e2e` (which transpiles per-file via `ts.transpileModule`, bypassing `rootDir` checks) and predates this change; left unfixed as out of scope for this slice.
+
+### Next safe step
+
+Proceed to the explicit initial TypeORM migration and `synchronize: false` production default (Section 29, item 4).
