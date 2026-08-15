@@ -2333,3 +2333,83 @@ Temporal + the real dev Postgres database):
 ### Next safe step
 
 M2 is closed. Begin M3 ("Policy and Agent vertical slice") per the user's earlier direction to continue through M3-M7: policy source registry, jurisdiction catalog, the policy DSL parser/validator/evaluator, and the `AgentRuntime` port with a LangGraph.js v1 adapter.
+
+## M3-001: Jurisdiction and policy-source-registry schema
+
+### Status
+
+Implemented and verified. This is the first of many M3 slices — M3's own scope list (Section 20) is, by a wide margin, the largest of any milestone in this charter (bitemporal policy resolution with dependency-vector invalidation, immutable evaluation manifests, an `AgentRuntime`/LangGraph.js port, budget ledgers, communication classification, reviewer interrupt/resume). Attempting it in one slice would repeat the mistake M2 avoided by going M2-001 through M2-007; this entry only closes the schema foundation, mirroring how M2-001 was schema-only before any workflow executed against it. Milestone table (Section 3) stays `Planned` — nowhere close to closeable yet.
+
+### Acceptance criterion
+
+The platform must be able to durably represent, with real provenance, an authorized jurisdiction hierarchy and a versioned, immutable policy rule with typed applicability — concretely: persist the charter's own Section 10.7 example rule (`synthetic-income-discrepancy-review`) through a full chain from jurisdiction to source to source revision to policy version to applicability scope, and read it back unchanged.
+
+### Implementation
+
+- `src/database/enums/jurisdiction.enum.ts` — `JurisdictionLevel` (FEDERAL/STATE/LOCAL), `JurisdictionCoverageStatus` (COVERED/PARTIAL/NOT_COVERED, defaulting to NOT_COVERED — Section 10.6: coverage is an explicit, reviewed fact, never an implicit default).
+- `src/database/enums/policy-source.enum.ts` — `PolicySourceRetrievalMode` (SYNTHETIC/MANUAL/CONNECTOR; only SYNTHETIC is actually used yet, per Section 10.6's "initial launch uses curated synthetic policy sources").
+- `src/database/enums/policy-version.enum.ts` — `PolicyReleaseStatus` (DRAFT/PROPOSED/RELEASED/SUPERSEDED/WITHDRAWN/CORRECTED), matching Section 10.2's lifecycle verbs.
+- `src/database/entities/jurisdiction.entity.ts` — `Jurisdiction`, keyed by its stable code (e.g. `"US-CA"`) rather than a generated uuid, with a self-referencing `parentCode` for the hierarchy (Section 10.1: "jurisdiction codes and jurisdiction level").
+- `src/database/entities/policy-source.entity.ts` — `PolicySource`: authorized source registry (owner, jurisdiction, retrieval mode, freshness objective).
+- `src/database/entities/policy-source-revision.entity.ts` — `PolicySourceRevision`: immutable retrieved-content record, bitemporal (`publishedAt` = source's own valid time, `recordedAt` = platform system time).
+- `src/database/entities/policy-version.entity.ts` — `PolicyVersion`: the immutable versioned DSL rule itself, unique on `(ruleId, version)`, with `supersedesVersionId` giving a correction an explicit relationship back to the record it replaces rather than mutating it (Section 10.8: "Policy identifiers and released versions are immutable").
+- `src/database/entities/policy-applicability.entity.ts` — `PolicyApplicability`: typed scope (jurisdiction, product, program, lifecycle event, transition rule) for one policy version.
+- All five enums placed in `src/database/enums/`, not inline in entity files, proactively — not because anything imports them into a Temporal-sandboxed workflow yet, but because M2-004's sandbox surprise (an inline enum pulling in TypeORM decorator machinery when a workflow needed it) showed that retrofitting this split later is exactly the kind of thing worth not having to redo.
+- `src/database/migrations/1786825196434-PolicySchema.ts` — generated against a scratch database with all four prior migrations applied (established discipline).
+- `src/database/migrations/schema-migrations.spec.ts` — extended: 5 new tables and 5 new foreign keys (self-referencing `jurisdictions.parentCode`, plus the `policy_sources -> jurisdictions -> policy_source_revisions -> policy_versions -> policy_applicability` chain) added to the post-migration assertions; a new revert-order test inserted first.
+- `src/database/entities/policy-schema.spec.ts` — new integration test: persists the literal Section 10.7 example DSL through the full chain (federal jurisdiction, CA jurisdiction as its child, a synthetic policy source, a source revision, a RELEASED policy version carrying that exact DSL as its jsonb payload, and its applicability row), then re-reads everything through fresh queries — not the in-memory objects just created — and confirms the `(ruleId, version)` uniqueness constraint actually rejects a duplicate.
+
+### Affected files
+
+- `src/database/enums/jurisdiction.enum.ts`, `policy-source.enum.ts`, `policy-version.enum.ts` (new)
+- `src/database/entities/jurisdiction.entity.ts`, `policy-source.entity.ts`, `policy-source-revision.entity.ts`, `policy-version.entity.ts`, `policy-applicability.entity.ts` (new)
+- `src/database/entities/policy-schema.spec.ts` (new)
+- `src/database/migrations/1786825196434-PolicySchema.ts` (new); `schema-migrations.spec.ts`
+- `src/database/database.module.ts`
+
+### Decisions and alternatives
+
+- **No `tenant_id` on any of these five tables**: Section 10.1 describes the policy catalog as composable across federal, state/local, product/program, *and* tenant operating-policy layers — implying the catalog itself (at least its federal/state/product layers) is shared platform infrastructure that different tenants' cases draw from, not partitioned per tenant. The charter's own Section 10.7 example carries no tenant reference. A tenant-scoped "tenant operating policy" layer is real, deferred scope (part of the not-yet-built `policy_packs` composability), not an oversight.
+- **`PolicyApplicability` kept as a separate table, one row per policy version, not inline columns on `PolicyVersion`**: the target resolver (Section 10.3) matches a case's context against jurisdiction/product/program/lifecycle-event dimensions independently; keeping applicability separate now costs nothing and avoids having to split it out later once the resolver needs to query across it directly (`IDX_policy_applicability_lookup` on `(jurisdictionCode, productCode, lifecycleEvent)` already anticipates that access pattern).
+- **`Jurisdiction.code` as primary key, not a generated uuid**: jurisdiction codes are the stable, human-meaningful identifiers every other policy record's applicability metadata references (`"US-CA"` in the Section 10.7 example) — a surrogate uuid would just be an extra join for no benefit, and codes are exactly the kind of small, curated reference data where a natural key is appropriate.
+- **This slice stops at schema — no DSL parser, validator, evaluator, or resolver**: those are each substantial, independently testable pieces (Section 20: "policy DSL parser, validator, evaluator, immutable versions, and golden tests" is its own scope line, separate from the registry/catalog line this slice closes). Building them against a schema that doesn't exist yet, or building the schema without proving it can hold the real example DSL, would each be the wrong order.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  21 suites passed, 153 tests passed (20->21 suites, +1 new:
+  policy-schema.spec.ts; net +2 tests over M2-007's 151: the new
+  provenance-chain test, and schema-migrations.spec.ts's new revert-
+  order test)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed (unchanged — no REST-layer
+     behavior touched in this slice)
+
+Confirmed via direct query that policy-schema.spec.ts's afterAll left
+no leftover jurisdiction/policy rows in the real dev database.
+
+Migration apply/revert both verified against a disposable scratch
+database via schema-migrations.spec.ts, same discipline as every
+prior migration this session.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — these tables have no REST/GraphQL entry point yet, only direct repository access proven by the integration test.
+- No borrower or tenant data in this schema at all — jurisdiction/policy content is regulatory/reference data, not personal data, so none of the retention/deletion-lineage rules (Section 14.2) apply to it the way they do to evidence or documents.
+- No new dependency; no new cost.
+
+### Known gaps
+
+- No DSL parser/validator/evaluator — `PolicyVersion.dsl` is opaque jsonb from this schema's point of view; nothing yet checks it's well-formed beyond being valid JSON.
+- No applicability resolver (Section 10.3), no `CasePolicySnapshot`, no policy-binding validation guard (Section 10.4), no evaluation input manifest (Section 10.5) — the entire "deterministic applicability resolution" and "efficient mandatory validation" machinery is unbuilt.
+- No REST/GraphQL surface for managing policy sources, revisions, or versions — everything in this slice is reachable only via direct repository/entity access, same as `LoanCase` was after M2-001 before the workflow and REST layers arrived in later slices.
+- No connection yet between this schema and the M2 case-conditions workflow's `hasSyntheticDiscrepancy` rule — that rule remains its own hardcoded logic, not yet expressed as a policy version row. Wiring the two together is real future work, not assumed done.
+
+### Next safe step
+
+Policy DSL parser and validator: a pure, framework-agnostic module that turns the Section 10.7 YAML/JSON shape into a validated in-memory structure (schema, types, unit/reference checks) with golden tests — the next named M3 scope line, and a natural next step now that the schema exists to eventually persist validated output into.

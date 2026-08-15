@@ -7,6 +7,11 @@ import { EvidenceFact } from './entities/evidence-fact.entity';
 import { LoanCondition } from './entities/loan-condition.entity';
 import { ConditionTransition } from './entities/condition-transition.entity';
 import { OutboxEvent } from './entities/outbox-event.entity';
+import { Jurisdiction } from './entities/jurisdiction.entity';
+import { PolicySource } from './entities/policy-source.entity';
+import { PolicySourceRevision } from './entities/policy-source-revision.entity';
+import { PolicyVersion } from './entities/policy-version.entity';
+import { PolicyApplicability } from './entities/policy-applicability.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -22,6 +27,11 @@ import { OutboxEvent } from './entities/outbox-event.entity';
       LoanCondition,
       ConditionTransition,
       OutboxEvent,
+      Jurisdiction,
+      PolicySource,
+      PolicySourceRevision,
+      PolicyVersion,
+      PolicyApplicability,
     ]),
   ],
   exports: [TypeOrmModule],

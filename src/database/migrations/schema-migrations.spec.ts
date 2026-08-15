@@ -89,10 +89,15 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(await tableNames()).toEqual([
       'condition_transitions',
       'evidence_facts',
+      'jurisdictions',
       'loan_applications',
       'loan_cases',
       'loan_conditions',
       'outbox_events',
+      'policy_applicability',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_versions',
       'tenants',
     ]);
 
@@ -132,8 +137,26 @@ describeOrSkip('Schema migrations (cumulative)', () => {
        WHERE table_schema = 'public' AND constraint_type = 'FOREIGN KEY'`,
       );
     // loan_cases -> tenants, loan_conditions -> loan_cases,
-    // evidence_facts -> loan_cases, condition_transitions -> loan_conditions
-    expect(foreignKeys).toHaveLength(4);
+    // evidence_facts -> loan_cases, condition_transitions -> loan_conditions,
+    // jurisdictions -> jurisdictions (self, parentCode), policy_sources ->
+    // jurisdictions, policy_source_revisions -> policy_sources,
+    // policy_versions -> policy_source_revisions, policy_applicability ->
+    // policy_versions
+    expect(foreignKeys).toHaveLength(9);
+  });
+
+  it('reverts the policy schema migration without touching case/evidence/condition/outbox tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'condition_transitions',
+      'evidence_facts',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'tenants',
+    ]);
   });
 
   it('reverts the outbox events migration without touching case/evidence/condition tables', async () => {
@@ -166,7 +189,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
        WHERE n.nspname = 'public'
          AND (t.typname LIKE 'loan_applications_%' OR t.typname LIKE 'loan_cases_%'
               OR t.typname LIKE 'loan_conditions_%' OR t.typname LIKE 'evidence_facts_%'
-              OR t.typname LIKE 'condition_transitions_%')`,
+              OR t.typname LIKE 'condition_transitions_%' OR t.typname LIKE 'jurisdictions_%'
+              OR t.typname LIKE 'policy_sources_%' OR t.typname LIKE 'policy_versions_%')`,
     );
     expect(enumTypes).toEqual([]);
   });
