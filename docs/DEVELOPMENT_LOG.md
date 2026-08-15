@@ -948,3 +948,82 @@ No application test is required for this documentation-only consistency correcti
 ### Next safe step
 
 Preserve the M1–M4 sequence already recorded. In M2, include `REVOKED` in the initial consent-status domain model and schema from the start rather than retrofitting it later. In M5, implement consent-revocation propagation to dependent provider authorization grants and the data-disposition workflow alongside the other tenant-trust-boundary controls.
+
+## M1-001: Startup environment validation and environment-aware GraphQL exposure
+
+### Status
+
+Implemented and locally verified. First application-code slice of Milestone 1 (supported runtime and security baseline).
+
+### Acceptance criterion
+
+The application must refuse to start with a single, complete list of every missing or malformed required environment variable, instead of failing later as an opaque database or server error. `NODE_ENV` must be a closed, validated enum so a typo cannot silently leave a production-only safety check (GraphQL introspection/playground, TypeORM schema auto-synchronization) disabled in a production deploy.
+
+### Problem
+
+`AppModule` read `DATABASE_URL` directly into TypeORM with no presence or shape check — a missing value would only surface as a low-level `pg` connection error at runtime. `NODE_ENV` was compared against the raw string `'production'` in two places with no validation, so a misspelled value (for example `Production`) would silently leave schema auto-synchronization enabled. `main.ts` read `PORT` directly from `process.env` instead of the validated config. The GraphQL module unconditionally enabled `playground` and `introspection` in every environment — the code comment said this was "for demo purposes," but the charter (Section 16.1) requires both disabled outside development, and this was already called out as in-scope for M1 in Section 29.
+
+### Implementation
+
+- Added `src/config/env.validation.ts`: an `EnvironmentVariables` class-validator schema (`NODE_ENV` as a closed `NodeEnvironment` enum defaulting to `development`; `DATABASE_URL` required and checked for a `postgres://`/`postgresql://` scheme; `PORT` optional, integer, `1`-`65535`, defaulting to `3000`) and a `validateEnvironment` function that collects every validation failure into one thrown error instead of stopping at the first.
+- Wired `validate: validateEnvironment` into `ConfigModule.forRoot(...)` in `app.module.ts`, so an invalid environment fails Nest's module compilation before any HTTP listener or database connection is attempted.
+- Converted `GraphQLModule.forRoot` to `forRootAsync`, gating `playground` and `introspection` on the validated `NODE_ENV` being `development`.
+- Changed the TypeORM `synchronize`/`logging` factory to compare against the validated `NodeEnvironment` enum instead of a raw string literal.
+- Updated `main.ts` to read `PORT` and `NODE_ENV` through `ConfigService` instead of `process.env` directly, and to only log the GraphQL Playground URL when it is actually enabled.
+- Documented the new validation rules and defaults inline in `.env.example`.
+
+### Affected files
+
+- `src/config/env.validation.ts` (new)
+- `src/config/env.validation.spec.ts` (new)
+- `src/app.module.ts`
+- `src/main.ts`
+- `.env.example`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`class-validator`/`class-transformer` over adding Joi**: both are already dependencies used for GraphQL input DTOs elsewhere in the codebase (`src/loan/loan.model.ts`); reusing the same validation library avoids adding a new production dependency for an equivalent capability.
+- **A `validate` function over `validationSchema`**: `@nestjs/config`'s `validate` hook returns a typed object that `ConfigService.get()` prefers over raw `process.env` reads (confirmed by reading the installed `@nestjs/config` source), which lets `configService.get<NodeEnvironment>('NODE_ENV')` return the validated enum rather than a string that call sites would need to re-parse.
+- **Only three variables declared in the schema, not every `.env` key**: `class-transformer`'s `plainToInstance` (without `excludeExtraneousValues`) retains extraneous source properties on the returned object, and `@nestjs/config` merges that object back onto `process.env` rather than replacing it — confirmed by reading `config.module.js`'s `assignVariablesToProcess` call. This means `AgentService`'s existing `DECISION_PROVIDER`/`OLLAMA_*` reads continue to work unchanged; only the variables this slice cares about (`DATABASE_URL`, `NODE_ENV`, `PORT`) needed schema entries.
+- **Left `AgentService`'s own `DECISION_PROVIDER` validation untouched**: it already throws a clear error on an invalid value; folding it into the new global validator would touch working, already-tested Agent code for no behavioral gain, outside this slice's acceptance criterion.
+
+### Verification
+
+```text
+npm run lint
+  passed, no errors
+
+npm run build
+  passed
+
+npm test -- --runInBand --no-cache --silent
+  9 suites passed
+  74 tests passed (8 new, in src/config/env.validation.spec.ts)
+
+npm run test:e2e
+  1 suite failed, 4 tests failed — TypeError: request is not a function
+  Reproduced against the pre-existing code (git stash) with an identical
+  failure: not caused by this change. Root cause appears to be
+  `import * as request from 'supertest'` in test/loan.e2e-spec.ts under the
+  e2e transformer's `esModuleInterop: true`, which does not make a CJS
+  callable export directly invocable via a namespace import. Left unfixed
+  here — out of scope for this slice's acceptance criterion — and tracked
+  below.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new dependency was added; both validation libraries were already in `package.json`.
+- Fail-fast startup validation reduces the chance of a misconfigured `NODE_ENV` reaching a running production process with schema auto-sync or GraphQL introspection unintentionally enabled.
+- No behavior changed for `DECISION_PROVIDER`, `OLLAMA_*`, `DEMO_MODE`, or `ANTHROPIC_API_KEY` — verified by an explicit regression test asserting they pass through `validateEnvironment` untouched.
+
+### Known gaps
+
+- `test/loan.e2e-spec.ts` cannot currently run to completion due to the pre-existing supertest import issue described above; e2e coverage for this slice was therefore obtained by full unit coverage of `validateEnvironment` plus a clean `nest build`, not a live end-to-end request.
+- No Postgres instance was running in this environment, so the env-validation change was not exercised against a real database connection failure/success path, only against the validator in isolation.
+- Node.js/NestJS/Express/Apollo major-version upgrades (the first item in Section 29's M1 list) are deferred to their own slice — bumping those together with this change would have mixed an unrelated, higher-risk, harder-to-revert upgrade into one commit.
+
+### Next safe step
+
+Fix the `test/loan.e2e-spec.ts` supertest import as its own small M1 slice so e2e evidence is available again, then proceed to the explicit initial TypeORM migration and `synchronize: false` production default (Section 29, item 4).

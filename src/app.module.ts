@@ -8,21 +8,36 @@ import { LoanModule } from './loan/loan.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AgentModule } from './agent/agent.module';
 import { DatabaseModule } from './database/database.module';
+import { NodeEnvironment, validateEnvironment } from './config/env.validation';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      validate: validateEnvironment,
     }),
 
-    GraphQLModule.forRoot<ApolloDriverConfig>({
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
-      sortSchema: true,
-      // Expose playground in all environments for demo purposes
-      playground: true,
-      introspection: true,
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => {
+        // The GraphQL Playground and schema introspection are convenient for
+        // local development but leak the full schema to anyone who can reach
+        // the endpoint — the charter (16.1) requires both disabled outside
+        // development.
+        const isDevelopment =
+          configService.get<NodeEnvironment>('NODE_ENV') ===
+          NodeEnvironment.Development;
+
+        return {
+          autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+          sortSchema: true,
+          playground: isDevelopment,
+          introspection: isDevelopment,
+        };
+      },
+      inject: [ConfigService],
     }),
 
     TypeOrmModule.forRootAsync({
@@ -31,9 +46,15 @@ import { DatabaseModule } from './database/database.module';
         type: 'postgres',
         url: configService.get<string>('DATABASE_URL'),
         entities: [join(__dirname, '**', '*.entity.{ts,js}')],
-        // synchronize: true only for development — use migrations in production
-        synchronize: configService.get<string>('NODE_ENV') !== 'production',
-        logging: configService.get<string>('NODE_ENV') === 'development',
+        // synchronize: true only for development — use migrations in production.
+        // Reads the validated NODE_ENV enum (never a raw string) so a typo
+        // cannot leave auto-sync silently enabled in a production deploy.
+        synchronize:
+          configService.get<NodeEnvironment>('NODE_ENV') !==
+          NodeEnvironment.Production,
+        logging:
+          configService.get<NodeEnvironment>('NODE_ENV') ===
+          NodeEnvironment.Development,
       }),
       inject: [ConfigService],
     }),
