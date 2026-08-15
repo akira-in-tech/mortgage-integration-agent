@@ -12,18 +12,9 @@ import {
 } from 'typeorm';
 import { Tenant } from './tenant.entity';
 import { LoanType } from '../enums/loan-type.enum';
+import { CaseStatus } from '../enums/case-status.enum';
 
-/** Section 6.1 — describes workflow readiness, not a formal credit decision. */
-export enum CaseStatus {
-  DRAFT = 'DRAFT',
-  COLLECTING_EVIDENCE = 'COLLECTING_EVIDENCE',
-  CONDITIONS_OPEN = 'CONDITIONS_OPEN',
-  WAITING_FOR_INFORMATION = 'WAITING_FOR_INFORMATION',
-  WAITING_FOR_REVIEW = 'WAITING_FOR_REVIEW',
-  READY_FOR_UNDERWRITING = 'READY_FOR_UNDERWRITING',
-  MANUAL_REVIEW = 'MANUAL_REVIEW',
-  CLOSED = 'CLOSED',
-}
+export { CaseStatus };
 
 /**
  * The M2 target-vocabulary case aggregate (Section 6.1, 14.1). Coexists with

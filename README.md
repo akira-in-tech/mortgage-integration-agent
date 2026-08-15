@@ -141,6 +141,8 @@ DECISION_PROVIDER=ollama npm run start:dev
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated `http(s)://` origins; unset allows any `http://localhost:<port>` in development and none elsewhere |
 | `RATE_LIMIT_TTL_MS` | No | Rate-limit window in milliseconds; defaults to `60000` |
 | `RATE_LIMIT_MAX` | No | Max requests per client IP per window (all routes except `/health/*`); defaults to `100` |
+| `TEMPORAL_ADDRESS` | No | Temporal frontend host:port; defaults to `localhost:7233` |
+| `TEMPORAL_NAMESPACE` | No | Temporal namespace; defaults to `default` |
 
 All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=production` disables the GraphQL playground/introspection and TypeORM schema auto-synchronization — see [Database migrations](#database-migrations).
 
@@ -164,6 +166,15 @@ Migrations live in `src/database/migrations/`; the CLI reads connection settings
 - `GET /health/ready` — process is up and the database is reachable; returns `503` otherwise.
 
 Both are exempt from rate limiting so frequent infra polling can't report a healthy instance as unavailable.
+
+### Temporal worker
+
+Durable, long-running case work (starting with the M2 conditions workflow — collecting evidence, opening a condition, and durably waiting on a reviewer's `resolveCondition` signal, surviving process restarts in between) runs on [Temporal](https://temporal.io) rather than in-process. This splits the app into two processes that share the same database and codebase but have distinct responsibilities:
+
+- **API process** (`npm run start:dev` / `node dist/main`) — GraphQL/REST entry points; starts workflows and delivers signals via `TemporalClientService`, but never executes workflow or activity code itself.
+- **Worker process** (`npm run start:worker:dev` / `node dist/worker`) — polls the `case-conditions` task queue and executes workflow and activity code. Stateless and horizontally scalable; if it crashes or restarts, Temporal replays in-flight workflows from their persisted history rather than losing progress.
+
+`docker-compose up` starts a local Temporal server (`temporalio/auto-setup`, backed by the same Postgres instance under separate `temporal`/`temporal_visibility` databases) plus both the `app` and `worker` services. Outside Docker, run a Temporal dev server (`temporal server start-dev`, or `docker compose up temporal`) and then `npm run start:worker:dev` alongside `npm run start:dev`.
 
 ## Example Mutation
 
@@ -243,6 +254,8 @@ npm run test:e2e
 ```
 
 Tests are automatically skipped with a warning if either env var is missing.
+
+The Temporal workflow and activities suites (`src/workflows/*.spec.ts`) follow the same convention: they run against a real Temporal server and database when `TEMPORAL_ADDRESS`/`DATABASE_URL` are set, and skip otherwise.
 
 ## Design Notes
 

@@ -8,8 +8,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    # Mirrors docker-compose.yml's postgres service so CI exercises the same
-    # database image, credentials, and health check as local development.
+    # Mirrors docker-compose.yml's postgres and temporal services so CI
+    # exercises the same images, credentials, and health check as local
+    # development.
     services:
       postgres:
         image: postgres:16-alpine
@@ -29,6 +30,7 @@ jobs:
       DATABASE_URL: postgres://mortgage:mortgage_demo@localhost:5432/mortgage_agent
       NODE_ENV: test
       DECISION_PROVIDER: rules
+      TEMPORAL_ADDRESS: localhost:7233
 
     steps:
       - uses: actions/checkout@v4
@@ -45,10 +47,31 @@ jobs:
 
       - run: npm run build
 
-      # DATABASE_URL is set above, so this also runs the migration
-      # integration test (src/database/migrations/*.spec.ts), which creates
-      # and drops its own disposable database — never the service's
-      # `mortgage_agent` database itself.
+      # Temporal's own auto-setup image needs the postgres service above,
+      # so it can't be declared as a `services:` container (those all start
+      # together with no ordering) — run it directly instead, and poll its
+      # gRPC port before continuing since auto-setup runs a schema
+      # migration on first boot and takes a few seconds to become ready.
+      - run: |
+          docker run -d --name temporal --network host \
+            -e DB=postgres12 \
+            -e DB_PORT=5432 \
+            -e POSTGRES_USER=mortgage \
+            -e POSTGRES_PWD=mortgage_demo \
+            -e POSTGRES_SEEDS=localhost \
+            temporalio/auto-setup:1.29.7
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/7233) 2>/dev/null && exit 0
+            sleep 2
+          done
+          echo "Temporal server did not become ready in time" >&2
+          exit 1
+
+      # DATABASE_URL and TEMPORAL_ADDRESS are set above, so this also runs
+      # the migration integration test (src/database/migrations/*.spec.ts)
+      # and the Temporal workflow/activities tests
+      # (src/workflows/*.spec.ts) — all of which create and clean up their
+      # own disposable state, never touching the service's own databases.
       - run: npm test -- --ci --runInBand
 
       - run: npm run test:e2e

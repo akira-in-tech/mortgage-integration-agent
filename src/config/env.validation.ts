@@ -103,6 +103,17 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   OLLAMA_TIMEOUT_MS: number = 60_000;
+
+  // ── Temporal (src/workflows, src/worker.ts) ─────────────────────────────
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  TEMPORAL_ADDRESS: string = 'localhost:7233';
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  TEMPORAL_NAMESPACE: string = 'default';
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

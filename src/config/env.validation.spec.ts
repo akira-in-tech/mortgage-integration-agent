@@ -126,4 +126,31 @@ describe('validateEnvironment', () => {
       ).toThrow();
     });
   });
+
+  describe('Temporal (TEMPORAL_ADDRESS / TEMPORAL_NAMESPACE)', () => {
+    it('defaults to the local dev server and the default namespace', () => {
+      const result = validateEnvironment(baseConfig());
+
+      expect(result.TEMPORAL_ADDRESS).toBe('localhost:7233');
+      expect(result.TEMPORAL_NAMESPACE).toBe('default');
+    });
+
+    it('accepts an explicit address and namespace', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          TEMPORAL_ADDRESS: 'temporal.internal:7233',
+          TEMPORAL_NAMESPACE: 'mortgage-agent-staging',
+        }),
+      );
+
+      expect(result.TEMPORAL_ADDRESS).toBe('temporal.internal:7233');
+      expect(result.TEMPORAL_NAMESPACE).toBe('mortgage-agent-staging');
+    });
+
+    it('rejects an empty TEMPORAL_ADDRESS', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ TEMPORAL_ADDRESS: '' })),
+      ).toThrow(/TEMPORAL_ADDRESS/);
+    });
+  });
 });

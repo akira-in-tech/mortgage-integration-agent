@@ -13,6 +13,8 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { NodeEnvironment, validateEnvironment } from './config/env.validation';
 import { GqlThrottlerGuard } from './common/gql-throttler.guard';
+import { createTypeOrmOptions } from './database/typeorm-options.factory';
+import { TemporalModule } from './workflows/temporal.module';
 
 @Module({
   imports: [
@@ -63,20 +65,7 @@ import { GqlThrottlerGuard } from './common/gql-throttler.guard';
 
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres',
-        url: configService.get<string>('DATABASE_URL'),
-        entities: [join(__dirname, '**', '*.entity.{ts,js}')],
-        // synchronize: true only for development — use migrations in production.
-        // Reads the validated NODE_ENV enum (never a raw string) so a typo
-        // cannot leave auto-sync silently enabled in a production deploy.
-        synchronize:
-          configService.get<NodeEnvironment>('NODE_ENV') !==
-          NodeEnvironment.Production,
-        logging:
-          configService.get<NodeEnvironment>('NODE_ENV') ===
-          NodeEnvironment.Development,
-      }),
+      useFactory: createTypeOrmOptions,
       inject: [ConfigService],
     }),
 
@@ -85,6 +74,7 @@ import { GqlThrottlerGuard } from './common/gql-throttler.guard';
     IntegrationsModule,
     AgentModule,
     HealthModule,
+    TemporalModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })

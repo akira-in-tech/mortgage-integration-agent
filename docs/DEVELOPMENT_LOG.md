@@ -1893,3 +1893,123 @@ Manual boot test against node dist/main.js:
 ### Next safe step
 
 Stand up Temporal for local development and implement the first durable M2 workflow — the architecture-review findings from this session are now fully addressed, so M2 continues from where M2-001 left off.
+
+## M2-004: Durable case-conditions Temporal workflow
+
+### Status
+
+Implemented and verified: automated tests (workflow control flow and activities against a real database) pass, and the hardest guarantee — that a worker crash or restart loses no acknowledged work while a case is durably waiting — was additionally verified by hand against a real Temporal server before the automated test that codifies the same proof was written. Closes M2's "Temporal workflow, activities, signals, retry classification, and replay tests" scope item.
+
+### Acceptance criterion
+
+A synthetic loan case must be able to enter a durable condition workflow, collect evidence via activities, optionally open a condition and wait — indefinitely, and correctly, across a worker process restart — for a `resolveCondition` signal, then reach `READY_FOR_UNDERWRITING`. The wait must be Temporal's own durable state, not in-process memory: no worker running at all must not lose or drop a signal sent during that gap.
+
+### Problem
+
+The M2-001 schema (`LoanCase`, `EvidenceFact`, `LoanCondition`, `ConditionTransition`) existed but nothing executed against it — cases could be persisted but never actually moved through evidence collection, condition evaluation, or condition resolution. Doing this with plain NestJS request/response code would mean either blocking an HTTP request for however long a human reviewer takes to resolve a condition (unbounded, sometimes days), or hand-rolling a polling/resume mechanism (a queue plus a status column plus a cron sweep) that reimplements what a durable-execution engine already does correctly, including the specific hard part: surviving a process crash mid-wait without losing the eventual signal.
+
+### Implementation
+
+- `src/workflows/case-conditions.signals.ts` — `resolveConditionSignal`, a `defineSignal<[ResolveConditionSignalPayload]>` carrying `actorId`, `resolution: 'SATISFIED' | 'WAIVED'`, and an optional `reason`. `CASE_CONDITIONS_TASK_QUEUE` is the single shared task queue name used by the client, the worker, and the tests.
+- `src/workflows/case-conditions.activities.ts` — `createCaseConditionsActivities(deps)`, a plain factory function (not a NestJS-injected class — see Decisions) taking `{ dataSource, plaidService, creditService, documentService }` and returning the seven activities: `markCollectingEvidence`, `fetchIncomeEvidence`/`fetchCreditEvidence`/`fetchDocumentEvidence` (each persists an `EvidenceFact` row and returns the simulator's data), `evaluateConditions` (applies `hasSyntheticDiscrepancy()` — `derogatoryMarks >= 1 || debtToIncomeRatio > 0.4 || !allDocumentsValid` — and either marks the case ready or opens a `LoanCondition` with status `OPEN`), `resolveCondition` (updates the condition's status and appends an attributed `ConditionTransition` row — actor, reason, from/to status), and `markReadyForUnderwriting`.
+- `src/workflows/case-conditions.workflow.ts` — `caseConditionsWorkflow`, the actual durable function: registers the signal handler, calls `markCollectingEvidence`, fans out the three evidence-fetch activities via `Promise.all`, calls `evaluateConditions`, and returns immediately if no condition opened. Otherwise it durably waits with `await condition(() => resolution !== undefined)` — Temporal persists this suspension server-side — then calls `resolveCondition` and `markReadyForUnderwriting` using whatever the signal handler captured, and returns the final status plus condition id.
+- `src/workflows/case-conditions.types.ts` — `CaseConditionsWorkflowInput`/`Result`, imported by both the workflow and its callers.
+- `src/workflows/temporal-client.service.ts` — `TemporalClientService`, a NestJS `OnModuleDestroy` service wrapping a `@temporalio/client` `Client`: `startCaseConditionsWorkflow`, `resolveCondition` (delivers the signal to a running workflow handle), `getWorkflowStatus`. Not yet called from any REST/GraphQL entry point — see Known gaps.
+- `src/workflows/temporal.module.ts` — registers and exports `TemporalClientService` for the API process.
+- `src/worker.module.ts` / `src/worker.ts` — a second, minimal Nest application context (`NestFactory.createApplicationContext`, not `create` — no HTTP listener) that builds the real `CaseConditionsActivities` from the app's actual `DataSource`/integration services, connects a `NativeConnection` to Temporal, and runs a `Worker` polling `CASE_CONDITIONS_TASK_QUEUE`. `src/database/typeorm-options.factory.ts` extracts the `TypeOrmModule.forRootAsync` options object so `app.module.ts` and `worker.module.ts` share one definition instead of two copies that could drift.
+- `src/config/env.validation.ts` — added `TEMPORAL_ADDRESS` (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`), validated the same way as every other environment variable, with matching `env.validation.spec.ts` coverage (defaults, explicit values, rejects an empty `TEMPORAL_ADDRESS`).
+- `docker-compose.yml` — added a `temporal` service (`temporalio/auto-setup:1.29.7`, pointed at the existing `postgres` service's `temporal`/`temporal_visibility` databases — it never touches `mortgage_agent`) and a `worker` service (`node dist/worker`); `app` now depends on `temporal` and gets `TEMPORAL_ADDRESS=temporal:7233`.
+- `.env.example` — documented `TEMPORAL_ADDRESS`/`TEMPORAL_NAMESPACE`.
+- `.github/workflows/ci.yml` — runs a real `temporalio/auto-setup` container (via `docker run`, not `services:`, since it must start after and target the `postgres` service — see Decisions) and polls its port before the test step, so the Temporal-gated suites actually execute in CI instead of skipping.
+- `README.md` — new "Temporal worker" section explaining the API/worker process split, plus the new environment variables and the Temporal-gated test convention.
+- `package.json` — added `@temporalio/{client,worker,workflow,activity,common}` (runtime) and `@temporalio/testing` (dev), and `start:worker`/`start:worker:dev` scripts.
+
+### Failures and resolution
+
+- **Workflow sandbox risk, caught before it broke anything**: `case-conditions.workflow.ts` initially imported `CaseStatus` from `loan-case.entity.ts` for convenience (the entity already exported it). Temporal bundles workflow code into an isolated, deterministic sandbox and rejects modules with side effects or non-deterministic behavior at load time — and `loan-case.entity.ts` pulls in TypeORM's decorator machinery. Rather than wait for that to surface as a runtime bundling failure, extracted `CaseStatus` into a standalone `src/database/enums/case-status.enum.ts` with no other imports, re-exported from the entity file for the existing call sites, and confirmed via webpack's bundle analysis output that the workflow bundle now contains only the enum file, not the entity.
+- **`env.validation.spec.ts` coupling from M2-002 surfaced again here**: no new instance of the same problem, but the same test suite was extended in place (three new tests for `TEMPORAL_ADDRESS`/`TEMPORAL_NAMESPACE`) rather than adding a second validation mechanism, consistent with that earlier decision.
+- **Local Temporal server setup**: `brew install temporal` failed on an unrelated, pre-existing permission problem under `/usr/local/share/man/man8` on this machine. Did not use `sudo` to force past a system-level permission issue outside this task's scope; used a disposable Docker Compose stack (`temporalio/auto-setup` + a scratch Postgres) in the scratchpad directory for manual verification instead, torn down after use.
+
+### Manual restart-survival verification (before the automated test)
+
+Performed by hand against the scratchpad Temporal server, in this order, before writing `case-conditions.workflow.spec.ts`'s equivalent automated test:
+
+1. Started a worker (`ts-node src/worker.ts`) and started a workflow for a synthetic case with a `DISCREPANT_CREDIT`-shaped evidence set (forces `hasOpenCondition: true`).
+2. Confirmed via `temporal workflow describe` / the case's Postgres row that the workflow reached the durable wait and the case was `CONDITIONS_OPEN`.
+3. Killed the worker process entirely (`Ctrl+C`) — zero workers running.
+4. Sent the `resolveCondition` signal from a separate script while still zero workers were running; confirmed Temporal accepted and persisted it server-side (no worker needed to be listening to receive it).
+5. Started a new, independent worker process.
+6. Confirmed the new worker picked up the pending signal, ran `resolveCondition`/`markReadyForUnderwriting`, and the case reached `READY_FOR_UNDERWRITING` — with `markCollectingEvidence` and the fetch activities *not* re-executed (confirmed via their log lines appearing only once, from the first worker), i.e. Temporal replayed the prior history rather than re-running completed work.
+
+This sequence is what `case-conditions.workflow.spec.ts`'s `'loses no acknowledged work across a worker restart while durably waiting'` test automates.
+
+### Affected files
+
+- `src/workflows/case-conditions.signals.ts`, `case-conditions.types.ts`, `case-conditions.activities.ts`, `case-conditions.workflow.ts`, `temporal-client.service.ts`, `temporal.module.ts` (all new)
+- `src/workflows/case-conditions.workflow.spec.ts`, `case-conditions.activities.spec.ts` (new)
+- `src/database/enums/case-status.enum.ts` (new); `src/database/entities/loan-case.entity.ts` (re-exports it)
+- `src/database/typeorm-options.factory.ts` (new); `src/app.module.ts` (uses it, imports `TemporalModule`)
+- `src/worker.module.ts`, `src/worker.ts` (new)
+- `src/config/env.validation.ts`, `env.validation.spec.ts`
+- `docker-compose.yml`, `.env.example`, `.github/workflows/ci.yml`, `README.md`, `package.json`
+
+### Decisions and alternatives
+
+- **Activities as a plain factory function, not a NestJS-injected class**: Temporal's worker constructs activities from a plain object of functions handed to `Worker.create()` — there is no Nest DI container inside a Temporal worker's activity execution path by default. Wrapping every activity call in `moduleRef.get()` lookups would add indirection with no benefit over closing over the already-constructed `dataSource`/integration services once, at worker startup, which is what `createCaseConditionsActivities(deps)` does.
+- **Second Nest application context for the worker, not one process doing both**: `NestFactory.createApplicationContext(WorkerModule)` builds only the providers the worker actually needs (config, TypeORM, the three integration services) with no HTTP listener, guard, or resolver in the graph — keeping the worker's dependency surface minimal and its failure domain separate from the API process's. `WorkerModule` intentionally does not import `AgentModule`, `LoanModule`, or `TemporalModule` (the client side) since the worker never starts or signals workflows, only executes them.
+- **`CaseStatus` extracted to its own file instead of loosening the sandbox**: Temporal's sandbox restriction is a correctness guarantee (workflow code must replay deterministically), not an inconvenience to route around; `workflowsPath`-level sandbox exceptions exist but would have papered over the actual coupling problem (a workflow depending on entity/ORM code) rather than fixing it.
+- **CI runs Temporal via `docker run`, not GitHub Actions' `services:` block**: `services:` containers all start in parallel with no dependency ordering between them, but `temporalio/auto-setup` needs the `postgres` service already accepting connections to run its own schema migration on first boot. Starting it as a manual step after `postgres`'s health check has already gated earlier steps, then polling its gRPC port, gets the same effect without inventing a wait-for-postgres mechanism inside a `services:` container that doesn't support one.
+- **Retry policy (`initialInterval: 1s`, `backoffCoefficient: 2`, `maximumAttempts: 3`) is Temporal's standard activity retry, not custom classification logic**: this slice's activities either succeed or throw (no distinct "retryable vs. terminal" error taxonomy exists yet in the simulator services they call) — attempting retry-reason classification now would be speculative for failure modes that don't exist yet in this codebase. Revisit once a real, non-simulated provider integration introduces errors worth distinguishing (e.g., rate limits vs. malformed input).
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  17 suites passed, 108 tests passed (15->17 suites, +2 new:
+  case-conditions.workflow.spec.ts, case-conditions.activities.spec.ts;
+  net +13 tests over M2-003's 95)
+  - case-conditions.workflow.spec.ts (4 tests, against a real Temporal
+    server via TestWorkflowEnvironment.createFromExistingServer, mocked
+    activities): straight-through completion with no open condition;
+    durable wait -> signal -> completion; the restart-survival test
+    described above, automated; duplicate-signal delivery does not
+    double-resolve a condition.
+  - case-conditions.activities.spec.ts (6 tests, against a real
+    Postgres database, real activities, mocked integration services):
+    each activity's effect on LoanCase/EvidenceFact/LoanCondition/
+    ConditionTransition rows, including the attributed transition
+    record (actor, reason, from/to status) on resolution.
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 1 suite passed, 4 tests passed (unaffected by this slice; run
+     with TEMPORAL_ADDRESS set to confirm AppModule still boots
+     correctly with TemporalModule wired in)
+
+Manual end-to-end restart-survival verification: see above, performed
+against a disposable scratchpad Temporal + Postgres Docker stack
+(torn down after use), independently of the automated suite.
+
+Webpack workflow-bundle inspection: confirmed the compiled workflow
+bundle Temporal loads into its sandbox includes only
+case-status.enum.ts, not loan-case.entity.ts or any TypeORM module.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface: `TemporalClientService` is not yet called from any REST/GraphQL resolver (see Known gaps), so this slice adds no new attack surface to the API process itself.
+- The worker process holds the same database credentials and integration-service access the API process already has — no new credential or scope was introduced, but it is a second process that now needs the same secrets, which operationally matters for secret-distribution/rotation once this leaves local development.
+- `ConditionTransition` rows (already part of the M2-001 schema) capture `actorId`/`reason` for every resolution, giving the same reviewer-attribution audit trail the charter's Section 6.3 human-in-the-loop requirement expects — this slice is what actually populates that table for the first time.
+- No paid service added; Temporal's OSS server runs locally via Docker, same cost profile as the existing Postgres dependency.
+
+### Known gaps
+
+- `TemporalClientService.startCaseConditionsWorkflow`/`resolveCondition` exist but are not called from any REST or GraphQL entry point yet — a case cannot currently be moved into this workflow except by calling the service directly (as the tests and manual verification do). This is explicitly still-pending M2 scope ("REST workflow-start and status endpoints"), not a defect in this slice.
+- Retry behavior uses Temporal's default activity retry policy uniformly; there is no failure-classification logic distinguishing retryable from terminal errors (see Decisions) because no real provider integration in this codebase currently produces that distinction.
+- No transactional outbox or signed status events yet (separate M2 scope item, not started).
+- `LoanCondition`'s `ConditionStatus` enum remains defined in `loan-condition.entity.ts` rather than extracted like `CaseStatus`, since no workflow or activity code imports it directly (activities run outside the sandbox, so this is safe as-is, not an oversight).
+
+### Next safe step
+
+Wire `TemporalClientService` into a REST or GraphQL entry point so a real case can start this workflow and receive the `resolveCondition` signal from outside a test — the workflow itself is complete and proven, but currently unreachable from outside this codebase's own test suite.
