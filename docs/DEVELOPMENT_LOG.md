@@ -1398,3 +1398,64 @@ npm run lint / npm test / npm run test:e2e
 ### Next safe step
 
 Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.
+
+## M1-007: Resolve markdown lint problems (IDE-reported, 200+)
+
+### Status
+
+Implemented and verified.
+
+### Acceptance criterion
+
+The editor's markdown-lint diagnostics for `README.md` and `docs/*.md` must drop to zero without renaming any of `docs/DEVELOPMENT_LOG.md`'s intentionally repeated per-entry section headings and without hand-reformatting dozens of charter tables.
+
+### Problem
+
+The editor's Problems panel reported 200+ markdown lint findings. Running `markdownlint-cli2` (no repo config present, so its stricter-than-the-editor defaults) against `docs/*.md` and `README.md` showed the full breakdown: 917 `MD013` (line-length — not part of the 200+, since the editor's own defaults don't flag it), 141 `MD024` (duplicate heading), 60 `MD060` (inconsistent table-separator-row spacing), 2 `MD040` (fenced code block missing a language), 1 `MD034` (bare URL). Excluding `MD013`, the remaining 204 matched the reported count closely.
+
+Almost all of the `MD024` findings were a false-positive pattern, not a real problem: `docs/DEVELOPMENT_LOG.md` intentionally repeats the same subsection headings (`### Status`, `### Implementation`, ...) under every milestone entry — that structure is the journal format itself (Section 26). Default `MD024` flags any duplicate heading text anywhere in the document, regardless of which parent it's under.
+
+### Implementation
+
+- Added `.markdownlint.jsonc`: `MD024` set to `siblings_only` (only flags a duplicate heading against true siblings under the same parent, not against every other entry in an append-only journal) and `MD013` disabled (prose-heavy architecture/journal docs intentionally use long lines).
+- Ran `markdownlint-cli2 --fix`, which mechanically normalized all 60 `MD060` table-separator rows (`|---|---|` → `| --- | --- |`, matching the padding already used by every table's header/data rows) and fixed the one `MD034` bare URL (wrapped in `<...>`). Reviewed the resulting diff before keeping it: every changed line in `docs/PROJECT_CHARTER.md` and `README.md` is a table-separator row or the one URL — no prose, code, or table content changed.
+- Manually added a language hint (`text`) to the two `MD040`-flagged fenced code blocks in `README.md` (the ASCII architecture diagram and the demo CLI output) — not auto-fixable, since the tool can't infer an appropriate language for a plain-text block.
+
+### Affected files
+
+- `.markdownlint.jsonc` (new)
+- `docs/PROJECT_CHARTER.md`, `README.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Config fix (`siblings_only`) over renaming headings**: `docs/DEVELOPMENT_LOG.md`'s repeated per-entry headings are the documented journal structure (Section 26), not a mistake; the lint rule's default assumption (a normal document has each heading once) doesn't fit an append-only journal, so the config was wrong for this file, not the file.
+- **`--fix` plus a reviewed diff over leaving `MD060` unaddressed**: unlike `MD024`, the table-separator spacing inconsistency was a real, mechanical formatting defect (separator rows didn't match their own table's header/data row padding), consistently fixable without touching any actual content — worth actually fixing rather than just silencing the rule.
+- **Disabled `MD013` rather than reformatting to 80 columns**: this is an architecture/journal document with intentionally long single-sentence lines carrying precise technical qualifications; hard-wrapping at 80 columns would hurt readability and diff-ability far more than it would help, and the editor's own defaults already don't enforce it.
+
+### Verification
+
+```text
+npx markdownlint-cli2 "docs/*.md" "README.md" "*.md"
+  before: 1121 issues (917 MD013, 141 MD024, 60 MD060, 2 MD040, 1 MD034)
+  after config + --fix + manual MD040 fixes: 0 issues
+
+npx markdownlint-cli2 "**/*.md" (whole repo, excluding node_modules/dist)
+  0 issues in 3 files
+
+git diff docs/PROJECT_CHARTER.md / README.md (manual review before commit)
+  every changed line is a table-separator row, the one bare URL, or a
+  code-fence language tag — no prose, table content, or code changed
+
+npm run build / npm test -- --runInBand --no-cache --silent / npm run test:e2e
+  all unaffected: dist/main.js present, 13 suites / 86 tests passed,
+  4/4 e2e passed
+```
+
+### Known gaps
+
+- None. This was a documentation/tooling hygiene fix with no application behavior involved.
+
+### Next safe step
+
+Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.

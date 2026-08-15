@@ -8,7 +8,7 @@ Built with NestJS, GraphQL, TypeORM, PostgreSQL, and Ollama-compatible local mod
 
 ## Architecture
 
-```
+```text
                           ┌─────────────────────────────────────────────────┐
                           │           mortgage-integration-agent            │
                           │                                                 │
@@ -50,7 +50,7 @@ Built with NestJS, GraphQL, TypeORM, PostgreSQL, and Ollama-compatible local mod
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | API | GraphQL (code-first), Apollo Server |
 | Framework | NestJS 10 |
 | Language | TypeScript 5 (strict mode) |
@@ -69,7 +69,7 @@ npm install
 npm run demo
 ```
 
-```
+```text
   Mortgage Integration Agent  demo mode
   Rule-based underwriter · no API key required · no database
 
@@ -104,7 +104,7 @@ docker-compose up
 DECISION_PROVIDER=ollama docker-compose up
 ```
 
-Open **http://localhost:3000/graphql** once the app is running.
+Open **<http://localhost:3000/graphql>** once the app is running.
 
 ## Setup (local, without Docker)
 
@@ -130,7 +130,7 @@ DECISION_PROVIDER=ollama npm run start:dev
 ### Environment variables
 
 | Variable | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `DATABASE_URL` | Yes | PostgreSQL connection string (`postgres://` or `postgresql://`) |
 | `NODE_ENV` | No | `development` (default) / `test` / `staging` / `production` |
 | `PORT` | No | TCP port, `1`-`65535`; defaults to `3000` |

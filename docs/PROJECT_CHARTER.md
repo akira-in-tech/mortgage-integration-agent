@@ -3,7 +3,7 @@
 > Mortgage-first, lending-extensible autonomous operations platform
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
 | Version | 2.6 |
 | Repository | `mortgage-integration-agent` |
@@ -83,7 +83,7 @@ The current simulator services also predate the target `ProviderAdapter` contrac
 ### 3.1 Current workflow audit
 
 | Area | Implemented behavior | Production implication |
-|---|---|---|
+| --- | --- | --- |
 | Intake | GraphQL receives borrower identifier, requested amount, and loan type. | Insufficient to establish a complete application, legal milestone, jurisdiction, property, purpose, occupancy, or consent context. |
 | Evidence | Three deterministic simulators return income, credit, and document summaries concurrently. | Useful for a demo; not authorized, complete, normalized, freshness-governed provider evidence. |
 | Policy | Thresholds exist in source code and a local-model prompt. | No immutable release, jurisdiction scope, effective dating, approval, binding validation, or exception governance. |
@@ -207,7 +207,7 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 ### 6.1 Case statuses
 
 | Status | Meaning |
-|---|---|
+| --- | --- |
 | `DRAFT` | Case exists but required intake data has not been submitted. |
 | `COLLECTING_EVIDENCE` | Approved evidence-gathering work is active. |
 | `CONDITIONS_OPEN` | One or more operational conditions require resolution. |
@@ -255,7 +255,7 @@ Communication classification and template enforcement are deterministic applicat
 Mortgage production is not one universal linear workflow: product, channel, jurisdiction, lender policy, and case facts change the required path. The platform therefore records authoritative milestone events and coordinates a bounded operations segment rather than pretending to own the lender's entire origination process.
 
 | Lifecycle area | Representative milestones | Initial product relationship | Authority boundary |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Shopping, inquiry, and prequalification | Product exploration, inquiry, prequalification | Outside launch scope; may enter as context | The platform must not infer that a regulated application was received. |
 | Application intake and initial disclosure triggers | Application-received event, required initial disclosures, intent to proceed | Integration boundary; record downstream-confirmed events and deadlines | The lender or authorized system determines legal application status and performs disclosures. |
 | Processing and evidence assembly | Collect and verify income, assets, credit, identity, occupancy, and documents | Core launch scope with synthetic evidence | The platform may identify evidence gaps but does not make a credit decision. |
@@ -448,7 +448,7 @@ Budget fields are server-issued observations, not model authority. At every grap
 ### 9.4 Registered tools
 
 | Tool | Purpose | Side effect | Approval boundary |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `check_case_completeness` | Validate required intake fields | None | No |
 | `inspect_documents` | Extract candidate facts from synthetic documents | Document processing | Consent required |
 | `fetch_income_evidence` | Request income capability | Provider submission | Consent and budget required |
@@ -1074,7 +1074,7 @@ Domain and application contracts do not import web frameworks, model SDKs, queue
 ## 13. Target technology stack
 
 | Layer | Target | Rationale |
-|---|---|---|
+| --- | --- | --- |
 | Runtime | Node.js 24 LTS | Active LTS production baseline; non-LTS Current releases are deferred. |
 | Language | TypeScript 6, strict | Stable bridge for tools requiring the programmatic compiler API; TypeScript 7 adoption is compatibility-gated. |
 | Backend | NestJS 11 + Express 5 | Mature modular TypeScript framework and supported migration path. |
@@ -1104,7 +1104,7 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 ### 14.1 Core entities
 
 | Entity | Purpose |
-|---|---|
+| --- | --- |
 | `tenants` | Organization boundary and configuration. |
 | `users` | OIDC-linked human identity. |
 | `tenant_memberships` | Role assignment by tenant. |
@@ -1528,7 +1528,7 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 ### Milestone status
 
 | Milestone | Outcome | Status |
-|---|---|---|
+| --- | --- | --- |
 | M0 | Stable free model baseline and independent product charter | Implemented |
 | M1 | Supported runtime, migrations, and security baseline | Planned |
 | M2 | Durable loan case, evidence, and condition workflow | Planned |
@@ -1850,7 +1850,7 @@ Exit evidence:
 ## 23. Risks and mitigation
 
 | Risk | Mitigation |
-|---|---|
+| --- | --- |
 | Product becomes a generic Agent demo | Keep the conditions loop, evidence graph, policy lifecycle, and provider failures central. |
 | Product becomes a copy of one company | Maintain independent positioning, public standards, provider neutrality, and a multi-lending extension model. |
 | Model output is mistaken for a lending decision | Use workflow-readiness vocabulary, deterministic authority, visible provenance, and human review. |
