@@ -2114,3 +2114,119 @@ workflow termination) was verified to actually run, not just written.
 ### Next safe step
 
 Transactional outbox and signed status events — the last unimplemented item in M2's scope list — so workflow state changes (`workflow_run.started`, `condition.opened`, `condition.satisfied`, etc. from Section 15.4's event catalog) become durable, ordered, externally-deliverable events instead of only being inspectable by directly querying Postgres or Temporal.
+
+## M2-006: Transactional outbox and signed status event foundation — closes Milestone 2
+
+### Status
+
+Implemented and verified, including a full hands-on pass through the real REST API and a real worker (not just automated tests): created a case, started its workflow, watched every expected event land with a valid signature at each step, resolved its condition, and confirmed the terminal events. Closes the "transactional outbox and signed status event foundation" scope item. This does **not** close Milestone 2 outright: the charter's M2 scope list (Section 20) also names "retry classification" as a distinct item, which remains deliberately deferred (same reasoning as M2-004's Known gaps — the simulator services have no distinct transient-vs-terminal error taxonomy to classify yet) and is unaffected by this slice. See Known gaps.
+
+### Acceptance criterion
+
+Every domain state change this codebase makes that other systems will eventually need to know about must be recorded as a durable, HMAC-signed event in the same database transaction as the change itself — so a committed state change and its event can never diverge, and the event's authenticity can be verified independently of trusting whoever stores or forwards it later.
+
+### Problem
+
+Case, evidence, and condition state changes were only ever visible by directly querying Postgres or Temporal's own workflow history. Nothing recorded *that a change happened* as a first-class, independently inspectable fact — which is what M4's webhook delivery, and any future audit or integration consumer, needs to build on. Two of the six activities in `case-conditions.activities.ts` also had a real, separate atomicity gap this work needed to fix before an outbox write could honestly be called "transactional": `evaluateConditions`'s discrepancy branch did a `LoanCondition` insert and a `LoanCase` status update as two independent, non-atomic statements (a crash between them would leave a condition with no case status update reflecting it), and `resolveCondition` had the same gap between its condition-status update and its `ConditionTransition` insert.
+
+### Implementation
+
+- `src/database/entities/outbox-event.entity.ts` — `OutboxEvent`: `tenantId`, `caseId`, `eventType`, `payload` (jsonb), `signature`, `createdAt`, `publishedAt` (nullable, stays null in this slice — no dispatcher exists yet, that's M4). Deliberately has no foreign key to `loan_cases`: an event log should survive changes to the aggregate's own lifecycle, unlike `evidence_facts`/`loan_conditions`, which correctly cascade-delete with their case.
+- `src/database/outbox/outbox-signer.ts` — `signOutboxPayload`/`verifyOutboxSignature`, HMAC-SHA256 over a *canonicalized* (recursively key-sorted) serialization of the payload. The canonicalization is load-bearing, not defensive style: Postgres jsonb does not preserve object key order, so a signature computed from `JSON.stringify(payload)` at write time would not reliably match one recomputed from `JSON.stringify(reloadedPayload)` after a real round-trip through the database — verified empirically (see Verification) rather than assumed.
+- `src/database/outbox/outbox-writer.ts` — `writeOutboxEvent(manager, secret, input)`: plain TypeORM, takes the `EntityManager` from an already-open transaction. Not a NestJS provider on purpose — it needs to work both from `src/workflows/case-conditions.activities.ts` (plain functions outside Nest's DI container, per M2-004's design) and from Nest-injected services (`CasesService`).
+- `src/database/outbox/outbox-event-types.ts` — `OutboxEventType` constants for the subset of Section 15.4's catalog this codebase can honestly emit today: `loan_case.created`, `workflow_run.started`/`waiting_for_review`/`completed`, `evidence.updated`, `condition.opened`/`satisfied`/`waived`. Not emitted (see Known gaps): `workflow_run.waiting_for_information`, `workflow_run.failed`, `condition.escalated`, `review.completed` — nothing in this codebase produces those states yet.
+- `src/workflows/case-conditions.activities.ts` — every activity now wraps its domain write(s) and outbox event(s) in one `dataSource.transaction()`. This is also where the two pre-existing atomicity gaps got fixed, as a direct consequence of doing the outbox correctly rather than as separate cleanup: `evaluateConditions`'s condition-insert + case-status-update, and `resolveCondition`'s condition-status-update + transition-insert, are now each one transaction. `evaluateConditions`'s discrepancy branch writes two events in the same transaction (`condition.opened` and `workflow_run.waiting_for_review`) since both are true simultaneously the moment a condition opens.
+- `src/cases/cases.service.ts` — `createCase` now runs inside `dataSource.transaction()`, writing the `LoanCase` row and its `loan_case.created` event together; the existing idempotency logic (pre-check plus unique-violation catch) is unchanged, just now wraps a transaction instead of a single `save()`.
+- `src/config/env.validation.ts` — `OUTBOX_SIGNING_SECRET`, validated (`@MinLength(16)`) with a documented dev-only default, same pattern as every other config value in this file.
+- `src/database/migrations/1786817290551-OutboxEvents.ts` — generated against a scratch database with both prior migrations applied (established discipline); creates `outbox_events` and its `(tenantId, caseId)` index.
+- `src/database/migrations/schema-migrations.spec.ts` — extended: `outbox_events` added to the post-migration table list, and a new revert-order test inserted first (since `undoLastMigration()` reverts most-recent-first).
+- `src/worker.ts` — unrelated bugfix found while doing the manual end-to-end proof below (see Failures and resolution).
+- `docs/PROJECT_CHARTER.md` — added `condition.waived` to the Section 15.4 event catalog (a real gap: the catalog had `condition.satisfied` but no counterpart for a reviewer *waiving* rather than the borrower *satisfying* a condition — only visible once something needed to emit the event for real); version 2.7 -> 2.8. Milestone table (Section 3) M2 status left as `Planned` — see Known gaps.
+
+### Failures and resolution
+
+- **`npm run start:worker:dev` was already broken, unrelated to this slice, discovered only because this slice's manual verification needed a real running worker for the first time since M2-004's own manual check**: `src/worker.ts` built `workflowsPath` as `join(__dirname, 'workflows', 'case-conditions.workflow.js')` — a hardcoded `.js` extension that only exists under the compiled `dist/` output. Running via `ts-node` directly (`start:worker:dev`, against `src/`) threw `ENOENT` immediately, since only the `.ts` file exists there. `npm run start:worker` (the compiled path, `node dist/worker`) was unaffected, which is presumably why this went uncaught: nothing in the automated test suite exercises `src/worker.ts`'s own entrypoint (`case-conditions.workflow.spec.ts` bypasses it entirely with its own `require.resolve('./case-conditions.workflow')`). Fixed by switching to that same `require.resolve` pattern, which correctly finds `.ts` under ts-node and `.js` under the compiled build.
+- **First signature-canonicalization design was wrong until checked against a real database**: the initial version of `outbox-signer.ts` used a plain `JSON.stringify(payload)`. Before trusting it, ran `case-conditions.activities.spec.ts`'s `verifyOutboxSignature` assertions against a real Postgres `jsonb` column (not an in-memory object) — this is exactly the kind of case where an in-memory unit test would have passed while the real round-trip could plausibly fail depending on jsonb's internal key ordering, so canonicalization (recursively sorting object keys before serializing) was designed in from the start rather than discovered as a bug later; the empirical round-trip check confirms it actually holds, not just that the code looks right.
+
+### Affected files
+
+- `src/database/entities/outbox-event.entity.ts` (new)
+- `src/database/outbox/outbox-signer.ts`, `outbox-signer.spec.ts`, `outbox-writer.ts`, `outbox-event-types.ts` (all new)
+- `src/database/migrations/1786817290551-OutboxEvents.ts` (new); `schema-migrations.spec.ts`
+- `src/database/database.module.ts`
+- `src/workflows/case-conditions.activities.ts`, `case-conditions.activities.spec.ts`
+- `src/cases/cases.service.ts`, `cases.service.spec.ts`
+- `src/config/env.validation.ts`, `env.validation.spec.ts`
+- `src/worker.ts`
+- `docs/PROJECT_CHARTER.md`, `README.md`
+
+### Decisions and alternatives
+
+- **A global `OUTBOX_SIGNING_SECRET`, not a per-endpoint secret**: the full target design (Section 14.1's `webhook_endpoints.secretRef`) signs each webhook delivery with the *destination's own* secret, but that table doesn't exist yet (M4 scope) — there is no destination to have a secret. A single foundation-level secret proves the signing mechanism end-to-end now (every event is tamper-evident from the moment it's committed) without inventing per-endpoint infrastructure ahead of the feature that needs it; M4's dispatcher swaps the secret source, not the signing mechanism itself.
+- **`OutboxEvent` has no foreign key to `loan_cases`**: every other case-scoped table (`evidence_facts`, `loan_conditions`) intentionally cascade-deletes with its case, because they're live business state owned by the case. An event log is different — it should outlive whatever happens to the case row it describes (matching how `audit_events`, Section 14.1, is described as append-only history, not case-owned state), so a future case-deletion or archival path can't silently take its own event history down with it.
+- **Wrapping every activity write in `dataSource.transaction()` rather than adding a lighter-weight "just don't lose the outbox row" mechanism**: a true transactional outbox requires the state change and the event to be atomic, not merely both-attempted; the two pre-existing non-atomic multi-statement activities (see Problem) meant this slice had to introduce real transaction boundaries regardless, so extending that same boundary to include the outbox write was the direct, non-speculative way to do it — not an unrelated refactor bundled in.
+- **Manual end-to-end verification through the real REST API + a real worker, not just the automated suites**: the automated tests (activities spec, service spec) each verify one layer in isolation with some collaborators mocked. The one thing neither proves is that the whole chain — REST request, DB transaction, Temporal signal, a second activity's transaction — produces the *right sequence* of events for a real case as it actually moves through every state. Running the real API and worker together and reading back all nine events against a synthetic discrepant case (matching the exact production code path) is the same standard of proof M2-004 used for the restart-survival guarantee.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  20 suites passed, 139 tests passed (19->20 suites, +1 new:
+  outbox-signer.spec.ts [6 tests]; net +10 tests over M2-005's 129:
+  +6 outbox-signer, +3 env.validation OUTBOX_SIGNING_SECRET coverage,
+  +1 schema-migrations revert-order test)
+  - case-conditions.activities.spec.ts: all 6 tests now also assert the
+    correct outbox event(s) were written, including one that round-trips
+    a real signature through a real jsonb column and independently
+    verifies it (see Failures and resolution).
+  - schema-migrations.spec.ts: outbox_events created/reverted correctly
+    in the full cumulative migration sequence, in isolation from
+    case/evidence/condition and loan_applications tables.
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed (unchanged from M2-005 — this
+     slice added no new e2e-suite-level behavior beyond what the
+     manual end-to-end check below covers more thoroughly)
+
+Manual end-to-end proof (real API process + real worker process,
+scratchpad Temporal + the real dev Postgres database):
+  1. Seeded a tenant directly, POSTed a case -> outbox has exactly one
+     loan_case.created event, signature verifies.
+  2. POSTed .../workflow-runs -> the real worker picks it up; polled
+     the outbox and watched, in order: workflow_run.started,
+     evidence.updated x3 (INCOME/CREDIT/DOCUMENT), then — because this
+     run's synthetic data happened to be discrepant — condition.opened
+     and workflow_run.waiting_for_review together (same transaction,
+     confirmed by identical timestamps down to the same commit).
+     Case status: CONDITIONS_OPEN.
+  3. POSTed .../reviews (SATISFIED) -> condition.satisfied then
+     workflow_run.completed. Case status: READY_FOR_UNDERWRITING.
+  4. Independently recomputed and verified all 9 events' signatures
+     against the values actually stored in Postgres (not the in-memory
+     values from step 1-3) using OUTBOX_SIGNING_SECRET's default —
+     every one verified; confirmed a wrong secret fails verification.
+  5. Confirmed workflow bundle (webpack output) still includes only
+     case-status.enum.ts, not any entity file — the M2-004 sandbox fix
+     is unaffected by this slice's changes.
+  Cleaned up the synthetic tenant/case/condition/outbox rows, the
+  worker/API processes, and the scratchpad Temporal stack afterward.
+```
+
+### Security, privacy, cost, and compatibility
+
+- `OUTBOX_SIGNING_SECRET`'s default is explicitly dev-only (documented in both `env.validation.ts` and `.env.example`); this slice has no deployment target yet, so there is nothing consuming these signatures in a security-relevant way today — the mechanism is proven correct, but a real deployment must set its own secret before the signatures mean anything.
+- Outbox payloads currently include borrower-identifying fields (`borrowerId`, `requestedAmount`) in plaintext JSONB — acceptable for synthetic data with no deployment target, but the charter's data rules (Section 14.2: "Logs contain identifiers, classifications, and hashes instead of full borrower data") will need this revisited once a real dispatcher (M4) sends these events somewhere external.
+- No new external dependency; the outbox table adds write volume proportional to case activity but no new cost driver (same Postgres instance).
+
+### Known gaps
+
+- No dispatcher: `publishedAt` stays `null` forever in this slice. Nothing reads `outbox_events` and delivers it anywhere — that is explicitly M4 scope (`webhook_endpoints`, `webhook_deliveries`, retries, replay protection).
+- Four catalog event types are not emitted because nothing in this codebase produces the states they describe yet: `workflow_run.waiting_for_information` (no separate borrower-information wait state exists, only the reviewer wait), `workflow_run.failed` (no failure-classification path — same reasoning M2-004 used to defer retry classification), `condition.escalated` (no escalation path built), `review.completed` (no `review_tasks` table or formal review-task lifecycle exists; `condition.satisfied`/`condition.waived` are the accurate events for what actually happens today).
+- **M2's "retry classification" scope item remains unimplemented** (not new to this slice — first identified as a gap in M2-004, restated as a deliberate decision there): Temporal's default uniform retry policy is used everywhere; there is no logic distinguishing retryable from terminal failures because the simulator services this codebase calls don't yet produce a failure taxonomy worth classifying. This is the one remaining item keeping M2 as a whole from being closeable — everything else in Section 20's M2 scope list is now built.
+- Outbox payload contents are not yet privacy-reviewed for the plaintext-borrower-data concern noted above.
+
+### Next safe step
+
+M2's only remaining scope item is retry classification, and it is currently blocked on not having a real failure taxonomy to classify (no non-synthetic provider integration exists yet — that's M4 scope). Two honest paths forward: (a) treat M2 as closeable now with retry classification explicitly re-scoped into M4 alongside the real provider gateway that would finally give it something real to classify, or (b) build a synthetic failure taxonomy now purely to close M2 on paper. (a) reflects what's actually true about this codebase; (b) would be scope invented to satisfy a checklist. Recommend (a), but this is a call for the user, not one to make silently — ask before touching the milestone table. Once resolved, proceed to M3 ("Policy and Agent vertical slice") per the user's earlier direction to continue through M3-M7.

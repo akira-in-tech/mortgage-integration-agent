@@ -6,6 +6,7 @@ import { LoanCase } from './entities/loan-case.entity';
 import { EvidenceFact } from './entities/evidence-fact.entity';
 import { LoanCondition } from './entities/loan-condition.entity';
 import { ConditionTransition } from './entities/condition-transition.entity';
+import { OutboxEvent } from './entities/outbox-event.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -20,6 +21,7 @@ import { ConditionTransition } from './entities/condition-transition.entity';
       EvidenceFact,
       LoanCondition,
       ConditionTransition,
+      OutboxEvent,
     ]),
   ],
   exports: [TypeOrmModule],

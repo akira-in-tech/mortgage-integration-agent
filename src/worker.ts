@@ -2,7 +2,6 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { Worker, NativeConnection } from '@temporalio/worker';
-import { join } from 'path';
 import { WorkerModule } from './worker.module';
 import { PlaidService } from './integrations/plaid/plaid.service';
 import { CreditService } from './integrations/credit/credit.service';
@@ -22,6 +21,10 @@ async function bootstrap(): Promise<void> {
     plaidService: appContext.get(PlaidService),
     creditService: appContext.get(CreditService),
     documentService: appContext.get(DocumentService),
+    outboxSigningSecret: configService.get<string>(
+      'OUTBOX_SIGNING_SECRET',
+      'dev-outbox-signing-secret-change-me',
+    ),
   });
 
   const connection = await NativeConnection.connect({
@@ -32,7 +35,13 @@ async function bootstrap(): Promise<void> {
     connection,
     namespace: configService.get<string>('TEMPORAL_NAMESPACE', 'default'),
     taskQueue: CASE_CONDITIONS_TASK_QUEUE,
-    workflowsPath: join(__dirname, 'workflows', 'case-conditions.workflow.js'),
+    // require.resolve, not a hardcoded `.js` join(__dirname, ...) path: the
+    // latter only exists under the compiled dist/ output (`npm run
+    // start:worker`) and throws ENOENT under `npm run start:worker:dev`'s
+    // direct ts-node execution against src/, where only the .ts file
+    // exists — this needs to resolve correctly under both. Same pattern
+    // already proven working in case-conditions.workflow.spec.ts.
+    workflowsPath: require.resolve('./workflows/case-conditions.workflow'),
     activities,
   });
 

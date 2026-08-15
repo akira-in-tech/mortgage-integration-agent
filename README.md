@@ -143,6 +143,7 @@ DECISION_PROVIDER=ollama npm run start:dev
 | `RATE_LIMIT_MAX` | No | Max requests per client IP per window (all routes except `/health/*`); defaults to `100` |
 | `TEMPORAL_ADDRESS` | No | Temporal frontend host:port; defaults to `localhost:7233` |
 | `TEMPORAL_NAMESPACE` | No | Temporal namespace; defaults to `default` |
+| `OUTBOX_SIGNING_SECRET` | No | HMAC secret for signed outbox events (see below); the default is for local development only |
 
 All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=production` disables the GraphQL playground/introspection and TypeORM schema auto-synchronization — see [Database migrations](#database-migrations).
 
@@ -189,6 +190,10 @@ A narrower slice of the target `/v1/loan-cases` contract (see the project charte
 | `POST /v1/loan-cases/{caseId}/reviews` | A reviewer resolves the case's open condition (`{ actorId, resolution: "SATISFIED" \| "WAIVED", reason? }`), delivered as the workflow's `resolveCondition` signal. `202 Accepted`. |
 
 No authentication or tenant-scoped access control exists yet (`tenantId` is a plain request field) — full RBAC/RLS is M5 scope. There is also no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use.
+
+### Transactional outbox
+
+Every domain state change that matters externally (`loan_case.created`, `workflow_run.started`/`waiting_for_review`/`completed`, `evidence.updated`, `condition.opened`/`satisfied`/`waived`) is written to the `outbox_events` table in the same database transaction as the change itself, HMAC-signed with `OUTBOX_SIGNING_SECRET`. This is the transactional-outbox pattern: a committed domain change and its event can never diverge, because they're the same transaction. There is no dispatcher yet — `outbox_events.publishedAt` stays `null` — actual webhook delivery to subscribers is M4 scope; this is the durable, signed foundation it will read from.
 
 ## Example Mutation
 

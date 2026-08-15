@@ -4,6 +4,7 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { CasesService } from './cases.service';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
+import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CreateCaseDto } from './dto/create-case.dto';
 
@@ -18,13 +19,12 @@ const BASE_DTO: CreateCaseDto = {
 };
 
 describe('CasesService', () => {
-  let caseRepo: {
-    findOneBy: jest.Mock;
-    findOneByOrFail: jest.Mock;
-    create: jest.Mock;
-    save: jest.Mock;
-  };
+  let caseRepo: { findOneBy: jest.Mock; findOneByOrFail: jest.Mock };
   let tenantRepo: { findOneBy: jest.Mock };
+  let txCaseRepo: { create: jest.Mock; save: jest.Mock };
+  let txOutboxRepo: { create: jest.Mock; save: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
+  let configService: { get: jest.Mock };
   let temporalClient: {
     startCaseConditionsWorkflow: jest.Mock;
     resolveCondition: jest.Mock;
@@ -33,12 +33,14 @@ describe('CasesService', () => {
   let service: CasesService;
 
   beforeEach(() => {
-    caseRepo = {
-      findOneBy: jest.fn(),
-      findOneByOrFail: jest.fn(),
-      create: jest
-        .fn()
-        .mockImplementation((data: Partial<LoanCase>) => data as LoanCase),
+    caseRepo = { findOneBy: jest.fn(), findOneByOrFail: jest.fn() };
+    tenantRepo = { findOneBy: jest.fn() };
+    // dataSource.transaction is mocked to actually invoke the callback
+    // (not just record the call) so CasesService's real transaction body —
+    // the case save, the outbox write, and the unique-violation catch —
+    // runs for real against these manager-scoped repo mocks.
+    txCaseRepo = {
+      create: jest.fn((data: Partial<LoanCase>) => data as LoanCase),
       save: jest.fn().mockImplementation(async (loanCase) => ({
         id: CASE_ID,
         version: 1,
@@ -47,7 +49,23 @@ describe('CasesService', () => {
         ...loanCase,
       })),
     };
-    tenantRepo = { findOneBy: jest.fn() };
+    txOutboxRepo = {
+      create: jest.fn((data) => data),
+      save: jest.fn(async (data) => data),
+    };
+    const manager = {
+      getRepository: jest.fn((entity: unknown) => {
+        if (entity === LoanCase) return txCaseRepo;
+        if (entity === OutboxEvent) return txOutboxRepo;
+        throw new Error(`Unexpected repository requested: ${String(entity)}`);
+      }),
+    };
+    dataSource = {
+      transaction: jest.fn((cb: (m: unknown) => unknown) => cb(manager)),
+    };
+    configService = {
+      get: jest.fn((_key: string, defaultValue: unknown) => defaultValue),
+    };
     temporalClient = {
       startCaseConditionsWorkflow: jest.fn(),
       resolveCondition: jest.fn(),
@@ -56,7 +74,9 @@ describe('CasesService', () => {
     service = new CasesService(
       caseRepo as never,
       tenantRepo as never,
+      dataSource as never,
       temporalClient as never,
+      configService as never,
     );
   });
 
@@ -67,7 +87,7 @@ describe('CasesService', () => {
       await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
         NotFoundException,
       );
-      expect(caseRepo.save).not.toHaveBeenCalled();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
     it('creates a new DRAFT case for a first-time idempotency key', async () => {
@@ -77,13 +97,21 @@ describe('CasesService', () => {
       const result = await service.createCase('key-1', BASE_DTO);
 
       expect(result.id).toBe(CASE_ID);
-      expect(caseRepo.create).toHaveBeenCalledWith(
+      expect(txCaseRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId: TENANT_ID,
           idempotencyKey: 'key-1',
           status: CaseStatus.DRAFT,
         }),
       );
+      expect(txOutboxRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          caseId: CASE_ID,
+          eventType: 'loan_case.created',
+        }),
+      );
+      expect(txOutboxRepo.save).toHaveBeenCalled();
     });
 
     it('returns the existing case instead of creating a duplicate for a repeated key', async () => {
@@ -94,13 +122,13 @@ describe('CasesService', () => {
       const result = await service.createCase('key-1', BASE_DTO);
 
       expect(result).toBe(existing);
-      expect(caseRepo.save).not.toHaveBeenCalled();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
     it('resolves to the winning row when a concurrent duplicate loses the unique-constraint race', async () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       caseRepo.findOneBy.mockResolvedValue(null);
-      caseRepo.save.mockRejectedValue({ code: '23505' });
+      txCaseRepo.save.mockRejectedValue({ code: '23505' });
       const winner = { id: CASE_ID, idempotencyKey: 'key-1' } as LoanCase;
       caseRepo.findOneByOrFail.mockResolvedValue(winner);
 
@@ -112,7 +140,7 @@ describe('CasesService', () => {
     it('propagates errors unrelated to a unique-constraint violation', async () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       caseRepo.findOneBy.mockResolvedValue(null);
-      caseRepo.save.mockRejectedValue(new Error('connection reset'));
+      txCaseRepo.save.mockRejectedValue(new Error('connection reset'));
 
       await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
         'connection reset',

@@ -92,6 +92,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_applications',
       'loan_cases',
       'loan_conditions',
+      'outbox_events',
       'tenants',
     ]);
 
@@ -133,6 +134,19 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // loan_cases -> tenants, loan_conditions -> loan_cases,
     // evidence_facts -> loan_cases, condition_transitions -> loan_conditions
     expect(foreignKeys).toHaveLength(4);
+  });
+
+  it('reverts the outbox events migration without touching case/evidence/condition tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'condition_transitions',
+      'evidence_facts',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'tenants',
+    ]);
   });
 
   it('reverts the case/evidence/condition migration without touching loan_applications', async () => {

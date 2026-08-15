@@ -153,4 +153,30 @@ describe('validateEnvironment', () => {
       ).toThrow(/TEMPORAL_ADDRESS/);
     });
   });
+
+  describe('Outbox signing (OUTBOX_SIGNING_SECRET)', () => {
+    it('defaults to the local development secret', () => {
+      const result = validateEnvironment(baseConfig());
+      expect(result.OUTBOX_SIGNING_SECRET).toBe(
+        'dev-outbox-signing-secret-change-me',
+      );
+    });
+
+    it('accepts an explicit secret at least 16 characters long', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          OUTBOX_SIGNING_SECRET: 'a-real-32-character-long-secret',
+        }),
+      );
+      expect(result.OUTBOX_SIGNING_SECRET).toBe(
+        'a-real-32-character-long-secret',
+      );
+    });
+
+    it('rejects a secret shorter than 16 characters', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ OUTBOX_SIGNING_SECRET: 'too-short' })),
+      ).toThrow(/OUTBOX_SIGNING_SECRET/);
+    });
+  });
 });

@@ -1,10 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { WorkflowNotFoundError } from '@temporalio/client';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
 import { TemporalClientService } from '../workflows/temporal-client.service';
+import { writeOutboxEvent } from '../database/outbox/outbox-writer';
+import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ResolveConditionDto } from './dto/resolve-condition.dto';
 
@@ -39,7 +42,10 @@ export class CasesService {
     private readonly caseRepository: Repository<LoanCase>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly temporalClient: TemporalClientService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -47,6 +53,8 @@ export class CasesService {
    * same key returns the original case instead of creating a second one,
    * whether the original request already committed (checked up front) or
    * is committing concurrently (the unique-constraint race caught below).
+   * The case row and its `loan_case.created` outbox event are written in
+   * one transaction (Section 9.5: "COMMIT STATE AND OUTBOX EVENT").
    */
   async createCase(
     idempotencyKey: string,
@@ -65,17 +73,37 @@ export class CasesService {
       return existing;
     }
 
-    const loanCase = this.caseRepository.create({
-      tenantId: dto.tenantId,
-      idempotencyKey,
-      borrowerId: dto.borrowerId,
-      requestedAmount: dto.requestedAmount,
-      loanType: dto.loanType,
-      status: CaseStatus.DRAFT,
-    });
+    const outboxSigningSecret = this.configService.get<string>(
+      'OUTBOX_SIGNING_SECRET',
+      'dev-outbox-signing-secret-change-me',
+    );
 
     try {
-      return await this.caseRepository.save(loanCase);
+      return await this.dataSource.transaction(async (manager) => {
+        const caseRepo = manager.getRepository(LoanCase);
+        const loanCase = await caseRepo.save(
+          caseRepo.create({
+            tenantId: dto.tenantId,
+            idempotencyKey,
+            borrowerId: dto.borrowerId,
+            requestedAmount: dto.requestedAmount,
+            loanType: dto.loanType,
+            status: CaseStatus.DRAFT,
+          }),
+        );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId: dto.tenantId,
+          caseId: loanCase.id,
+          eventType: OutboxEventType.LoanCaseCreated,
+          payload: {
+            caseId: loanCase.id,
+            borrowerId: dto.borrowerId,
+            requestedAmount: dto.requestedAmount,
+            loanType: dto.loanType,
+          },
+        });
+        return loanCase;
+      });
     } catch (error) {
       if (isUniqueViolation(error)) {
         return await this.caseRepository.findOneByOrFail({

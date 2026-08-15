@@ -8,6 +8,7 @@ import {
   Matches,
   Max,
   Min,
+  MinLength,
   validateSync,
 } from 'class-validator';
 
@@ -114,6 +115,18 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   TEMPORAL_NAMESPACE: string = 'default';
+
+  // ── Outbox event signing (src/database/outbox) ──────────────────────────
+  // HMAC secret for the transactional outbox's signed status events
+  // (Section 15.3). The default is fine for local development only — this
+  // slice has no deployment target yet (see docs/DEVELOPMENT_LOG.md M2-006
+  // Known gaps); a real deployment must set its own secret.
+  @IsOptional()
+  @IsString()
+  @MinLength(16, {
+    message: 'OUTBOX_SIGNING_SECRET must be at least 16 characters',
+  })
+  OUTBOX_SIGNING_SECRET: string = 'dev-outbox-signing-secret-change-me';
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

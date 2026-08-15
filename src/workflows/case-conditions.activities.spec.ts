@@ -13,11 +13,14 @@ import {
   EvidenceType,
 } from '../database/entities/evidence-fact.entity';
 import { LoanApplication } from '../database/entities/loan-application.entity';
+import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
+import { OutboxEventType } from '../database/outbox/outbox-event-types';
+import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -25,6 +28,8 @@ import { DocumentVerificationResult } from '../integrations/document/document.ty
 // suite, and cleans them up in afterAll.
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
+
+const OUTBOX_SIGNING_SECRET = 'activities-spec-signing-secret-32-chars';
 
 const GOOD_INCOME: PlaidIncomeData = {
   monthlyIncome: 9000,
@@ -69,6 +74,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ConditionTransition,
         EvidenceFact,
         LoanApplication,
+        OutboxEvent,
       ],
     });
     await dataSource.initialize();
@@ -81,6 +87,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService,
       documentService,
+      outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
     const tenant = await dataSource
@@ -98,8 +105,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
       const caseRepo = dataSource.getRepository(LoanCase);
       const evidenceRepo = dataSource.getRepository(EvidenceFact);
       const conditionRepo = dataSource.getRepository(LoanCondition);
+      const outboxRepo = dataSource.getRepository(OutboxEvent);
       if (caseIds.length > 0) {
         await evidenceRepo.delete({ tenantId });
+        await outboxRepo.delete({ tenantId });
         const conditions = await conditionRepo.find({
           where: caseIds.map((caseId) => ({ caseId })),
         });
@@ -132,7 +141,13 @@ describeOrSkip('createCaseConditionsActivities', () => {
     return loanCase.id;
   }
 
-  it('markCollectingEvidence sets the case status', async () => {
+  async function outboxEventsFor(caseId: string) {
+    return dataSource
+      .getRepository(OutboxEvent)
+      .find({ where: { caseId }, order: { createdAt: 'ASC' } });
+  }
+
+  it('markCollectingEvidence sets the case status and writes a signed workflow_run.started event', async () => {
     const caseId = await makeCase();
     await activities.markCollectingEvidence({ tenantId, caseId });
 
@@ -140,9 +155,32 @@ describeOrSkip('createCaseConditionsActivities', () => {
       .getRepository(LoanCase)
       .findOneByOrFail({ id: caseId });
     expect(updated.status).toBe(CaseStatus.COLLECTING_EVIDENCE);
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.WorkflowRunStarted);
+    expect(events[0].tenantId).toBe(tenantId);
+    // Round-trips through the real jsonb column and a fresh read — proves
+    // the signature verifies against what Postgres actually stored, not
+    // just the in-memory object at write time (see outbox-signer.ts's
+    // canonicalization comment on why this specifically needs a real DB).
+    expect(
+      verifyOutboxSignature(
+        events[0].payload,
+        events[0].signature,
+        OUTBOX_SIGNING_SECRET,
+      ),
+    ).toBe(true);
+    expect(
+      verifyOutboxSignature(
+        events[0].payload,
+        events[0].signature,
+        'wrong-secret-value-at-least-16-chars',
+      ),
+    ).toBe(false);
   });
 
-  it('fetchIncomeEvidence persists an INCOME evidence fact and returns the simulator data', async () => {
+  it('fetchIncomeEvidence persists an INCOME evidence fact, returns the simulator data, and writes an evidence.updated event', async () => {
     const caseId = await makeCase();
     const plaidService = {
       getIncomeData: jest.fn().mockResolvedValue(GOOD_INCOME),
@@ -152,6 +190,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService: { getCreditData: jest.fn() } as any,
       documentService: { verifyDocuments: jest.fn() } as any,
+      outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
     const result = await scoped.fetchIncomeEvidence({
@@ -167,9 +206,18 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(facts).toHaveLength(1);
     expect(facts[0].value).toEqual(GOOD_INCOME);
     expect(facts[0].sourceIdentifier).toBe('plaid-simulator');
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.EvidenceUpdated);
+    expect(events[0].payload).toMatchObject({
+      caseId,
+      evidenceType: EvidenceType.INCOME,
+      sourceIdentifier: 'plaid-simulator',
+    });
   });
 
-  it('evaluateConditions with clean data marks the case ready and opens no condition', async () => {
+  it('evaluateConditions with clean data marks the case ready, opens no condition, and writes workflow_run.completed', async () => {
     const caseId = await makeCase();
 
     const result = await activities.evaluateConditions({
@@ -189,9 +237,17 @@ describeOrSkip('createCaseConditionsActivities', () => {
       .getRepository(LoanCondition)
       .find({ where: { caseId } });
     expect(conditions).toHaveLength(0);
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.WorkflowRunCompleted);
+    expect(events[0].payload).toMatchObject({
+      caseId,
+      finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
+    });
   });
 
-  it('evaluateConditions with a discrepancy opens a condition and sets CONDITIONS_OPEN', async () => {
+  it('evaluateConditions with a discrepancy opens a condition, sets CONDITIONS_OPEN, and writes condition.opened + workflow_run.waiting_for_review atomically', async () => {
     const caseId = await makeCase();
 
     const result = await activities.evaluateConditions({
@@ -216,9 +272,19 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(condition.status).toBe(ConditionStatus.OPEN);
     expect(condition.code).toBe('SYNTHETIC_DISCREPANCY_REVIEW');
     expect(condition.description).toContain('derogatory mark');
+
+    const events = await outboxEventsFor(caseId);
+    expect(events.map((e) => e.eventType)).toEqual([
+      OutboxEventType.ConditionOpened,
+      OutboxEventType.WorkflowRunWaitingForReview,
+    ]);
+    expect(events[0].payload).toMatchObject({
+      caseId,
+      conditionId: result.conditionId,
+    });
   });
 
-  it('resolveCondition updates the condition and records an attributed transition', async () => {
+  it('resolveCondition updates the condition, records an attributed transition, and writes condition.satisfied or condition.waived', async () => {
     const caseId = await makeCase();
     const { conditionId } = await activities.evaluateConditions({
       tenantId,
@@ -252,9 +318,21 @@ describeOrSkip('createCaseConditionsActivities', () => {
       actorId: 'reviewer-activities-spec',
       reason: 'Confirmed acceptable in this test.',
     });
+
+    const events = await outboxEventsFor(caseId);
+    // condition.opened + workflow_run.waiting_for_review from
+    // evaluateConditions above, then condition.waived from this call.
+    expect(events).toHaveLength(3);
+    expect(events[2].eventType).toBe(OutboxEventType.ConditionWaived);
+    expect(events[2].payload).toMatchObject({
+      caseId,
+      conditionId,
+      actorId: 'reviewer-activities-spec',
+      resolution: 'WAIVED',
+    });
   });
 
-  it('markReadyForUnderwriting sets the case status', async () => {
+  it('markReadyForUnderwriting sets the case status and writes workflow_run.completed', async () => {
     const caseId = await makeCase();
     await activities.markReadyForUnderwriting({ tenantId, caseId });
 
@@ -262,5 +340,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
       .getRepository(LoanCase)
       .findOneByOrFail({ id: caseId });
     expect(updated.status).toBe(CaseStatus.READY_FOR_UNDERWRITING);
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.WorkflowRunCompleted);
   });
 });

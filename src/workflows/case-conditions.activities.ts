@@ -1,4 +1,4 @@
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
@@ -17,12 +17,16 @@ import {
 } from '../database/entities/loan-condition.entity';
 import { ConditionTransition } from '../database/entities/condition-transition.entity';
 import { ConditionResolutionKind } from './case-conditions.signals';
+import { writeOutboxEvent } from '../database/outbox/outbox-writer';
+import { OutboxEventType } from '../database/outbox/outbox-event-types';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
   plaidService: PlaidService;
   creditService: CreditService;
   documentService: DocumentService;
+  /** HMAC secret for outbox event signing (Section 15.3). */
+  outboxSigningSecret: string;
 }
 
 interface CaseRef {
@@ -72,22 +76,71 @@ function hasSyntheticDiscrepancy(
  * factory closes over NestJS-resolved services/repositories so activities
  * can reuse the same PlaidService/CreditService/DocumentService the
  * evaluateLoan path already uses, rather than duplicating simulator logic.
+ *
+ * Every domain write below runs inside `dataSource.transaction()` alongside
+ * the outbox event(s) it produces, so a committed state change and its
+ * event can never diverge (Section 9.5: "COMMIT STATE AND OUTBOX EVENT";
+ * M2 scope: "transactional outbox and signed status event foundation").
  */
 export function createCaseConditionsActivities(
   deps: CaseConditionsActivitiesDeps,
 ) {
-  const { dataSource, plaidService, creditService, documentService } = deps;
-  const caseRepo = dataSource.getRepository(LoanCase);
-  const evidenceRepo = dataSource.getRepository(EvidenceFact);
-  const conditionRepo = dataSource.getRepository(LoanCondition);
-  const transitionRepo = dataSource.getRepository(ConditionTransition);
+  const {
+    dataSource,
+    plaidService,
+    creditService,
+    documentService,
+    outboxSigningSecret,
+  } = deps;
+
+  async function recordEvidence(
+    manager: EntityManager,
+    params: CaseRef & {
+      factType: EvidenceType;
+      sourceIdentifier: string;
+      value: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const evidenceRepo = manager.getRepository(EvidenceFact);
+    await evidenceRepo.save(
+      evidenceRepo.create({
+        tenantId: params.tenantId,
+        caseId: params.caseId,
+        factType: params.factType,
+        sourceKind: EvidenceSourceKind.SIMULATOR,
+        sourceIdentifier: params.sourceIdentifier,
+        value: params.value,
+        observedAt: new Date(),
+      }),
+    );
+    await writeOutboxEvent(manager, outboxSigningSecret, {
+      tenantId: params.tenantId,
+      caseId: params.caseId,
+      eventType: OutboxEventType.EvidenceUpdated,
+      payload: {
+        caseId: params.caseId,
+        evidenceType: params.factType,
+        sourceIdentifier: params.sourceIdentifier,
+      },
+    });
+  }
 
   return {
     async markCollectingEvidence({ tenantId, caseId }: CaseRef): Promise<void> {
-      await caseRepo.update(
-        { id: caseId, tenantId },
-        { status: CaseStatus.COLLECTING_EVIDENCE },
-      );
+      await dataSource.transaction(async (manager) => {
+        await manager
+          .getRepository(LoanCase)
+          .update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.COLLECTING_EVIDENCE },
+          );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunStarted,
+          payload: { caseId },
+        });
+      });
     },
 
     async fetchIncomeEvidence({
@@ -96,15 +149,13 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<PlaidIncomeData> {
       const income = await plaidService.getIncomeData(borrowerId);
-      await evidenceRepo.save(
-        evidenceRepo.create({
+      await dataSource.transaction((manager) =>
+        recordEvidence(manager, {
           tenantId,
           caseId,
           factType: EvidenceType.INCOME,
-          sourceKind: EvidenceSourceKind.SIMULATOR,
           sourceIdentifier: 'plaid-simulator',
           value: income as unknown as Record<string, unknown>,
-          observedAt: new Date(),
         }),
       );
       return income;
@@ -116,15 +167,13 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<CreditBureauData> {
       const credit = await creditService.getCreditData(borrowerId);
-      await evidenceRepo.save(
-        evidenceRepo.create({
+      await dataSource.transaction((manager) =>
+        recordEvidence(manager, {
           tenantId,
           caseId,
           factType: EvidenceType.CREDIT,
-          sourceKind: EvidenceSourceKind.SIMULATOR,
           sourceIdentifier: 'credit-bureau-simulator',
           value: credit as unknown as Record<string, unknown>,
-          observedAt: new Date(),
         }),
       );
       return credit;
@@ -136,15 +185,13 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<DocumentVerificationResult> {
       const documents = await documentService.verifyDocuments(borrowerId);
-      await evidenceRepo.save(
-        evidenceRepo.create({
+      await dataSource.transaction((manager) =>
+        recordEvidence(manager, {
           tenantId,
           caseId,
           factType: EvidenceType.DOCUMENT,
-          sourceKind: EvidenceSourceKind.SIMULATOR,
           sourceIdentifier: 'document-verification-simulator',
           value: documents as unknown as Record<string, unknown>,
-          observedAt: new Date(),
         }),
       );
       return documents;
@@ -157,10 +204,20 @@ export function createCaseConditionsActivities(
       documents,
     }: EvaluateConditionsInput): Promise<EvaluateConditionsResult> {
       if (!hasSyntheticDiscrepancy(credit, documents)) {
-        await caseRepo.update(
-          { id: caseId, tenantId },
-          { status: CaseStatus.READY_FOR_UNDERWRITING },
-        );
+        await dataSource.transaction(async (manager) => {
+          await manager
+            .getRepository(LoanCase)
+            .update(
+              { id: caseId, tenantId },
+              { status: CaseStatus.READY_FOR_UNDERWRITING },
+            );
+          await writeOutboxEvent(manager, outboxSigningSecret, {
+            tenantId,
+            caseId,
+            eventType: OutboxEventType.WorkflowRunCompleted,
+            payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
+          });
+        });
         return { hasOpenCondition: false };
       }
 
@@ -179,24 +236,44 @@ export function createCaseConditionsActivities(
         );
       }
 
-      const condition = await conditionRepo.save(
-        conditionRepo.create({
+      const conditionId = await dataSource.transaction(async (manager) => {
+        const conditionRepo = manager.getRepository(LoanCondition);
+        const condition = await conditionRepo.save(
+          conditionRepo.create({
+            tenantId,
+            caseId,
+            code: 'SYNTHETIC_DISCREPANCY_REVIEW',
+            description: `Review required: ${reasons.join('; ')}.`,
+            status: ConditionStatus.OPEN,
+          }),
+        );
+        await manager
+          .getRepository(LoanCase)
+          .update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.CONDITIONS_OPEN },
+          );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
           tenantId,
           caseId,
-          code: 'SYNTHETIC_DISCREPANCY_REVIEW',
-          description: `Review required: ${reasons.join('; ')}.`,
-          status: ConditionStatus.OPEN,
-        }),
-      );
-      await caseRepo.update(
-        { id: caseId, tenantId },
-        { status: CaseStatus.CONDITIONS_OPEN },
-      );
+          eventType: OutboxEventType.ConditionOpened,
+          payload: { caseId, conditionId: condition.id, code: condition.code },
+        });
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunWaitingForReview,
+          payload: { caseId, conditionId: condition.id },
+        });
+        return condition.id;
+      });
 
-      return { hasOpenCondition: true, conditionId: condition.id };
+      return { hasOpenCondition: true, conditionId };
     },
 
     async resolveCondition({
+      tenantId,
+      caseId,
       conditionId,
       actorId,
       resolution,
@@ -207,29 +284,57 @@ export function createCaseConditionsActivities(
           ? ConditionStatus.SATISFIED
           : ConditionStatus.WAIVED;
 
-      const condition = await conditionRepo.findOneByOrFail({
-        id: conditionId,
+      await dataSource.transaction(async (manager) => {
+        const conditionRepo = manager.getRepository(LoanCondition);
+        const condition = await conditionRepo.findOneByOrFail({
+          id: conditionId,
+        });
+        await conditionRepo.update({ id: conditionId }, { status: toStatus });
+        await manager.getRepository(ConditionTransition).save(
+          manager.getRepository(ConditionTransition).create({
+            conditionId,
+            fromStatus: condition.status,
+            toStatus,
+            actorId,
+            reason: reason ?? null,
+          }),
+        );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType:
+            resolution === 'SATISFIED'
+              ? OutboxEventType.ConditionSatisfied
+              : OutboxEventType.ConditionWaived,
+          payload: {
+            caseId,
+            conditionId,
+            actorId,
+            resolution,
+            reason: reason ?? null,
+          },
+        });
       });
-      await conditionRepo.update({ id: conditionId }, { status: toStatus });
-      await transitionRepo.save(
-        transitionRepo.create({
-          conditionId,
-          fromStatus: condition.status,
-          toStatus,
-          actorId,
-          reason: reason ?? null,
-        }),
-      );
     },
 
     async markReadyForUnderwriting({
       tenantId,
       caseId,
     }: CaseRef): Promise<void> {
-      await caseRepo.update(
-        { id: caseId, tenantId },
-        { status: CaseStatus.READY_FOR_UNDERWRITING },
-      );
+      await dataSource.transaction(async (manager) => {
+        await manager
+          .getRepository(LoanCase)
+          .update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.READY_FOR_UNDERWRITING },
+          );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunCompleted,
+          payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
+        });
+      });
     },
   };
 }

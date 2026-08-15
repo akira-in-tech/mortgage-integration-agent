@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.7 |
+| Version | 2.8 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -1238,6 +1238,7 @@ workflow_run.failed
 evidence.updated
 condition.opened
 condition.satisfied
+condition.waived
 condition.escalated
 review.completed
 policy_version.released
