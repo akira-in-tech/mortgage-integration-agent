@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsInt,
   IsOptional,
+  IsString,
   Matches,
   Max,
   Min,
@@ -44,6 +45,27 @@ export class EnvironmentVariables {
   @Min(1)
   @Max(65535)
   PORT: number = 3000;
+
+  // Comma-separated http(s):// origins. Left unset, CORS falls back to a
+  // localhost-only allowance in development and is disabled everywhere
+  // else — see src/config/cors.ts.
+  @IsOptional()
+  @IsString()
+  @Matches(/^https?:\/\/\S+(\s*,\s*https?:\/\/\S+)*$/, {
+    message:
+      'CORS_ALLOWED_ORIGINS must be a comma-separated list of http(s):// origins',
+  })
+  CORS_ALLOWED_ORIGINS?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  RATE_LIMIT_TTL_MS: number = 60_000;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  RATE_LIMIT_MAX: number = 100;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

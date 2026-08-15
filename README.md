@@ -138,6 +138,9 @@ DECISION_PROVIDER=ollama npm run start:dev
 | `OLLAMA_BASE_URL` | With `ollama` | Local Ollama endpoint; defaults to `http://127.0.0.1:11434` |
 | `OLLAMA_MODEL` | With `ollama` | Local model tag; defaults to `qwen3.5:9b` |
 | `OLLAMA_TIMEOUT_MS` | No | Positive request timeout in milliseconds; defaults to `60000` |
+| `CORS_ALLOWED_ORIGINS` | No | Comma-separated `http(s)://` origins; unset allows any `http://localhost:<port>` in development and none elsewhere |
+| `RATE_LIMIT_TTL_MS` | No | Rate-limit window in milliseconds; defaults to `60000` |
+| `RATE_LIMIT_MAX` | No | Max requests per client IP per window (all routes except `/health/*`); defaults to `100` |
 
 All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=production` disables the GraphQL playground/introspection and TypeORM schema auto-synchronization — see [Database migrations](#database-migrations).
 
@@ -154,6 +157,13 @@ npm run migration:generate -- src/database/migrations/<Name>   # after changing 
 ```
 
 Migrations live in `src/database/migrations/`; the CLI reads connection settings from `DATABASE_URL` via `src/database/data-source.ts`, a standalone `DataSource` kept separate from `AppModule` because the CLI runs outside Nest's dependency-injection container.
+
+### Health checks
+
+- `GET /health/live` — process is up; no dependency checks.
+- `GET /health/ready` — process is up and the database is reachable; returns `503` otherwise.
+
+Both are exempt from rate limiting so frequent infra polling can't report a healthy instance as unavailable.
 
 ## Example Mutation
 

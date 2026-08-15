@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { join } from 'path';
 import { LoanModule } from './loan/loan.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { AgentModule } from './agent/agent.module';
 import { DatabaseModule } from './database/database.module';
+import { HealthModule } from './health/health.module';
 import { NodeEnvironment, validateEnvironment } from './config/env.validation';
+import { GqlThrottlerGuard } from './common/gql-throttler.guard';
 
 @Module({
   imports: [
@@ -35,8 +39,25 @@ import { NodeEnvironment, validateEnvironment } from './config/env.validation';
           sortSchema: true,
           playground: isDevelopment,
           introspection: isDevelopment,
+          // Exposes req/res on the resolver context so GqlThrottlerGuard can
+          // rate-limit GraphQL requests the same way it does REST ones.
+          context: ({ req, res }: { req: unknown; res: unknown }) => ({
+            req,
+            res,
+          }),
         };
       },
+      inject: [ConfigService],
+    }),
+
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => [
+        {
+          ttl: configService.get<number>('RATE_LIMIT_TTL_MS', 60_000),
+          limit: configService.get<number>('RATE_LIMIT_MAX', 100),
+        },
+      ],
       inject: [ConfigService],
     }),
 
@@ -63,6 +84,8 @@ import { NodeEnvironment, validateEnvironment } from './config/env.validation';
     LoanModule,
     IntegrationsModule,
     AgentModule,
+    HealthModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })
 export class AppModule {}

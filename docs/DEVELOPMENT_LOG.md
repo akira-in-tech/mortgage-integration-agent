@@ -1244,3 +1244,103 @@ The workflow file's own execution was not observed running on GitHub's infrastru
 ### Next safe step
 
 Continue Section 29's M1 list, item 5: liveness/readiness endpoints, graceful shutdown, secure headers, CORS allowlist, rate limiting, and request body limits.
+
+## M1-005: Health endpoints, graceful shutdown, secure headers, CORS, rate limiting, body limits
+
+### Status
+
+Implemented, unit-tested, and manually smoke-tested against a real running instance (see Verification — the e2e suite bootstraps the Nest module directly and does not exercise `main.ts`, so this slice could not be trusted from automated tests alone).
+
+### Acceptance criterion
+
+Section 29, item 5: add liveness/readiness endpoints, graceful shutdown, secure headers, a CORS allowlist, rate limiting, and explicit request-body limits, as one hardened-runtime baseline.
+
+### Implementation
+
+- **Health**: `src/health/health.controller.ts` — `GET /health/live` (process up, no dependency check) and `GET /health/ready` (runs `SELECT 1` through the injected `DataSource`; `503` with a generic body on failure so internal connection errors aren't leaked to an unauthenticated caller). `@SkipThrottle()` on the controller so infra polling can't be rate-limited into reporting a false-unhealthy instance.
+- **Graceful shutdown**: `app.enableShutdownHooks()` in `main.ts`, so SIGTERM/SIGINT run Nest's `onModuleDestroy`/`beforeApplicationShutdown` hooks (closing the TypeORM connection pool) instead of the process dying with connections open.
+- **Secure headers**: `helmet()`, with `contentSecurityPolicy` disabled only in development — the GraphQL Playground loads assets from external CDNs that the default CSP blocks, and the playground is the only browser-rendered surface that exists before the operations console (Section 8.6).
+- **CORS allowlist**: `src/config/cors.ts#resolveCorsOrigin` — an explicit `CORS_ALLOWED_ORIGINS` always wins; unset, development allows any `http://localhost:<port>` (convenience for a local frontend dev server or the playground) and every other environment fails closed (no cross-origin access) until configured.
+- **Rate limiting**: `@nestjs/throttler`, configured via `RATE_LIMIT_TTL_MS`/`RATE_LIMIT_MAX` (defaults `60000`/`100`), bound globally via `APP_GUARD`. Discovered that the default `ThrottlerGuard` cannot track GraphQL requests at all (see Failures below) and added `src/common/gql-throttler.guard.ts` plus a `context: ({ req, res }) => ({ req, res })` factory on `GraphQLModule` to fix it.
+- **Request body limits**: `app.useBodyParser('json' | 'urlencoded', { limit: '1mb' })` in `main.ts`, replacing Express's implicit default with an explicit, documented one — no endpoint currently accepts file uploads.
+- Added `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_TTL_MS`, `RATE_LIMIT_MAX` to `src/config/env.validation.ts`, and documented all of the above in `README.md`/`.env.example`.
+
+### Affected files
+
+- `src/health/health.controller.ts`, `src/health/health.controller.spec.ts`, `src/health/health.module.ts` (new)
+- `src/common/gql-throttler.guard.ts`, `src/common/gql-throttler.guard.spec.ts` (new)
+- `src/config/cors.ts`, `src/config/cors.spec.ts` (new)
+- `src/config/env.validation.ts`
+- `src/app.module.ts`, `src/main.ts`
+- `package.json`, `package-lock.json` (added `helmet`, `@nestjs/throttler`)
+- `README.md`, `.env.example`, `docs/DEVELOPMENT_LOG.md`
+
+### Failures and resolution
+
+- **GraphQL requests were silently never rate-limited.** First manual test (`{ __typename }` repeated past the configured limit) never triggered a `ThrottlerException`. Root cause turned out to be twofold:
+  1. `__typename` is a meta-field resolved by `graphql-js` itself without invoking any `@Resolver()` method, so it never enters Nest's guard pipeline at all — a testing-methodology mistake, not a code bug. Re-tested against the real `health` query (an actual `@Query()` resolver method) and confirmed requests 1-3 succeeded and request 4 correctly threw `ThrottlerException`.
+  2. Independently real: the base `ThrottlerGuard.getRequestResponse()` reads `context.switchToHttp()`, which does not populate the way a GraphQL resolver's arguments do. Fixed by `GqlThrottlerGuard` (`getRequestResponse` overridden to pull `req`/`res` from `GqlExecutionContext`) plus wiring `GraphQLModule`'s `context` factory to expose them — confirmed via `@nestjs/throttler`'s own documented GraphQL recipe, not guessed.
+  Added debug logging temporarily to confirm exactly where the guard was and wasn't being invoked before writing the fix; removed before commit.
+- **`npm run build` silently produced no `dist/` output while still reporting success**, discovered while trying to run the built app for this slice's smoke test. Root cause and fix recorded separately as M1-006 below (independent of this slice's acceptance criterion, but found while verifying it).
+
+### Decisions and alternatives
+
+- **Hand-rolled health controller over `@nestjs/terminus`**: the app has exactly one dependency to check (Postgres); a ~30-line controller is simpler to read and maintain than adopting Terminus's indicator abstraction for a single check. Revisit if/when more dependency health checks are needed.
+- **`@nestjs/throttler` over hand-rolled rate limiting**: unlike health checks, correct distributed-safe rate limiting (windowing, per-key tracking) is not trivial to hand-roll well; using the framework's own official module is the better minimalism call here.
+- **CSP disabled only in development, not helmet entirely**: production has the playground disabled (M1-001) and no other browser-rendered surface yet, so it gets helmet's full strict defaults; only the dev-only playground needs the carve-out.
+- **CORS default fails closed outside development**: no browser frontend exists yet (Section 8.6 console is Planned); guessing at allowed origins would be worse than requiring explicit configuration once one exists.
+- **One flat 1 MB body limit over per-route tuning**: every current route is a small GraphQL operation; per-route limits (e.g., for a future document-upload endpoint) belong with that endpoint's own slice.
+- **Manual HTTP smoke test over trusting the e2e suite for this slice**: `test/loan.e2e-spec.ts` calls `moduleRef.createNestApplication()` directly and only adds a `ValidationPipe` — none of `main.ts`'s helmet/CORS/body-limit/shutdown-hook/rate-limit wiring runs under it. Automated coverage here is the unit tests for each piece in isolation (`cors.spec.ts`, `gql-throttler.guard.spec.ts`, `health.controller.spec.ts`); end-to-end behavior was verified by actually starting `dist/main.js` and hitting it, which is recorded below rather than left as an unverified claim.
+
+### Verification
+
+```text
+npm run lint / npm run build
+  both passed
+
+npm test -- --runInBand --no-cache --silent
+  13 suites passed, 86 tests passed (10 new: health, cors, gql-throttler-guard)
+
+npm run test:e2e
+  1 suite passed, 4 tests passed (unchanged — confirms this slice didn't
+  break the existing GraphQL flow, not that the new middleware works)
+
+Manual smoke test against `node dist/main.js` (NODE_ENV=development, real
+local Postgres):
+  GET /health/live            -> 200 {"status":"ok"}
+  GET /health/ready            -> 200 {"status":"ok"}
+  helmet headers present       -> Strict-Transport-Security, X-Content-Type-Options,
+                                   X-Frame-Options, etc.; Content-Security-Policy
+                                   correctly absent in development
+  CORS preflight, allowed origin (http://localhost:5173)
+                                -> Access-Control-Allow-Origin echoed back
+  CORS preflight, other origin (https://evil.example.com)
+                                -> no Access-Control-Allow-Origin header (blocked)
+  POST /graphql with a 2 MB body -> 413 Payload Too Large
+  POST /graphql with a small query -> 200, unaffected
+  Rate limiting (RATE_LIMIT_MAX=3, RATE_LIMIT_TTL_MS=60000), against the
+  real `health` GraphQL query:
+    requests 1-3 -> 200 {"data":{"health":"ok"}}
+    request 4-5  -> 200 with a GraphQL-level ThrottlerException error
+                    (GraphQL-over-HTTP convention: errors surface in the
+                    response body, not the HTTP status, confirmed by
+                    checking the status code directly: 200)
+  SIGTERM graceful shutdown    -> process exited within 1s, no hang
+```
+
+### Security, privacy, cost, and compatibility
+
+- `helmet` and `@nestjs/throttler` were checked against `npm audit`; neither introduces a new vulnerability. `npm audit` does report 33 pre-existing vulnerabilities elsewhere in the dependency tree (mostly `@nestjs/cli`'s Angular-devkit toolchain and transitive `express`/`body-parser`/`multer`/`lodash`/`ws` issues) — pre-existing, not introduced by this slice, and tracked as a known gap rather than silently fixed here (dependency remediation is its own acceptance criterion, "patched dependencies and lockfile review," Section 29).
+- The `/health/ready` failure response is intentionally generic (`{"status":"error","reason":"database unreachable"}`) — health endpoints are typically unauthenticated and internet-reachable, so the real error message and stack are logged server-side only, never returned to the caller.
+- CORS fails closed (no cross-origin access) in every environment except development unless explicitly configured — consistent with the charter's least-privilege default.
+
+### Known gaps
+
+- GraphQL query-complexity/depth limiting (also mentioned in Section 15.3) is a separate, GraphQL-specific concern not part of Section 29's item 5 list; deferred to a later slice.
+- `npm audit`'s 33 pre-existing vulnerabilities are unaddressed; Section 29's "patched dependencies and lockfile review" item covers that as its own acceptance criterion.
+- Rate-limit storage is `@nestjs/throttler`'s default in-memory store — fine for a single instance, but will need a shared store (e.g., Redis) before running more than one instance behind a load balancer (M7/production scaling).
+- No automated test exercises `main.ts`'s bootstrap wiring directly (helmet/CORS/body-limit/shutdown-hook application) — only its constituent pieces in isolation plus one manual smoke-test run. An e2e harness that boots through `main.ts`/`bootstrap()` itself, rather than a bare `createNestApplication()`, would close this gap; left for a future testing-infrastructure slice rather than expanding this one further.
+
+### Next safe step
+
+Fix the `nest build` incremental-cache issue found while smoke-testing this slice (recorded as its own follow-up entry), then record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes out Milestone 1.
