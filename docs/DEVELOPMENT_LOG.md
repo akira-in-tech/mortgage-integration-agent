@@ -1172,3 +1172,75 @@ Post-run check (`psql ... \l`)
 ### Next safe step
 
 Continue Section 29's M1 list: liveness/readiness endpoints, graceful shutdown, secure headers, CORS allowlist, rate limiting, and request body limits (item 5), then record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (item 6) that closes out Milestone 1.
+
+## M1-004: Lightweight CI (lint, build, unit, e2e) on every push
+
+### Status
+
+Implemented and locally verified (YAML syntax and every underlying script verified locally; the workflow itself only executes on GitHub's runners, which this environment cannot invoke directly).
+
+### Acceptance criterion
+
+Every push and pull request must automatically run lint, build, the unit suite, and the e2e suite against a real Postgres — with no `--fix` silently rewriting a violation instead of failing the run — without waiting for M7's full deployment pipeline.
+
+### Problem
+
+The repository had no `.github/workflows`, so nothing ran automatically on push. Both a pre-existing broken e2e test (fixed in M1-002) and a charter-consistency gap fixed in an earlier documentation session went unnoticed until manually discovered — exactly the class of regression basic CI catches immediately. The full CI/CD pipeline is correctly scoped to M7 (it depends on Terraform/OpenTofu environments that do not exist yet), but build/lint/test automation does not depend on any of that and is cheap to add now.
+
+### Implementation
+
+- Added `.github/workflows/ci.yml`: a single `build-and-test` job that checks out, sets up Node 22 (matching the currently installed runtime and `@types/node`; not yet the charter's target Node 24 LTS, which is deferred to its own runtime-upgrade slice), runs `npm ci`, then `lint:check`, `build`, the unit suite (`--ci --runInBand`), and `test:e2e`.
+- Added a `postgres:16-alpine` service container to the workflow, mirroring `docker-compose.yml`'s image, database name, user, and password exactly, with the same `pg_isready` health check — so e2e actually runs in CI instead of soft-skipping for lack of a database, and the unit-test step also exercises the M1-003 migration integration test rather than skipping it.
+- Added `lint:check` (plain `eslint`, no `--fix`) to `package.json`, kept alongside the existing `lint` (with `--fix`, for local developer convenience) — running the `--fix` variant in CI would let a violation pass by silently rewriting the file mid-run instead of failing the job.
+
+### Affected files
+
+- `.github/workflows/ci.yml` (new)
+- `package.json`
+
+### Decisions and alternatives
+
+- **Trigger on every push and every pull request, not just `main`**: the project currently has one active development branch and no branch-protection or release-train discipline yet (that is M5/M7 scope); running on every push surfaces a regression at the point it is introduced rather than only at merge time.
+- **A real Postgres service container over skipping e2e/migration tests in CI**: a soft-skip is the right fallback for a local machine that may not have Postgres running, but CI should always have it and should always exercise the full suite — a CI run that quietly skips the tests that matter most would defeat the purpose.
+- **Node 22 over Node 24 in the workflow**: the workflow should match what the repository is actually built and tested against today; bumping it will be one line changed alongside the (still deferred) Node/NestJS/Express runtime-upgrade slice, not before it.
+- **Single job over a matrix**: no current requirement (multiple Node versions, multiple OSes) justifies the added complexity yet.
+- **No CI badge or branch-protection change in this slice**: neither was part of the acceptance criterion; branch protection in particular is a repository-settings change with broader consequences than a workflow file and deserves an explicit decision of its own.
+
+### Verification
+
+```text
+YAML syntax check (js-yaml)
+  passed
+
+npm run lint:check
+  passed, no errors (no files rewritten — confirms the CI step would fail
+  on a real violation instead of masking it)
+
+npm run build
+  passed
+
+npm test -- --runInBand --no-cache --silent
+  10 suites passed, 76 tests passed
+
+npm run test:e2e
+  1 suite passed, 4 tests passed
+```
+
+The workflow file's own execution was not observed running on GitHub's infrastructure from this environment — only its constituent commands and YAML validity were checked locally, each against the same real local Postgres instance used throughout M1-001 through M1-003. First-run evidence from an actual GitHub Actions execution is a known gap below.
+
+### Security, privacy, cost, and compatibility
+
+- The Postgres service container uses the same non-secret local-development credentials already committed in `docker-compose.yml`; nothing sensitive is introduced.
+- No deployment credentials, cloud provider access, or OIDC configuration is included — this workflow only builds and tests, matching Section 19.3's environment list (`local`/`test`), not `staging`/`production`.
+- `DECISION_PROVIDER=rules` is pinned for the CI job, so no model runtime or credential is required to run the suite, consistent with the "no-paid-model default execution" principle.
+
+### Known gaps
+
+- Not yet observed running on GitHub's actual runners from within this session; first real execution should be checked after this commit is pushed.
+- No status badge added to `README.md`.
+- No branch-protection rule requires this workflow to pass before merge yet — that is a repository-settings decision, not a code change, and was left for the user to configure explicitly.
+- Node version in the workflow will need to move to 24 LTS alongside the still-deferred Node/NestJS/Express/Apollo runtime-upgrade slice (Section 29, item 1).
+
+### Next safe step
+
+Continue Section 29's M1 list, item 5: liveness/readiness endpoints, graceful shutdown, secure headers, CORS allowlist, rate limiting, and request body limits.

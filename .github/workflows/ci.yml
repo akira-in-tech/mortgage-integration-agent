@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # Mirrors docker-compose.yml's postgres service so CI exercises the same
+    # database image, credentials, and health check as local development.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mortgage_agent
+          POSTGRES_USER: mortgage
+          POSTGRES_PASSWORD: mortgage_demo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mortgage -d mortgage_agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://mortgage:mortgage_demo@localhost:5432/mortgage_agent
+      NODE_ENV: test
+      DECISION_PROVIDER: rules
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # No --fix here: CI must fail on a violation, not silently rewrite it.
+      - run: npm run lint:check
+
+      - run: npm run build
+
+      # DATABASE_URL is set above, so this also runs the migration
+      # integration test (src/database/migrations/*.spec.ts), which creates
+      # and drops its own disposable database — never the service's
+      # `mortgage_agent` database itself.
+      - run: npm test -- --ci --runInBand
+
+      - run: npm run test:e2e
