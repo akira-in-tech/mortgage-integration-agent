@@ -1642,3 +1642,91 @@ protocol, against the upgraded stack):
 ### Next safe step
 
 Milestone 1 is complete (Section 20 status table updated to `Implemented`). Begin Milestone 2: tenant-keyed case, evidence, condition, audit, workflow, and idempotency schema; REST workflow-start and status endpoints; API and worker process boundaries; Temporal workflow, activities, signals, retry classification, and replay tests; transactional outbox and signed status event foundation; deterministic synthetic discrepancy scenario (Section 20, M2 scope).
+
+## M2-001: Tenant-keyed case, evidence, and condition schema
+
+### Status
+
+Implemented and verified against a real Postgres instance. First slice of Milestone 2; M2 as a whole (Temporal workflow, REST endpoints, API/worker process split, transactional outbox, replay tests) remains in progress — the Section 20 milestone table is not updated to `Implemented` until the full M2 scope and exit evidence exist.
+
+### Acceptance criterion
+
+The repository must contain a tenant-keyed case, evidence, and condition schema using the charter's target vocabulary (Section 6.1 case statuses, Section 6.2 condition statuses) — as new, additive entities and a verified migration, coexisting with the legacy `LoanApplication`/`evaluateLoan` one-shot path rather than replacing it in place (Section 3: the legacy vocabulary is migrated deliberately, not dropped as a side effect).
+
+### Implementation
+
+- Added five entities in `src/database/entities/`: `Tenant`, `LoanCase` (the aggregate root — tenant-scoped, optimistic-concurrency `version` column, unique `(tenantId, idempotencyKey)` for case-creation idempotency per Section 15.3), `EvidenceFact` (typed, source-attributed, JSONB `value`), `LoanCondition` (Section 6.2 status enum, nullable `policySnapshotId` since the M3 policy engine that produces it doesn't exist yet), and `ConditionTransition` (append-only actor-attributed history).
+- Registered all five in `DatabaseModule` alongside the existing `LoanApplication`.
+- Generated and verified a second migration, `CaseEvidenceConditionSchema`, on top of the existing `InitialSchema` one from M1-003.
+- Rewrote the migration test (`initial-schema.migration.spec.ts` → `schema-migrations.spec.ts`) to test the full cumulative migration sequence rather than one migration in isolation — see Failures below for why a one-file-per-migration structure doesn't hold up.
+
+### Failures and resolution
+
+Three distinct problems, each found by actually running the migration workflow end-to-end rather than trusting the generator output:
+
+1. **`migration:generate` failed to type-check `initial-schema.migration.spec.ts`.** `src/database/data-source.ts`'s `migrations` glob (`*.{ts,js}`) matched every `.ts` file in the migrations directory, including the M1-003 spec file. This didn't surface in M1-003 because the spec didn't exist yet when that migration was generated; generating a *second* migration exposed it. `ts-node`'s program loading for the CLI tried to type-check the spec file (which needs Jest's ambient globals) as part of loading the DataSource and failed. Fixed by changing the glob to `[0-9]*.{ts,js}`, matching TypeORM's own `<timestamp>-Name.ts` migration-file naming convention, which excludes any hand-written spec file by construction. Applied the same fix to the spec file's own (separate) migrations glob for consistency.
+2. **The first generation attempt produced a migration that duplicated `loan_applications`.** Generated against a fully empty scratch database, so the diff saw every entity — including the untouched `LoanApplication` — as new. The correct workflow is to apply the *existing* migration to the scratch database first, then generate the next one against that now-partially-migrated state so the diff contains only what's actually new. Deleted the incorrect migration file and regenerated correctly; verified the resulting file only creates the five new tables.
+3. **The migration failed on a fresh database with `function uuid_generate_v4() does not exist`.** The new entities use `@PrimaryGeneratedColumn('uuid')`, which needs the Postgres `uuid-ossp` extension; TypeORM's Postgres driver only auto-creates that extension when it discovers a `uuid`-typed column via loaded entity metadata at connect time. The migration test's `DataSource` only declared `migrations`, not `entities` (unlike the real CLI's `data-source.ts`, which declares both) — so the auto-extension step never ran for that connection. Fixed by declaring `entities` in the test's `DataSource` too, matching the real CLI config.
+
+Also confirmed, not just assumed: after running the full unit and e2e suite against the real local `mortgage_agent` database, `\dt` showed all five new tables were auto-created there via `synchronize: true` (unchanged `development` policy from M1-001/M1-003) — expected, and no existing `loan_applications` rows were affected.
+
+### Affected files
+
+- `src/database/entities/tenant.entity.ts`, `loan-case.entity.ts`, `evidence-fact.entity.ts`, `loan-condition.entity.ts`, `condition-transition.entity.ts` (new)
+- `src/database/database.module.ts`
+- `src/database/data-source.ts`
+- `src/database/migrations/1786808947275-CaseEvidenceConditionSchema.ts` (new, generated)
+- `src/database/migrations/schema-migrations.spec.ts` (renamed and rewritten from `initial-schema.migration.spec.ts`)
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Additive new schema over modifying `LoanApplication` in place**: the charter (Section 3) treats the legacy vocabulary migration as its own deliberate, evidence-backed step, not something to fold silently into an unrelated schema slice.
+- **Cumulative migration test over one spec file per migration**: `DataSource.runMigrations()`/`undoLastMigration()` operate on the whole pending/applied sequence, not a single named migration, so per-migration test isolation isn't available without much more custom machinery; a test that grows its assertions as migrations accumulate matches how the underlying API actually behaves.
+- **`policySnapshotId` nullable now, tightened later**: Section 6.2 requires every satisfied/waived/escalated condition to carry a policy snapshot reference, but nothing in the repository produces one until M3 — modeling it as required today would make the column meaningless (always null) rather than enforced.
+- **JSONB `value` on `EvidenceFact` over per-fact-type columns**: only one real fact-type shape exists in the repository today (the synthetic Plaid/credit/document payloads already used by `LoanApplication.rawIntegrationData`); normalizing into typed columns before a second shape exists to compare against would be guessing at a schema instead of deriving one.
+
+### Verification
+
+```text
+npm run build / npm run lint:check          -> both passed
+
+Migration round-trip against a disposable scratch database
+(mortgage_agent_migration_scratch, created and dropped on the same
+Postgres server as the real mortgage_agent database, which was never
+directly modified by migration commands):
+  migration:run (InitialSchema, then CaseEvidenceConditionSchema)
+    -> tenants, loan_cases, evidence_facts, loan_conditions,
+       condition_transitions created alongside the untouched
+       loan_applications; columns, enum types, and 4 foreign keys
+       match the entities exactly
+  migration:revert x2 (reverse order)
+    -> first revert leaves only loan_applications; second revert
+       leaves the database empty, no orphaned enum types
+
+npm test -- --runInBand --no-cache --silent
+  13 suites passed, 87 tests passed (1 new net: schema-migrations.spec.ts
+  has 3 tests, replacing the 2-test initial-schema.migration.spec.ts)
+
+npm run test:e2e
+  1 suite passed, 4 tests passed — also incidentally confirmed
+  synchronize:true auto-created the 5 new tables in the real local
+  mortgage_agent database (expected development-mode behavior;
+  existing loan_applications rows unaffected)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Schema-only change; no new runtime dependency, no data migration, no behavior change to the existing `evaluateLoan` path.
+- All verification against a real database used a disposable, immediately-dropped scratch database; the real `mortgage_agent` database was only ever touched by the app's own existing `synchronize: true` development behavior, never by a migration command run directly against it.
+
+### Known gaps
+
+- No service, resolver, or REST endpoint reads or writes these entities yet — this slice is schema only, by design, matching the M1-003 precedent of generating and verifying a migration before any business logic depends on it.
+- `Tenant`/tenant-scoping here is a column and a foreign key, not enforcement — RBAC, row-level security, and tenant-context middleware remain M5 scope (Section 14.2 already notes service-layer authorization as primary, RLS as defense in depth).
+- No case/condition domain service exists yet to actually transition a `LoanCase`/`LoanCondition` through its status machine; `ConditionTransition` rows are not yet written by anything.
+- Next M2 slices: Temporal workflow/activities/signals for the durable case lifecycle, REST workflow-start and status endpoints, the API/worker process boundary, and a transactional outbox — per Section 20's M2 scope, in that rough order since the workflow needs the schema this slice provides and the REST layer needs the workflow.
+
+### Next safe step
+
+Stand up Temporal for local development (add to `docker-compose.yml`, add the TypeScript SDK) and implement the first durable workflow: create a case, wait for evidence, resume, reach a readiness state — the M2 user-visible outcome.

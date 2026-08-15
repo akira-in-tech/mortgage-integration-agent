@@ -19,6 +19,12 @@ export default new DataSource({
   type: 'postgres',
   url: process.env.DATABASE_URL,
   entities: [join(__dirname, 'entities', '*.entity.{ts,js}')],
-  migrations: [join(__dirname, 'migrations', '*.{ts,js}')],
+  // TypeORM auto-generates migration filenames as `<timestamp>-Name.ts`, so
+  // requiring a leading digit excludes hand-written *.spec.ts test files in
+  // the same directory — without this, ts-node tries to type-check spec
+  // files (which need Jest's ambient types) as part of loading this
+  // DataSource for the CLI, and fails as soon as more than one real
+  // migration exists alongside a spec file.
+  migrations: [join(__dirname, 'migrations', '[0-9]*.{ts,js}')],
   migrationsTableName: 'typeorm_migrations',
 });
