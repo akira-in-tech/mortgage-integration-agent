@@ -2,7 +2,7 @@
 
 This append-only journal records implementation evidence, decisions, failures, and remaining gaps. Product claims must be supported by the repository and the verification recorded here.
 
-## 2026-08-14 — M0-001: Local open-model decision provider
+## M0-001: Local open-model decision provider
 
 ### Status
 
@@ -96,7 +96,7 @@ The Agent-specific suite included 32 passing tests covering the rules path, vali
 
 Complete and commit this isolated Milestone 0 feature, then begin the supported runtime and security baseline without mixing the two scopes.
 
-## 2026-08-14 — M0-002: Project charter and engineering execution protocol
+## M0-002: Project charter and engineering execution protocol
 
 ### Status
 
@@ -114,7 +114,7 @@ The repository must contain one implementation-oriented charter that defines the
 - Added a phase-status table and per-feature execution loop.
 - Defined one coherent, independently revertible feature slice per commit.
 - Made this development journal part of the definition of done.
-- Required rationale-focused comments for domain, security, reliability, provider, and Agent logic.
+- Added public code-documentation guidelines for domain, security, reliability, provider, and Agent logic.
 - Defined launch gates, SLO targets, Agent evaluation targets, provider modes, data boundaries, and release governance.
 - Removed personal collaboration and identity instructions from the public charter; repository documentation now contains only product and software-delivery governance.
 
@@ -127,7 +127,7 @@ The repository must contain one implementation-oriented charter that defines the
 
 - **Milestones instead of one large rewrite**: each architecture capability must land as a tested, auditable slice.
 - **Atomic feature commits instead of commit-per-function**: a commit must be meaningful, buildable, reviewable, and revertible; mechanical fragmentation would obscure behavior and test evidence.
-- **Detailed journal plus concise code comments**: the journal preserves chronology and verification, while comments preserve non-obvious rationale next to the code. Duplicating implementation syntax in comments is prohibited.
+- **Detailed journal plus concise code comments**: the journal preserves implementation evidence and verification, while comments preserve non-obvious rationale next to the code. Comments that merely duplicate implementation syntax are treated as noise rather than documentation.
 - **TypeScript 6 for Milestone 1**: TypeScript 7 is released, but current Nest CLI programmatic compiler compatibility is not ready for this migration; the newer compiler remains a separately gated upgrade.
 - **Public governance only**: private operator or assistant instructions are not product requirements and do not belong in repository architecture documentation.
 
@@ -163,3 +163,59 @@ No application test was required for the charter-only change. The immediately pr
 ### Next safe step
 
 Begin Milestone 1 as small acceptance-criterion commits, starting with the supported runtime/framework upgrade and retaining a development-log entry for every completed feature slice.
+
+## M0-003: Public-facing documentation guidelines
+
+### Status
+
+Documentation revised and locally validated; no application behavior changed.
+
+### Acceptance criterion
+
+Development-log entries use stable milestone identifiers without calendar dates, and the code-documentation guidance reads as a public engineering standard for all contributors rather than as an instruction to a particular developer or tool.
+
+### Implementation
+
+- Removed date prefixes from existing development-log headings.
+- Removed the date field from the charter's development-journal entry schema.
+- Documented milestone and feature identifiers as the journal's organizing keys.
+- Reframed the code-comment section as public code-documentation guidance centered on useful rationale, assumptions, failure behavior, and long-term alignment with the implementation.
+- Updated the earlier charter log entry to use the same public-facing language.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Stable feature identifiers over dates**: milestone identifiers communicate delivery order and scope without requiring calendar metadata in every journal entry.
+- **Contributor guidance over command language**: public documentation describes the qualities of maintainable comments and the contexts where they add value.
+- **Charter metadata remains separate**: the charter's document-control date remains useful version metadata and is not part of the development journal.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+date-prefixed development-log heading search
+  no matches
+
+superseded code-comment wording search
+  no matches
+
+Markdown code-fence balance check
+  passed
+```
+
+No application test is required because this change affects documentation only.
+
+### Known gaps
+
+- Future feature entries still depend on contributors following the published journal structure.
+- Existing source comments have not yet been audited against the revised guidance; that work belongs with the implementation slices they describe.
+
+### Next safe step
+
+Begin Milestone 1 with the supported runtime and framework upgrade, documenting each coherent feature slice under its milestone identifier.

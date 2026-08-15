@@ -1081,7 +1081,7 @@ No single framework, model, cloud deployment, or feature awards ten points. The 
 
 `docs/DEVELOPMENT_LOG.md` is an append-only engineering journal. Every feature entry records:
 
-- date, milestone, status, and acceptance criterion;
+- milestone, status, and acceptance criterion;
 - problem and intended outcome;
 - implementation details and affected files;
 - architecture and product decisions, including rejected alternatives;
@@ -1090,11 +1090,11 @@ No single framework, model, cloud deployment, or feature awards ten points. The 
 - security, privacy, data, cost, and compatibility considerations;
 - known gaps and the next safe step.
 
-The journal records evidence, not a polished retrospective. Failed experiments and unverified boundaries remain visible.
+Entries are organized by milestone and feature identifier rather than calendar date. The journal records evidence, not a polished retrospective. Failed experiments and unverified boundaries remain visible.
 
-### Code-comment standard
+### Code documentation guidelines
 
-Comments and JSDoc are required where they preserve information that the code alone does not make obvious:
+Useful comments and JSDoc preserve context that is difficult to infer from code alone. They are especially valuable around:
 
 - lending-policy intent and readiness boundaries;
 - tenant, consent, privacy, and authorization constraints;
@@ -1104,7 +1104,7 @@ Comments and JSDoc are required where they preserve information that the code al
 - non-obvious compatibility workarounds and performance tradeoffs;
 - public interfaces, provider adapters, Agent tools, and domain invariants.
 
-Comments explain **why**, assumptions, and failure behavior. They do not restate syntax, narrate every line, preserve dead code, or make unsupported compliance claims. A behavior change must update or remove the related comment in the same commit.
+A good comment explains **why** a design exists, which assumptions it relies on, and how it behaves when something fails. Comments that merely restate syntax, narrate each line, preserve dead code, or imply unsupported compliance guarantees add noise instead of context. When behavior changes, the related documentation evolves with it so that the code and its rationale remain aligned.
 
 ## 28. Decision records
 
