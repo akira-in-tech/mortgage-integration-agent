@@ -1459,3 +1459,56 @@ npm run build / npm test -- --runInBand --no-cache --silent / npm run test:e2e
 ### Next safe step
 
 Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.
+
+## M1-008: Resolve remaining editor TypeScript problems (15)
+
+### Status
+
+Implemented and verified.
+
+### Acceptance criterion
+
+The editor's TypeScript diagnostics for `tsconfig.json` and `test/tsconfig.json` must drop to zero.
+
+### Problem
+
+Two distinct, unrelated issues, both pre-existing and both noted as known gaps in earlier entries (M1-002, M1-005) without being fixed:
+
+1. **`test/tsconfig.json`: 14 `TS6059` errors, one per file under `src/`.** Its `rootDir` was set to `.` (i.e. `test/`), but `include` also pulls in `../src/**/*.ts` (needed so the language service can resolve `test/loan.e2e-spec.ts`'s `import { AppModule } from '../src/app.module'` with full type information, not just ambient types). `rootDir` must be the common ancestor of every file TypeScript includes in the program; `test/` alone isn't an ancestor of `../src/`, so every src file was flagged.
+2. **`tsconfig.json`: 1 deprecation warning on `baseUrl`.** `baseUrl` is being removed in a future TypeScript release (the diagnostic links `aka.ms/ts6`); a repo-wide search confirmed no import in `src/` or `test/` is a bare, non-relative, non-package specifier that depends on it — every import is either relative (`./`, `../`) or a real package. It was dead configuration.
+
+### Implementation
+
+- `test/tsconfig.json`: changed `rootDir` from `.` to `..` (the actual common ancestor of `test/` and `../src`), with a comment explaining why it must cover both and that nothing actually emits through this config (jest transforms test files with its own transformer; `tsc -p test/tsconfig.json` is never invoked by any script or CI step — confirmed by grep before changing it).
+- `tsconfig.json`: removed the unused `baseUrl` line.
+
+### Affected files
+
+- `test/tsconfig.json`
+- `tsconfig.json`
+
+### Decisions and alternatives
+
+- **Fix `rootDir` over narrowing `include`**: dropping `../src/**/*.ts` from `include` would also silence the error, but would degrade the editor's type-checking of `test/loan.e2e-spec.ts`'s imports back to ambient/`.d.ts`-only information — the include pattern is there on purpose.
+- **Delete `baseUrl` over bumping `ignoreDeprecations`**: `ignoreDeprecations: "5.0"` already present in the file doesn't cover this (newer) deprecation boundary, and since nothing depends on `baseUrl`, suppressing the warning would just be deferring dead-config removal rather than doing it — confirmed unused via a repo-wide import search before removing, not assumed.
+
+### Verification
+
+```text
+npx tsc --noEmit -p tsconfig.json       -> exit 0, no diagnostics
+npx tsc --noEmit -p test/tsconfig.json  -> exit 0, no diagnostics (was 14-16 TS6059 errors)
+
+npm run build                            -> dist/main.js present
+npm run lint:check                       -> passed
+npm test -- --runInBand --no-cache --silent
+                                          -> 13 suites passed, 86 tests passed
+npm run test:e2e                         -> 1 suite passed, 4 tests passed
+```
+
+### Known gaps
+
+- None.
+
+### Next safe step
+
+Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.

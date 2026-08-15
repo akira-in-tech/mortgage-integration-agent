@@ -2,7 +2,12 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "outDir": "../dist",
-    "rootDir": ".",
+    // Must be the common ancestor of everything in "include" below (both
+    // test/ and ../src), not just test/ itself, or tsc reports every src
+    // file as outside rootDir (TS6059). Only used for IDE type-checking —
+    // nothing emits through this config (jest transforms test files with
+    // its own transformer; see test/jest-ts-transformer.cjs).
+    "rootDir": "..",
     "types": ["jest", "node"]
   },
   "include": ["./**/*.ts", "../src/**/*.ts"]
