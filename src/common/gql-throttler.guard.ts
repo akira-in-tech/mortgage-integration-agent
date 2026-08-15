@@ -1,14 +1,17 @@
 import { ExecutionContext, Injectable } from '@nestjs/common';
-import { GqlExecutionContext } from '@nestjs/graphql';
+import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 /**
  * The default ThrottlerGuard reads the request/response off the HTTP
  * execution context, which a GraphQL resolver's arguments don't populate
  * the same way. Without this override, rate limiting would silently stop
- * tracking the app's one real endpoint (GraphQL) while still working for
- * plain REST controllers such as /health. Requires GraphQLModule's context
- * factory to expose `req`/`res` (see app.module.ts).
+ * tracking the app's GraphQL endpoint while still working for plain REST
+ * controllers. Requires GraphQLModule's context factory to expose
+ * `req`/`res` (see app.module.ts). Applied globally (APP_GUARD), so it must
+ * also handle plain REST contexts (e.g. src/cases, /health) correctly —
+ * `context.getType()` distinguishes the two instead of assuming every
+ * request is a GraphQL one.
  */
 @Injectable()
 export class GqlThrottlerGuard extends ThrottlerGuard {
@@ -16,6 +19,13 @@ export class GqlThrottlerGuard extends ThrottlerGuard {
     req: Record<string, unknown>;
     res: Record<string, unknown>;
   } {
+    if (context.getType<GqlContextType>() !== 'graphql') {
+      const httpContext = context.switchToHttp();
+      return {
+        req: httpContext.getRequest(),
+        res: httpContext.getResponse(),
+      };
+    }
     const gqlContext = GqlExecutionContext.create(context).getContext<{
       req: Record<string, unknown>;
       res: Record<string, unknown>;

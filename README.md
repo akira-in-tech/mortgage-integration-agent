@@ -176,6 +176,20 @@ Durable, long-running case work (starting with the M2 conditions workflow — co
 
 `docker-compose up` starts a local Temporal server (`temporalio/auto-setup`, backed by the same Postgres instance under separate `temporal`/`temporal_visibility` databases) plus both the `app` and `worker` services. Outside Docker, run a Temporal dev server (`temporal server start-dev`, or `docker compose up temporal`) and then `npm run start:worker:dev` alongside `npm run start:dev`.
 
+### Case REST API
+
+A narrower slice of the target `/v1/loan-cases` contract (see the project charter, Section 15.1) — enough to create a case and drive it through the M2 conditions workflow from outside the process:
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /v1/loan-cases` | Create a case. Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. |
+| `GET /v1/loan-cases/{caseId}` | Fetch a case. |
+| `POST /v1/loan-cases/{caseId}/workflow-runs` | Start the case-conditions workflow. `202 Accepted`; safe to retry — a case with a workflow already running returns that same run rather than starting a second one. |
+| `GET /v1/loan-cases/{caseId}/workflow-runs/{runId}` | Current Temporal status of that run. |
+| `POST /v1/loan-cases/{caseId}/reviews` | A reviewer resolves the case's open condition (`{ actorId, resolution: "SATISFIED" \| "WAIVED", reason? }`), delivered as the workflow's `resolveCondition` signal. `202 Accepted`. |
+
+No authentication or tenant-scoped access control exists yet (`tenantId` is a plain request field) — full RBAC/RLS is M5 scope. There is also no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use.
+
 ## Example Mutation
 
 ```graphql

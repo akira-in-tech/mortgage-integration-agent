@@ -15,6 +15,7 @@ import { NodeEnvironment, validateEnvironment } from './config/env.validation';
 import { GqlThrottlerGuard } from './common/gql-throttler.guard';
 import { createTypeOrmOptions } from './database/typeorm-options.factory';
 import { TemporalModule } from './workflows/temporal.module';
+import { CasesModule } from './cases/cases.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { TemporalModule } from './workflows/temporal.module';
     AgentModule,
     HealthModule,
     TemporalModule,
+    CasesModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })

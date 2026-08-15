@@ -2013,3 +2013,104 @@ case-status.enum.ts, not loan-case.entity.ts or any TypeORM module.
 ### Next safe step
 
 Wire `TemporalClientService` into a REST or GraphQL entry point so a real case can start this workflow and receive the `resolveCondition` signal from outside a test — the workflow itself is complete and proven, but currently unreachable from outside this codebase's own test suite.
+
+## M2-005: REST case, workflow-start, and status endpoints
+
+### Status
+
+Implemented and verified against a real database and a real Temporal server (no mocks) via a dedicated e2e suite, plus fast unit coverage for the service/controller logic. Closes M2's "REST workflow-start and status endpoints" scope item and M2-004's Known-gaps/Next-safe-step item (`TemporalClientService` was built but unreachable from outside this codebase's own tests).
+
+### Acceptance criterion
+
+An external caller must be able to, over plain HTTP: create a case, start its durable conditions workflow, read that workflow's current status, and resolve an open condition as a reviewer — with a duplicate case-creation request or a duplicate workflow-start request producing no duplicate domain effect (M2 exit evidence).
+
+### Problem
+
+`TemporalClientService` (M2-004) could start and signal the workflow, but nothing called it — a case could only enter this workflow by writing a test or a one-off script against the service directly. There was also no REST endpoint of any kind creating a `LoanCase` row; the M2-001 schema had no entry point at all.
+
+### Implementation
+
+- `src/cases/cases.controller.ts` — `CasesController` at `v1/loan-cases` (Section 15.1's full target path prefix, narrowed to the endpoints this slice actually implements):
+  - `POST /v1/loan-cases` — requires an `Idempotency-Key` header (400 if missing/blank); delegates to `CasesService.createCase`.
+  - `GET /v1/loan-cases/:caseId` — 404 via `ParseUUIDPipe` rejecting a malformed id, or `CasesService.getCase` for a well-formed but unknown one.
+  - `POST /v1/loan-cases/:caseId/workflow-runs` — 202, starts the workflow.
+  - `GET /v1/loan-cases/:caseId/workflow-runs/:runId` — 200 with `{ workflowId, runId, status }`.
+  - `POST /v1/loan-cases/:caseId/reviews` — 202, maps to Section 15.1's reviewer-decision endpoint; the only implemented review action is resolving the case's open condition.
+- `src/cases/cases.service.ts` — `CasesService` owns the case-idempotency logic and Temporal-error-to-HTTP-exception mapping (`WorkflowNotFoundError` -> `NotFoundException`), keeping `TemporalClientService` itself a plain, REST-agnostic wrapper (Section 12.1's API/worker boundary comment already established this — this slice is the API side actually using it).
+- `src/cases/dto/create-case.dto.ts`, `resolve-condition.dto.ts` — class-validator DTOs, validated by the existing global `ValidationPipe` (`whitelist`/`forbidNonWhitelisted`/`transform`, already wired in `main.ts`; no new pipe needed).
+- `src/workflows/temporal-client.service.ts` — extended, not replaced:
+  - `startCaseConditionsWorkflow` now catches `WorkflowExecutionAlreadyStartedError` (thrown when a workflow with that id is already running) and returns the existing execution's `{ workflowId, runId }` instead of surfacing an error — this is what makes `POST .../workflow-runs` safely retriable.
+  - `getWorkflowStatus` now accepts an optional `runId` (matching the REST path's `.../workflow-runs/{runId}` shape) and returns a structured `{ workflowId, runId, status }` instead of a bare status string.
+- `test/cases.e2e-spec.ts` — real-infrastructure suite (gated on `DATABASE_URL` + `TEMPORAL_ADDRESS`, same skip-if-unreachable convention as every other integration suite this session): seeds a real `Tenant` row, exercises every route above through `supertest` against the real `AppModule`, and specifically proves the two duplicate-command scenarios required by M2's exit evidence (repeated `Idempotency-Key` -> one case row; repeated `POST .../workflow-runs` -> same `runId`, not a second execution). Cleans up its own tenant/case rows and terminates any workflow it started, in `afterAll` — nothing in this suite runs a worker, so without an explicit `terminate()` those executions would sit `RUNNING` on the Temporal server indefinitely.
+- `src/cases/cases.service.spec.ts`, `cases.controller.spec.ts` — fast unit coverage (mocked repositories/`TemporalClientService`) for the same logic, following this codebase's established two-tier pattern (e.g. `case-conditions.activities.spec.ts` for real-infra proof, `rules-underwriter.service.spec.ts` for fast logic coverage).
+- `test/jest-e2e.json` — `testRegex` widened from matching only `loan.e2e-spec.ts` to any `*.e2e-spec.ts` file, so this new suite (and any future one) actually runs under `npm run test:e2e` instead of being silently ignored by a regex that named one specific file.
+
+### Failures and resolution
+
+- **`GqlThrottlerGuard` crashed every REST request with `TypeError: Cannot read properties of undefined (reading 'header')`, caught by the new e2e suite, not by anything existing**: the guard is wired globally via `APP_GUARD` (see M1-005), so it runs on every route, but it unconditionally treated every execution context as GraphQL (`GqlExecutionContext.create(context).getContext()`), which does not return `{req, res}` for a plain HTTP context. This had been invisible until now because the only REST controller before this slice was `HealthController`, which is `@SkipThrottle()`'d and so never reached the guard's request-reading logic at all. Fixed by branching on `context.getType() === 'graphql'` and falling back to `context.switchToHttp()` otherwise; added a unit test for the REST-context path so this specific regression (a guard that only works for the one context type it happened to be tested against) can't reappear silently on the next new REST controller.
+
+### Affected files
+
+- `src/cases/cases.controller.ts`, `cases.service.ts`, `dto/create-case.dto.ts`, `dto/resolve-condition.dto.ts`, `cases.module.ts` (all new)
+- `src/cases/cases.controller.spec.ts`, `cases.service.spec.ts` (new)
+- `test/cases.e2e-spec.ts` (new); `test/jest-e2e.json`
+- `src/workflows/temporal-client.service.ts`
+- `src/common/gql-throttler.guard.ts`, `gql-throttler.guard.spec.ts`
+- `src/app.module.ts`
+- `README.md`
+
+### Decisions and alternatives
+
+- **Idempotency via the existing `(tenantId, idempotencyKey)` unique constraint, not new fingerprint/header middleware**: Section 15.3's full target idempotency contract (canonical request fingerprints, changed-payload rejection, documented retention) is real future scope, not something this narrow slice's exit evidence asks for ("duplicate command ... produce no duplicate domain effect" — nothing about fingerprinting a changed payload under the same key). `CasesService.createCase` checks for an existing row up front and also catches the Postgres `23505` unique-violation on a concurrent race, so the guarantee holds even under simultaneous duplicate requests, not just sequential retries.
+- **Workflow-start idempotency lives in `TemporalClientService`, not `CasesService`**: `WorkflowExecutionAlreadyStartedError` is Temporal's own signal that a workflow for this id is already running: catching it exactly where the Temporal client call happens (rather than, e.g., checking case status first in `CasesService` and hoping it doesn't race) means the guarantee holds regardless of what triggered the second start attempt — a client retry, a REST caller's own retry logic, or two REST requests arriving concurrently.
+- **REST, not GraphQL, for this slice**: the charter (Section 12.1, 15.1/15.2) assigns partner-facing case/workflow operations to REST and reserves GraphQL for operations-console queries (case lists, timelines, review queues) — this slice is the former, so it follows the charter's own division rather than adding it to the existing `LoanResolver`'s GraphQL surface.
+- **No tenant-creation endpoint added**: `Tenant` has no lifecycle of its own defined anywhere in the charter yet (multi-tenant onboarding and RBAC/RLS are explicitly M5 scope — see the entity's own comment), so inventing one now would be scope creep ahead of its actual design. Tests and local use seed a `Tenant` row directly.
+- **`GqlThrottlerGuard` fixed in place, not worked around in `CasesController`**: an `@SkipThrottle()` escape hatch on every new REST controller would have hidden the fact that rate limiting silently didn't apply to any of them; fixing the guard to correctly handle both context types is what the guard was already supposed to do per its own class comment ("works... for plain REST controllers such as /health" — true only because `/health` opts out, which the comment did not make clear was load-bearing).
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  19 suites passed, 129 tests passed (17->19 suites, +2 new:
+  cases.service.spec.ts [12 tests], cases.controller.spec.ts [8 tests];
+  net +21 tests over M2-004's 108, includes the new
+  gql-throttler.guard.spec.ts REST-context regression test)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed (1->2 suites: new
+     test/cases.e2e-spec.ts, 9 tests, against a real Temporal server
+     and a real Postgres database)
+  cases.e2e-spec.ts covers: missing Idempotency-Key -> 400; repeated
+  idempotency key -> one row, not two; unknown tenant -> 404; unknown
+  case id -> 404; GET reflects what was created; workflow-runs started
+  twice for the same case -> identical runId (idempotent, no second
+  execution); GET workflow-runs/{runId} reflects real Temporal status;
+  unknown workflow run -> 404; resolving a condition with no running
+  workflow -> 404.
+
+Manual: confirmed via direct DB query and `docker ps` that the e2e
+suite's afterAll left no leftover tenant/case rows and no leftover
+Temporal containers — the suite's own cleanup (row deletes + explicit
+workflow termination) was verified to actually run, not just written.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No authentication or tenant-scoped authorization exists on these endpoints yet — `tenantId` is caller-supplied with no verification that the caller is entitled to act for that tenant. Acceptable for this slice (no real data, no deployment target yet) but a hard blocker before any non-local exposure; tracked under M5 (tenant trust boundary), not silently deferred.
+- `POST /v1/loan-cases/:caseId/reviews` accepts `actorId` as a plain string with no verification the caller is who they claim — the charter's Section 6.3 "human reviewers approve... and record overrides" requirement needs real reviewer identity (from auth) once auth exists; today `ConditionTransition.actorId` records whatever the caller sent.
+- No new external dependency; no new cost.
+- `GqlThrottlerGuard`'s fix restores rate-limiting protection for every REST route going forward (it was previously accepting the crash — a 500 — as an accidental de facto block, not real protection; now it correctly rate-limits instead of erroring).
+
+### Known gaps
+
+- No auth/tenant-authorization layer (see above; M5 scope).
+- No RFC 9457 problem-details error format, request/trace ids, pagination, or the rest of Section 15.3's full API-standards list — this slice's errors are Nest's default JSON exception shape.
+- `GET /v1/loan-cases/:caseId` does not include the case's conditions, evidence, or workflow status inline (Section 15.1 lists those as separate endpoints — `.../conditions`, `.../evidence` — not yet built).
+- No tenant-creation endpoint (see Decisions).
+- Transactional outbox and signed status events (remaining M2 scope item) not started.
+
+### Next safe step
+
+Transactional outbox and signed status events — the last unimplemented item in M2's scope list — so workflow state changes (`workflow_run.started`, `condition.opened`, `condition.satisfied`, etc. from Section 15.4's event catalog) become durable, ordered, externally-deliverable events instead of only being inspectable by directly querying Postgres or Temporal.
