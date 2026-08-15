@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.3 |
+| Version | 2.4 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -21,8 +21,8 @@ Capability status is expressed consistently:
 - **Implemented**: present in the repository.
 - **Verified**: implemented and supported by current, recorded test or operational evidence.
 - **Deployed**: running in an identified environment with a reproducible source revision.
-- **Provider-integration-ready**: simulator and authorized provider modes use the same domain workflow and adapter contract; sandbox certification evidence exists, but production credentials and real consumer data remain disabled.
-- **Production-approved**: passed the security, privacy, reliability, compliance, and operational gates required for real customer data.
+- **Provider-integration-ready**: a named provider, capability, adapter version, schema profile, and sandbox environment use the same domain workflow and canonical contract as the simulator; certification evidence exists, but production credentials and real consumer data remain disabled.
+- **Production-approved**: a named tenant, data flow, provider tuple, product, jurisdiction, and environment passed the required security, privacy, reliability, compliance, and operational gates for real customer data.
 - **Planned**: target capability without implementation evidence.
 
 These states are independent. A working local demo is not a production deployment, and a successful deployment is not proof of production approval.
@@ -190,7 +190,7 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 1. Correctness and evidence outrank model fluency.
 2. Deterministic policy owns operational status; models propose bounded actions.
 3. Humans retain authority over material, ambiguous, or externally communicated outcomes.
-4. Every external effect is idempotent, attributable, and auditable.
+4. Every external effect has a durable intent, attributable audit trail, and effect-specific retry and reconciliation strategy; idempotency is claimed only where certified semantics support it.
 5. Durable business state lives outside model context.
 6. Every provider and model call has provenance, validation, timeout, and failure handling.
 7. Synthetic data is the default; real credentials are explicit, tenant-owned, and environment-scoped.
@@ -271,15 +271,16 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 5. Extract candidate facts and retain source locations.
 6. Run simulated income, asset, credit, identity, and document capabilities.
 7. Normalize findings and compare case-intake, document, and provider evidence.
-8. Request an evaluation; the mandatory system guard validates or refreshes the case's current policy binding using the authoritative scope generation and relevant-facts hash.
-9. Execute deterministic calculations and policy only against the validated immutable snapshot.
-10. Create prioritized operational conditions for missing or contradictory evidence.
-11. Let the Agent select the next approved tool within budget.
-12. Pause durably for information or human approval when required.
-13. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
-14. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
-15. Before every re-evaluation, validate the binding again; reuse it when all validity predicates still hold, otherwise refresh it or create a review task.
-16. Publish signed status events and display the full timeline, including the binding and validation outcome used by every evaluation.
+8. Request an evaluation; the mandatory system guard validates or refreshes the case's current policy binding using the authoritative dependency vector and versioned relevant-facts hash.
+9. Atomically freeze an evaluation input manifest containing exact case, consent, evidence, calculation, policy, and runtime versions.
+10. Execute deterministic calculations and policy only against the immutable manifest; never read mutable `latest` values mid-evaluation.
+11. Create prioritized operational conditions for missing or contradictory evidence using optimistic case-version checks.
+12. Let the Agent select the next approved tool within budget.
+13. Pause durably for information or human approval when required.
+14. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
+15. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
+16. Before every re-evaluation, validate the binding and assemble a new manifest; unchanged immutable inputs may be referenced again without being copied.
+17. Publish signed status events and display the full timeline, including the binding, input manifest, and validation outcome used by every evaluation.
 
 ### 7.2 Included synthetic capabilities
 
@@ -326,7 +327,7 @@ Every simulator supports deterministic fixtures for:
 - multi-region disaster recovery;
 - high-volume batch submission.
 
-Deferred capabilities are disabled in the public synthetic launch, not omitted from the target integration architecture. Real providers must enter through the same capability ports, workflow, canonical findings, and release artifact after the gates in Sections 11.7 and 22.6 pass.
+Deferred capabilities are disabled in the public synthetic launch, not omitted from the target integration architecture. Real providers must enter through the same capability ports, workflow, canonical findings, and release artifact after the gates in Sections 11.8 and 22.6 pass.
 
 ## 8. Product modules
 
@@ -564,15 +565,33 @@ The same resolution context, policy catalog knowledge time, and resolver version
 
 ### 10.4 Efficient mandatory validation before every evaluation
 
-Every evaluation must confirm that its policy is still current, but confirmation does not require full resolution or a new receipt every time. The policy control plane publishes approved immutable snapshots and increments a generation only for affected scope keys. The evaluation data plane performs a constant-size validation against the authoritative generation pointer, trusted time, and a hash of policy-relevant case facts.
+Every evaluation must confirm that its policy is still current, but confirmation does not require full resolution or a new receipt every time. A single composite scope generation is insufficient because a case can depend simultaneously on federal, state, local, product, program, tenant, lifecycle, source-coverage, and resolver definitions. A parent-layer change could otherwise leave a narrower case scope unchanged and incorrectly reusable.
+
+The policy control plane therefore maintains a bounded dependency vector. Dependency keys exist even when no rule is currently present, so publishing a newly applicable overlay still changes the vector. The evaluation data plane derives the expected key set from the current server-owned context, reads all generations in one indexed query, and compares a canonical digest, trusted time, and versioned policy-relevant facts.
 
 ```ts
+interface PolicyDependencyRef {
+  key: string;
+  kind:
+    | 'CATALOG'
+    | 'JURISDICTION'
+    | 'PRODUCT'
+    | 'PROGRAM'
+    | 'TENANT'
+    | 'LIFECYCLE'
+    | 'SOURCE_COVERAGE'
+    | 'RESOLVER';
+  generation: number;
+}
+
 interface CasePolicyBinding {
   id: string;
   tenantId: string;
   caseId: string;
-  scopeKey: string;
-  scopeGeneration: number;
+  dependencyKeySetHash: string;
+  dependencyRefs: PolicyDependencyRef[];
+  dependencyDigest: string;
+  relevantFactSchemaVersion: string;
   relevantFactsHash: string;
   policySnapshotId: string;
   boundAt: string;
@@ -584,20 +603,23 @@ interface CasePolicyBinding {
 interface PolicyBindingValidation {
   bindingId: string;
   validatedAt: string;
-  observedScopeGeneration: number;
+  observedDependencyDigest: string;
+  observedRelevantFactSchemaVersion: string;
   observedFactsHash: string;
   outcome: 'REUSED' | 'REFRESHED' | 'REVIEW_REQUIRED';
 }
 ```
 
-`scopeKey` is derived from tenant, jurisdiction, product, optional program or investor overlay, and lifecycle event. `revalidateAfter` is the earliest known scheduled activation boundary, source-freshness deadline, or configured maximum validation interval.
+The dependency set covers the catalog, the full jurisdiction ancestry, product, optional program or investor overlay, tenant policy, lifecycle event, declared source coverage, and resolver release; the relevant-fact selector is compared through its separate schema version. `revalidateAfter` is the earliest known scheduled activation boundary, source-freshness deadline, or configured maximum validation interval. Consent and provider authorization are intentionally excluded from the policy-binding lifecycle and are checked independently during evaluation-manifest creation and immediately before external dispatch.
 
 ```text
 BEGIN EVALUATION REQUEST
-  -> derive scope key and relevant-facts hash from server-owned state
-  -> read the indexed authoritative scope generation
+  -> derive expected dependency keys from current server-owned context
+  -> read the bounded authoritative dependency vector in one indexed query
+  -> derive relevant facts with a versioned selector and canonical encoding
   -> validate binding predicates
-       generation unchanged
+       dependency key set and digest unchanged
+       relevant-fact selector version unchanged
        relevant-facts hash unchanged
        trusted time before revalidateAfter
        binding not invalidated or withdrawn
@@ -610,11 +632,11 @@ BEGIN EVALUATION REQUEST
   -> execute against that binding in the same consistency boundary
 ```
 
-This design keeps the correctness property while eliminating per-evaluation source reads, full rule scans, and duplicate receipt writes. A successful fast path performs one indexed generation read plus in-memory hash and time comparisons. Redis or process caches may reduce latency, but they are hints only; the authoritative scope generation is read transactionally whenever an evaluation can create a material state transition.
+This design keeps the correctness property while eliminating per-evaluation source reads, full rule scans, and duplicate receipt writes. A successful fast path performs one bounded indexed query plus in-memory canonical hash and time comparisons. Redis or process caches may reduce latency, but they are hints only; the authoritative dependency vector is read transactionally whenever an evaluation can create a material state transition.
 
-Policy activation atomically increments only affected scope generations and emits invalidation events. A new evaluation may safely reuse a binding while every predicate remains valid. It must refresh after a relevant case mutation, affected generation change, scheduled boundary, withdrawal, coverage-freshness deadline, or hash mismatch. The invariant is therefore **validation coverage `100%` and invalid binding acceptance `0`**, not zero reuse.
+Policy activation atomically increments every affected dependency generation and emits invalidation events. Jurisdiction hierarchy changes, newly introduced overlays, source-coverage changes, and resolver or relevant-fact-selector releases are first-class invalidators. A new evaluation may safely reuse a binding while every predicate remains valid. It must refresh after a relevant case mutation, dependency change, scheduled boundary, withdrawal, coverage-freshness deadline, selector-version change, or hash mismatch. The invariant is therefore **validation coverage `100%` and invalid binding acceptance `0`**, not zero reuse.
 
-The evaluation row itself is the audit record: it stores the binding ID, observed scope generation, validation time, outcome, and evaluator version. A same-request idempotent replay returns the recorded result. A new request may reuse the binding after validation without creating a separate confirmation artifact.
+The evaluation row itself is the audit record: it stores the binding ID, observed dependency digest, validation time, outcome, and evaluator version. A same-request idempotent replay returns the recorded result. A new request may reuse the binding after validation without creating a separate confirmation artifact.
 
 Validation and execution share a database snapshot or equivalent consistency boundary so a policy activation cannot create an unrecorded time-of-check/time-of-use gap. The evaluator rejects direct calls that bypass validation. The guard is deterministic infrastructure, not a human click and not an LLM judgment.
 
@@ -622,7 +644,41 @@ Validation reads the approved internal catalog; it does not scrape or reinterpre
 
 For a live evaluation, `evaluationAsOf` and `policyKnowledgeAsOf` come from trusted server time. Historical values are accepted only by a separately authorized replay operation that cannot create a live case outcome.
 
-### 10.5 Change detection and open-case impact
+### 10.5 Immutable evaluation input manifest
+
+Policy consistency alone does not make an evaluation reproducible. Evidence, consent, case facts, calculations, adapter normalization, and model configuration can change while an evaluation is running. Every evaluation therefore consumes one server-created immutable input manifest rather than querying mutable `latest` records.
+
+```ts
+interface EvaluationInputManifest {
+  id: string;
+  tenantId: string;
+  caseId: string;
+  caseVersion: number;
+  authorizationDecisionId: string;
+  consentVersionRefs: string[];
+  evidenceRefs: Array<{
+    evidenceId: string;
+    version: number;
+    contentHash: string;
+    validThrough?: string;
+    adapterVersion?: string;
+    normalizationSchemaVersion?: string;
+  }>;
+  calculationRefs: Array<{ calculationId: string; version: string }>;
+  policyBindingId: string;
+  observedPolicyDependencyDigest: string;
+  evaluatorVersion: string;
+  modelAndPromptManifestId?: string;
+  createdAt: string;
+  manifestHash: string;
+}
+```
+
+Manifest assembly and case-version comparison occur transactionally after policy, authorization, consent, evidence freshness, contradiction, and completeness checks. Deterministic calculation and policy execution read only the referenced versions. A concurrent document, provider callback, consent change, policy activation, or case mutation cannot alter a running evaluation; it creates a new case version and requires a new evaluation manifest. Condition writes use compare-and-swap against the expected case version, so an older evaluation cannot overwrite newer case state.
+
+The manifest records exact references and hashes without becoming a retention bypass. If an authorized deletion removes underlying content, the audit record retains only the metadata permitted by the applicable retention or legal-hold decision and reports that full content replay is no longer available.
+
+### 10.6 Change detection and open-case impact
 
 ```text
 authorized source revision detected
@@ -644,7 +700,7 @@ An open case does not silently inherit the newest version, and it is not permane
 
 Initial launch uses curated synthetic policy sources and change events. Future official-source connectors are read-only ingestion adapters with per-jurisdiction coverage, freshness objectives, schema-drift alerts, and manual fallback. No connector is described as complete coverage until that coverage is reviewed and tested.
 
-### 10.6 Example synthetic DSL
+### 10.7 Example synthetic DSL
 
 ```yaml
 rule:
@@ -666,15 +722,16 @@ rule:
     route: MANUAL_REVIEW
 ```
 
-### 10.7 Policy invariants
+### 10.8 Policy invariants
 
 - Policy identifiers and released versions are immutable.
 - Every released rule has source provenance, jurisdiction, valid-time boundaries, system-time history, and approval evidence.
 - Units, money, ratios, dates, and rounding behavior are explicit.
 - Every condition links to the rule and evidence that created it.
-- Every evaluation links to an immutable case policy snapshot and resolver version.
+- Every evaluation links to an immutable input manifest, case policy snapshot, dependency digest, and evaluator version.
 - Every evaluation validates a policy binding; validation coverage is `100%` and invalid binding acceptance is `0`.
-- A valid binding may be reused across evaluations only while its scope generation, relevant-facts hash, time boundary, invalidation state, and source coverage remain valid.
+- A valid binding may be reused across evaluations only while its dependency key set and digest, relevant-fact selector and hash, time boundary, invalidation state, and source coverage remain valid; consent and provider authorization are separate execution guards.
+- Evaluations never read mutable latest-case, latest-evidence, latest-consent, or latest-policy values after manifest creation.
 - Policy activation never mutates a running evaluation or silently reinterprets an open case.
 - A policy change requires regression evidence, effective-date boundary tests, transition approval, and an open-case impact summary.
 - Future-effective policy never activates early; expired, withdrawn, conflicting, or coverage-unknown policy fails closed.
@@ -697,7 +754,7 @@ type ProviderMode = 'SIMULATOR' | 'AUTHORIZED_SANDBOX' | 'PRODUCTION_BYOC';
 
 Simulator, authorized sandbox, and production adapters implement the same capability port and return the same canonical findings. Domain, workflow, policy, and Agent code cannot branch on a provider brand or operating mode. Environment-specific authentication, endpoints, bootstrap calls, and payload quirks stay inside the adapter and credential boundary.
 
-Changing from simulator to a real provider is a reviewed configuration and secret activation, not a source-code edit, rebuild, or alternate business workflow. The same immutable application artifact is promoted across environments.
+Activating an already implemented and certified adapter is a reviewed configuration and secret operation, not a source-code edit, rebuild, or alternate business workflow. Adding a new provider, capability, schema profile, or materially changed adapter may require code and a new certified artifact; “configuration-only” never means an arbitrary provider can be connected without implementation and certification. The same certified immutable application artifact is promoted across environments.
 
 Sandbox parity has limits: a provider test environment may not reproduce institution-specific authentication, data quality, latency, rate limits, or failure behavior. Production readiness therefore requires both deterministic simulator coverage and an authorized provider-certification sequence before live traffic.
 
@@ -708,7 +765,13 @@ interface ProviderAdapter<TRequest, TReceipt, TFinding> {
   readonly providerId: string;
   readonly capability: ProviderCapability;
   readonly mode: ProviderMode;
-  submit(request: TRequest, context: ProviderContext): Promise<TReceipt>;
+  readonly operation: ProviderOperationDescriptor;
+  submit(
+    request: TRequest,
+    intent: ProviderOperationIntent,
+    authorization: ProviderAuthorizationGrant,
+    context: ProviderContext,
+  ): Promise<TReceipt>;
   poll?(receipt: TReceipt, context: ProviderContext): Promise<ProviderStatus>;
   normalize(payload: unknown, context: ProviderContext): TFinding;
   cancel?(receipt: TReceipt, context: ProviderContext): Promise<void>;
@@ -722,9 +785,13 @@ Adapters never write case state directly. Workflow activities validate and norma
 
 ```ts
 interface ProviderPromotionManifest {
+  id: string;
+  version: number;
   tenantId: string;
   providerId: string;
   adapterVersion: string;
+  adapterArtifactDigest: string;
+  schemaProfile: string;
   mode: ProviderMode;
   capabilities: ProviderCapability[];
   endpointAllowlist: string[];
@@ -735,14 +802,111 @@ interface ProviderPromotionManifest {
   timeoutPolicyId: string;
   retryPolicyId: string;
   rateAndCostBudgetId: string;
-  certificationReportId: string;
-  enabled: boolean;
+  validFrom: string;
+  validUntil?: string;
+  contentHash: string;
+}
+
+interface ProviderCertificationRecord {
+  id: string;
+  manifestId: string;
+  manifestVersion: number;
+  environment: string;
+  certificationEvidenceRef: string;
+  certifiedArtifactDigest: string;
+  decidedAt: string;
+  expiresAt: string;
+  decision: 'PASSED' | 'FAILED' | 'REVOKED';
+}
+
+interface ProviderApprovalRecord {
+  id: string;
+  manifestId: string;
+  manifestVersion: number;
+  approvalRole: string;
+  actorId: string;
+  decision: 'APPROVED' | 'REJECTED' | 'REVOKED';
+  decidedAt: string;
+  expiresAt: string;
+}
+
+interface ProviderActivation {
+  manifestId: string;
+  manifestVersion: number;
+  environment: string;
+  expectedPreviousActivationVersion: number;
+  state: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+  activatedBy: string;
+  activatedAt: string;
 }
 ```
 
-Manifests contain references and policy identifiers, never raw credentials. Enabling `PRODUCTION_BYOC` requires an approved manifest, isolated secret reference, explicit tenant authorization, and an attributable change record. A kill switch can disable a provider or capability without redeploying the application.
+Manifests are immutable, versioned desired state and contain references and policy identifiers, never raw credentials. Certification, approval, revocation, and activation are separate append-only records that reference the manifest; approving a manifest never mutates its content. Enabling or re-enabling `PRODUCTION_BYOC` requires current passing certification, sufficient unexpired approvals, exact artifact and schema-profile match, isolated secret reference, explicit tenant authorization, optimistic activation-version check, and two-person control with no self-approval. Emergency disable remains a single authorized fail-safe action; re-enable requires normal approval. Every activation is attributable and a kill switch can suspend a provider or capability without redeploying the application.
 
-### 11.5 Routing
+### 11.5 External-effect, authorization, retry, and fallback safety
+
+Transport retries are not automatically business-safe. A timeout after request transmission may mean the provider completed an order even though the platform did not receive the response. Retrying or falling back at that point can duplicate fees, consumer-impacting inquiries, communications, or other irreversible work.
+
+```ts
+type ProviderEffectClass =
+  | 'READ_ONLY'
+  | 'REUSABLE_LOOKUP'
+  | 'COST_BEARING_ORDER'
+  | 'CONSUMER_IMPACTING'
+  | 'IRREVERSIBLE';
+
+interface ProviderOperationDescriptor {
+  effectClass: ProviderEffectClass;
+  providerIdempotencyScope?: string;
+  supportsStatusLookup: boolean;
+  supportsCancellation: boolean;
+  fallbackPolicy: 'AUTOMATIC' | 'REAUTHORIZE' | 'HUMAN_REVIEW' | 'PROHIBITED';
+}
+
+interface ProviderAuthorizationGrant {
+  id: string;
+  tenantId: string;
+  caseId: string;
+  borrowerSubjectId: string;
+  providerId: string;
+  capability: ProviderCapability;
+  purposeCode: string;
+  permittedDataClasses: string[];
+  consentRecordIds: string[];
+  permissiblePurposeDecisionId?: string;
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+}
+
+interface ProviderOperationIntent {
+  id: string;
+  tenantId: string;
+  caseId: string;
+  providerId: string;
+  capability: ProviderCapability;
+  effectClass: ProviderEffectClass;
+  requestFingerprint: string;
+  idempotencyKey: string;
+  authorizationGrantId: string;
+  state:
+    | 'PREPARED'
+    | 'DISPATCHED'
+    | 'SUCCEEDED'
+    | 'FAILED_FINAL'
+    | 'OUTCOME_UNKNOWN'
+    | 'RECONCILING'
+    | 'CANCELLED';
+}
+```
+
+The platform persists the operation intent before dispatch and revalidates the authorization grant immediately before every external request. Authorization is case-, borrower-, provider-, capability-, purpose-, field-, and time-bound. For consumer-report capabilities, the permissible-purpose decision is consumer- and transaction-specific; a tenant-wide setting or disclaimer is insufficient.
+
+A stable platform idempotency key and request fingerprint are reused only for the same logical intent. They prevent duplicate platform commands but do not prove that a provider enforces idempotency. Retry is automatic only when the adapter's certified semantics establish that the request was not transmitted or that the same provider key/status resource safely reconciles the original operation. After an ambiguous timeout, the state becomes `OUTCOME_UNKNOWN`; the workflow polls, consumes a verified callback, or creates reconciliation work before any new order.
+
+Fallback is a new external effect, not merely another retry. Before changing providers, the router must revalidate authorization, permissible purpose, data scope, expected cost, freshness, duplicate-impact risk, and provider-specific contract terms. `COST_BEARING_ORDER`, `CONSUMER_IMPACTING`, and `IRREVERSIBLE` operations never cross-provider fallback automatically unless an explicitly approved policy and provider semantics prove the action safe. Cancellation records intent but does not claim the provider cancelled work until that outcome is verified.
+
+### 11.6 Routing
 
 Provider selection uses deterministic constraints before optimization:
 
@@ -752,39 +916,42 @@ Provider selection uses deterministic constraints before optimization:
 4. provider health and circuit state;
 5. data freshness requirements;
 6. latency, cost, and reliability score;
-7. configured fallback order.
+7. operation effect class and unresolved prior intent;
+8. configured fallback policy and order.
 
 LLMs do not choose a provider by unconstrained preference. More advanced optimization may be added after the routing inputs and objectives are measurable.
 
-### 11.6 Contract and certification tests
+### 11.7 Contract and certification tests
 
 Every adapter passes the same reusable suite:
 
 - input and output schema validation;
-- request idempotency;
+- request fingerprinting, provider idempotency scope, and changed-payload rejection;
 - authentication and authorization failure mapping;
-- timeout and retry classification;
+- pre-dispatch failure, post-dispatch timeout, unknown-outcome reconciliation, and safe retry classification;
 - rate-limit handling;
 - malformed, partial, stale, and contradictory payload behavior;
 - duplicate and out-of-order callback handling;
 - cancellation race behavior;
 - normalized provenance;
 - log and error redaction;
-- health and fallback behavior.
+- authorization expiry and revocation races;
+- effect-class-specific cancellation and fallback behavior;
+- health and routing behavior.
 
 The same suite runs against simulators and authorized sandboxes. A production certification run additionally verifies endpoint and credential isolation, real authentication behavior, representative schema variance, webhook signatures, documented rate limits, support correlation identifiers, canary routing, kill-switch behavior, and rollback to a safe provider state.
 
-### 11.7 Real-data enablement boundary
+### 11.8 Real-data enablement boundary
 
-The codebase is **provider-integration-ready** only when real providers can be enabled through a promotion manifest and secret activation with no domain or workflow code change. It becomes **production-approved** for real data only after all of the following are evidenced for the specific tenant, provider, capability, product, jurisdiction, and environment:
+The codebase is **provider-integration-ready** for a declared provider/capability/adapter-version/schema-profile tuple only when that already implemented adapter can be enabled through a promotion manifest and secret activation with no domain or workflow code change. It becomes **production-approved** for real data only after all of the following are evidenced for the specific tenant, provider, capability, adapter version, schema profile, product, jurisdiction, and environment:
 
 - executed contract and production access approval;
-- consent and permissible-purpose configuration;
+- runtime authorization grants plus consent and permissible-purpose enforcement;
 - data-flow, classification, minimization, retention, deletion, and residency review;
 - managed credentials, rotation, revocation, egress allowlist, and webhook verification;
 - tenant isolation, field authorization, encryption, redaction, and audit tests;
-- provider-specific certification, rate-limit and cost budgets, canary plan, kill switch, and incident runbook;
-- legal, compliance, privacy, security, and operations approval with named owners;
+- provider-specific certification, effect semantics, reconciliation, rate-limit and cost budgets, canary plan, kill switch, and incident runbook;
+- legal, compliance, privacy, security, and operations approval with named owners and enforced separation of duties;
 - monitored first-live workflow and verified rollback.
 
 Real data is never copied into public fixtures, model-evaluation corpora, screenshots, local development, or shared staging. Production adapters receive only the minimum authorized fields, and model access remains independently governed from provider access.
@@ -912,17 +1079,24 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `policy_versions` | Immutable DSL, valid-time interval, release status, approvals, and test manifest. |
 | `policy_applicability` | Typed scope, triggering event, precedence, and approved transition criteria. |
 | `policy_change_events` | Detected, scheduled, activated, corrected, withdrawn, or superseded change history. |
-| `policy_scope_generations` | Authoritative generation and next boundary for each affected tenant, jurisdiction, product, program, and lifecycle scope. |
+| `policy_dependency_generations` | Authoritative generations and next boundaries for catalog, jurisdiction, product, program, tenant, lifecycle, coverage, and resolver dependency keys. |
 | `case_policy_snapshots` | Immutable resolved versions, source revisions, context hash, and resolution reasons. |
-| `case_policy_bindings` | Reusable case-to-snapshot binding with scope generation, relevant-facts hash, time boundary, and invalidation state. |
+| `case_policy_bindings` | Reusable case-to-snapshot binding with dependency vector, selector version, relevant-facts hash, time boundary, and invalidation state. |
 | `policy_impact_assessments` | Dry-run comparison and disposition for potentially affected open cases. |
-| `policy_evaluations` | Binding ID, validation observation, evaluator version, rule execution, and evidence references. |
+| `evaluation_input_manifests` | Immutable case, authorization, consent, evidence, calculation, policy, evaluator, and optional model-version references. |
+| `policy_evaluations` | Input-manifest ID, binding validation observation, evaluator version, rule execution, and outcome. |
 | `loan_conditions` | Condition lifecycle and required evidence. |
 | `condition_transitions` | Actor-attributed condition state history. |
 | `provider_connections` | Tenant provider mode and credential reference. |
-| `provider_submissions` | Idempotent provider request and aggregate status. |
+| `provider_authorization_grants` | Case-, subject-, provider-, capability-, purpose-, data-, and time-bound external-call authority. |
+| `provider_operation_intents` | Durable request fingerprint, effect class, idempotency key, authorization, and dispatch outcome. |
 | `provider_attempts` | Attempt, latency, error, retry, and cost metadata. |
+| `provider_reconciliations` | Evidence and resolution of ambiguous, delayed, cancelled, or externally completed operations. |
 | `provider_findings` | Normalized results and provenance. |
+| `provider_promotion_manifests` | Immutable adapter, schema, endpoint, control, and secret-reference desired state. |
+| `provider_certifications` | Append-only manifest-scoped test report, artifact digest, validity, outcome, and revocation history. |
+| `provider_approvals` | Append-only manifest-scoped independent approval, expiry, rejection, and revocation history. |
+| `provider_activations` | Versioned environment activation, suspension, disablement, and actor history. |
 | `workflow_runs` | Durable business workflow identity and status. |
 | `workflow_steps` | User-facing activity timeline and failure state. |
 | `agent_runs` | Runtime, model, prompt, budgets, tools, and final route. |
@@ -932,6 +1106,8 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `idempotency_keys` | Tenant, route, key, request hash, and response reference. |
 | `webhook_endpoints` | Destination, secret reference, subscriptions, and state. |
 | `webhook_deliveries` | Signed attempt history and replay state. |
+| `legal_holds` | Scoped hold authority, reason, owner, validity, review, and release history. |
+| `data_disposition_tasks` | Lineage-aware retention, deletion, anonymization, hold, and verification state. |
 | `audit_events` | Append-only actor, action, resource, and security history. |
 | `outbox_events` | Transactionally committed events awaiting publication. |
 
@@ -946,11 +1122,14 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Policy data retains separate valid-time and system-time fields so historical execution can be reproduced as both effective and known at a declared instant.
 - Policy source coverage and freshness are explicit per jurisdiction; missing coverage is an operational state, not an implicit default.
 - Policy bindings and their observed generations are server-owned; clients and models cannot supply, select, or extend them.
+- Evaluation input manifests are immutable and reference exact versions; an evaluation never follows mutable latest-value pointers.
+- Provider operation intents are persisted before dispatch; `OUTCOME_UNKNOWN` is a first-class state that blocks a new effect until reconciliation or authorized review.
 - Raw provider payloads are encrypted, access-controlled, and short-lived.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
 - Public demos and automated tests use visibly synthetic data only.
-- Deletion and retention workflows preserve only the audit metadata legally and operationally permitted.
+- Retention and deletion traverse document, evidence, normalized finding, cache, search index, prompt, evaluation artifact, object, and backup lineage; legal holds are explicit, scoped, reviewable, and never inferred from an undeletable implementation detail.
+- Deletion verification records what was deleted, anonymized, retained under a valid hold, or pending backup expiry without retaining the removed content itself.
 
 ## 15. API and developer experience
 
@@ -966,6 +1145,7 @@ GET    /v1/loan-cases/{caseId}/workflow-runs/{runId}
 GET    /v1/loan-cases/{caseId}/conditions
 GET    /v1/loan-cases/{caseId}/evidence
 GET    /v1/loan-cases/{caseId}/policy-snapshots
+GET    /v1/loan-cases/{caseId}/provider-operations/{operationId}
 POST   /v1/loan-cases/{caseId}/reviews
 GET    /v1/loan-cases/{caseId}/audit-export
 POST   /v1/webhook-endpoints
@@ -976,7 +1156,7 @@ Long-running commands return `202 Accepted` with stable status URLs.
 
 ### 15.2 Operations GraphQL API
 
-GraphQL serves case lists, evidence graphs, timelines, review queues, policy releases, provider health, Agent runs, and evaluation reports. Production environments disable public introspection and interactive explorers unless explicitly authorized.
+GraphQL serves case lists, evidence graphs, timelines, review and provider-reconciliation queues, policy releases, provider operations and health, Agent runs, data-disposition work, activation governance, and evaluation reports. Production environments disable public introspection and interactive explorers unless explicitly authorized.
 
 ### 15.3 API standards
 
@@ -988,7 +1168,7 @@ GraphQL serves case lists, evidence graphs, timelines, review queues, policy rel
 - API version and deprecation policy;
 - request, upload, and query-complexity limits;
 - tenant and client rate limits;
-- idempotency for every externally initiated mutation with side effects;
+- idempotency for every externally initiated mutation with side effects, including documented scope and retention, tenant-bound keys, canonical request fingerprints, changed-payload rejection, and concurrent-request conflict behavior;
 - timestamped HMAC webhook signatures and replay protection;
 - stable event identifiers across retries;
 - contract tests for backward compatibility.
@@ -1015,8 +1195,15 @@ case_policy_snapshot.resolved
 policy_binding.validated
 policy_binding.refreshed
 policy_binding.review_required
+evaluation_input_manifest.created
 policy_impact.review_required
-provider_submission.failed
+provider_authorization.denied
+provider_operation.prepared
+provider_operation.dispatched
+provider_operation.outcome_unknown
+provider_operation.reconciled
+provider_activation.changed
+data_disposition.completed
 ```
 
 ### 15.5 Sandbox and SDKs
@@ -1041,13 +1228,15 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - dependency, secret, container, and infrastructure scanning;
 - append-only security audit events;
 - separate policy-author and policy-approver roles, with independent approval for releases and transition logic;
+- immutable provider-promotion manifests with separate proposer, certifier, approver, and activator duties for production enablement;
+- two-person control for production provider enablement or re-enablement, with self-approval prohibited and emergency disable independently available;
 - documented incident response, key rotation, backup, and restore procedures.
 
 ### 16.2 Privacy controls
 
-- purpose-bound consent checked before provider and document processing;
+- case-, subject-, provider-, capability-, purpose-, data-, and time-bound authorization checked immediately before every external request, retry, and fallback;
 - data minimization and field-level access policy;
-- configurable retention and deletion workflows;
+- lineage-aware retention, deletion, legal-hold, backup-expiry, and deletion-verification workflows;
 - redacted logs, traces, errors, prompts, and evaluation artifacts;
 - environment and tenant separation;
 - no real consumer data in public demos, fixtures, screenshots, or evaluation corpora;
@@ -1079,9 +1268,15 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - raw PII in logs, traces, model requests, or error messages;
 - stale policy or model version execution;
 - early activation, jurisdiction mismatch, unresolved policy conflict, or missed source update;
+- missed parent-layer, new-overlay, coverage, resolver, or relevant-fact-selector invalidation;
+- evaluation reads evidence, consent, or case state newer than its recorded policy input;
+- provider timeout is misclassified as failure and retried into a duplicate paid or consumer-impacting operation;
+- cross-provider fallback reuses an authorization or permissible-purpose decision outside its approved scope;
+- production manifest self-approval, artifact mismatch, stale activation race, or unsafe re-enable;
 - duplicate provider callbacks after workflow cancellation;
 - malicious file content and decompression abuse;
-- unauthorized review override or audit tampering.
+- incomplete deletion lineage, invalid legal hold, or sensitive content retained in derived stores;
+- unauthorized review override or audit tampering;
 - bypass, stale reuse, substitution, or time-of-check/time-of-use race involving a policy binding.
 
 ## 17. Reliability and observability
@@ -1089,12 +1284,17 @@ MCP is an optional adapter over the same registered tools and authorization laye
 ### 17.1 Reliability behavior
 
 - API acknowledgment occurs only after durable state is committed.
-- Temporal owns workflow retries and waits; activities remain idempotent.
+- Temporal owns workflow retries and waits; activities use durable intents and effect-specific retry safety rather than assuming every provider action is idempotent.
 - External delivery uses outbox-backed publication and stable event identifiers.
 - Retries use explicit classifications, bounded attempts, backoff, and jitter.
 - Circuit breakers prevent repeated calls to unhealthy providers.
+- Every provider call starts from a durable operation intent, certified effect classification, current authorization grant, and stable request fingerprint.
+- A post-dispatch timeout is an unknown business outcome until provider status, verified callback, or attributable reconciliation proves otherwise; it is never silently converted into a fresh order.
+- Provider fallback reauthorizes the new provider and cannot bypass cost, duplicate-impact, consumer-impact, or human-review gates.
 - Workflow replay does not duplicate completed external effects.
 - Workflow replay cannot bypass policy-binding validation; a new evaluation validates again, while an idempotent replay of the same completed request returns its recorded result.
+- Evaluation replay consumes its immutable input manifest; new evidence or consent state creates a new manifest rather than altering historical execution.
+- Provider activation uses immutable manifest versions and compare-and-swap so concurrent administrative changes cannot overwrite a newer state.
 - Versioned workflow code preserves deterministic replay compatibility.
 - Failed work remains inspectable and recoverable through operations tooling.
 - Provider fallback never changes the semantic capability contract silently.
@@ -1107,6 +1307,7 @@ Targets are release objectives, not current measurements:
 - monthly API availability: `99.9%` for the synthetic staging service;
 - acknowledged case and review mutations lost: `0`;
 - duplicate externally visible effects from idempotent replay: `0`;
+- duplicate cost-bearing or consumer-impacting provider operations caused by retry or fallback: `0` in the release fault corpus;
 - p95 non-workflow API latency: below `500 ms` under the published load profile;
 - p95 workflow-start acknowledgment: below `1 s` under the published load profile;
 - signed webhook eventual delivery: at least `99.9%` within the configured retry window for healthy receivers;
@@ -1122,13 +1323,14 @@ Required telemetry includes:
 
 - request rate, errors, duration, and saturation;
 - workflow state, schedule-to-start, activity retries, and stuck executions;
-- provider mode, adapter and certification version, latency, normalization failures, authentication expiry, webhook verification, rate limits, fallback, canary allocation, kill-switch state, and circuit state;
+- provider mode, adapter and certification version, effect class, authorization failure, latency, normalization failure, authentication expiry, webhook verification, rate limit, retry, fallback, unknown outcome, reconciliation age, duplicate prevention, cost, canary allocation, kill-switch state, and circuit state;
 - condition age, reopen rate, and time waiting for evidence;
 - Agent steps, tool choices, schema failures, escalation, tokens, and cost;
 - policy source freshness and coverage gaps by jurisdiction;
 - time from detected source revision to reviewed version and scheduled activation;
 - policy snapshot resolution conflicts, failures, and version distribution;
 - policy-binding validation coverage, fast-path reuse, refresh rate, latency, invalid-binding rejection, and review-required rate;
+- evaluation-manifest creation failures, mutable-read rejection, case-version conflicts, replay success, and unreplayable-content reason;
 - open cases awaiting change-impact review and changes approaching an effective date without approved treatment;
 - policy evaluation failures;
 - webhook backlog and terminal delivery failures;
@@ -1151,7 +1353,10 @@ Required telemetry includes:
 10. **Load and soak tests**: declared environment and reproducible workload.
 11. **Agent evaluation**: golden cases, adversarial documents, tool constraints, and model comparisons.
 12. **Policy time-travel tests**: jurisdiction matrices, effective-boundary instants, scheduled activation, grandfathering, corrections, withdrawals, late or out-of-order source revisions, and deterministic as-of replay.
-13. **Policy-binding tests**: validation-bypass rejection, safe unchanged-binding reuse, facts and scope-generation mismatch, scheduled-boundary expiry, invalidation events, catalog activation races, idempotent same-request replay, and mandatory validation on every re-evaluation.
+13. **Policy-binding tests**: validation-bypass rejection, safe unchanged-binding reuse, dependency-key and digest mismatch, parent-layer and newly introduced overlay invalidation, selector-version and facts mismatch, scheduled-boundary expiry, invalidation events, catalog activation races, idempotent same-request replay, and mandatory validation on every re-evaluation.
+14. **Evaluation-input tests**: immutable version references, latest-read rejection, evidence and consent races, stale case compare-and-swap, manifest-hash verification, replay, and deletion-aware audit behavior.
+15. **Provider-effect tests**: pre- and post-dispatch failures, changed-payload idempotency rejection, unknown outcomes, delayed success, reconciliation, duplicate callbacks, cancellation ambiguity, cost-bearing and consumer-impacting retry, and cross-provider fallback authorization.
+16. **Administrative-control tests**: manifest immutability, artifact and schema mismatch, self-approval rejection, dual authorization, expired approval, concurrent activation, emergency disable, and controlled re-enable.
 
 ### 18.2 Evaluation corpus
 
@@ -1180,6 +1385,10 @@ The first release target is at least 150 synthetic cases across normal, boundary
 - policy snapshot repeatability: `100%` for identical context, catalog knowledge time, and resolver version;
 - evaluations with a validated policy binding: `100%`;
 - invalid or stale policy bindings accepted: `0`;
+- evaluations without a valid immutable input manifest accepted: `0`;
+- external provider dispatches without a current scoped authorization grant: `0`;
+- duplicate cost-bearing or consumer-impacting provider effects caused by platform retry or fallback: `0`;
+- ambiguous provider outcomes automatically treated as confirmed failure: `0`;
 - future-effective policy activated early: `0`;
 - malformed output accepted as valid: `0`;
 - tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
@@ -1222,7 +1431,7 @@ Kubernetes is deferred until measured scheduling, portability, or organizational
 
 - per-tenant and per-workflow step, provider, token, storage, and concurrency budgets;
 - immutable finding reuse when consent, freshness, and policy permit;
-- idempotency prevents duplicate provider and model cost;
+- immutable intent reuse, certified provider idempotency where available, and reconciliation reduce duplicate provider and model cost;
 - model and provider usage attributed to workflow runs;
 - local and staging model services can remain off outside evaluation windows;
 - cost-bearing infrastructure requires a documented budget and teardown path;
@@ -1231,8 +1440,8 @@ Kubernetes is deferred until measured scheduling, portability, or organizational
 ### 19.5 Production-readiness levels
 
 1. **Synthetic launch ready**: the production-shaped stack, complete workflow, security controls, observability, recovery, and release gates pass using generated data and deterministic simulators.
-2. **Provider-integration-ready**: the same artifact passes reusable adapter contracts and authorized sandbox certification; production endpoints, production credentials, and real consumer data remain disabled.
-3. **Production-approved**: a specific tenant, provider, capability, product, jurisdiction, and environment pass the real-data enablement gates in Section 11.7 and Section 22.6.
+2. **Provider-integration-ready**: a declared provider/capability/adapter-version/schema-profile tuple in the same artifact passes reusable contracts and authorized sandbox certification; production endpoints, production credentials, and real consumer data remain disabled.
+3. **Production-approved**: a specific tenant, provider, capability, adapter version, schema profile, product, jurisdiction, and environment pass the real-data enablement gates in Section 11.8 and Section 22.6.
 
 Level 2 is the repository engineering target. Level 3 is an environment and organizational approval state, not a claim that can be established from public source code alone.
 
@@ -1314,7 +1523,8 @@ Scope:
 - policy source registry, jurisdiction catalog, and explicit coverage status;
 - policy DSL parser, validator, evaluator, immutable versions, and golden tests;
 - bitemporal applicability resolver and immutable case policy snapshots;
-- unavoidable `PolicyEvaluationService` binding-validation guard, scope generations, and invalidation events;
+- unavoidable `PolicyEvaluationService` binding-validation guard, dependency generations, and invalidation events;
+- immutable evaluation input manifests and expected case-version writes;
 - future-effective scheduling, transition approval, and open-case impact assessment;
 - change fixtures covering state overlays, corrections, withdrawals, and relevant lifecycle events;
 - `AgentRuntime` port and LangGraph.js v1 adapter;
@@ -1331,7 +1541,8 @@ Exit evidence:
 - repeated versioned inputs produce the same policy result;
 - the same as-of context reproduces the same policy snapshot, including at effective-date boundaries;
 - every evaluation and re-evaluation records a binding-validation outcome, while direct evaluator calls that bypass validation fail closed;
-- unchanged valid bindings use the fast path; affected generations, facts, or time boundaries force refresh or review;
+- every evaluation reads one immutable input manifest, while mutable-latest reads and stale case writes fail closed;
+- unchanged valid bindings use the fast path; affected dependency keys, selector versions, facts, or policy time boundaries force refresh or review, while failed consent or authorization blocks manifest creation independently;
 - a catalog activation racing with evaluation produces one internally consistent, auditable result;
 - a future-effective or jurisdiction-mismatched version is never selected;
 - an ambiguous transition or policy-layer conflict always creates a review task;
@@ -1345,18 +1556,20 @@ Scope:
 
 - provider registry, capability contracts, health, routing, and normalization;
 - income, asset, credit, identity, and document simulators;
-- promotion manifests and configuration-only simulator, sandbox, and production modes;
+- promotion manifests and controlled mode activation for already certified adapter tuples;
+- scoped runtime authorization grants, durable operation intents, effect classes, unknown-outcome reconciliation, and fallback gates;
 - reusable adapter contract suite;
 - REST/OpenAPI contract and TypeScript client;
 - webhook subscriptions, delivery retries, history, and replay protection;
 - sandbox scenarios, webhook inspector, and quickstart;
-- safe replay and provider fallback operations.
+- safe replay, unknown-outcome reconciliation, and authorization-gated provider fallback operations.
 
 Exit evidence:
 
 - a new simulator adapter is added without domain or Agent changes;
 - an authorized sandbox adapter runs the same workflow and canonical contracts as its simulator;
-- changing provider mode requires configuration and secret activation, not a different application build;
+- an already implemented and certified adapter changes mode through configuration and secret activation, not a different application build;
+- post-dispatch timeout, delayed callback, cancellation, retry, and fallback tests produce no duplicate cost-bearing or consumer-impacting effect;
 - every documented failure mode is covered by a deterministic test;
 - generated client completes the published quickstart.
 
@@ -1371,14 +1584,16 @@ Scope:
 - RBAC, tenant context, and PostgreSQL RLS;
 - consent enforcement;
 - encrypted field and object boundaries;
-- retention, deletion, and audit export workflows;
+- lineage-aware retention, deletion, legal-hold, backup-expiry, deletion-verification, and audit-export workflows;
 - tenant-owned provider, policy, webhook, and budget configuration;
+- immutable provider manifests, separated administrative duties, dual production activation, emergency disable, and controlled re-enable;
 - threat-model tests and negative authorization suite.
 
 Exit evidence:
 
 - cross-tenant tests fail closed at API, service, and database layers;
 - every material mutation records actor, tenant, resource, correlation, and reason provenance.
+- self-approval, stale activation, artifact mismatch, expired grant, and incomplete deletion-lineage tests fail closed.
 
 ### M6 — Operations and evaluation vertical slice
 
@@ -1388,6 +1603,7 @@ Scope:
 
 - React case list and detail;
 - evidence, condition, policy, provider, Agent, workflow, review, and audit views;
+- provider unknown-outcome reconciliation, production-activation approval, and data-disposition queues with least-privilege actions;
 - explicit empty, loading, degraded, retrying, stale, unauthorized, and disconnected states;
 - accessible interaction and keyboard navigation;
 - evaluation dashboard and downloadable release report;
@@ -1412,14 +1628,14 @@ Scope:
 - load, soak, security, backup, restore, and failure-recovery evidence;
 - SLO dashboards, alerts, runbooks, and incident exercise;
 - architecture decision records and demo walkthrough;
-- provider promotion manifests, certification reports, kill-switch exercise, and configuration-only mode-switch evidence;
+- provider promotion manifests, certification reports, kill-switch exercise, and certified-adapter mode-activation evidence;
 - release artifact, dependency, and source-revision traceability.
 
 Exit evidence:
 
 - all launch gates in Section 22 pass in staging;
 - live health, workflow, review, webhook, and recovery paths are verified;
-- provider-integration-ready status is claimed only after at least one authorized sandbox integration passes the same contract suite and end-to-end workflow as its simulator;
+- provider-integration-ready status is claimed only for each named provider, capability, adapter version, schema profile, and authorized sandbox that passes the same contract suite and end-to-end workflow as its simulator;
 - absence of optional provider credentials does not block synthetic-launch-ready status, but it prevents a provider-integration-ready claim and remains an explicit unverified boundary;
 - the release remains explicitly synthetic and is not represented as approved for real borrower data.
 
@@ -1438,7 +1654,8 @@ Exit evidence:
 - condition reopen rate;
 - human-review rate and duration;
 - workflow completion, cancellation, and terminal-failure rates;
-- provider retry, fallback, and terminal-failure rates;
+- provider authorization rejection, retry, unknown-outcome, reconciliation age, fallback, duplicate-prevention, and terminal-failure rates;
+- evaluation input-manifest creation, case-version conflict, and deterministic replay rates;
 - signed webhook delivery latency and success;
 - cost per workflow and resolved condition.
 
@@ -1466,6 +1683,9 @@ Exit evidence:
 - unsupported material claim accepted by a release gate: `0`;
 - lost acknowledged workflow work: `0`;
 - duplicate external side effects caused by replay: `0`;
+- duplicate cost-bearing or consumer-impacting provider effects caused by retry or fallback: `0`;
+- provider dispatch without current scoped authorization: `0`;
+- production provider enablement or re-enablement without two distinct current approvals and no self-approval: `0`;
 - unattributed human override: `0`;
 - real consumer data in public demo or evaluation artifacts: `0`.
 
@@ -1474,7 +1694,7 @@ Exit evidence:
 ### 22.1 Product gates
 
 - end-to-end synthetic conditions journey is usable through documented APIs and the console;
-- every condition links to evidence and an immutable case policy snapshot;
+- every condition links to an immutable evaluation input manifest, exact evidence versions, and an immutable case policy snapshot;
 - workflow and UI distinguish evidence readiness, operational conditions, downstream underwriting status, and formal credit action;
 - review, wait, resume, cancellation, and recovery paths are demonstrated;
 - API, SDK, webhook, and sandbox quickstarts are current;
@@ -1486,12 +1706,13 @@ Exit evidence:
 - secrets, dependency, container, and infrastructure scans pass at the declared threshold;
 - threat model and abuse-case tests are current;
 - logs, traces, prompts, errors, screenshots, and fixtures pass PII review;
-- backup, restore, retention, deletion, and key-rotation procedures are exercised;
+- backup, restore, lineage-aware retention, deletion, legal hold, backup expiry, deletion verification, and key-rotation procedures are exercised;
 - no real borrower data is accepted by the public launch environment.
 
 ### 22.3 Reliability gates
 
 - migration, workflow replay, crash recovery, duplicate delivery, and webhook retry tests pass;
+- ambiguous provider outcomes reconcile without a duplicate order, fee, consumer-impacting inquiry, or false cancellation claim;
 - declared load and soak profiles meet release objectives;
 - alerts fire in injected provider, queue, database, and webhook failure scenarios;
 - operations users can recover documented failures without database mutation;
@@ -1503,7 +1724,9 @@ Exit evidence:
 - unauthorized-tool, mandatory-review, evidence-coverage, malformed-output, and unsupported-claim gates pass;
 - every released policy version has approval and regression evidence;
 - every evaluated case records the exact applicable versions, source revisions, jurisdiction context, effective boundaries, resolver version, and resolution reasons;
-- every evaluation and re-evaluation records a validated policy binding and observed scope generation; bypassed, stale, invalidated, or mismatched bindings are rejected;
+- every evaluation and re-evaluation records an immutable input manifest, validated policy binding, and observed dependency digest; bypassed, stale, invalidated, or mismatched inputs are rejected;
+- parent-layer, new-overlay, coverage, resolver, and relevant-fact-selector changes invalidate affected bindings;
+- concurrent evidence, consent, policy, and case changes cannot alter a running evaluation or accept a stale condition write;
 - historical replay reproduces the same snapshot for the declared valid time and system knowledge time;
 - future-effective versions never activate early, and unresolved coverage or transition states fail closed to review;
 - approaching effective dates with stale sources or incomplete impact review trigger an operational alert;
@@ -1520,12 +1743,14 @@ Exit evidence:
 ### 22.6 Provider-integration and real-data gates
 
 - simulator and authorized sandbox adapters pass the same canonical capability contract and end-to-end workflow tests;
-- the identical application artifact runs all provider modes; only reviewed configuration and secret references differ;
+- the identical certified application artifact runs all modes for the declared provider, capability, adapter version, and schema profile; only reviewed configuration and secret references differ;
 - sandbox-only behavior is isolated inside adapters and cannot enter production routing;
-- promotion manifest, endpoint allowlist, credential rotation, webhook verification, rate and cost budgets, canary, kill switch, and rollback are exercised;
-- provider-specific schema variance, partial results, authentication expiry, rate limits, duplicate callbacks, delayed callbacks, and outages are tested;
-- consent, permissible purpose, minimization, retention, deletion, residency, model-access, and audit controls are approved for the exact data flow;
-- production routing remains disabled until tenant, provider, capability, product, jurisdiction, environment, and named approvers match the approved manifest;
+- immutable promotion manifest, artifact digest, schema profile, endpoint allowlist, credential rotation, webhook verification, rate and cost budgets, canary, kill switch, and rollback are exercised;
+- provider-specific schema variance, partial results, authentication expiry, rate limits, pre- and post-dispatch timeouts, unknown outcomes, duplicate and delayed callbacks, cancellation ambiguity, and outages are tested;
+- runtime authorization, consent, permissible purpose, data minimization, retention, deletion, residency, model access, and audit controls are approved for the exact data flow;
+- operation intents prove that retry and fallback cannot duplicate cost-bearing, consumer-impacting, or irreversible effects; unresolved outcomes block new effects pending reconciliation or authorized review;
+- production enablement and re-enablement enforce separated duties, two-person control, no self-approval, approval expiry, and optimistic activation versioning; emergency disable remains immediately available and attributable;
+- production routing remains disabled until tenant, provider, capability, adapter version, schema profile, product, jurisdiction, environment, artifact digest, and named approvers match the approved manifest;
 - provider-integration-ready and production-approved status are reported separately.
 
 ## 23. Risks and mitigation
@@ -1539,11 +1764,15 @@ Exit evidence:
 | Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
 | Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
 | Policy drift or wrong jurisdiction changes case treatment | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity. |
-| Evaluation bypasses or races policy validation | Make binding validation an internal application-service guard, use authoritative scope generations and hashes, execute in one consistency boundary, and reject direct evaluator calls. |
+| A parent policy, new overlay, resolver, or fact-selector change misses a narrower binding | Validate a complete dependency key set and digest, including empty scopes and hierarchy generations, before every evaluation. |
+| Evaluation bypasses or races policy or evidence state | Make binding validation and immutable input-manifest creation internal application-service guards, use authoritative dependency vectors and hashes, execute in one consistency boundary, and reject mutable-latest reads. |
 | Readiness automation is mistaken for the full approval process | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority. |
 | Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
+| Timeout, retry, cancellation, or fallback duplicates a paid or consumer-impacting operation | Persist effect-classified intents before dispatch, preserve unknown outcomes, reconcile first, reauthorize fallback, and require review where safety is not proven. |
 | Simulator success hides production-provider behavior | Run the same contracts in authorized sandboxes, document parity gaps, certify provider-specific failures, and use controlled canaries with a kill switch. |
 | Real data is enabled by an unsafe environment toggle | Require an approved promotion manifest, managed secret reference, exact scope match, attributable activation, and default-deny production routing. |
+| One administrator certifies and enables an unsafe provider configuration | Separate proposal, certification, approval, and activation; prohibit self-approval; require dual enablement; keep unilateral emergency disable. |
+| Deletion removes a primary record but leaves derived consumer data | Traverse lineage across findings, indexes, caches, model artifacts, objects, and backups; verify disposition and explicitly govern legal holds. |
 | Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
 | PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
 | Latest versions destabilize delivery | Prefer LTS and supported compatibility; gate major upgrades separately. |
@@ -1623,12 +1852,15 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 6. Versioned internal policy DSL and release lifecycle.
 7. Bitemporal, jurisdiction-aware policy resolution with immutable case snapshots.
 8. Policy-change impact assessment and approved open-case transition handling.
-9. Efficient mandatory policy-binding validation with scoped generations and safe reuse.
+9. Efficient mandatory policy-binding validation with dependency vectors, versioned fact selectors, and safe reuse.
 10. Mortgage lifecycle milestones and explicit readiness-versus-decision boundaries.
-11. Provider modes with contract parity, promotion manifests, certification, and configuration-only activation.
+11. Provider modes with contract parity, scoped certification, and controlled activation of already certified adapters.
 12. Synthetic-only public launch and real-data approval boundary.
 13. Terraform/OpenTofu and ECS Fargate before Kubernetes.
 14. Stable repository name with product identity expressed through documentation.
+15. Immutable evaluation input manifests and optimistic case-version writes.
+16. Effect-classified provider intents, unknown-outcome reconciliation, and authorization-bound fallback.
+17. Immutable provider promotion manifests with separated duties and dual production activation.
 
 ## 29. Immediate next implementation slice
 
@@ -1668,5 +1900,8 @@ Technology choices are based on official project documentation and are revalidat
 - OCC Residential Real Estate Lending handbook: <https://www.occ.treas.gov/publications-and-resources/publications/comptrollers-handbook/files/residential-real-estate-lending/pub-ch-residential-real-estate.pdf>
 - OpenID Foundation FAPI 2.0 Security Profile: <https://openid.net/specs/fapi-security-profile-2_0.html>
 - Example provider sandbox and production environment guidance: <https://plaid.com/docs/sandbox/>
+- CFPB advisory opinion on consumer-specific permissible purpose: <https://www.consumerfinance.gov/rules-policy/final-rules/fair-credit-reporting-permissible-purposes-for-furnishing-using-and-obtaining-consumer-reports/>
+- IETF HTTPAPI Idempotency-Key draft: <https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header>
+- NIST SP 800-53 Rev. 5 separation-of-duties and dual-authorization controls: <https://doi.org/10.6028/NIST.SP.800-53r5>
 
 Technology references justify maturity and compatibility only. Regulatory references illustrate source versioning, effective-date, relevant-event, and federal/state interaction requirements; they are not legal interpretation, complete jurisdiction coverage, or proof that target capabilities are implemented.

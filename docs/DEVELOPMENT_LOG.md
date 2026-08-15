@@ -590,3 +590,134 @@ No application test was required because this feature changes architecture and a
 ### Next safe step
 
 Continue with the planned M1 and M2 vertical slices. In M3, implement scoped generations, policy-relevant fact hashing, an immutable binding, the guarded fast path, invalidation, race tests, and fail-closed refresh. In M4, first migrate every simulator to the shared adapter contract and contract suite, then demonstrate configuration-only activation against an authorized sandbox before making any provider-integration-ready claim.
+
+## M0-008: Business-invariant and external-effect audit
+
+### Status
+
+Target architecture audited and revised; application implementation remains planned. The review found correctness gaps in policy invalidation, evaluation reproducibility, provider retry and fallback, provider-readiness claims, production activation governance, and derived-data disposition.
+
+This entry narrows M0-007's single composite scope-generation and configuration-only language. The reusable policy-binding fast path remains, but it now validates a complete dependency vector. Configuration-only activation applies only to an adapter, capability, version, and schema profile already implemented and certified in the promoted artifact.
+
+### Acceptance criterion
+
+The target architecture must not allow a policy dependency to change without invalidating an affected binding; combine mutable inputs in one evaluation; repeat an ambiguous external effect; reuse authorization across an unapproved provider fallback; activate production through one mutable flag or one person's approval; claim readiness for an undeveloped adapter; or delete a primary record while silently retaining derived consumer data.
+
+### Research and architecture audit
+
+- Reviewed the active policy-binding, provider adapter, routing, promotion, data, privacy, reliability, testing, launch-gate, risk, roadmap, and ADR sections.
+- Confirmed that the prior single composite scope generation did not explicitly capture parent policy layers, empty scopes that later gain a rule, jurisdiction hierarchy changes, resolver releases, or relevant-fact selector changes.
+- Confirmed that a policy binding alone did not freeze case, consent, evidence, calculation, normalization, evaluator, and optional model versions used by one evaluation.
+- Confirmed that generic idempotency, retry, cancellation, and fallback language did not distinguish a failure before dispatch from an unknown outcome after dispatch.
+- Confirmed that an idempotency key expresses one logical intent but cannot prove an external provider honored that key.
+- Confirmed that the prior routing rules could allow a different provider to be selected without creating a new provider-scoped authorization and duplicate-impact decision.
+- Confirmed that the promotion manifest mixed desired configuration with a mutable enabled state and did not encode immutable versioning, artifact and schema identity, approval expiry, self-approval rejection, dual activation, or concurrent-change protection.
+- Confirmed that provider-integration readiness needed to be scoped to a named provider, capability, adapter version, schema profile, and sandbox rather than expressed as one repository-wide boolean.
+- Confirmed that generic deletion language did not explicitly traverse normalized findings, search indexes, caches, prompts, evaluation artifacts, objects, and backup expiry.
+- Used the current CFPB advisory opinion as a source for consumer-specific permissible-purpose boundaries, the IETF HTTPAPI idempotency draft for retry uncertainty and key/fingerprint behavior, and NIST SP 800-53 for separation-of-duties and dual-authorization design inputs.
+
+### Findings and implementation
+
+1. **Incomplete policy invalidation**
+   - Replaced one composite scope generation with a bounded `PolicyDependencyRef` vector covering catalog, full jurisdiction ancestry, product, program, tenant, lifecycle, source coverage, and resolver dependencies.
+   - Required dependency keys to exist even for empty scopes so a newly introduced overlay invalidates affected bindings.
+   - Added dependency-key-set hashing, canonical dependency digesting, and relevant-fact selector versioning to binding validation.
+   - Kept consent and provider authorization outside the policy-binding lifecycle so an authorization change blocks execution without forcing unrelated policy resolution.
+   - Preserved the efficient fast path as one bounded indexed query plus canonical hash and time comparisons.
+
+2. **Mixed-version evaluation inputs**
+   - Added an immutable `EvaluationInputManifest` with exact case, authorization, consent, evidence, adapter normalization, calculation, policy binding, evaluator, and optional model and prompt references.
+   - Required transactional manifest assembly after policy, authorization, consent, evidence freshness, contradiction, and completeness checks.
+   - Prohibited mutable latest-value reads after manifest creation.
+   - Required compare-and-swap writes so an older evaluation cannot overwrite a newer case version.
+
+3. **Unsafe retry, cancellation, and fallback**
+   - Added provider effect classes for read-only, reusable lookup, cost-bearing, consumer-impacting, and irreversible operations.
+   - Added a durable `ProviderOperationIntent` persisted before dispatch with a request fingerprint, stable idempotency key, scoped authorization, effect class, and explicit unknown-outcome states.
+   - Required post-dispatch timeouts to enter reconciliation instead of automatically creating a new order.
+   - Required verified provider status, callback, or attributable review before resolving ambiguous outcomes.
+   - Treated fallback as a new external effect with provider-specific reauthorization, permissible-purpose, data-scope, cost, freshness, and duplicate-impact checks.
+   - Prohibited automatic cross-provider fallback for material effects unless certified semantics and an approved policy prove it safe.
+
+4. **Overbroad provider-readiness claim**
+   - Clarified that a new provider, capability, schema profile, or materially changed adapter can require code and a newly certified artifact.
+   - Limited configuration-only switching to already implemented and certified adapter tuples.
+   - Scoped provider-integration-ready and production-approved evidence to adapter version and schema profile as well as provider, capability, tenant, product, jurisdiction, and environment.
+
+5. **Mutable or single-actor production activation**
+   - Replaced an `enabled` flag with immutable versioned promotion manifests and separate append-only certification, approval, revocation, and activation records.
+   - Bound activation to manifest content hash, adapter artifact digest, schema profile, approval validity, credential reference, environment, and expected previous activation version.
+   - Added separated proposer, certifier, approver, and activator duties; prohibited self-approval; and required two-person control for enablement and re-enablement.
+   - Preserved immediate attributable emergency disable as a fail-safe action.
+
+6. **Incomplete deletion and legal-hold semantics**
+   - Added lineage-aware data-disposition tasks and explicit scoped legal holds.
+   - Required disposition to traverse source documents, evidence, normalized findings, indexes, caches, prompts, evaluation artifacts, object storage, and backup expiry.
+   - Required verification records to distinguish deleted, anonymized, validly held, and backup-expiry-pending data without retaining the removed content itself.
+
+- Expanded the data model, security and privacy controls, threat scenarios, reliability rules, SLOs, telemetry, tests, release metrics, milestones, launch gates, risks, ADR backlog, and official reference baseline for these invariants.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Dependency vector over one scope counter**: one indexed query remains efficient while preventing missed invalidation across composed layers and future overlays.
+- **Versioned fact selector over an unversioned hash**: changing which fields influence policy must invalidate a binding even when the old selected values did not change.
+- **Independent policy and authorization lifecycles over coupled expiry**: policy applicability can be reused while evaluation-manifest creation and external dispatch still fail closed on expired or revoked authority.
+- **Immutable input manifest over broad transaction duration**: long-running evaluation cannot hold a database transaction open, so it freezes references and uses optimistic writes instead.
+- **Unknown outcome over assumed failure**: transport failure does not prove business failure after dispatch.
+- **Intent plus provider reconciliation over platform idempotency alone**: external exactly-once behavior cannot be inferred when a provider does not guarantee the same idempotency scope and retention.
+- **Reauthorization over inherited fallback consent**: authority for one provider and purpose is not silently transferable to another provider or effect.
+- **Append-only governance records over mutable manifest status**: certification, approval, revocation, and activation evolve without rewriting the reviewed configuration.
+- **Dual enablement and unilateral disable over symmetric approval**: production entry requires stronger control, while emergency shutdown remains immediately available.
+- **Scoped readiness over repository-wide readiness**: evidence for one adapter cannot validate every provider or capability.
+- **Lineage-aware disposition over row deletion**: consumer data can survive in derived stores even after its primary row is gone.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 40 fence markers
+  DEVELOPMENT_LOG.md: 16 fence markers
+
+obsolete policy-generation and unsafe provider-language inspection
+  no active charter references to the superseded single-generation fields,
+  mutable enable flag, or unscoped configuration-only roadmap language
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+```
+
+No application test is required for this documentation-only architecture audit. None of the newly specified controls are represented as implemented, tested, deployed, provider-certified, or production-approved.
+
+### Security, compliance, and operational boundaries
+
+- The platform does not infer consumer-report authority from a tenant-wide switch, disclaimer, prior provider grant, or model output.
+- A consumer-specific permissible-purpose decision remains an authorized business and compliance responsibility; the architecture only enforces and records the supplied scope.
+- Idempotency and reconciliation reduce duplicate risk but do not claim universal exactly-once behavior across third-party systems.
+- A full audit replay may become unavailable after authorized deletion; retained metadata cannot be used as an excuse to preserve prohibited content.
+- NIST and IETF materials are engineering baselines, not claims of certification or final legal requirements.
+
+### Known gaps
+
+- Policy dependency generations, relevant-fact selector releases, immutable input manifests, and compare-and-swap condition writes do not exist in application code.
+- Provider effect descriptors, authorization grants, operation intents, reconciliation workflows, immutable promotion manifests, certification records, approval records, and activation records do not exist in application code.
+- No provider's idempotency, cancellation, fallback, pricing, consumer impact, status lookup, or callback semantics have been certified.
+- No data-lineage deletion graph, legal-hold workflow, backup-expiry verifier, or deletion report exists.
+- Actual permissible-purpose, consent, retention, legal-hold, and approval rules remain scoped organizational decisions requiring authorized owners.
+
+### Next safe step
+
+Keep M1 as the supported runtime baseline and M2 as the durable synthetic conditions slice. In M2, establish aggregate versioning, idempotency fingerprint rejection, immutable evidence versions, and optimistic writes. In M3, implement dependency-vector policy bindings and immutable evaluation input manifests. In M4, implement the provider intent state machine and reconciliation against simulators before any authorized sandbox. In M5, implement scoped grants, immutable activation governance, lineage-aware deletion, and negative authorization tests.
