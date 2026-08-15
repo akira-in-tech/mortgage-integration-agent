@@ -2230,3 +2230,106 @@ scratchpad Temporal + the real dev Postgres database):
 ### Next safe step
 
 M2's only remaining scope item is retry classification, and it is currently blocked on not having a real failure taxonomy to classify (no non-synthetic provider integration exists yet — that's M4 scope). Two honest paths forward: (a) treat M2 as closeable now with retry classification explicitly re-scoped into M4 alongside the real provider gateway that would finally give it something real to classify, or (b) build a synthetic failure taxonomy now purely to close M2 on paper. (a) reflects what's actually true about this codebase; (b) would be scope invented to satisfy a checklist. Recommend (a), but this is a call for the user, not one to make silently — ask before touching the milestone table. Once resolved, proceed to M3 ("Policy and Agent vertical slice") per the user's earlier direction to continue through M3-M7.
+
+## M2-007: Synthetic retry classification — closes Milestone 2
+
+### Status
+
+Implemented and verified, including a hands-on run through the real REST API and a real worker for both classifications: a terminal-failure case reached `MANUAL_REVIEW` after exactly one attempt per activity; a transient-failure case retried three times each (matching the workflow's configured policy) before reaching the same state. The user explicitly chose option (b) from M2-006's Next-safe-step decision — build a synthetic failure taxonomy now — over the recommended (a) (defer to M4). This closes M2's last open scope item; Milestone 2 ("Durable loan case, evidence, and condition workflow") is now `Implemented` in the charter's milestone table (Section 3).
+
+### Acceptance criterion
+
+`case-conditions.activities.ts`'s evidence-fetch activities must classify provider failures into at least two categories — retryable and non-retryable — and Temporal's actual retry behavior must observably differ between them (a retryable failure consumes the configured retry budget; a non-retryable one does not), with an unrecoverable failure of either kind routing the case to a reviewable terminal state rather than crashing the workflow.
+
+### Problem
+
+No real provider integration exists in this codebase to observe genuine failure modes from (rate limits, malformed responses, timeouts) — every provider call today is one of three in-process simulators that always succeed. M2-004 and M2-006 both deferred retry classification for exactly this reason: building a taxonomy for failures that can't happen yet would be speculative. The user's direction changed that trade-off — closing M2 now was judged more valuable than waiting for M4's real provider gateway to supply genuine failure modes to classify.
+
+### Implementation
+
+- `src/integrations/synthetic-provider-failures.ts` — deterministic fault injection, mirroring `hasSyntheticDiscrepancy`'s pattern: a `borrowerId` prefix (`SYNTHETIC-TRANSIENT-FAILURE-` / `SYNTHETIC-TERMINAL-FAILURE-`) triggers `SyntheticProviderTimeoutError` / `SyntheticProviderRejectionError`. Deliberately provider-agnostic and Temporal-unaware — it only simulates what a raw provider failure looks like, shared by all three simulators, which are also used by the older `evaluateLoan` GraphQL path via `AgentService` and must keep working unmodified for callers that never pass a synthetic-prefixed id.
+- `src/integrations/plaid/plaid.service.ts`, `credit/credit.service.ts`, `document/document.service.ts` — each calls `maybeThrowSyntheticProviderFailure(borrowerId, providerName)` before generating data.
+- `src/workflows/case-conditions.activities.ts` — `callProviderWithRetryClassification(fn, providerName)`: the actual classification intelligence, kept here rather than in the simulators because activities are where provider outcomes get interpreted and normalized (Section 12.2). Catches `SyntheticProviderRejectionError`/`SyntheticProviderTimeoutError` and rethrows as `ApplicationFailure.nonRetryable(...)` / `ApplicationFailure.retryable(...)` (from `@temporalio/activity`) — `nonRetryable()` forces Temporal to stop after one attempt regardless of the workflow's retry policy. An unrecognized error is rethrown unchanged rather than guessed at. Wraps all three fetch activities' provider calls.
+- `src/workflows/case-conditions.activities.ts` — new `markManualReview` activity: transactionally sets `CaseStatus.MANUAL_REVIEW` and writes a `workflow_run.failed` outbox event with the failure reason, same transactional-outbox pattern as every other activity (M2-006).
+- `src/workflows/case-conditions.workflow.ts` — the evidence-fetch `Promise.all` is now wrapped in try/catch; an unrecoverable rejection (retries exhausted, or an immediate non-retryable failure) calls `markManualReview` and returns `{ finalStatus: CaseStatus.MANUAL_REVIEW }` instead of letting the workflow fail outright — mirrors Section 9.5's Agent-loop "budget or runtime failure: route to manual review" pattern, applied here at the workflow level.
+- `src/database/outbox/outbox-event-types.ts` — added `WorkflowRunFailed` (`workflow_run.failed`), the last Section 15.4 event this codebase now has a real producer for among the ones M2-006 called out as not yet emitted.
+- `docs/PROJECT_CHARTER.md` — Milestone table (Section 3): M2 `Planned` -> `Implemented`. Version 2.8 -> 2.9.
+
+### Failures and resolution
+
+- None specific to this slice — build, lint, and every automated suite passed on first full run after implementation. The one thing worth recording as a design check rather than a failure: initially considered having the *simulators* count attempts (via `@temporalio/activity`'s `Context.current().info.attempt`) so a transient failure could succeed on, say, the 3rd try. Rejected before writing it: `Context.current()` is only valid inside a real Temporal activity execution, and these simulators are shared with the plain NestJS `evaluateLoan` path (via `AgentService`), which never runs inside one — calling it unconditionally would have broken that path for any borrowerId, not just synthetic-failure ones. The simpler, safer design (simulators always fail consistently for a given synthetic borrowerId; Temporal's own retry engine is what actually varies) avoids the problem entirely and is what's implemented.
+
+### Affected files
+
+- `src/integrations/synthetic-provider-failures.ts` (new)
+- `src/integrations/plaid/plaid.service.ts`, `plaid.service.spec.ts`
+- `src/integrations/credit/credit.service.ts`, `credit.service.spec.ts`
+- `src/integrations/document/document.service.ts`, `document.service.spec.ts`
+- `src/workflows/case-conditions.activities.ts`, `case-conditions.activities.spec.ts`
+- `src/workflows/case-conditions.workflow.ts`, `case-conditions.workflow.spec.ts`
+- `src/database/outbox/outbox-event-types.ts`
+- `docs/PROJECT_CHARTER.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Classification via `ApplicationFailure.nonRetryable()`/`.retryable()` thrown from the activity, not a `nonRetryableErrorTypes` list on the workflow's `proxyActivities` retry policy**: the SDK docs are explicit that `nonRetryable()` forces no-retry "even if type is not listed in RetryPolicy.nonRetryableErrorTypes" — classifying at the throw site keeps the decision co-located with the code that actually knows why the call failed, rather than requiring the workflow to maintain a name-matching list in sync with every error type an activity might ever throw.
+- **One shared `borrowerId` prefix triggers failure in all three simulators simultaneously, not one flag per provider**: the workflow's three fetch activities already run via a single `Promise.all` over the same `borrowerId` — a synthetic case marked for failure-testing failing across all evidence sources at once is the simpler, still-realistic scenario, and per-provider flags would need a request shape change (separate synthetic ids per evidence type) for no proven testing benefit yet.
+- **Workflow catches the `Promise.all` rejection and returns a result, rather than letting Temporal mark the workflow `Failed`**: `MANUAL_REVIEW` is an existing, planned `CaseStatus` value, not an error state — a human can still act on a case in this state, so treating it as a graceful business outcome (a normal workflow completion) rather than an infrastructure failure matches how the rest of this codebase already treats "needs a human" states (`CONDITIONS_OPEN` durably waits for a reviewer the same way).
+- **Closing M2 now, per explicit user direction, over the initially recommended defer-to-M4 path**: recorded here because the earlier entry (M2-006) explicitly laid out both options and a recommendation — this entry is the record of which one was actually chosen and why the trade-off changed (the user's own priority, not new technical information).
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  20 suites passed, 151 tests passed (net +12 over M2-006's 139, no new
+  suites — all added to existing spec files):
+  - plaid/credit/document .service.spec.ts: +2 tests each (6 total) —
+    each simulator throws the correct synthetic error class for its
+    trigger prefix.
+  - case-conditions.activities.spec.ts: +4 tests — markManualReview's
+    DB/outbox effect; real PlaidService/CreditService/DocumentService
+    (not mocks) prove the full chain throws a correctly-shaped
+    ApplicationFailure for both synthetic failure kinds; an
+    unrecognized error is left unclassified.
+  - case-conditions.workflow.spec.ts: +2 tests, against a real Temporal
+    server — a retryable mock activity is called exactly 3 times
+    (matching maximumAttempts) before the workflow returns
+    MANUAL_REVIEW; a non-retryable one is called exactly once.
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed (unchanged — no REST-layer
+     behavior changed in this slice)
+
+Manual end-to-end proof (real API + real worker process, scratchpad
+Temporal + the real dev Postgres database):
+  Terminal case (SYNTHETIC-TERMINAL-FAILURE- borrowerId): POSTed case
+  and workflow-runs; worker log shows all three fetch activities
+  failing at attempt: 1 (no retries wasted); case reached
+  MANUAL_REVIEW; outbox has loan_case.created, workflow_run.started,
+  workflow_run.failed, all independently signature-verified.
+  Transient case (SYNTHETIC-TRANSIENT-FAILURE- borrowerId): same
+  sequence, worker log shows attempt: 1, 2, 3 for each fetch activity
+  (exponential backoff, matching the 1s/2s/4s-capped policy) before
+  the workflow gave up and reached MANUAL_REVIEW; outbox events
+  verified the same way.
+  Cleaned up synthetic tenant/case/outbox rows, both processes, and
+  the scratchpad Temporal stack afterward.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable behavior: the synthetic-failure trigger is a `borrowerId` string prefix, reachable the same way any other borrowerId is (via `POST /v1/loan-cases`) — no new endpoint or capability, and no realistic borrowerId would collide with the reserved prefixes.
+- `markManualReview`'s outbox payload includes the raw error's `String(error)` as `reason` — currently always a synthetic, non-borrower-identifying message (`ActivityFailure: Activity task failed` at the workflow layer, per Temporal's own wrapping); worth re-checking once real provider errors exist, in case a real provider ever echoes request data back in an error message.
+- No new dependency; `ApplicationFailure` is already part of the installed `@temporalio/activity` package.
+
+### Known gaps
+
+- Still synthetic: this proves the retry-classification *mechanism* works correctly, not that its classification (which failures are "transient" vs "terminal") matches how a real Plaid/credit-bureau/IDP vendor's errors actually behave — that mapping is real M4 work once real adapters exist.
+- The richer target retry model (Section 11.5: `OUTCOME_UNKNOWN` reconciliation, pre-dispatch vs. post-dispatch failure, cost-bearing/consumer-impacting effect classes, cross-provider fallback authorization) is unaddressed — that is explicitly M4 (provider gateway) scope, not something this M2 vertical slice's activities were ever meant to carry.
+- `workflow_run.failed`'s `reason` payload is Temporal's own wrapped error string, not a structured classification (e.g. `{ activityType, failureType, attempts }`) — sufficient for this slice's proof, but a real operations console (M6) would likely want more structure.
+
+### Next safe step
+
+M2 is closed. Begin M3 ("Policy and Agent vertical slice") per the user's earlier direction to continue through M3-M7: policy source registry, jurisdiction catalog, the policy DSL parser/validator/evaluator, and the `AgentRuntime` port with a LangGraph.js v1 adapter.

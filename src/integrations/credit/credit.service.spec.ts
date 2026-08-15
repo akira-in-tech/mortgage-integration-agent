@@ -1,5 +1,9 @@
 import 'reflect-metadata';
 import { CreditService } from './credit.service';
+import {
+  SyntheticProviderTimeoutError,
+  SyntheticProviderRejectionError,
+} from '../synthetic-provider-failures';
 
 describe('CreditService', () => {
   let service: CreditService;
@@ -54,5 +58,17 @@ describe('CreditService', () => {
     const data = await service.getCreditData('test-borrower-derog');
     expect(data.derogatoryMarks).toBeGreaterThanOrEqual(0);
     expect(data.derogatoryMarks).toBeLessThanOrEqual(2);
+  });
+
+  it('throws a synthetic timeout for a SYNTHETIC-TRANSIENT-FAILURE- borrowerId', async () => {
+    await expect(
+      service.getCreditData('SYNTHETIC-TRANSIENT-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderTimeoutError);
+  });
+
+  it('throws a synthetic rejection for a SYNTHETIC-TERMINAL-FAILURE- borrowerId', async () => {
+    await expect(
+      service.getCreditData('SYNTHETIC-TERMINAL-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderRejectionError);
   });
 });

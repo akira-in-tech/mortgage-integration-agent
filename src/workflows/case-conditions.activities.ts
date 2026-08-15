@@ -1,10 +1,15 @@
 import { DataSource, EntityManager } from 'typeorm';
+import { ApplicationFailure } from '@temporalio/activity';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
+import {
+  SyntheticProviderTimeoutError,
+  SyntheticProviderRejectionError,
+} from '../integrations/synthetic-provider-failures';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import {
   EvidenceFact,
@@ -68,6 +73,42 @@ function hasSyntheticDiscrepancy(
     credit.debtToIncomeRatio > 0.4 ||
     !documents.allDocumentsValid
   );
+}
+
+/**
+ * Retry-classification boundary (M2 scope: "retry classification"): calls
+ * a provider simulator and reinterprets whatever it throws as an
+ * ApplicationFailure with an explicit retry decision. `ApplicationFailure
+ * .nonRetryable()` forces Temporal to stop after this attempt regardless
+ * of the workflow's retry policy, so a terminal synthetic failure never
+ * wastes the configured 3 attempts the way a transient one legitimately
+ * does. No real provider integration exists yet to observe genuine
+ * failure modes from (see synthetic-provider-failures.ts) — an
+ * unrecognized error is left untouched rather than guessed at.
+ */
+async function callProviderWithRetryClassification<T>(
+  fn: () => Promise<T>,
+  providerName: string,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof SyntheticProviderRejectionError) {
+      throw ApplicationFailure.nonRetryable(
+        error.message,
+        'TerminalProviderFailure',
+        providerName,
+      );
+    }
+    if (error instanceof SyntheticProviderTimeoutError) {
+      throw ApplicationFailure.retryable(
+        error.message,
+        'TransientProviderFailure',
+        providerName,
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -148,7 +189,10 @@ export function createCaseConditionsActivities(
       caseId,
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<PlaidIncomeData> {
-      const income = await plaidService.getIncomeData(borrowerId);
+      const income = await callProviderWithRetryClassification(
+        () => plaidService.getIncomeData(borrowerId),
+        'plaid-simulator',
+      );
       await dataSource.transaction((manager) =>
         recordEvidence(manager, {
           tenantId,
@@ -166,7 +210,10 @@ export function createCaseConditionsActivities(
       caseId,
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<CreditBureauData> {
-      const credit = await creditService.getCreditData(borrowerId);
+      const credit = await callProviderWithRetryClassification(
+        () => creditService.getCreditData(borrowerId),
+        'credit-bureau-simulator',
+      );
       await dataSource.transaction((manager) =>
         recordEvidence(manager, {
           tenantId,
@@ -184,7 +231,10 @@ export function createCaseConditionsActivities(
       caseId,
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<DocumentVerificationResult> {
-      const documents = await documentService.verifyDocuments(borrowerId);
+      const documents = await callProviderWithRetryClassification(
+        () => documentService.verifyDocuments(borrowerId),
+        'document-verification-simulator',
+      );
       await dataSource.transaction((manager) =>
         recordEvidence(manager, {
           tenantId,
@@ -333,6 +383,35 @@ export function createCaseConditionsActivities(
           caseId,
           eventType: OutboxEventType.WorkflowRunCompleted,
           payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
+        });
+      });
+    },
+
+    /**
+     * Escape hatch for an unrecoverable activity failure (evidence
+     * fetching exhausted its retries, or hit a terminal provider error) —
+     * mirrors Section 9.5's "budget or runtime failure: route to manual
+     * review" Agent-loop pattern at the workflow level. `reason` is the
+     * classified failure's message, safe to log verbatim since it never
+     * contains borrower data (see synthetic-provider-failures.ts).
+     */
+    async markManualReview({
+      tenantId,
+      caseId,
+      reason,
+    }: CaseRef & { reason: string }): Promise<void> {
+      await dataSource.transaction(async (manager) => {
+        await manager
+          .getRepository(LoanCase)
+          .update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.MANUAL_REVIEW },
+          );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunFailed,
+          payload: { caseId, reason },
         });
       });
     },

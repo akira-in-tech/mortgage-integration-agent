@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
+import { ApplicationFailure } from '@temporalio/common';
 import { v4 as uuidv4 } from 'uuid';
 import { caseConditionsWorkflow } from './case-conditions.workflow';
 import { resolveConditionSignal } from './case-conditions.signals';
@@ -50,6 +51,7 @@ function makeMockActivities(
       .mockResolvedValue({ hasOpenCondition: false }),
     resolveCondition: jest.fn().mockResolvedValue(undefined),
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
+    markManualReview: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as CaseConditionsActivities;
 }
@@ -257,5 +259,65 @@ describeOrSkip('caseConditionsWorkflow', () => {
     });
     expect(activities.resolveCondition).toHaveBeenCalledTimes(1);
     expect(activities.markReadyForUnderwriting).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {
+    const fetchIncomeEvidence = jest
+      .fn()
+      .mockRejectedValue(
+        ApplicationFailure.retryable(
+          'synthetic transient failure',
+          'TransientProviderFailure',
+        ),
+      );
+    const activities = makeMockActivities({ fetchIncomeEvidence });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, () =>
+      env.client.workflow.execute(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      }),
+    );
+
+    expect(result).toEqual({ finalStatus: CaseStatus.MANUAL_REVIEW });
+    // maximumAttempts: 3 in case-conditions.workflow.ts's proxyActivities
+    // retry policy — proves a retryable classification is actually retried
+    // up to the configured limit, not just once.
+    expect(fetchIncomeEvidence).toHaveBeenCalledTimes(3);
+    expect(activities.markManualReview).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-1', caseId: 'case-1' }),
+    );
+  });
+
+  it('does not retry a terminal (non-retryable) activity failure', async () => {
+    const fetchCreditEvidence = jest
+      .fn()
+      .mockRejectedValue(
+        ApplicationFailure.nonRetryable(
+          'synthetic terminal failure',
+          'TerminalProviderFailure',
+        ),
+      );
+    const activities = makeMockActivities({ fetchCreditEvidence });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, () =>
+      env.client.workflow.execute(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      }),
+    );
+
+    expect(result).toEqual({ finalStatus: CaseStatus.MANUAL_REVIEW });
+    // A non-retryable classification must not waste any of the configured
+    // retry attempts — exactly one call, not three.
+    expect(fetchCreditEvidence).toHaveBeenCalledTimes(1);
   });
 });

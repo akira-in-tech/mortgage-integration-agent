@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CreditBureauData, PaymentHistoryGrade } from './credit.types';
+import { maybeThrowSyntheticProviderFailure } from '../synthetic-provider-failures';
 
 /**
  * Mock credit bureau service (Experian / Equifax / TransUnion tri-merge).
@@ -12,6 +13,7 @@ export class CreditService {
 
   async getCreditData(borrowerId: string): Promise<CreditBureauData> {
     this.logger.debug(`Pulling credit report for borrower ${borrowerId}`);
+    maybeThrowSyntheticProviderFailure(borrowerId, 'credit-bureau-simulator');
 
     // Bureau pulls are slower than bank data — simulate 100–400 ms
     await this.simulateLatency(100, 400);

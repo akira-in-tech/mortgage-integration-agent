@@ -45,11 +45,32 @@ export async function caseConditionsWorkflow(
 
   await activities.markCollectingEvidence({ tenantId, caseId });
 
-  const [income, credit, documents] = await Promise.all([
-    activities.fetchIncomeEvidence({ tenantId, caseId, borrowerId }),
-    activities.fetchCreditEvidence({ tenantId, caseId, borrowerId }),
-    activities.fetchDocumentEvidence({ tenantId, caseId, borrowerId }),
-  ]);
+  let income: Awaited<ReturnType<typeof activities.fetchIncomeEvidence>>;
+  let credit: Awaited<ReturnType<typeof activities.fetchCreditEvidence>>;
+  let documents: Awaited<ReturnType<typeof activities.fetchDocumentEvidence>>;
+  try {
+    [income, credit, documents] = await Promise.all([
+      activities.fetchIncomeEvidence({ tenantId, caseId, borrowerId }),
+      activities.fetchCreditEvidence({ tenantId, caseId, borrowerId }),
+      activities.fetchDocumentEvidence({ tenantId, caseId, borrowerId }),
+    ]);
+  } catch (error) {
+    // An activity exhausted its retries (transient classification) or
+    // failed immediately (terminal classification) — either way, this
+    // case cannot proceed automatically. Route to manual review rather
+    // than let the whole workflow fail (Section 9.5's Agent-loop pattern,
+    // applied here at the workflow level): a human can still act on it.
+    log.warn('Evidence collection failed, routing to manual review', {
+      caseId,
+      error: String(error),
+    });
+    await activities.markManualReview({
+      tenantId,
+      caseId,
+      reason: String(error),
+    });
+    return { finalStatus: CaseStatus.MANUAL_REVIEW };
+  }
 
   const evaluation = await activities.evaluateConditions({
     tenantId,

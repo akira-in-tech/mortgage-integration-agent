@@ -1,6 +1,9 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { createCaseConditionsActivities } from './case-conditions.activities';
+import { PlaidService } from '../integrations/plaid/plaid.service';
+import { CreditService } from '../integrations/credit/credit.service';
+import { DocumentService } from '../integrations/document/document.service';
 import { Tenant } from '../database/entities/tenant.entity';
 import { LoanCase } from '../database/entities/loan-case.entity';
 import {
@@ -344,5 +347,104 @@ describeOrSkip('createCaseConditionsActivities', () => {
     const events = await outboxEventsFor(caseId);
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe(OutboxEventType.WorkflowRunCompleted);
+  });
+
+  it('markManualReview sets the case status and writes a workflow_run.failed event with the given reason', async () => {
+    const caseId = await makeCase();
+    await activities.markManualReview({
+      tenantId,
+      caseId,
+      reason: 'synthetic failure for markManualReview test',
+    });
+
+    const updated = await dataSource
+      .getRepository(LoanCase)
+      .findOneByOrFail({ id: caseId });
+    expect(updated.status).toBe(CaseStatus.MANUAL_REVIEW);
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.WorkflowRunFailed);
+    expect(events[0].payload).toMatchObject({
+      caseId,
+      reason: 'synthetic failure for markManualReview test',
+    });
+  });
+
+  describe('retry classification against real provider simulators', () => {
+    // Real PlaidService/CreditService/DocumentService, not mocks — proves
+    // the full chain (simulator throws a synthetic failure -> the
+    // activity's callProviderWithRetryClassification reclassifies it as
+    // an ApplicationFailure with the right retry decision), not just that
+    // a mocked collaborator was called correctly.
+    let realActivities: ReturnType<typeof createCaseConditionsActivities>;
+
+    beforeAll(() => {
+      realActivities = createCaseConditionsActivities({
+        dataSource,
+        plaidService: new PlaidService(),
+        creditService: new CreditService(),
+        documentService: new DocumentService(),
+        outboxSigningSecret: OUTBOX_SIGNING_SECRET,
+      });
+    });
+
+    it('classifies a synthetic transient provider failure as retryable', async () => {
+      const caseId = await makeCase();
+      await expect(
+        realActivities.fetchIncomeEvidence({
+          tenantId,
+          caseId,
+          borrowerId: 'SYNTHETIC-TRANSIENT-FAILURE-x',
+        }),
+      ).rejects.toMatchObject({
+        nonRetryable: false,
+        type: 'TransientProviderFailure',
+      });
+
+      // The provider call failed before the transaction that would have
+      // written an EvidenceFact/outbox row ever started.
+      const facts = await dataSource
+        .getRepository(EvidenceFact)
+        .find({ where: { caseId } });
+      expect(facts).toHaveLength(0);
+      expect(await outboxEventsFor(caseId)).toHaveLength(0);
+    });
+
+    it('classifies a synthetic terminal provider failure as non-retryable', async () => {
+      const caseId = await makeCase();
+      await expect(
+        realActivities.fetchCreditEvidence({
+          tenantId,
+          caseId,
+          borrowerId: 'SYNTHETIC-TERMINAL-FAILURE-x',
+        }),
+      ).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'TerminalProviderFailure',
+      });
+    });
+
+    it('leaves an unrecognized error unclassified (propagated as-is)', async () => {
+      const caseId = await makeCase();
+      const brokenPlaid = {
+        getIncomeData: jest.fn().mockRejectedValue(new Error('unrelated bug')),
+      } as any;
+      const scoped = createCaseConditionsActivities({
+        dataSource,
+        plaidService: brokenPlaid,
+        creditService: new CreditService(),
+        documentService: new DocumentService(),
+        outboxSigningSecret: OUTBOX_SIGNING_SECRET,
+      });
+
+      await expect(
+        scoped.fetchIncomeEvidence({
+          tenantId,
+          caseId,
+          borrowerId: 'irrelevant',
+        }),
+      ).rejects.toThrow('unrelated bug');
+    });
   });
 });

@@ -1,5 +1,9 @@
 import 'reflect-metadata';
 import { PlaidService } from './plaid.service';
+import {
+  SyntheticProviderTimeoutError,
+  SyntheticProviderRejectionError,
+} from '../synthetic-provider-failures';
 
 describe('PlaidService', () => {
   let service: PlaidService;
@@ -49,5 +53,17 @@ describe('PlaidService', () => {
     expect(['FULL_TIME', 'PART_TIME', 'SELF_EMPLOYED']).toContain(
       data.employmentStatus,
     );
+  });
+
+  it('throws a synthetic timeout for a SYNTHETIC-TRANSIENT-FAILURE- borrowerId', async () => {
+    await expect(
+      service.getIncomeData('SYNTHETIC-TRANSIENT-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderTimeoutError);
+  });
+
+  it('throws a synthetic rejection for a SYNTHETIC-TERMINAL-FAILURE- borrowerId', async () => {
+    await expect(
+      service.getIncomeData('SYNTHETIC-TERMINAL-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderRejectionError);
   });
 });
