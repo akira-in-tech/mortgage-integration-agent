@@ -1,8 +1,5 @@
 export type EmploymentStatus =
-  | 'FULL_TIME'
-  | 'PART_TIME'
-  | 'SELF_EMPLOYED'
-  | 'UNEMPLOYED';
+  'FULL_TIME' | 'PART_TIME' | 'SELF_EMPLOYED' | 'UNEMPLOYED';
 
 export interface PlaidIncomeData {
   /** Gross monthly income in USD */

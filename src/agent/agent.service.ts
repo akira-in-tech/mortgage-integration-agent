@@ -466,9 +466,7 @@ Loan-to-Annual-Income Ratio: ${(context.requestedAmount / (context.income.monthl
     }
 
     const decision = response['decision'] as
-      | 'APPROVED'
-      | 'CONDITIONAL'
-      | 'DENIED';
+      'APPROVED' | 'CONDITIONAL' | 'DENIED';
     const conditions = (response['conditions'] as string[]).map((condition) =>
       condition.trim(),
     );

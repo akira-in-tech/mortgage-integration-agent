@@ -52,8 +52,8 @@ Built with NestJS, GraphQL, TypeORM, PostgreSQL, and Ollama-compatible local mod
 | Layer | Technology |
 | --- | --- |
 | API | GraphQL (code-first), Apollo Server |
-| Framework | NestJS 10 |
-| Language | TypeScript 5 (strict mode) |
+| Framework | NestJS 11 |
+| Language | TypeScript 6 (strict mode) |
 | Decisioning | Deterministic rules or local Ollama + Qwen3.5 |
 | ORM | TypeORM 0.3 |
 | Database | PostgreSQL 15+ |
@@ -108,7 +108,7 @@ Open **<http://localhost:3000/graphql>** once the app is running.
 
 ## Setup (local, without Docker)
 
-**Prerequisites:** Node.js 20+, PostgreSQL 15+. Ollama is optional.
+**Prerequisites:** Node.js 24+, PostgreSQL 15+. Ollama is optional.
 
 ```bash
 npm install

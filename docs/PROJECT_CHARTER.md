@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.6 |
+| Version | 2.7 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -1530,7 +1530,7 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 | Milestone | Outcome | Status |
 | --- | --- | --- |
 | M0 | Stable free model baseline and independent product charter | Implemented |
-| M1 | Supported runtime, migrations, and security baseline | Planned |
+| M1 | Supported runtime, migrations, and security baseline | Implemented |
 | M2 | Durable loan case, evidence, and condition workflow | Planned |
 | M3 | Temporal policy resolution, bounded Agent tools, and human review | Planned |
 | M4 | Provider gateway, partner API, webhooks, and sandbox | Planned |

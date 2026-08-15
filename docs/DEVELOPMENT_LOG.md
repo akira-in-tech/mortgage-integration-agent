@@ -1512,3 +1512,133 @@ npm run test:e2e                         -> 1 suite passed, 4 tests passed
 ### Next safe step
 
 Record the consolidated clean-install/build/lint/test/migration/Docker/dependency evidence (Section 29, item 6) that closes Milestone 1.
+
+## M1-009: Runtime upgrade (Node 24, NestJS 11, Express 5, Apollo Server 5, TypeScript 6, Jest 30) — closes Milestone 1
+
+### Status
+
+Implemented and verified against real infrastructure (real Postgres, real Docker daemon — not assumed). This completes every remaining item in Section 20's M1 scope; the milestone status table is updated to `Implemented` in this entry.
+
+### Acceptance criterion
+
+Section 29, item 1 and the remaining M1 scope items not yet covered by M1-001 through M1-008: upgrade Node.js and the NestJS/Express/Apollo/GraphQL/TypeScript/Jest runtime to the charter's targets with compatibility evidence, patch dependencies, and record the consolidated clean-install/build/lint/unit/e2e/migration/Docker/vulnerability evidence with exact versions.
+
+### Problem
+
+The runtime upgrade was deliberately deferred across M1-001 through M1-008 (recorded each time as a known gap) because bundling a Node/NestJS/Express major-version jump with unrelated hardening work would have violated the one-coherent-commit principle and made failures hard to isolate. With the rest of M1 complete, this was the only remaining scope item, plus one discovered while checking it: `npm install` reported `@apollo/server@4.13.0`'s end-of-life date (January 26, 2026) had already passed as of today, which made the Apollo Server v5 upgrade (already the charter's target) more than a routine "compatible packages" bump — it closed a real, current EOL exposure.
+
+### Research before touching anything
+
+- Tested Node 24.19.0 (installed via `nvm`, without changing the shell's default) against the **unmodified** dependency set first: clean install, build, lint, 13 suites / 86 unit tests, and e2e all passed with zero changes required — confirmed the Node major bump itself was not the risk.
+- Checked every relevant package's declared peer dependencies before changing `package.json`, rather than upgrading and discovering conflicts after the fact: `@nestjs/typeorm@11`'s peer range (`^0.3.0 || ^1.0.0-dev`) confirmed TypeORM could stay on the patched `0.3.x` line the charter explicitly wants to preserve, rather than the unplanned `typeorm@1.x` that `npm view typeorm version` surfaces as latest. `@nestjs/graphql@13`/`@apollo/server@5` both peer on `graphql@^16.11.x`, not the also-available `graphql@17` — confirmed the correct target was the latest **16.x**, not a further unplanned major. `@typescript-eslint@8.67.0`'s peer range (`typescript: >=4.8.4 <6.1.0`) confirmed `typescript@6.0.3` (latest stable `6.x`, `7.x` already released separately) is precisely the version the toolchain supports today — validating the charter's existing "TypeScript 6 bridge, TypeScript 7 compatibility-gated" language rather than assuming enough time had passed to move to 7.
+
+### Implementation
+
+- Installed Node 24.19.0 via `nvm` (additive; did not change the shell's default Node version) and added `"engines": { "node": ">=24.0.0" }` to `package.json`.
+- Upgraded, with exact resolved versions recorded below.
+- `npm install` surfaced a missing peer at runtime (not caught by static peer-dep review): `@nestjs/apollo@13` under Express requires the separate `@as-integrations/express5` package for Apollo Server v5's Express integration; e2e failed with a clear `PackageLoader` error until it was installed.
+- Re-ran the full M1-005 manual smoke test (health endpoints, helmet headers, CORS allow/block, 2 MB body rejection, GraphQL rate limiting via the real `health` resolver, SIGTERM graceful shutdown) against the upgraded stack — all identical to the pre-upgrade results, confirming none of that slice's custom wiring (especially `GqlThrottlerGuard`'s dependence on Apollo's context shape) broke across the Apollo v4→v5 jump.
+- Built and ran the actual Docker image (`docker build`, then `docker compose up`) against a real Postgres container — not merely `docker build` — and confirmed the GraphQL `health` query and `/health/live` both respond correctly from inside the container. Torn down and the ad-hoc image tag removed afterward.
+- Fixed two lines flagged by the newer Prettier's updated union-type formatting (`src/agent/agent.service.ts`, `src/integrations/plaid/plaid.types.ts`) — formatting only, no logic change.
+- Bumped `Dockerfile`'s base image and `.github/workflows/ci.yml`'s `actions/setup-node` to Node 24.
+- Updated `README.md`'s prerequisites and tech-stack table (NestJS 11, TypeScript 6, Node 24+).
+- Updated the Section 20 milestone table: M1 status to `Implemented`.
+
+### Exact resolved versions (Section 29 item 6: "current compatibility decisions recorded with exact versions")
+
+```text
+node                          24.19.0 (LTS "Krypton")
+npm                           11.17.0
+
+@nestjs/core                  11.2.1
+@nestjs/common                11.2.1
+@nestjs/platform-express      11.2.1
+@nestjs/config                4.0.4
+@nestjs/graphql                13.4.4
+@nestjs/apollo                 13.4.4
+@nestjs/typeorm                11.0.3
+@nestjs/throttler               6.5.0   (unchanged — already NestJS-11-compatible)
+@nestjs/testing / cli / schematics   11.2.1 / 11.0.24 / 11.1.0
+@apollo/server                 5.5.1   (transitive via @nestjs/apollo; not a direct import)
+@as-integrations/express5      1.1.2   (new — required by @nestjs/apollo 13 + Express 5)
+graphql                         16.14.2 (latest 16.x — not the also-available graphql 17)
+express                         5.2.1   (transitive via @nestjs/platform-express)
+typescript                      6.0.3   (latest stable 6.x; 7.x exists but typescript-eslint caps at <6.1.0)
+jest                             30.4.2
+@types/jest                      30.0.0
+@types/node                      24.13.3
+@types/express                   5.0.6
+typeorm                          0.3.31  (patched within 0.3.x — not the unplanned typeorm 1.x)
+pg                                8.23.0
+rxjs                               7.8.2
+eslint                              9.39.5 (patched within 9.x — not the also-available eslint 10)
+@typescript-eslint/*                8.67.0
+prettier                            3.9.6
+supertest                            7.2.2
+```
+
+### Affected files
+
+- `package.json`, `package-lock.json`
+- `Dockerfile`, `.github/workflows/ci.yml`
+- `src/agent/agent.service.ts`, `src/integrations/plaid/plaid.types.ts` (formatting only)
+- `README.md`, `docs/PROJECT_CHARTER.md` (Version 2.6 → 2.7, M1 status to Implemented)
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **One batched upgrade over piecemeal package-by-package bumps**: NestJS 11 + `@nestjs/graphql` 13 + `@nestjs/apollo` 13 + Apollo Server 5 + GraphQL 16.11+ are a mutually-interlocking peer-dependency set (confirmed by reading every peer range before changing anything) — installing them one at a time would pass through broken intermediate states with no independent value, unlike the smaller slices earlier in M1.
+- **`graphql@16.11+` over the available `graphql@17`, and `typeorm@0.3.31` over the available `typeorm@1.x`**: both are cases where `npm view <pkg> version` alone would have suggested a further major jump neither the charter nor any peer dependency actually calls for; verified via peer ranges before deciding, not assumed from "latest" being available.
+- **`typescript@6.0.3` over `7.0.2`**: matches the charter's explicit existing decision and re-confirms it against current toolchain support (`typescript-eslint`'s `<6.1.0` cap) rather than re-litigating it from scratch.
+- **`nvm`-installed Node, default version left unchanged**: upgrading the *project's* required Node version shouldn't silently change what `node`/`npm` resolve to in the user's other shells or projects; `engines` in `package.json` documents the requirement instead.
+- **Real Docker Compose run over `docker build` alone**: M1's exit evidence explicitly lists "Docker" as its own checked item; a build that only proves the image compiles doesn't prove the container actually serves a request against a real database, which is the thing that would actually break silently.
+
+### Verification
+
+```text
+npm ci (clean install from the regenerated lockfile)     -> 0 vulnerabilities
+npm run build                                             -> dist/main.js present
+npm run lint:check                                        -> passed
+npx tsc --noEmit -p tsconfig.json                          -> 0 diagnostics
+npx tsc --noEmit -p test/tsconfig.json                      -> 0 diagnostics
+npm test -- --runInBand --no-cache --silent                -> 13 suites passed, 86 tests passed
+npm run test:e2e                                             -> 1 suite passed, 4 tests passed
+npm audit                                                     -> found 0 vulnerabilities (was 33: 3 low,
+                                                                  20 moderate, 10 high, all pre-existing —
+                                                                  resolved as a byproduct of upgrading their
+                                                                  outdated transitive sources, primarily
+                                                                  @nestjs/cli's Angular-devkit toolchain and
+                                                                  old express/body-parser/multer)
+
+docker build -t mortgage-integration-agent:m1-verify .     -> succeeded, 0 vulnerabilities reported
+                                                                inside the image build
+docker compose up -d --build                                -> app + postgres containers healthy
+  POST /graphql {query:"query{health}"}                      -> 200 {"data":{"health":"ok"}}
+  GET /health/live                                             -> 200
+docker compose down                                          -> torn down; ad-hoc image tag removed
+
+Manual smoke test against `node dist/main.js` (repeat of M1-005's
+protocol, against the upgraded stack):
+  helmet headers present, CSP absent in development (unchanged)
+  CORS: localhost origin allowed, arbitrary origin blocked (unchanged)
+  2 MB POST /graphql body -> 413 (unchanged)
+  Rate limiting (RATE_LIMIT_MAX=3) against the real `health` resolver:
+    requests 1-3 -> 200, request 4 -> GraphQL ThrottlerException (unchanged)
+  SIGTERM -> process exited within 1s (unchanged)
+```
+
+### Security, privacy, cost, and compatibility
+
+- `npm audit` moved from 33 pre-existing vulnerabilities (3 low, 20 moderate, 10 high) to 0, as a direct effect of this upgrade rather than a separate remediation pass — closes the "patched dependencies and lockfile review" M1 scope item.
+- Apollo Server v4's already-passed EOL date (January 26, 2026) is no longer an exposure; the project now runs the actively supported Apollo Server v5.
+- No production credential, cloud access, or real consumer data was involved; all verification used synthetic fixtures and local/Docker-local infrastructure.
+
+### Known gaps
+
+- `docker-compose.yml`'s `app` service still starts with `NODE_ENV: development` (unchanged from M1-003's known gap) — schema auto-sync, not the M1-003 migration path, is what actually created the schema in the Docker Compose smoke test above. A production-shaped Docker Compose profile (or the eventual M7 staging environment) should exercise `NODE_ENV=production` plus `npm run migration:run` explicitly.
+- `npm audit`'s clean result reflects this moment's advisory database; it is not a standing guarantee and should be re-checked periodically, not treated as permanently closed.
+- `@apollo/server-plugin-landing-page-graphql-playground` (an internal dependency `@nestjs/apollo` still ships for legacy playground support) declares a peer of `@apollo/server@^4.0.0` against the now-installed `@apollo/server@5.5.1`; npm resolves this with a peer override and it does not affect anything this project uses (the app doesn't reference that plugin directly, and the playground continued to work correctly in the manual smoke test) — noted here in case a future `npm install` warning about it looks unfamiliar.
+
+### Next safe step
+
+Milestone 1 is complete (Section 20 status table updated to `Implemented`). Begin Milestone 2: tenant-keyed case, evidence, condition, audit, workflow, and idempotency schema; REST workflow-start and status endpoints; API and worker process boundaries; Temporal workflow, activities, signals, retry classification, and replay tests; transactional outbox and signed status event foundation; deterministic synthetic discrepancy scenario (Section 20, M2 scope).
