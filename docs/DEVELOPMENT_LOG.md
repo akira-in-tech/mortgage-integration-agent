@@ -309,3 +309,93 @@ No application test was required because this feature changes product and engine
 ### Next safe step
 
 Begin M1 with an isolated supported-runtime upgrade, preserving current behavior and recording clean installation, compatibility, build, lint, test, migration, Docker, and dependency evidence before starting the durable conditions workflow.
+
+## M0-005: Temporal and jurisdiction-aware policy architecture
+
+### Status
+
+Architecture documentation corrected and locally validated; the policy catalog, resolver, change monitoring, and impact workflow remain planned for M3.
+
+### Acceptance criterion
+
+The charter must not treat policy as one globally current or permanently case-pinned configuration. It must define how immutable policy history is resolved by jurisdiction, product, lifecycle event, relevant event date, and platform knowledge time; how future changes affect open cases; and where legal, compliance, deterministic-system, Agent, and human authority begin and end.
+
+### Problem
+
+The prior policy lifecycle correctly made released versions immutable, but its case-pinning language was incomplete. Federal, state, and sometimes local rules can change on different schedules. Applicability can depend on a triggering event such as application receipt, disclosure, underwriting review, closing, or a later servicing event. Permanently retaining the first version could apply stale treatment, while silently moving every open case to the newest version could ignore effective dates or approved transition treatment.
+
+### Implementation
+
+- Replaced the static policy section with a temporal and jurisdiction-aware Policy-as-Code contract.
+- Separated immutable policy versions from deterministic, context-specific `CasePolicySnapshot` resolution.
+- Added jurisdiction, product, program, tenant, lifecycle event, relevant-event dates, valid-time, system-time, provenance, correction, withdrawal, and transition metadata.
+- Added a bitemporal model that records both when a rule is effective and when the platform learned about the source revision.
+- Added source coverage and freshness as explicit per-jurisdiction operational states.
+- Added deterministic resolution behavior that fails closed when jurisdiction data, coverage, version boundaries, precedence, or transition logic is ambiguous.
+- Added scheduled activation for future-effective versions and prohibited early activation.
+- Added open-case impact assessment with no-impact, future-milestone, approved-grandfathering, re-evaluation, and review-required dispositions.
+- Added Agent tool boundaries for requesting snapshot resolution and change-impact assessment without giving the model policy authority.
+- Expanded the data model, API surface, event catalog, roles, threats, telemetry, tests, evaluation fixtures, metrics, launch gates, risks, roadmap, and ADR backlog.
+- Extended the synthetic launch scenario with a reviewed state-policy change while a workflow is waiting.
+- Added official eCFR, Federal Register, and CFPB references as architecture inputs without claiming legal interpretation or jurisdiction coverage.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Immutable versions plus dynamic resolution**: released records never mutate, but each evaluation resolves an immutable snapshot from the approved catalog and case context.
+- **Bitemporal history over a single effective date**: valid time supports applicability, while system time makes late publications and corrections replayable.
+- **Relevant events over calendar-only switching**: a rule may key off a case milestone rather than the wall-clock time of evaluation.
+- **Explicit reviewed composition over hard-coded precedence**: federal, state, product, program, and tenant layers compose only under approved rules; unresolved conflicts enter review.
+- **Impact workflow over bulk automatic migration**: policy changes first generate dry-run classifications for potentially affected open cases, then approved workflow commands create any new snapshots.
+- **Deterministic resolver over model interpretation**: AI may summarize or draft, but cannot decide applicability, precedence, transition treatment, approval, or activation.
+- **Synthetic sources first**: official-source adapters remain a future read-only ingestion boundary with explicit coverage and freshness objectives.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 30 fence markers
+  DEVELOPMENT_LOG.md: 10 fence markers
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+
+dynamic-policy architecture term inspection
+  policy knowledge time, case policy snapshots, change events, impact review,
+  future-effective scheduling, and jurisdiction handling are present
+```
+
+No application test was required because this feature changes architecture documentation only. The new policy capabilities are explicitly marked planned rather than implemented.
+
+### Security, compliance, and operational boundaries
+
+- Separate author and approver roles govern releases and transition logic.
+- Source ingestion never activates policy automatically.
+- Missing coverage, unresolved conflicts, and stale policy state fail closed to review.
+- The public repository continues to use synthetic policy content and generated cases only.
+- Official references demonstrate why version, event, and jurisdiction metadata are necessary; they do not authorize legal conclusions.
+
+### Known gaps
+
+- No policy-source registry, jurisdiction coverage service, applicability resolver, scheduler, or impact-assessment workflow exists in application code yet.
+- No official federal or state source connector has been implemented or validated.
+- The repository contains no complete legal rule set and makes no claim of nationwide regulatory coverage.
+- Source selection, legal interpretation, precedence, transition logic, and review service-level objectives require authorized legal and compliance ownership before real-data use.
+- State and local publication systems vary, so production coverage will require monitored connectors plus a documented manual fallback rather than one universal scraper.
+
+### Next safe step
+
+Continue with M1 and M2 as sequenced. When M3 begins, implement the smallest policy slice first: jurisdiction and source schemas, two synthetic time-bounded versions, a pure applicability resolver, effective-boundary and replay tests, and one open-case impact-review path before adding Agent-assisted authoring or external source ingestion.

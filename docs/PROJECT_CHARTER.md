@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.0 |
+| Version | 2.1 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -105,7 +105,7 @@ It is not a replacement for every system in the lending stack. Customers retain 
 
 - Assemble a coherent case from fragmented application, document, and provider data.
 - Determine which evidence is present, missing, stale, contradictory, or unsupported.
-- Evaluate evidence against a versioned operational policy pack.
+- Evaluate evidence against the policy snapshot applicable to its jurisdiction, product, lifecycle event, and relevant date.
 - Create and prioritize resolvable conditions.
 - Select approved tools and providers within cost, permission, and time constraints.
 - Wait for information or review without losing workflow state.
@@ -208,13 +208,13 @@ type ConditionStatus =
   | 'ESCALATED';
 ```
 
-Every satisfied, waived, or escalated condition includes evidence or reviewer provenance and the policy version that governed the transition.
+Every satisfied, waived, or escalated condition includes evidence or reviewer provenance and the immutable case policy snapshot that governed the transition.
 
 ### 6.3 Authority order
 
 1. Consent, authorization, and security controls may stop processing.
 2. Validated source evidence remains attributable to its origin.
-3. Deterministic calculations and released policy packs determine condition state and readiness.
+3. Deterministic calculations and the resolved, released case policy snapshot determine condition state and readiness.
 4. The Agent may select approved tools, compare evidence, propose actions, and draft explanations.
 5. Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides.
 6. Model output never silently overrides policy, source evidence, or a human decision.
@@ -232,13 +232,14 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 5. Extract candidate facts and retain source locations.
 6. Run simulated income, asset, credit, identity, and document capabilities.
 7. Normalize findings and compare application, document, and provider evidence.
-8. Execute a released synthetic policy pack.
+8. Resolve and execute the released synthetic policy snapshot for the case's jurisdiction, product, lifecycle event, and relevant date.
 9. Create prioritized conditions for missing or contradictory evidence.
 10. Let the Agent select the next approved tool within budget.
 11. Pause durably for information or human approval when required.
-12. Resume when a signal supplies new evidence or a review decision.
-13. Re-evaluate affected conditions and derive workflow readiness.
-14. Publish signed status events and display the full timeline.
+12. Introduce a reviewed synthetic state-policy change while the case waits and produce an open-case impact assessment.
+13. Resume when a signal supplies new evidence, an approved transition decision, or another review decision.
+14. Resolve a new snapshot only when the approved transition requires it, then re-evaluate affected conditions and derive workflow readiness.
+15. Publish signed status events and display the full timeline, including why each policy version did or did not apply.
 
 ### 7.2 Included synthetic capabilities
 
@@ -249,6 +250,8 @@ The first launch scenario uses a synthetic conventional mortgage with W-2-style 
 - identity consistency;
 - document classification and structured field extraction;
 - qualified-income, DTI, and LTV calculations using synthetic policy;
+- jurisdiction and relevant-event-aware policy snapshot resolution;
+- future-effective policy scheduling and open-case impact simulation;
 - evidence comparison and contradiction detection;
 - condition creation and resolution;
 - human review and override;
@@ -294,7 +297,7 @@ Observes case state, selects registered tools, proposes safe next actions, expla
 
 ### 8.3 Policy-as-Code Studio
 
-Manages synthetic policy packs, DSL validation, test cases, impact analysis, review, release, deprecation, and rollback.
+Manages authorized source coverage, jurisdiction overlays, immutable synthetic policy versions, applicability, effective dates, transition rules, DSL validation, tests, impact review, scheduled activation, correction, withdrawal, and retirement.
 
 ### 8.4 Provider Gateway
 
@@ -351,8 +354,7 @@ interface LendingOperationsAgentState {
   openConditions: ConditionSummary[];
   providerHealth: ProviderHealthSummary[];
   attemptedTools: ToolAttemptSummary[];
-  policyPackId: string;
-  policyVersion: string;
+  policySnapshotId: string;
   modelVersion?: string;
   promptVersion?: string;
   remainingStepBudget: number;
@@ -377,7 +379,9 @@ interface LendingOperationsAgentState {
 | `calculate_dti` | Execute deterministic calculation | Versioned calculation | No |
 | `calculate_ltv` | Execute deterministic calculation | Versioned calculation | No |
 | `compare_evidence` | Detect missing, stale, or conflicting facts | None | No |
-| `evaluate_policy` | Execute released policy pack | Creates assessment | No; policy owns result |
+| `resolve_policy_snapshot` | Resolve already approved rules for the case context | Creates immutable snapshot | No; deterministic resolver owns result |
+| `check_policy_change_impact` | Compare an approved policy change with open cases | Creates impact assessment | No; cannot change case applicability |
+| `evaluate_policy` | Execute an immutable case policy snapshot | Creates assessment | No; policy owns result |
 | `create_condition` | Materialize policy-supported condition | Case mutation | Schema and policy required |
 | `draft_information_request` | Prepare a remediation request | Draft only | No |
 | `send_information_request` | Deliver an external message | External communication | Human or configured policy approval |
@@ -388,7 +392,7 @@ interface LendingOperationsAgentState {
 
 ```text
 LOAD VERSIONED CASE
-  -> VERIFY TENANT, CONSENT, POLICY, AND BUDGET
+  -> VERIFY TENANT, CONSENT, POLICY SNAPSHOT, AND BUDGET
   -> INSPECT CURRENT EVIDENCE AND CONDITIONS
   -> SELECT ONE OR MORE APPROVED READ-ONLY TOOLS
   -> REQUEST SIDE-EFFECTING TOOL THROUGH WORKFLOW GATE
@@ -408,6 +412,7 @@ LOAD VERSIONED CASE
 - contradictory identity, income, asset, credit, or document evidence;
 - evidence confidence below the configured threshold for a material fact;
 - unsupported policy interpretation or rule conflict;
+- unresolved jurisdiction, effective-date, or transition-rule conflict;
 - malformed model or tool output;
 - manual waiver or override of a deterministic condition;
 - material negative external communication;
@@ -428,32 +433,122 @@ LOAD VERSIONED CASE
 - complete model, prompt, policy, tool, input-hash, and result provenance;
 - dry-run and shadow modes for unapproved model or policy versions.
 
-## 10. Policy-as-Code
+## 10. Temporal and jurisdiction-aware Policy-as-Code
 
-### 10.1 Policy lifecycle
+Policy is not a static application setting. Requirements can change at different times across federal, state, and, where applicable, local jurisdictions. Applicability can also depend on product, program, tenant operating policy, lifecycle milestone, and the date of a legally relevant case event. The platform therefore separates an immutable policy version from the deterministic resolution of which approved versions apply to a case.
+
+This subsystem organizes authorized policy content and execution evidence; it does not provide legal advice. Legal and compliance owners remain responsible for source coverage, interpretation, precedence, transition rules, and approval.
+
+### 10.1 Policy dimensions and layers
+
+Every released rule declares typed applicability metadata:
+
+- jurisdiction codes and jurisdiction level;
+- product and optional program or investor overlay;
+- tenant operating-policy scope;
+- lifecycle milestone and relevant triggering event;
+- `effective_from` and optional `effective_to` valid-time boundaries;
+- `recorded_at`, source revision, checksum, and provenance;
+- approved transition behavior, including any grandfathering criteria;
+- supersession, correction, withdrawal, and release status.
+
+The catalog can compose a reviewed base federal pack, state or local overlays, product and program constraints, and tenant operating policies. It does not assume that a higher or lower layer automatically wins. A conflict without an explicitly approved precedence rule fails closed into policy review.
+
+Policy records are bitemporal: **valid time** describes when a rule is intended to apply, while **system time** records when the platform learned and stored that source revision. Both are required for historical replay, late publications, corrections, and audit explanations.
+
+### 10.2 Policy lifecycle
 
 ```text
-author synthetic rule
-  -> validate DSL schema and types
-  -> lint references and units
+register authorized source or author synthetic rule
+  -> capture provenance, jurisdiction, publication, and effective metadata
+  -> create proposed immutable version
+  -> validate DSL schema, types, references, units, and boundaries
   -> detect conflicts and unreachable branches
-  -> generate or attach test cases
-  -> run regression and impact analysis
-  -> reviewer approval
-  -> immutable release
-  -> case version pinning
-  -> observe outcomes
-  -> deprecate or roll back
+  -> attach tests and approved transition logic
+  -> simulate impact on synthetic and potentially affected open cases
+  -> independent reviewer approvals
+  -> schedule activation by effective boundary
+  -> activate without mutating prior versions
+  -> observe freshness, conflicts, and outcomes
+  -> supersede, correct, withdraw, or retire while retaining history
 ```
 
-AI may draft a candidate rule from authorized text, but generated rules never publish automatically. A released policy pack is human-reviewed, versioned, immutable, and covered by executable tests.
+AI may summarize a change or draft a candidate rule from an authorized source, but it cannot publish a rule, decide legal precedence, infer transition treatment, or activate a version. Source ingestion never implies approval. Released versions and approval records are immutable; a correction creates a new version and an explicit relationship to the corrected record.
 
-### 10.2 Example synthetic DSL
+### 10.3 Deterministic applicability resolution
+
+```ts
+interface PolicyResolutionContext {
+  tenantId: string;
+  caseId: string;
+  caseFactVersion: number;
+  jurisdictionCodes: string[];
+  productCode: string;
+  programCode?: string;
+  lifecycleEvent: string;
+  eventOccurredAt: string;
+  relevantEventDates: Record<string, string | undefined>;
+  evaluationAsOf: string;
+  policyKnowledgeAsOf: string;
+}
+
+interface CasePolicySnapshot {
+  id: string;
+  resolvedAt: string;
+  contextHash: string;
+  resolverVersion: string;
+  policyKnowledgeAsOf: string;
+  resolutionStatus: 'RESOLVED' | 'REVIEW_REQUIRED';
+  versions: Array<{
+    policyVersionId: string;
+    sourceRevisionId: string;
+    effectiveFrom: string;
+    effectiveTo?: string;
+    applicabilityDecision: 'CURRENT' | 'GRANDFATHERED';
+    resolutionReasons: string[];
+  }>;
+  unresolvedReasons: string[];
+}
+```
+
+The resolver receives server-owned tenant and case facts, then selects only released policy versions whose reviewed applicability constraints match. It returns an immutable `CasePolicySnapshot`, not a mutable global policy pointer. The workflow pins that snapshot for one deterministic evaluation. A later workflow step resolves again only when a declared policy-relevant event, approved change event, or reviewer action requires it.
+
+The same resolution context, policy catalog knowledge time, and resolver version must reproduce the same snapshot. Missing jurisdiction data, overlapping versions, a gap around an effective boundary, or unresolved precedence produces `REVIEW_REQUIRED`; the system never asks the model to guess.
+
+### 10.4 Change detection and open-case impact
+
+```text
+authorized source revision detected
+  -> provenance and completeness review
+  -> candidate policy and transition rule authored
+  -> future-effective activation scheduled
+  -> applicability index finds potentially affected open cases
+  -> dry-run compares old and proposed snapshots
+       -> no impact
+       -> applies at a future lifecycle event
+       -> approved grandfathering rule preserves prior treatment
+       -> re-evaluation required
+       -> ambiguity requires human review
+  -> approved activation emits audit and change events
+  -> affected cases receive new snapshots only through workflow commands
+```
+
+An open case does not silently inherit the newest version, and it is not permanently frozen to the first version. Its treatment follows an approved transition rule tied to the relevant event and effective boundary. Impact assessment is advisory until an authorized reviewer approves the transition configuration; activation and re-evaluation remain idempotent, attributable workflow actions.
+
+Initial launch uses curated synthetic policy sources and change events. Future official-source connectors are read-only ingestion adapters with per-jurisdiction coverage, freshness objectives, schema-drift alerts, and manual fallback. No connector is described as complete coverage until that coverage is reviewed and tested.
+
+### 10.5 Example synthetic DSL
 
 ```yaml
 rule:
   id: synthetic-income-discrepancy-review
   version: 1.0.0
+  applicability:
+    jurisdictions: [US-CA]
+    product: CONVENTIONAL_MORTGAGE
+    lifecycle_events: [UNDERWRITING_REVIEW]
+    effective_from: 2027-01-01T00:00:00-08:00
+    transition_rule: application_received_on_or_after_effective_date
   when:
     difference_percent:
       left: application.monthly_income
@@ -464,13 +559,17 @@ rule:
     route: MANUAL_REVIEW
 ```
 
-### 10.3 Policy invariants
+### 10.6 Policy invariants
 
 - Policy identifiers and released versions are immutable.
+- Every released rule has source provenance, jurisdiction, valid-time boundaries, system-time history, and approval evidence.
 - Units, money, ratios, dates, and rounding behavior are explicit.
 - Every condition links to the rule and evidence that created it.
-- Case evaluation pins a policy version and never silently changes mid-run.
-- A policy upgrade requires regression evidence and an impact summary.
+- Every evaluation links to an immutable case policy snapshot and resolver version.
+- Policy activation never mutates a running evaluation or silently reinterprets an open case.
+- A policy change requires regression evidence, effective-date boundary tests, transition approval, and an open-case impact summary.
+- Future-effective policy never activates early; expired, withdrawn, conflicting, or coverage-unknown policy fails closed.
+- Historical replay declares both the policy valid time and the platform knowledge time.
 - Official or proprietary guidelines are not copied into the public repository.
 
 ## 11. Provider platform
@@ -539,7 +638,7 @@ Every adapter passes the same reusable suite:
 Use a modular monolith with independently deployable API, worker, and web processes from one repository:
 
 - **API service**: partner REST API, operations GraphQL API, authentication, validation, idempotency, and status retrieval.
-- **Worker service**: Temporal workers, provider activities, Agent runs, policy execution, and webhook delivery.
+- **Worker service**: Temporal workers, provider activities, Agent runs, policy-source monitoring, applicability resolution, policy execution, impact assessment, and webhook delivery.
 - **Web application**: operations console, review experience, policy and sandbox surfaces.
 
 This structure preserves one domain model and release train while allowing independent runtime scaling. Service extraction follows measured boundaries rather than speculative architecture.
@@ -591,7 +690,7 @@ libs/
   application/         use cases, ports, authorization decisions
   workflows/           workflow definitions, signals, versioning
   agent/               graph, tools, budgets, runtime port
-  policy/              DSL, compiler, evaluator, release lifecycle
+  policy/              sources, catalog, DSL, resolver, evaluator, impact, lifecycle
   providers/           registry, routing, adapters, simulators
   reviews/             review tasks, decisions, overrides
   audit/               append-only domain and security events
@@ -648,9 +747,16 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `documents` | Object metadata, checksum, media type, scan, and retention state. |
 | `evidence_facts` | Typed facts with source, confidence, validity, and lineage. |
 | `evidence_conflicts` | Contradictory fact relationships and resolution state. |
-| `policy_packs` | Product and policy package metadata. |
-| `policy_versions` | Immutable released DSL and test manifest. |
-| `policy_evaluations` | Versioned rule execution and evidence references. |
+| `jurisdictions` | Stable codes, levels, parent relationships, and supported coverage status. |
+| `policy_sources` | Authorized source registry, owner, jurisdiction, retrieval mode, and freshness objective. |
+| `policy_source_revisions` | Immutable retrieved content metadata, checksum, publication time, and system-time history. |
+| `policy_packs` | Composable federal, jurisdiction, product, program, and tenant policy metadata. |
+| `policy_versions` | Immutable DSL, valid-time interval, release status, approvals, and test manifest. |
+| `policy_applicability` | Typed scope, triggering event, precedence, and approved transition criteria. |
+| `policy_change_events` | Detected, scheduled, activated, corrected, withdrawn, or superseded change history. |
+| `case_policy_snapshots` | Immutable resolved versions, source revisions, context hash, and resolution reasons. |
+| `policy_impact_assessments` | Dry-run comparison and disposition for potentially affected open cases. |
+| `policy_evaluations` | Snapshot-bound rule execution and evidence references. |
 | `loan_conditions` | Condition lifecycle and required evidence. |
 | `condition_transitions` | Actor-attributed condition state history. |
 | `provider_connections` | Tenant provider mode and credential reference. |
@@ -677,6 +783,8 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Ratios store defined scale and rounding behavior.
 - Every mutable aggregate includes version and actor provenance.
 - Evidence retains source location, observed time, validity interval, and transformation history.
+- Policy data retains separate valid-time and system-time fields so historical execution can be reproduced as both effective and known at a declared instant.
+- Policy source coverage and freshness are explicit per jurisdiction; missing coverage is an operational state, not an implicit default.
 - Raw provider payloads are encrypted, access-controlled, and short-lived.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
@@ -696,6 +804,7 @@ POST   /v1/loan-cases/{caseId}/workflow-runs
 GET    /v1/loan-cases/{caseId}/workflow-runs/{runId}
 GET    /v1/loan-cases/{caseId}/conditions
 GET    /v1/loan-cases/{caseId}/evidence
+GET    /v1/loan-cases/{caseId}/policy-snapshots
 POST   /v1/loan-cases/{caseId}/reviews
 GET    /v1/loan-cases/{caseId}/audit-export
 POST   /v1/webhook-endpoints
@@ -738,6 +847,11 @@ condition.satisfied
 condition.escalated
 review.completed
 policy_version.released
+policy_version.scheduled
+policy_version.activated
+policy_change.detected
+case_policy_snapshot.resolved
+policy_impact.review_required
 provider_submission.failed
 ```
 
@@ -762,6 +876,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - signed URLs with short expiry;
 - dependency, secret, container, and infrastructure scanning;
 - append-only security audit events;
+- separate policy-author and policy-approver roles, with independent approval for releases and transition logic;
 - documented incident response, key rotation, backup, and restore procedures.
 
 ### 16.2 Privacy controls
@@ -780,6 +895,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - protected characteristics excluded from model inputs unless an approved, documented use requires them;
 - evidence references for material claims;
 - model, prompt, schema, tool, and policy versioning;
+- deterministic policy applicability resolution outside the model boundary;
 - output schema and semantic validation;
 - uncertainty and contradiction routed to a person;
 - no private chain-of-thought retention or display;
@@ -798,6 +914,7 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - SSRF through provider or webhook configuration;
 - raw PII in logs, traces, model requests, or error messages;
 - stale policy or model version execution;
+- early activation, jurisdiction mismatch, unresolved policy conflict, or missed source update;
 - duplicate provider callbacks after workflow cancellation;
 - malicious file content and decompression abuse;
 - unauthorized review override or audit tampering.
@@ -842,7 +959,11 @@ Required telemetry includes:
 - provider latency, errors, rate limits, fallback, and circuit state;
 - condition age, reopen rate, and time waiting for evidence;
 - Agent steps, tool choices, schema failures, escalation, tokens, and cost;
-- policy version distribution and evaluation failures;
+- policy source freshness and coverage gaps by jurisdiction;
+- time from detected source revision to reviewed version and scheduled activation;
+- policy snapshot resolution conflicts, failures, and version distribution;
+- open cases awaiting change-impact review and changes approaching an effective date without approved treatment;
+- policy evaluation failures;
 - webhook backlog and terminal delivery failures;
 - database pool, query latency, locks, and migration state;
 - redaction failures and security events.
@@ -852,7 +973,7 @@ Required telemetry includes:
 ### 18.1 Test strategy
 
 1. **Unit tests**: calculations, domain transitions, authorization, redaction, and pure policy rules.
-2. **Property-based tests**: money, ratios, policy invariants, idempotency, and condition-state machines.
+2. **Property-based tests**: money, ratios, temporal policy invariants, idempotency, and condition-state machines.
 3. **Migration tests**: clean installation, forward migration, data preservation, and compatibility checks.
 4. **Integration tests**: PostgreSQL, Temporal, object storage, provider adapters, and outbox behavior.
 5. **Contract tests**: API compatibility, webhooks, and reusable provider expectations.
@@ -862,6 +983,7 @@ Required telemetry includes:
 9. **Reliability tests**: crash, timeout, duplicate, partial failure, and recovery scenarios.
 10. **Load and soak tests**: declared environment and reproducible workload.
 11. **Agent evaluation**: golden cases, adversarial documents, tool constraints, and model comparisons.
+12. **Policy time-travel tests**: jurisdiction matrices, effective-boundary instants, scheduled activation, grandfathering, corrections, withdrawals, late or out-of-order source revisions, and deterministic as-of replay.
 
 ### 18.2 Evaluation corpus
 
@@ -871,6 +993,7 @@ evaluation/
   documents/             generated and adversarial documents
   expected-facts/        extraction ground truth
   expected-conditions/   policy and condition ground truth
+  policy-timelines/      jurisdiction, effective-date, transition, and correction fixtures
   provider-failures/     timeout, duplicate, stale, malformed scenarios
   prompt-injection/      untrusted content fixtures
   model-configs/         model and prompt manifests
@@ -886,6 +1009,8 @@ The first release target is at least 150 synthetic cases across normal, boundary
 - evidence reference coverage for material output: `100%`;
 - mandatory-review recall: `100%` on designated release cases;
 - deterministic policy repeatability: `100%` for identical versioned inputs;
+- policy snapshot repeatability: `100%` for identical context, catalog knowledge time, and resolver version;
+- future-effective policy activated early: `0`;
 - malformed output accepted as valid: `0`;
 - tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
 - model, prompt, policy, dataset, and code revisions are pinned in every report.
@@ -943,7 +1068,7 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 | M0 | Stable free model baseline and independent product charter | Implemented |
 | M1 | Supported runtime, migrations, and security baseline | Planned |
 | M2 | Durable loan case, evidence, and condition workflow | Planned |
-| M3 | Policy DSL, bounded Agent tools, and human review | Planned |
+| M3 | Temporal policy resolution, bounded Agent tools, and human review | Planned |
 | M4 | Provider gateway, partner API, webhooks, and sandbox | Planned |
 | M5 | Tenant trust boundary and audit controls | Planned |
 | M6 | Operations console and release evaluation | Planned |
@@ -1003,11 +1128,15 @@ Exit evidence:
 
 ### M3 — Policy and Agent vertical slice
 
-**User-visible outcome:** the Agent inspects evidence, selects allowed tools, applies a released synthetic policy, pauses for review, and resumes after a decision.
+**User-visible outcome:** the Agent inspects evidence, selects allowed tools, resolves the approved synthetic policy for the case's jurisdiction and event time, pauses for review, and resumes after a decision.
 
 Scope:
 
-- policy DSL parser, validator, evaluator, versioning, and golden tests;
+- policy source registry, jurisdiction catalog, and explicit coverage status;
+- policy DSL parser, validator, evaluator, immutable versions, and golden tests;
+- bitemporal applicability resolver and immutable case policy snapshots;
+- future-effective scheduling, transition approval, and open-case impact assessment;
+- change fixtures covering state overlays, corrections, withdrawals, and relevant lifecycle events;
 - `AgentRuntime` port and LangGraph.js v1 adapter;
 - registered tools, schemas, budgets, and side-effect gates;
 - reviewer interrupt and resume flow;
@@ -1020,6 +1149,9 @@ Exit evidence:
 - unauthorized tools remain unreachable;
 - designated review cases always interrupt;
 - repeated versioned inputs produce the same policy result;
+- the same as-of context reproduces the same policy snapshot, including at effective-date boundaries;
+- a future-effective or jurisdiction-mismatched version is never selected;
+- an ambiguous transition or policy-layer conflict always creates a review task;
 - malformed model output routes safely.
 
 ### M4 — Provider and developer platform vertical slice
@@ -1130,6 +1262,10 @@ Exit evidence:
 - unauthorized tool rate;
 - malformed output rejection rate;
 - policy conflict and regression rate;
+- policy source coverage and freshness by jurisdiction;
+- time from source-change detection to reviewed, scheduled policy version;
+- policy snapshot resolution conflict and failure rate;
+- open cases awaiting policy-impact disposition;
 - steps, latency, tokens, and cost by model configuration.
 
 ### 21.4 Guardrails
@@ -1147,7 +1283,7 @@ Exit evidence:
 ### 22.1 Product gates
 
 - end-to-end synthetic conditions journey is usable through documented APIs and the console;
-- every condition links to evidence and a policy version;
+- every condition links to evidence and an immutable case policy snapshot;
 - review, wait, resume, cancellation, and recovery paths are demonstrated;
 - API, SDK, webhook, and sandbox quickstarts are current;
 - all user-visible capabilities distinguish synthetic from official results.
@@ -1174,6 +1310,10 @@ Exit evidence:
 - pinned evaluation corpus and configuration produce a reproducible report;
 - unauthorized-tool, mandatory-review, evidence-coverage, malformed-output, and unsupported-claim gates pass;
 - every released policy version has approval and regression evidence;
+- every evaluated case records the exact applicable versions, source revisions, jurisdiction context, effective boundaries, resolver version, and resolution reasons;
+- historical replay reproduces the same snapshot for the declared valid time and system knowledge time;
+- future-effective versions never activate early, and unresolved coverage or transition states fail closed to review;
+- approaching effective dates with stale sources or incomplete impact review trigger an operational alert;
 - Agent and policy failures route to safe states;
 - no model output is represented as private reasoning or official underwriting authority.
 
@@ -1194,6 +1334,7 @@ Exit evidence:
 | Architecture grows faster than evidence | Deliver vertical slices and defer service extraction, Kubernetes, and secondary frameworks. |
 | Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
 | Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
+| Policy drift or wrong jurisdiction changes case treatment | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity. |
 | Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
 | Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
 | PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
@@ -1272,10 +1413,12 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 4. Temporal as durable workflow owner and LangGraph behind an `AgentRuntime` port.
 5. Deterministic policy authority over model proposals.
 6. Versioned internal policy DSL and release lifecycle.
-7. Provider modes: simulator, authorized sandbox, and production BYOC.
-8. Synthetic-only public launch and real-data approval boundary.
-9. Terraform/OpenTofu and ECS Fargate before Kubernetes.
-10. Stable repository name with product identity expressed through documentation.
+7. Bitemporal, jurisdiction-aware policy resolution with immutable case snapshots.
+8. Policy-change impact assessment and approved open-case transition handling.
+9. Provider modes: simulator, authorized sandbox, and production BYOC.
+10. Synthetic-only public launch and real-data approval boundary.
+11. Terraform/OpenTofu and ECS Fargate before Kubernetes.
+12. Stable repository name with product identity expressed through documentation.
 
 ## 29. Immediate next implementation slice
 
@@ -1305,5 +1448,8 @@ Technology choices are based on official project documentation and are revalidat
 - React versions: <https://react.dev/versions>
 - OpenAPI specification: <https://spec.openapis.org/oas/>
 - OpenTelemetry documentation: <https://opentelemetry.io/docs/>
+- eCFR API documentation: <https://www.ecfr.gov/developers/documentation/api/v1>
+- Federal Register API documentation: <https://www.federalregister.gov/developers/documentation/api/v1>
+- CFPB Regulation Z current and historical versions: <https://www.consumerfinance.gov/rules-policy/regulations/1026/>
 
-External references justify technology maturity and compatibility only. They do not prove that target capabilities are implemented in this repository.
+Technology references justify maturity and compatibility only. Regulatory references illustrate source versioning, effective-date, relevant-event, and federal/state interaction requirements; they are not legal interpretation, complete jurisdiction coverage, or proof that target capabilities are implemented.
