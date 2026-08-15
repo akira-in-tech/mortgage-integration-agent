@@ -1816,3 +1816,80 @@ Manual boot test against the real built app (node dist/main.js):
 ### Next safe step
 
 Stand up Temporal for local development and implement the first durable workflow (unchanged from before this slice — M2's next step). Separately, consider decomposing `AgentService` into an HTTP/model client, a prompt/response layer, and the rules engine as its own dedicated slice given its size and mixed responsibilities.
+
+## M2-003: Split AgentService into orchestrator + two decisioning services
+
+### Status
+
+Implemented and verified, including through real NestJS dependency injection (not only mocked unit tests). Closes the last of the four architecture-review findings from this session (M2-002 covered the other two; the fourth — the M2-001 schema being unconnected to any service — is not a defect, it correctly waits on the Temporal workflow slice).
+
+### Acceptance criterion
+
+`AgentService` must no longer mix HTTP client logic, prompt construction, JSON-schema definition, response parsing, and the deterministic rules engine in one class. Each concern must be independently unit-testable without needing to go through `AgentService`'s orchestration layer, and `AgentService` itself must be reducible to fan-out + provider dispatch + result assembly.
+
+### Finding
+
+`AgentService` was a single ~470-line class doing five distinct things: parallel integration fan-out, deterministic threshold-based decisioning, Ollama HTTP client management, prompt/schema construction, and model-response parsing/validation. Testing any one of these required going through the others (e.g., every rules-engine threshold test also mocked and exercised the integration fan-out), and the class's size made it the highest-risk file in the repository for any future change — exactly the file the charter's own M3 direction (separate `AgentRuntime`, deterministic policy engine, and bounded Agent execution) already says should eventually be split apart.
+
+### Implementation
+
+- Extracted `RulesUnderwriterService` (`src/agent/rules-underwriter.service.ts`): the deterministic threshold engine (`runRulesUnderwriter`/`getLoanThresholds`), moved verbatim. It has no constructor dependencies — a pure, synchronous, directly-instantiable class.
+- Extracted `OllamaUnderwriterService` (`src/agent/ollama-underwriter.service.ts`): the Ollama HTTP client, prompt/schema construction, and response parsing (`invokeOllamaUnderwriter`/`parseModelResponse`), moved verbatim. Reads `OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_TIMEOUT_MS` from the centralized validated config (M2-002) itself now, rather than being handed pre-resolved values. Exposes `endpoint`/`modelName` getters so `AgentService` can still log which model/endpoint is active without holding those values itself.
+- `AgentService` is now ~95 lines: fan out to Plaid/Credit/Document, pick `rulesUnderwriter.evaluate()` or `ollamaUnderwriter.evaluate()` based on `DECISION_PROVIDER`, assemble the result (confidence clamping, `incomeVerified` derivation, raw-payload storage — the parts that are genuinely orchestration, not decisioning).
+- Registered both new services as providers in `AgentModule`.
+
+### Test reorganization
+
+Split `agent.service.spec.ts`'s ~600 lines into three focused files rather than keeping one large spec that exercises everything through the orchestrator:
+
+- `rules-underwriter.service.spec.ts`: all 16 threshold tests (APPROVED/CONDITIONAL/DENIED), now calling `service.evaluate(context)` directly with no mocking at all, since the service has no dependencies — simpler and faster than the previous version, which had to mock three integration services just to reach the rules logic.
+- `ollama-underwriter.service.spec.ts`: all 6 Ollama HTTP/parsing test groups, now calling `service.evaluate(context)` directly against a mocked `httpClient`, without needing `AgentService` or its integration mocks at all.
+- `agent.service.spec.ts`: now tests only orchestration — provider dispatch (added two new tests making the dispatch behavior explicit, since it used to only be exercised implicitly by which HTTP calls happened), `incomeVerified` derivation, confidence clamping, and the integration fan-out — against mocked `RulesUnderwriterService`/`OllamaUnderwriterService`.
+
+### Affected files
+
+- `src/agent/rules-underwriter.service.ts`, `rules-underwriter.service.spec.ts` (new)
+- `src/agent/ollama-underwriter.service.ts`, `ollama-underwriter.service.spec.ts` (new)
+- `src/agent/agent.service.ts`, `agent.service.spec.ts` (rewritten)
+- `src/agent/agent.module.ts`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Two services, not a generic `DecisionProvider` interface with two implementations**: an interface would add an abstraction with exactly two members and no third implementation planned in this slice; `AgentService`'s ternary dispatch is already the simplest expression of "pick one of two."
+- **`endpoint`/`modelName` getters on `OllamaUnderwriterService` rather than moving the startup log into its constructor**: NestJS constructs every registered provider regardless of which `DECISION_PROVIDER` is active, so logging "Local model provider active" from `OllamaUnderwriterService`'s own constructor would log it on every boot, even in rules mode — a regression from the current conditional behavior. The conditional logic has to stay where the actual provider selection happens.
+- **Verified through real DI, not just mocks**: unit tests mock the collaborators, which would not have caught a wiring mistake in `agent.module.ts` (e.g., forgetting to register a provider) or a mismatch between what `AgentService` expects from `OllamaUnderwriterService` and what it actually exposes. Booted the real built app in both `rules` and `ollama` mode and confirmed the log line correctly read `model`/`endpoint` from the actually-injected service, not a mock.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+npm test -- --runInBand --no-cache --silent
+  15 suites passed, 95 tests passed (13→15 suites: 2 new; net +4 tests:
+  all threshold/Ollama tests moved 1:1, 2 new explicit dispatch tests added)
+npm run test:e2e                      -> 1 suite passed, 4 tests passed
+  (exercises the real AgentModule DI graph, not mocks — confirms the
+  provider registration is correct)
+
+Manual boot test against node dist/main.js:
+  DECISION_PROVIDER unset (rules default)
+    -> "*** RULES PROVIDER ACTIVE ***" logged, as before
+  DECISION_PROVIDER=ollama OLLAMA_MODEL=qwen3.5:4b
+    -> "Local model provider active [model=qwen3.5:4b,
+       endpoint=http://127.0.0.1:11434]" — confirms AgentService reads
+       these values from the real injected OllamaUnderwriterService,
+       not a hand-wired mock
+```
+
+### Security, privacy, cost, and compatibility
+
+- Pure refactor — no behavior, prompt content, threshold values, or validation logic changed; every moved code block is verbatim.
+- No new dependency.
+
+### Known gaps
+
+- None specific to this slice. The broader M3 direction (a real `AgentRuntime` port, tool registry, budgets) is unaffected — this slice only cleans up the current one-shot decisioning path's internal structure, it does not build toward M3 itself.
+
+### Next safe step
+
+Stand up Temporal for local development and implement the first durable M2 workflow — the architecture-review findings from this session are now fully addressed, so M2 continues from where M2-001 left off.
