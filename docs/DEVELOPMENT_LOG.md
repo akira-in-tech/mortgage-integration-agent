@@ -95,3 +95,71 @@ The Agent-specific suite included 32 passing tests covering the rules path, vali
 ### Next safe step
 
 Complete and commit this isolated Milestone 0 feature, then begin the supported runtime and security baseline without mixing the two scopes.
+
+## 2026-08-14 — M0-002: Project charter and engineering execution protocol
+
+### Status
+
+Documentation implemented and locally validated; target capabilities remain planned until their individual milestone evidence exists.
+
+### Acceptance criterion
+
+The repository must contain one implementation-oriented charter that defines the product boundary, phased roadmap, architecture, Agent authority, security and reliability gates, atomic-commit discipline, development-journal requirements, and code-comment standards.
+
+### Implementation
+
+- Added a 30-section target-state project charter.
+- Separated implemented, in-progress, and planned capabilities.
+- Defined Milestones 0 through 6 with deliverables and exit gates.
+- Added a phase-status table and per-feature execution loop.
+- Defined one coherent, independently revertible feature slice per commit.
+- Made this development journal part of the definition of done.
+- Required rationale-focused comments for domain, security, reliability, provider, and Agent logic.
+- Defined launch gates, SLO targets, Agent evaluation targets, provider modes, data boundaries, and release governance.
+- Removed personal collaboration and identity instructions from the public charter; repository documentation now contains only product and software-delivery governance.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Milestones instead of one large rewrite**: each architecture capability must land as a tested, auditable slice.
+- **Atomic feature commits instead of commit-per-function**: a commit must be meaningful, buildable, reviewable, and revertible; mechanical fragmentation would obscure behavior and test evidence.
+- **Detailed journal plus concise code comments**: the journal preserves chronology and verification, while comments preserve non-obvious rationale next to the code. Duplicating implementation syntax in comments is prohibited.
+- **TypeScript 6 for Milestone 1**: TypeScript 7 is released, but current Nest CLI programmatic compiler compatibility is not ready for this migration; the newer compiler remains a separately gated upgrade.
+- **Public governance only**: private operator or assistant instructions are not product requirements and do not belong in repository architecture documentation.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+personal/internal identity phrase search
+  no matches
+
+prohibited product-name search
+  no matches
+
+Markdown code-fence balance check
+  passed
+```
+
+No application test was required for the charter-only change. The immediately preceding feature commit retained successful build, lint, and 65-test evidence.
+
+### Failures and resolution
+
+- An early charter draft included a private identity constraint. It was identified as inappropriate for a public product document and replaced with ordinary release governance.
+- A version review initially treated TypeScript 6 as the newest stable release. Current research found TypeScript 7 had shipped, followed by a confirmed Nest CLI compatibility problem; the charter now records the compatibility-driven TypeScript 6 decision accurately.
+
+### Known gaps
+
+- The charter is a target-state contract, not proof that Milestones 1 through 6 are implemented.
+- Milestone status must be updated only when exit-gate evidence is recorded.
+- Architecture decision records will be added as each corresponding implementation begins.
+
+### Next safe step
+
+Begin Milestone 1 as small acceptance-criterion commits, starting with the supported runtime/framework upgrade and retaining a development-log entry for every completed feature slice.
