@@ -721,3 +721,139 @@ No application test is required for this documentation-only architecture audit. 
 ### Next safe step
 
 Keep M1 as the supported runtime baseline and M2 as the durable synthetic conditions slice. In M2, establish aggregate versioning, idempotency fingerprint rejection, immutable evidence versions, and optimistic writes. In M3, implement dependency-vector policy bindings and immutable evaluation input manifests. In M4, implement the provider intent state machine and reconciliation against simulators before any authorized sandbox. In M5, implement scoped grants, immutable activation governance, lineage-aware deletion, and negative authorization tests.
+
+## M0-009: Product-authority, communication, and Agent-budget consistency
+
+### Status
+
+Three cross-section specification conflicts were independently identified, reproduced against the active charter, and corrected. The product-authority, protected-communication, and Agent-budget controls remain target architecture rather than implemented application behavior.
+
+### Acceptance criterion
+
+The charter must express one enforceable answer to each of the following questions:
+
+- Can provider certification or a launch phase enable the platform to move funds, commit rate locks, perform settlement or funding, or deliver loans to capital markets?
+- Can configured policy approve a protected borrower- or third-party-facing communication without a person approving the exact message?
+- Where and how are duration and cost budgets represented and authoritatively enforced when Agent state already exposes step, token, and provider-call budgets?
+
+No deferred-capability paragraph, provider gate, tool-table row, engineering principle, runtime state field, or launch gate may contradict those answers.
+
+### Findings
+
+1. **Product identity versus deferred funds and closing scope**
+   - The executive summary unconditionally said the platform does not move money.
+   - The non-goals limited the same exclusion to the public launch.
+   - The deferred-capability section grouped rate locks, legal disclosures, closing, settlement, and capital delivery with capabilities that could later enter through provider gates.
+   - Provider certification establishes scoped technical and organizational readiness for an allowed adapter; it cannot itself grant lender, settlement, funds-transfer, rate-lock, disclosure, servicing, or capital-delivery authority.
+
+2. **Protected communication versus configured policy approval**
+   - The authority order required human approval for protected communication.
+   - The `send_information_request` tool allowed human or configured-policy approval without defining which path applied to which content.
+   - The engineering principle governing externally communicated outcomes was also broad enough to conflict with any automated routine message.
+
+3. **Agent budget promise versus runtime state**
+   - Safety controls promised step, duration, token, provider-call, and cost budgets.
+   - Mandatory review included time and provider-cost exhaustion.
+   - Agent state exposed only step, provider-call, and token counters, with no deadline, remaining duration, cost amount, currency, or authoritative ledger version.
+
+### Implementation
+
+#### Structural product-authority boundary
+
+- Made the no-funds boundary structural for the current charter rather than public-launch-specific.
+- Prohibited accepting, holding, controlling, initiating, approving, settling, disbursing, or transmitting funds or value.
+- Prohibited binding rate locks, payment and settlement instructions, funding authority, capital delivery, formal credit decisions, clear-to-close, legal disclosures and notices, and servicing payment movement.
+- Allowed read-only authoritative status ingestion, evidence reconciliation, and non-monetary task coordination in closing, funding, post-close, and servicing lifecycle areas.
+- Split deferred launch capabilities from structurally excluded capability classes.
+- Required capability registries, Agent tool registries, promotion-manifest validation, and production routing to reject excluded command classes even when an adapter and credentials exist.
+- Clarified that Sections 11.8 and 22.6 certify an already allowed provider capability and cannot override product identity.
+- Required any future boundary change to begin with a replacement charter, activity-specific legal and licensing analysis, accountable owners, funds-flow and threat models, and new implementation and launch gates.
+
+#### Communication authority
+
+- Defined protected communication by material meaning rather than tool name alone, including decisions, eligibility, approval status, incompleteness, adverse action, consumer rights, regulated deadlines, disclosures, rates or terms, waivers, exceptions, collection positions, settlement instructions, and other consequential outcomes.
+- Required a human reviewer to approve the exact rendered protected message, recipient, channel, locale, attachments, authoritative sender, and validity interval before delivery through the platform.
+- Kept formal notices outside product scope with the lender or authorized downstream system.
+- Defined a narrow routine operational class for version-pinned tenant-approved templates that request or acknowledge ordinary evidence without protected meaning or regulated deadlines.
+- Required allowlisted recipient relationships, channels, locales, variables, attachments, and purposes for routine delivery.
+- Made free-form material text, render drift, negative or ambiguous implication, unsupported locale, or classification uncertainty fail closed to protected review.
+- Moved classification and template enforcement into deterministic server-side guards that the Agent cannot supply or downgrade.
+- Clarified that signed machine webhooks publish only authorized integration events and cannot carry borrower-facing protected communication content.
+- Updated engineering principles, tool approvals, mandatory review triggers, safety controls, data entities, events, threats, reliability behavior, tests, metrics, roadmap, launch gates, risks, and ADRs to use the same classification.
+
+#### Duration and cost budgets
+
+- Added `remainingDurationBudgetMs`, `runStartedAt`, and `runDeadlineAt` to the Agent state contract.
+- Added `budgetCurrency`, `remainingCostBudgetMinorUnits`, and `budgetLedgerVersion` alongside renamed `remainingProviderCallBudget`.
+- Defined state budget fields as server-issued observations rather than model authority.
+- Required duration to be recomputed from trusted time and the absolute deadline at every graph step and tool boundary.
+- Required step, token, provider-call, and cost usage and reservations to use authoritative versioned run, workflow, and tenant budget ledgers.
+- Defined durable wait separately from bounded Agent runtime and prohibited retry, replay, cancellation, restart, or resume from resetting cumulative usage.
+- Required atomic conservative cost reservation for in-flight and outcome-unknown provider operations until reconciliation.
+- Made ledger conflict, reservation failure, deadline expiry, or negative remaining budget stop further tool execution and route safely.
+- Added budget ledgers, reservation entities, events, threats, reliability controls, tests, telemetry, metrics, roadmap evidence, launch gates, and risks.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Structural exclusion over launch-only exclusion**: an adapter readiness gate cannot accidentally become funds-flow or lending authority.
+- **Read-only lifecycle integration over total closing blindness**: the platform may remain operationally useful by observing authoritative events and coordinating non-monetary work without executing protected financial actions.
+- **Replacement charter over feature flag**: a future product-identity change must be explicit, separately governed, and reviewable rather than inherited from today's provider architecture.
+- **Meaning-based communication class over tool-name classification**: the same delivery tool can carry routine or protected meaning, so rendered content and context determine the approval path.
+- **Exact-render human approval over generic case approval**: changing recipient, wording, locale, attachment, channel, sender, or validity can change communication risk and invalidates approval reuse.
+- **Narrow template policy over all-human messaging**: routine evidence logistics can remain efficient without letting policy automation send consequential messages.
+- **Trusted absolute deadline over a model-decremented timer**: wall-clock enforcement cannot depend on Agent cooperation and remains correct across graph steps.
+- **Authoritative ledger and reservation over state-only counters**: concurrent tools and uncertain provider cost require atomic accounting outside the model state snapshot.
+- **Hierarchical cumulative budgets over per-run reset**: a new bounded run after durable wait may receive a new deadline, but it cannot erase workflow or tenant usage.
+- **Conservative unknown-cost reservation over optimistic spend**: unresolved provider outcomes must not free budget that may already have been consumed.
+
+### Verification
+
+```text
+git diff --check
+  passed
+
+top-level charter section sequence check
+  sections 1 through 30 present in order
+
+Markdown code-fence balance check
+  PROJECT_CHARTER.md: 40 fence markers
+  DEVELOPMENT_LOG.md: 18 fence markers
+
+funds-boundary, communication-authority, and Agent-budget consistency searches
+  structural exclusion, exact protected approval, routine-template boundary,
+  trusted duration, and authoritative cost-ledger terms are present;
+  superseded launch-only funds, ambiguous communication approval,
+  and incomplete Agent-state terms are absent
+
+company, personal identity, and private-instruction phrase search
+  no matches
+
+date-prefixed development-log heading search
+  no matches
+```
+
+No application test is required for this documentation-only consistency correction. The new registries, message guards, deadlines, ledgers, reservations, denial controls, tests, and operations surfaces are not represented as implemented, verified, deployed, or legally approved.
+
+### Security, compliance, and operational boundaries
+
+- The structural exclusions are product choices under this charter, not a legal conclusion that every observed or coordinated workflow is exempt from licensing or regulation.
+- FinCEN materials identify money-transmission analysis as fact- and circumstance-specific; the public charter therefore avoids claiming that provider certification determines regulatory status.
+- Current Regulation B notification requirements inform the conservative protected-communication class but do not make this architecture a complete notice or jurisdictional compliance program.
+- Human approval of a protected draft does not bring a formal notice into scope when the charter assigns that notice to an authorized lender or downstream system.
+- Budget controls constrain Agent execution but do not replace provider contract limits, tenant budgets, accounting, or human operational oversight.
+
+### Known gaps
+
+- No capability denylist, manifest validation, runtime router rule, or Agent tool check implements the structural financial-action exclusions yet.
+- No communication classifier, immutable template, exact-render hash, protected-message approval, or guarded delivery workflow exists in application code.
+- No trusted Agent deadline, budget ledger, atomic reservation, currency normalization, unknown-cost reserve, or ledger-conflict test exists in application code.
+- Activity-specific product, licensing, communication, and funds-flow review still requires authorized legal, compliance, operations, and business owners before any real-data deployment.
+
+### Next safe step
+
+Preserve M1 as the supported runtime foundation. In M2, introduce the versioned budget-ledger schema and optimistic reservation primitive without adding real costs or communications. In M3, add trusted Agent deadlines and a synthetic routine-versus-protected communication classifier with exact-render review tests. In M4, enforce the structural capability denylist across simulator registration, promotion validation, routing, and Agent tool exposure before any authorized sandbox integration.

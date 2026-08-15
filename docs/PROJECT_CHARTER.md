@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.4 |
+| Version | 2.5 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -33,7 +33,9 @@ Mortgage Integration Agent is a vendor-neutral autonomous lending operations pla
 
 The initial product is **mortgage-first and lending-extensible**. Its first vertical slice resolves routine mortgage evidence and underwriting-readiness conditions using synthetic data. The core platform is designed so that future product packs can support other lending workflows without replacing the workflow, provider, governance, or audit foundations.
 
-The platform does not issue credit, originate loans, move money, reproduce an official underwriting result, or replace an authorized decision-maker. It advances a case toward an actionable, evidence-backed operational state and escalates protected or ambiguous actions to a person.
+Under this charter, the platform does not issue credit, originate loans, reproduce an official underwriting result, or replace an authorized decision-maker. It also never accepts, holds, controls, initiates, approves, settles, disburses, or transmits funds or value; issues or commits a real rate lock; or directs a settlement, funding, or capital-delivery instruction. It may ingest authoritative downstream status, reconcile evidence, and coordinate non-monetary operational work without acquiring those authorities.
+
+This is a structural product boundary, not a public-launch toggle. Provider certification, production credentials, tenant configuration, or Agent approval cannot expand it. Any future product that performs a currently excluded financial action requires a replacement charter, separate legal and licensing analysis, explicit accountable owners, and a newly approved architecture and operating model before implementation.
 
 ### Product promise
 
@@ -174,7 +176,9 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 
 - Issuing credit or producing a binding approve/deny decision.
 - Claiming equivalence with an official automated underwriting system.
-- Moving funds, locking real rates, ordering paid services, or delivering loans to capital markets in the public launch.
+- Accepting, holding, controlling, initiating, approving, settling, disbursing, or transmitting funds or value.
+- Issuing or committing a real rate lock, directing settlement or funding, or delivering a loan to a capital market.
+- Ordering paid services or initiating real provider orders in the public launch.
 - Publishing copied proprietary guidelines or reverse-engineered vendor behavior.
 - Training a proprietary foundation model.
 - Building a general-purpose consumer chatbot.
@@ -189,7 +193,7 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 
 1. Correctness and evidence outrank model fluency.
 2. Deterministic policy owns operational status; models propose bounded actions.
-3. Humans retain authority over material, ambiguous, or externally communicated outcomes.
+3. Humans retain authority over material, ambiguous, or protected outcomes and communications; only narrowly defined routine operational messages may use pre-approved template policy.
 4. Every external effect has a durable intent, attributable audit trail, and effect-specific retry and reconciliation strategy; idempotency is claimed only where certified semantics support it.
 5. Durable business state lives outside model context.
 6. Every provider and model call has provenance, validation, timeout, and failure handling.
@@ -235,10 +239,18 @@ Every satisfied, waived, or escalated condition includes evidence or reviewer pr
 2. Validated source evidence remains attributable to its origin.
 3. Deterministic calculations and the resolved, released case policy snapshot determine condition state and readiness.
 4. The Agent may select approved tools, compare evidence, propose actions, and draft explanations.
-5. Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides.
+5. Human reviewers approve every protected communication sent through the platform, interpret out-of-policy cases, and record overrides; configured policy cannot substitute for that approval.
 6. Model output never silently overrides policy, source evidence, or a human decision.
 
-### 6.4 Mortgage lifecycle alignment and product boundary
+### 6.4 Communication classes and authority
+
+A **protected communication** is any borrower- or third-party-facing message that states or could reasonably be understood to state a credit decision, eligibility or underwriting conclusion, approval status, incompleteness or adverse action, consumer right, legally significant deadline, disclosure, rate or term, waiver, exception, collection position, settlement instruction, or other legally or materially consequential outcome. The Agent may draft it, but a human reviewer must approve the exact rendered content, recipient, channel, locale, attachments, and authoritative sender before platform delivery. Formal notices that remain outside product scope are sent by the lender or another authorized downstream system, not by this platform.
+
+A **routine operational communication** may be policy-approved without per-message human review only when it uses a version-pinned tenant-approved template to request or acknowledge ordinary evidence, contains no protected meaning or regulated deadline, uses an allowlisted recipient relationship, channel, locale, variables, and attachments, and does not change a case decision, right, term, or legal status. Template approval and message delivery are separately attributable. Any free-form material text, template drift, negative or ambiguous implication, unsupported locale, classification uncertainty, or failed variable validation upgrades the message to protected and creates review work.
+
+Communication classification and template enforcement are deterministic application-service guards outside the model. The Agent cannot label its own message routine, supply an approval result, or downgrade a protected classification. Signed machine webhooks publish only already-authorized committed events; they cannot create or transform a protected communication.
+
+### 6.5 Mortgage lifecycle alignment and product boundary
 
 Mortgage production is not one universal linear workflow: product, channel, jurisdiction, lender policy, and case facts change the required path. The platform therefore records authoritative milestone events and coordinates a bounded operations segment rather than pretending to own the lender's entire origination process.
 
@@ -251,12 +263,14 @@ Mortgage production is not one universal linear workflow: product, channel, juri
 | Underwriting | Evaluate capacity, credit, collateral, eligibility, and approved exceptions | Prepare an evidence-complete package and ingest downstream conditions | An authorized lender or underwriting system owns formal approval, suspension, or denial. |
 | Conditions and re-evaluation | Operational conditions, underwriter conditions, new evidence, changed circumstances | Core conditions-resolution loop | The platform may resolve operational work; only the authorized owner clears decision conditions. |
 | Action and consumer notification | Approval, counteroffer, incompleteness, withdrawal, or adverse action and required notices | Track external status; protected drafting may be added later | Formal action and legally required communication remain outside autonomous Agent authority. |
-| Clear-to-close, closing, and funding | Final verification, closing disclosure, consummation, settlement, funding | Outside initial launch scope | Authorized lender, settlement, and funding systems remain authoritative. |
-| Post-closing and servicing handoff | Quality control, delivery, boarding, servicing, corrections | Outside initial launch scope | Downstream operational and compliance owners retain authority. |
+| Clear-to-close, closing, and funding | Final verification, closing disclosure, consummation, settlement, funding | Future integrations may ingest status and coordinate non-monetary tasks only | Authorized lender, settlement, and funding systems remain authoritative; the platform cannot issue clear-to-close, create a legal disclosure, direct settlement, or initiate, approve, hold, or disburse funds. |
+| Post-closing and servicing handoff | Quality control, delivery, boarding, servicing, corrections | Future integrations may ingest status and coordinate non-monetary tasks only | Downstream operational and compliance owners retain authority; capital delivery and servicing money movement remain outside this charter. |
 
 `READY_FOR_UNDERWRITING` means only that configured evidence-readiness checks passed. `CONDITIONS_OPEN` means operational work remains. Neither status means conditional approval, final approval, clear-to-close, funding authorization, or satisfaction of a legal notice obligation.
 
 This lifecycle map is a product-scope baseline, not a legal checklist. Authorized lending, legal, compliance, and operations owners must configure the actual milestones, notices, clocks, evidence, and decision authorities for each product and jurisdiction.
+
+Technical provider readiness is necessary for an allowed integration but never grants lender, settlement, funds-transfer, rate-lock, disclosure, or capital-delivery authority. Sections 11.8 and 22.6 cannot override the structural boundary in Section 2 and Section 7.5.
 
 ## 7. Launch product and vertical slice
 
@@ -320,14 +334,26 @@ Every simulator supports deterministic fixtures for:
 - real consumer data;
 - real credit pulls or paid provider orders;
 - official underwriting or government-sponsored enterprise integrations;
-- rate locking, disclosures with legal effect, closing, settlement, or capital delivery;
 - production document OCR contracts;
 - additional lending product packs;
 - billing and subscription management;
 - multi-region disaster recovery;
 - high-volume batch submission.
 
-Deferred capabilities are disabled in the public synthetic launch, not omitted from the target integration architecture. Real providers must enter through the same capability ports, workflow, canonical findings, and release artifact after the gates in Sections 11.8 and 22.6 pass.
+These deferred capabilities are disabled in the public synthetic launch but may enter the target integration architecture only within the structural exclusions below and after the gates in Sections 11.8 and 22.6 pass. Passing those gates proves a declared adapter and data flow met technical and organizational controls; it does not grant a new regulated product authority.
+
+### 7.5 Structural exclusions from this charter
+
+The current product architecture does not expose commands that:
+
+- accept, hold, control, initiate, approve, settle, disburse, or transmit funds or value;
+- create, sign, or commit a real rate lock, payment instruction, settlement instruction, funding authorization, or capital-delivery instruction;
+- issue a formal credit decision, clear-to-close determination, disclosure with legal effect, or legally required action notice;
+- collect or distribute servicing payments or otherwise act as a lender, settlement agent, servicer, custodian, or funds-transfer operator.
+
+Allowed integrations may ingest authoritative statuses and documents, reconcile evidence, open non-monetary operational conditions, and coordinate tasks without executing an excluded action. The provider capability registry, Agent tool registry, promotion-manifest validator, and production router must reject excluded command classes even when credentials exist and an adapter is technically certified.
+
+Changing this boundary is not an ordinary roadmap item. It requires a replacement product charter and non-goal set, activity-specific legal and licensing analysis across applicable jurisdictions, accountable business and compliance owners, a new threat and funds-flow model, and separately approved implementation and launch gates. No feature flag, provider contract, tenant request, model decision, or Section 11.8/22.6 certification can authorize the change.
 
 ## 8. Product modules
 
@@ -402,12 +428,22 @@ interface LendingOperationsAgentState {
   modelVersion?: string;
   promptVersion?: string;
   remainingStepBudget: number;
-  remainingProviderBudget: number;
+  remainingDurationBudgetMs: number;
   remainingTokenBudget: number;
+  remainingProviderCallBudget: number;
+  budgetCurrency: string;
+  remainingCostBudgetMinorUnits: number;
+  budgetLedgerVersion: number;
+  runStartedAt: string;
+  runDeadlineAt: string;
   proposedAction?: AgentAction;
   reviewState?: HumanReviewState;
 }
 ```
+
+Budget fields are server-issued observations, not model authority. At every graph step and tool boundary, the runtime recomputes `remainingDurationBudgetMs` from trusted time and `runDeadlineAt`, then reads or reserves cost against authoritative versioned run, workflow, and tenant ledgers. `remainingCostBudgetMinorUnits` includes incurred cost plus conservative reservations for in-flight or outcome-unknown provider operations; a model cannot increase, reset, or supply any budget value. Ledger-version mismatch, reservation failure, deadline expiry, or a negative remaining value stops further tool execution and routes safely.
+
+`runDeadlineAt` limits one bounded Agent execution; time spent durably waiting for information or review is governed by workflow timers and is not hidden Agent runtime. Resume may create a new server-authorized run deadline only when cumulative workflow and tenant limits still permit it. Completed or dispatched step, token, provider-call, and cost usage is never credited back by retry, replay, cancellation, process restart, or resume; only an attributable reconciliation or billing correction can adjust the ledger.
 
 ### 9.4 Registered tools
 
@@ -427,9 +463,9 @@ interface LendingOperationsAgentState {
 | `evaluate_policy` | Request guarded evaluation of current applicable policy | Creates assessment | Mandatory policy-binding validation |
 | `create_condition` | Materialize a policy-supported operational condition | Case mutation | Validated binding and evaluation required |
 | `draft_information_request` | Prepare a remediation request | Draft only | No |
-| `send_information_request` | Deliver an external message | External communication | Human or configured policy approval |
+| `send_information_request` | Deliver an external message | External communication | Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content; formal notices outside product scope remain prohibited |
 | `escalate_to_reviewer` | Pause and create review task | Workflow transition | No |
-| `publish_case_update` | Deliver a signed webhook | External communication | Policy-controlled and idempotent |
+| `publish_case_update` | Deliver a signed machine webhook | External communication | Only already-authorized committed integration events; borrower-facing protected communication content is prohibited |
 
 `validate_policy_binding` is deliberately not an Agent tool. It is an unavoidable application-service guard invoked server-side for every evaluation request, including re-evaluations and retries. The Agent cannot omit it, supply its result, or choose an older snapshot.
 
@@ -437,7 +473,7 @@ interface LendingOperationsAgentState {
 
 ```text
 LOAD VERSIONED CASE
-  -> VERIFY TENANT, CONSENT, AND BUDGET
+  -> VERIFY TENANT, CONSENT, TRUSTED DEADLINE, AND AUTHORITATIVE BUDGET LEDGER
   -> INSPECT CURRENT EVIDENCE AND CONDITIONS
   -> SELECT ONE OR MORE APPROVED READ-ONLY TOOLS
   -> REQUEST SIDE-EFFECTING TOOL THROUGH WORKFLOW GATE
@@ -463,7 +499,8 @@ LOAD VERSIONED CASE
 - unresolved jurisdiction, effective-date, or transition-rule conflict;
 - malformed model or tool output;
 - manual waiver or override of a deterministic condition;
-- material negative external communication;
+- every protected communication and any message outside a version-pinned routine operational template;
+- communication classification uncertainty, free-form material text, negative implication, regulated deadline, legal effect, or rendered-template mismatch;
 - provider result outside the normalized contract;
 - step, token, time, or provider-cost budget exhaustion;
 - prompt-injection or tool-manipulation signal;
@@ -476,6 +513,8 @@ LOAD VERSIONED CASE
 - no arbitrary HTTP, SQL, shell, code execution, secret retrieval, or tool installation;
 - documents and provider payloads treated as untrusted content, never as instructions;
 - explicit step, duration, token, provider-call, and cost budgets;
+- trusted runtime deadline and versioned cost-ledger enforcement at every graph step and side-effect boundary;
+- deterministic communication classification, template validation, exact-render hashing, and attributable approval outside the model;
 - deterministic fallback to human review on uncertainty or runtime failure;
 - no storage or display of private chain-of-thought;
 - complete model, prompt, policy, tool, input-hash, and result provenance;
@@ -956,6 +995,8 @@ The codebase is **provider-integration-ready** for a declared provider/capabilit
 
 Real data is never copied into public fixtures, model-evaluation corpora, screenshots, local development, or shared staging. Production adapters receive only the minimum authorized fields, and model access remains independently governed from provider access.
 
+Provider certification is scoped evidence for an already allowed capability; it is not product-authority, licensing, or funds-flow approval. Promotion-manifest validation and routing fail closed for every command class excluded by Section 7.5, including funds or value movement, binding rate locks, legal disclosures or action notices, clear-to-close, settlement or funding direction, and capital delivery. An adapter may expose allowed read-only status or evidence capabilities for those lifecycle areas without exposing their execution commands.
+
 ## 12. Target architecture
 
 ### 12.1 Architecture style
@@ -1100,9 +1141,15 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 | `workflow_runs` | Durable business workflow identity and status. |
 | `workflow_steps` | User-facing activity timeline and failure state. |
 | `agent_runs` | Runtime, model, prompt, budgets, tools, and final route. |
+| `agent_budget_ledgers` | Versioned run, workflow, and tenant step, duration, token, provider-call, cost limit, usage, reservation, and currency state. |
+| `agent_budget_reservations` | Atomic cost and capacity reservations for in-flight or outcome-unknown work. |
 | `tool_attempts` | Arguments hash, result hash, side effect, and outcome. |
 | `review_tasks` | Pending protected action or exception review. |
 | `review_decisions` | Reviewer result, rationale, version, and override history. |
+| `communication_templates` | Immutable tenant-approved routine template, locale, variable, attachment, recipient, channel, purpose, and validity rules. |
+| `communication_classifications` | Deterministic routine, protected, or uncertain decision with reasons, policy version, and rendered-content hash. |
+| `communication_approvals` | Exact protected message, recipient, channel, locale, attachment, sender, reviewer, expiry, and revocation evidence. |
+| `communication_deliveries` | Idempotent attempt, approval or template reference, exact render hash, destination, and terminal outcome. |
 | `idempotency_keys` | Tenant, route, key, request hash, and response reference. |
 | `webhook_endpoints` | Destination, secret reference, subscriptions, and state. |
 | `webhook_deliveries` | Signed attempt history and replay state. |
@@ -1124,6 +1171,9 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Policy bindings and their observed generations are server-owned; clients and models cannot supply, select, or extend them.
 - Evaluation input manifests are immutable and reference exact versions; an evaluation never follows mutable latest-value pointers.
 - Provider operation intents are persisted before dispatch; `OUTCOME_UNKNOWN` is a first-class state that blocks a new effect until reconciliation or authorized review.
+- Agent budget observations are derived from trusted deadlines and a versioned ledger; models and clients cannot supply, extend, reset, or race a budget reservation.
+- Protected communication approval is bound to the exact rendered-content hash, recipient, channel, locale, attachments, sender, and validity interval; changing any bound field invalidates reuse.
+- Routine communication delivery requires an exact active template version and allowlisted variable set; classification uncertainty fails closed to human review.
 - Raw provider payloads are encrypted, access-controlled, and short-lived.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
@@ -1197,6 +1247,11 @@ policy_binding.refreshed
 policy_binding.review_required
 evaluation_input_manifest.created
 policy_impact.review_required
+agent_budget.reserved
+agent_budget.exhausted
+communication.review_required
+communication.approved
+communication.sent
 provider_authorization.denied
 provider_operation.prepared
 provider_operation.dispatched
@@ -1230,6 +1285,8 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - separate policy-author and policy-approver roles, with independent approval for releases and transition logic;
 - immutable provider-promotion manifests with separate proposer, certifier, approver, and activator duties for production enablement;
 - two-person control for production provider enablement or re-enablement, with self-approval prohibited and emergency disable independently available;
+- immutable routine communication templates, deterministic classification, exact-render approval binding, and protected-message review enforcement;
+- trusted Agent deadlines plus versioned, atomic budget usage and reservation ledgers enforced outside model state;
 - documented incident response, key rotation, backup, and restore procedures.
 
 ### 16.2 Privacy controls
@@ -1273,6 +1330,10 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - provider timeout is misclassified as failure and retried into a duplicate paid or consumer-impacting operation;
 - cross-provider fallback reuses an authorization or permissible-purpose decision outside its approved scope;
 - production manifest self-approval, artifact mismatch, stale activation race, or unsafe re-enable;
+- provider capability or Agent tool configuration attempts to expose a structurally excluded funds, rate-lock, settlement, disclosure, decision, or capital-delivery command;
+- model output, template variables, or free-form text downgrade a protected communication into a routine message;
+- protected-message approval is replayed after content, recipient, channel, locale, attachment, sender, or validity changes;
+- stale Agent budget state, concurrent reservations, or unknown provider cost permit work beyond a deadline or cost ceiling;
 - duplicate provider callbacks after workflow cancellation;
 - malicious file content and decompression abuse;
 - incomplete deletion lineage, invalid legal hold, or sensitive content retained in derived stores;
@@ -1295,6 +1356,8 @@ MCP is an optional adapter over the same registered tools and authorization laye
 - Workflow replay cannot bypass policy-binding validation; a new evaluation validates again, while an idempotent replay of the same completed request returns its recorded result.
 - Evaluation replay consumes its immutable input manifest; new evidence or consent state creates a new manifest rather than altering historical execution.
 - Provider activation uses immutable manifest versions and compare-and-swap so concurrent administrative changes cannot overwrite a newer state.
+- Every Agent graph step and side-effect gate rechecks trusted time and atomically reserves authoritative budget; in-flight and unknown provider costs remain conservatively reserved until reconciliation.
+- Communication delivery revalidates classification, template or exact human approval, recipient, channel, locale, attachments, sender, render hash, and expiry immediately before dispatch.
 - Versioned workflow code preserves deterministic replay compatibility.
 - Failed work remains inspectable and recoverable through operations tooling.
 - Provider fallback never changes the semantic capability contract silently.
@@ -1308,6 +1371,8 @@ Targets are release objectives, not current measurements:
 - acknowledged case and review mutations lost: `0`;
 - duplicate externally visible effects from idempotent replay: `0`;
 - duplicate cost-bearing or consumer-impacting provider operations caused by retry or fallback: `0` in the release fault corpus;
+- protected communications delivered without exact current human approval: `0`;
+- Agent tool effects accepted after deadline or without sufficient authoritative cost reservation: `0`;
 - p95 non-workflow API latency: below `500 ms` under the published load profile;
 - p95 workflow-start acknowledgment: below `1 s` under the published load profile;
 - signed webhook eventual delivery: at least `99.9%` within the configured retry window for healthy receivers;
@@ -1325,7 +1390,8 @@ Required telemetry includes:
 - workflow state, schedule-to-start, activity retries, and stuck executions;
 - provider mode, adapter and certification version, effect class, authorization failure, latency, normalization failure, authentication expiry, webhook verification, rate limit, retry, fallback, unknown outcome, reconciliation age, duplicate prevention, cost, canary allocation, kill-switch state, and circuit state;
 - condition age, reopen rate, and time waiting for evidence;
-- Agent steps, tool choices, schema failures, escalation, tokens, and cost;
+- Agent steps, tool choices, schema failures, escalation, trusted time remaining, tokens, provider calls, budget reservations, incurred and unknown cost, and ledger conflicts;
+- communication classification, template version, review, approval expiry, rendered-hash mismatch, delivery, and protected-message policy violations;
 - policy source freshness and coverage gaps by jurisdiction;
 - time from detected source revision to reviewed version and scheduled activation;
 - policy snapshot resolution conflicts, failures, and version distribution;
@@ -1357,6 +1423,8 @@ Required telemetry includes:
 14. **Evaluation-input tests**: immutable version references, latest-read rejection, evidence and consent races, stale case compare-and-swap, manifest-hash verification, replay, and deletion-aware audit behavior.
 15. **Provider-effect tests**: pre- and post-dispatch failures, changed-payload idempotency rejection, unknown outcomes, delayed success, reconciliation, duplicate callbacks, cancellation ambiguity, cost-bearing and consumer-impacting retry, and cross-provider fallback authorization.
 16. **Administrative-control tests**: manifest immutability, artifact and schema mismatch, self-approval rejection, dual authorization, expired approval, concurrent activation, emergency disable, and controlled re-enable.
+17. **Communication-authority tests**: routine-template allowlists, free-form and variable injection, negative and ambiguous meaning, regulated deadlines, locale and attachment changes, exact-render approval binding, approval expiry and revocation, retry, and protected-message fail-closed behavior.
+18. **Agent-budget tests**: trusted deadline expiry, stale client state, concurrent steps, atomic cost reservation, currency and rounding, in-flight and unknown provider cost, ledger-version conflict, retry, replay, cancellation, process restart, resume without cumulative-budget reset, and attempted model-supplied budget increase.
 
 ### 18.2 Evaluation corpus
 
@@ -1389,6 +1457,9 @@ The first release target is at least 150 synthetic cases across normal, boundary
 - external provider dispatches without a current scoped authorization grant: `0`;
 - duplicate cost-bearing or consumer-impacting provider effects caused by platform retry or fallback: `0`;
 - ambiguous provider outcomes automatically treated as confirmed failure: `0`;
+- protected communications delivered without exact current human approval: `0`;
+- routine communications delivered outside an active exact template and variable allowlist: `0`;
+- Agent tool effects accepted after deadline or beyond authoritative step, token, provider-call, or cost budget: `0`;
 - future-effective policy activated early: `0`;
 - malformed output accepted as valid: `0`;
 - tool-selection, condition precision, and condition recall thresholds are declared before evaluation and recorded with the report;
@@ -1529,6 +1600,8 @@ Scope:
 - change fixtures covering state overlays, corrections, withdrawals, and relevant lifecycle events;
 - `AgentRuntime` port and LangGraph.js v1 adapter;
 - registered tools, schemas, budgets, and side-effect gates;
+- trusted Agent deadlines, authoritative budget ledgers and reservations, and budget-exhaustion review routing;
+- deterministic communication classification, immutable routine templates, exact protected-message approval binding, and delivery guards;
 - reviewer interrupt and resume flow;
 - minimal review surface sufficient to operate the workflow;
 - evidence-backed explanations and Agent run timeline;
@@ -1547,6 +1620,8 @@ Exit evidence:
 - a future-effective or jurisdiction-mismatched version is never selected;
 - an ambiguous transition or policy-layer conflict always creates a review task;
 - malformed model output routes safely.
+- protected or uncertain communication cannot bypass exact human approval, while an unchanged approved routine template follows the configured policy path;
+- deadline and ledger-race tests prevent every over-budget tool effect, including conservatively reserved unknown provider cost.
 
 ### M4 — Provider and developer platform vertical slice
 
@@ -1555,6 +1630,7 @@ Exit evidence:
 Scope:
 
 - provider registry, capability contracts, health, routing, and normalization;
+- capability and promotion validation that rejects all structurally excluded command classes in Section 7.5;
 - income, asset, credit, identity, and document simulators;
 - promotion manifests and controlled mode activation for already certified adapter tuples;
 - scoped runtime authorization grants, durable operation intents, effect classes, unknown-outcome reconciliation, and fallback gates;
@@ -1572,6 +1648,7 @@ Exit evidence:
 - post-dispatch timeout, delayed callback, cancellation, retry, and fallback tests produce no duplicate cost-bearing or consumer-impacting effect;
 - every documented failure mode is covered by a deterministic test;
 - generated client completes the published quickstart.
+- no simulator, sandbox, production manifest, router, or Agent tool exposes a funds-movement, binding rate-lock, legal-disclosure, formal-decision, clear-to-close, settlement, funding, servicing-payment, or capital-delivery command.
 
 ### M5 — Fintech trust boundary
 
@@ -1585,7 +1662,7 @@ Scope:
 - consent enforcement;
 - encrypted field and object boundaries;
 - lineage-aware retention, deletion, legal-hold, backup-expiry, deletion-verification, and audit-export workflows;
-- tenant-owned provider, policy, webhook, and budget configuration;
+- tenant-owned provider, policy, webhook, communication-template, and budget configuration;
 - immutable provider manifests, separated administrative duties, dual production activation, emergency disable, and controlled re-enable;
 - threat-model tests and negative authorization suite.
 
@@ -1604,6 +1681,7 @@ Scope:
 - React case list and detail;
 - evidence, condition, policy, provider, Agent, workflow, review, and audit views;
 - provider unknown-outcome reconciliation, production-activation approval, and data-disposition queues with least-privilege actions;
+- protected-communication exact-render review and Agent deadline, usage, reservation, and cost-ledger views;
 - explicit empty, loading, degraded, retrying, stale, unauthorized, and disconnected states;
 - accessible interaction and keyboard navigation;
 - evaluation dashboard and downloadable release report;
@@ -1656,6 +1734,8 @@ Exit evidence:
 - workflow completion, cancellation, and terminal-failure rates;
 - provider authorization rejection, retry, unknown-outcome, reconciliation age, fallback, duplicate-prevention, and terminal-failure rates;
 - evaluation input-manifest creation, case-version conflict, and deterministic replay rates;
+- routine and protected communication classification, review, approval, template rejection, and delivery rates;
+- Agent deadline expiry, step, token, provider-call, cost usage, reservation conflict, unknown-cost reserve, and budget-exhaustion rates;
 - signed webhook delivery latency and success;
 - cost per workflow and resolved condition.
 
@@ -1685,6 +1765,9 @@ Exit evidence:
 - duplicate external side effects caused by replay: `0`;
 - duplicate cost-bearing or consumer-impacting provider effects caused by retry or fallback: `0`;
 - provider dispatch without current scoped authorization: `0`;
+- structurally excluded financial command classes registered or activated: `0`;
+- protected communication delivered without exact current human approval: `0`;
+- Agent tool effects accepted after trusted deadline or authoritative budget exhaustion: `0`;
 - production provider enablement or re-enablement without two distinct current approvals and no self-approval: `0`;
 - unattributed human override: `0`;
 - real consumer data in public demo or evaluation artifacts: `0`.
@@ -1696,6 +1779,7 @@ Exit evidence:
 - end-to-end synthetic conditions journey is usable through documented APIs and the console;
 - every condition links to an immutable evaluation input manifest, exact evidence versions, and an immutable case policy snapshot;
 - workflow and UI distinguish evidence readiness, operational conditions, downstream underwriting status, and formal credit action;
+- workflow and UI distinguish routine operational messages, protected drafts awaiting exact human approval, sent communications, and authoritative downstream notices;
 - review, wait, resume, cancellation, and recovery paths are demonstrated;
 - API, SDK, webhook, and sandbox quickstarts are current;
 - all user-visible capabilities distinguish synthetic from official results.
@@ -1705,6 +1789,7 @@ Exit evidence:
 - tenant-isolation and authorization suites pass;
 - secrets, dependency, container, and infrastructure scans pass at the declared threshold;
 - threat model and abuse-case tests are current;
+- protected-message classification and exact-render approval enforcement pass negative and race tests;
 - logs, traces, prompts, errors, screenshots, and fixtures pass PII review;
 - backup, restore, lineage-aware retention, deletion, legal hold, backup expiry, deletion verification, and key-rotation procedures are exercised;
 - no real borrower data is accepted by the public launch environment.
@@ -1713,6 +1798,7 @@ Exit evidence:
 
 - migration, workflow replay, crash recovery, duplicate delivery, and webhook retry tests pass;
 - ambiguous provider outcomes reconcile without a duplicate order, fee, consumer-impacting inquiry, or false cancellation claim;
+- Agent step and side-effect gates enforce trusted deadlines and atomic authoritative budget reservations under concurrent and replayed execution;
 - declared load and soak profiles meet release objectives;
 - alerts fire in injected provider, queue, database, and webhook failure scenarios;
 - operations users can recover documented failures without database mutation;
@@ -1727,6 +1813,8 @@ Exit evidence:
 - every evaluation and re-evaluation records an immutable input manifest, validated policy binding, and observed dependency digest; bypassed, stale, invalidated, or mismatched inputs are rejected;
 - parent-layer, new-overlay, coverage, resolver, and relevant-fact-selector changes invalidate affected bindings;
 - concurrent evidence, consent, policy, and case changes cannot alter a running evaluation or accept a stale condition write;
+- protected or uncertain communication always interrupts for exact human approval; routine policy delivery is limited to an unchanged active template and allowlisted render;
+- models and clients cannot increase, reset, or bypass duration, step, token, provider-call, or cost budgets;
 - historical replay reproduces the same snapshot for the declared valid time and system knowledge time;
 - future-effective versions never activate early, and unresolved coverage or transition states fail closed to review;
 - approaching effective dates with stale sources or incomplete impact review trigger an operational alert;
@@ -1751,6 +1839,7 @@ Exit evidence:
 - operation intents prove that retry and fallback cannot duplicate cost-bearing, consumer-impacting, or irreversible effects; unresolved outcomes block new effects pending reconciliation or authorized review;
 - production enablement and re-enablement enforce separated duties, two-person control, no self-approval, approval expiry, and optimistic activation versioning; emergency disable remains immediately available and attributable;
 - production routing remains disabled until tenant, provider, capability, adapter version, schema profile, product, jurisdiction, environment, artifact digest, and named approvers match the approved manifest;
+- provider certification and production approval reject every command class structurally excluded by Section 7.5; read-only lifecycle status integration cannot be promoted into funds movement, rate-lock, disclosure, decision, settlement, funding, servicing-payment, or capital-delivery authority;
 - provider-integration-ready and production-approved status are reported separately.
 
 ## 23. Risks and mitigation
@@ -1767,6 +1856,9 @@ Exit evidence:
 | A parent policy, new overlay, resolver, or fact-selector change misses a narrower binding | Validate a complete dependency key set and digest, including empty scopes and hierarchy generations, before every evaluation. |
 | Evaluation bypasses or races policy or evidence state | Make binding validation and immutable input-manifest creation internal application-service guards, use authoritative dependency vectors and hashes, execute in one consistency boundary, and reject mutable-latest reads. |
 | Readiness automation is mistaken for the full approval process | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority. |
+| Provider certification is misread as authority to move funds or perform another structurally excluded action | Enforce a permanent capability denylist across registries, manifests, routers, and Agent tools; require a replacement charter and separate activity-specific review before any boundary change. |
+| Routine-message policy is used to send a protected or legally consequential communication | Use deterministic classification, immutable template allowlists, exact-render human approval for protected content, and fail closed on uncertainty or render drift. |
+| Stale Agent state or concurrent work bypasses duration or cost limits | Enforce trusted absolute deadlines and atomic versioned budget reservations outside the graph; reserve unknown provider cost conservatively. |
 | Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
 | Timeout, retry, cancellation, or fallback duplicates a paid or consumer-impacting operation | Persist effect-classified intents before dispatch, preserve unknown outcomes, reconcile first, reauthorize fallback, and require review where safety is not proven. |
 | Simulator success hides production-provider behavior | Run the same contracts in authorized sandboxes, document parity gaps, certify provider-specific failures, and use controlled canaries with a kill switch. |
@@ -1861,6 +1953,9 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 15. Immutable evaluation input manifests and optimistic case-version writes.
 16. Effect-classified provider intents, unknown-outcome reconciliation, and authorization-bound fallback.
 17. Immutable provider promotion manifests with separated duties and dual production activation.
+18. Structural prohibition on funds movement, binding rate locks, formal decisions and notices, settlement, funding, servicing payments, and capital delivery.
+19. Deterministic routine-versus-protected communication authority with exact-render human approval.
+20. Trusted Agent deadlines and authoritative versioned budget ledgers and reservations.
 
 ## 29. Immediate next implementation slice
 
@@ -1903,5 +1998,6 @@ Technology choices are based on official project documentation and are revalidat
 - CFPB advisory opinion on consumer-specific permissible purpose: <https://www.consumerfinance.gov/rules-policy/final-rules/fair-credit-reporting-permissible-purposes-for-furnishing-using-and-obtaining-consumer-reports/>
 - IETF HTTPAPI Idempotency-Key draft: <https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header>
 - NIST SP 800-53 Rev. 5 separation-of-duties and dual-authorization controls: <https://doi.org/10.6028/NIST.SP.800-53r5>
+- FinCEN money-transmission definition and facts-and-circumstances guidance: <https://www.fincen.gov/resources/statutes-regulations/administrative-rulings/whether-company-provides-online-real-time>
 
 Technology references justify maturity and compatibility only. Regulatory references illustrate source versioning, effective-date, relevant-event, and federal/state interaction requirements; they are not legal interpretation, complete jurisdiction coverage, or proof that target capabilities are implemented.
