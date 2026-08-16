@@ -2469,3 +2469,75 @@ npx jest src/policy --no-coverage
 ### Next safe step
 
 Wire `PolicyVersion.dsl` to this parser/evaluator: a small service that loads a released `PolicyVersion` row, parses it once, and evaluates it against a fact context — the first real integration between the M3-001 schema and this slice's pure logic, and a necessary building block before the applicability resolver (Section 10.3) can select *which* version to load in the first place.
+
+## M3-003: Policy applicability resolver
+
+### Status
+
+Implemented and verified. A real, but deliberately simplified, implementation of Section 10.3's applicability resolver — closes the "bitemporal applicability resolver" portion of that M3 scope line (the "immutable case policy snapshots" portion is not yet built — this returns its result in-memory, nothing is persisted as a storable snapshot yet). First real consumer of both the M3-001 schema and the M3-002 DSL parser together.
+
+### Acceptance criterion
+
+Given a jurisdiction, product, lifecycle event, and a point in time, the platform must select every released, currently-effective policy version that applies — and fail closed to a distinct `REVIEW_REQUIRED` outcome (never silently guess) when jurisdiction coverage is missing/incomplete or when two released versions of the same rule are simultaneously effective, matching Section 10.3: "the system never asks the model to guess."
+
+### Implementation
+
+- `src/policy/policy-resolution.types.ts` — `PolicyResolutionContext` (jurisdiction/product/lifecycle-event/asOf — a simplified stand-in for Section 10.3's much larger interface), `ResolvedPolicyVersionRef`, `PolicyResolutionResult` (`RESOLVED` | `REVIEW_REQUIRED`, matching versions, unresolved reasons).
+- `src/policy/policy-applicability-resolver.service.ts` — `PolicyApplicabilityResolverService.resolve(context)`:
+  1. Looks up the jurisdiction; anything other than `COVERED` fails closed to `REVIEW_REQUIRED` (Section 10.6: "If declared jurisdiction coverage is incomplete ... validation stops and routes to review").
+  2. Finds `PolicyApplicability` rows matching jurisdiction/product/lifecycle-event exactly.
+  3. Filters to `PolicyVersion` rows that are `RELEASED` and whose `[effectiveFrom, effectiveTo)` window covers `asOf`.
+  4. Groups survivors by `ruleId`; more than one simultaneously-effective released version of the *same* rule is an unresolved precedence conflict — `REVIEW_REQUIRED`, not "pick the newest" (Section 10.3: "overlapping versions ... produces REVIEW_REQUIRED").
+  5. Otherwise `RESOLVED`, with each matched version's `dsl` parsed via M3-002's `parsePolicyRule` before being returned — a resolved reference always carries an already-validated rule, not raw jsonb.
+- `src/policy/policy.module.ts` — new `PolicyModule`, registers the five M3-001 entities via `TypeOrmModule.forFeature` and exports the resolver service; wired into `AppModule` directly (same pattern as `IntegrationsModule`/`AgentModule` — a module providing services with no controller of its own yet).
+- `src/policy/policy-applicability-resolver.service.spec.ts` — real-database integration tests (gated on `DATABASE_URL`, same convention as every other DB-backed suite): single match resolves correctly with a parsed rule; an unrelated lifecycle event resolves to zero matches without being `REVIEW_REQUIRED` (a real "no applicable rules" outcome is not a failure); future-`effectiveFrom`, past-`effectiveTo`, and `DRAFT` versions are all correctly excluded; two overlapping released versions of the same rule and an uncovered/partially-covered jurisdiction both fail closed to `REVIEW_REQUIRED`.
+
+### Affected files
+
+- `src/policy/policy-resolution.types.ts`, `policy-applicability-resolver.service.ts`, `policy.module.ts` (all new)
+- `src/policy/policy-applicability-resolver.service.spec.ts` (new)
+- `src/app.module.ts`
+
+### Decisions and alternatives
+
+- **Exact jurisdiction-code match only, no ancestry walk**: Section 10.1 describes jurisdiction ancestry (a case in `US-CA` should also pick up a `US`-level federal rule) as part of the full target resolver. Implementing that correctly needs the jurisdiction hierarchy to be walked and reasoned about per-rule, which is real additional scope on top of what this slice proves (the effective-window and overlap-detection logic). Recorded as a Known gap, not silently skipped — a resolver that only matches exact jurisdiction codes will under-match relative to the target design, never over-match, so it fails closed in the same spirit even while incomplete.
+- **In-memory result, no persisted `CasePolicySnapshot`**: Section 10.3's snapshot is immutable, storable, and referenced by later binding-validation logic (Section 10.4) — building persistence for it before anything needs to read a stored snapshot back would be speculative. This slice's `PolicyResolutionResult` is the right shape to eventually wrap in a persisted snapshot, not a dead end.
+- **Overlap detection groups by `ruleId`, not by applicability row**: two *different* rules both applying to the same case at once is normal and expected (Section 10.3's snapshot holds an array of versions) — the ambiguity that must fail closed is specifically two versions *of the same rule* disagreeing about which one is in effect right now.
+- **`PolicyApplicabilityResolverService` is a real `@Injectable()` NestJS service (DI, `@InjectRepository`), not a plain factory function**: unlike `case-conditions.activities.ts`'s activities (which deliberately avoid Nest DI because they run inside a Temporal worker with no DI container), this resolver has no such constraint yet — nothing in this slice runs it from inside a workflow/activity — so it follows the same DI pattern as `PlaidService`/`CasesService`. If a future slice needs to call it from an activity, that activity would receive it the same way `case-conditions.activities.ts` already receives `PlaidService` et al.: constructed once and passed in as a dependency, not re-architected.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  24 suites passed, 177 tests passed (23->24 suites, +1 new:
+  policy-applicability-resolver.service.spec.ts [8 tests]; net +8
+  tests over M3-002's 169)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed — confirms AppModule still boots
+     correctly with PolicyModule wired in (unaffected otherwise, no
+     REST/GraphQL surface added)
+
+Confirmed via direct query that the resolver spec's afterAll left no
+leftover jurisdiction/policy rows in the real dev database.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — `PolicyApplicabilityResolverService` has no REST/GraphQL entry point yet, reachable only via direct injection/construction (proven by the integration test).
+- No borrower or tenant data involved — same reasoning as M3-001.
+- No new dependency; no new cost.
+
+### Known gaps
+
+- No jurisdiction-ancestry walk (see Decisions) — a rule scoped to a parent jurisdiction (e.g. federal `US`) will not be picked up for a case in a child jurisdiction (e.g. `US-CA`) yet.
+- No grandfathering/transition-rule evaluation — `PolicyApplicability.transitionRule` and `PolicyVersion.supersedesVersionId` are persisted but nothing reads them to decide `CURRENT` vs `GRANDFATHERED` treatment for an open case (Section 10.3's `applicabilityDecision` field).
+- No dependency-generation fast-path validation (Section 10.4) — every call to `resolve()` does full resolution; there is no bounded "is my existing binding still valid" check yet, and therefore nothing to invalidate on policy activation either.
+- No persisted `CasePolicySnapshot` — the result is returned in-memory only, so nothing yet stores which snapshot a case's evaluation was bound to.
+- Still no connection to the M2 case-conditions workflow's `hasSyntheticDiscrepancy` (same gap carried from M3-001/M3-002).
+
+### Next safe step
+
+Two roughly-equal-sized options going into the next slice: (a) build the immutable `CasePolicySnapshot` persistence and the Section 10.4 binding-validation guard on top of this resolver, or (b) wire this resolver + the M3-002 evaluator into the M2 case-conditions workflow, replacing `hasSyntheticDiscrepancy` with a real policy-driven decision — the latter proves the whole M2-M3 integration end-to-end sooner and is probably higher-value before investing further in policy-internal machinery nothing outside this module exercises yet.

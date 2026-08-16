@@ -16,6 +16,7 @@ import { GqlThrottlerGuard } from './common/gql-throttler.guard';
 import { createTypeOrmOptions } from './database/typeorm-options.factory';
 import { TemporalModule } from './workflows/temporal.module';
 import { CasesModule } from './cases/cases.module';
+import { PolicyModule } from './policy/policy.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { CasesModule } from './cases/cases.module';
     HealthModule,
     TemporalModule,
     CasesModule,
+    PolicyModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })
