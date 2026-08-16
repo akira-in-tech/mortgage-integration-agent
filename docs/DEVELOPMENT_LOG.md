@@ -2413,3 +2413,59 @@ prior migration this session.
 ### Next safe step
 
 Policy DSL parser and validator: a pure, framework-agnostic module that turns the Section 10.7 YAML/JSON shape into a validated in-memory structure (schema, types, unit/reference checks) with golden tests — the next named M3 scope line, and a natural next step now that the schema exists to eventually persist validated output into.
+
+## M3-002: Policy DSL parser, validator, and evaluator
+
+### Status
+
+Implemented and verified with golden tests. Closes the "policy DSL parser, validator, evaluator, immutable versions, and golden tests" scope line's parser/validator/evaluator portion (immutable versions were already closed by M3-001's schema). Pure TypeScript, no database or Temporal dependency — fast, deterministic, framework-agnostic.
+
+### Acceptance criterion
+
+The platform must be able to parse the charter's own Section 10.7 example DSL document into a typed, validated structure — rejecting a malformed document with every problem listed at once, not just the first — and deterministically evaluate it against a fact context to the correct matched/not-matched outcome, including the same input always producing the same result (Section 20 M3 exit evidence: "repeated versioned inputs produce the same policy result").
+
+### Implementation
+
+- `src/policy/dsl/policy-rule.types.ts` — `PolicyRuleDocument`, `PolicyRuleApplicability`, `PolicyRuleCondition` (a discriminated union with one member so far, `DifferencePercentCondition` — matching the one operator the charter's DSL example actually shows; adding a second is an additive union member, not a rewrite), `PolicyFactContext`, `PolicyEvaluationOutcome`.
+- `src/policy/dsl/policy-rule-parser.ts` — `parsePolicyRule(raw: unknown): PolicyRuleDocument`. Validates and normalizes the DSL's snake_case source shape (`lifecycle_events`, `effective_from`, `greater_than`, etc.) into the camelCase internal type. Collects every validation issue before throwing `PolicyDslValidationError` (same "list every problem at once" discipline as `env.validation.ts`), rather than stopping at the first bad field.
+- `src/policy/dsl/policy-rule-evaluator.ts` — `evaluatePolicyRule(rule, context): PolicyEvaluationOutcome`. Resolves `left`/`right` fact paths (e.g. `"application.monthly_income"`) by plain object navigation, not `eval`/`Function()` — policy content is authored/reviewed data, not trusted code (Section 9.7's "no arbitrary... code execution" applies here too, not just to the Agent). Computes `difference_percent` as `abs(right - left) / abs(left) * 100`, matched when strictly greater than the rule's threshold.
+- `src/policy/dsl/policy-rule-parser.spec.ts`, `policy-rule-evaluator.spec.ts` — golden tests using the literal Section 10.7 example, plus malformed-input and edge-case coverage (missing/non-numeric facts, zero-denominator, exact-threshold boundary).
+
+### Affected files
+
+- `src/policy/dsl/policy-rule.types.ts`, `policy-rule-parser.ts`, `policy-rule-evaluator.ts` (all new)
+- `src/policy/dsl/policy-rule-parser.spec.ts`, `policy-rule-evaluator.spec.ts` (new)
+
+### Decisions and alternatives
+
+- **`difference_percent` uses absolute difference, not signed**: the charter's example (`left: application.monthly_income, right: evidence.verified_monthly_income, greater_than: 10`) doesn't specify the formula, and "the borrower's stated income differs from verified income" is a discrepancy worth reviewing whether they over- or under-stated it — a signed-only check would miss half the real cases this rule exists to catch. Recorded here as a judgment call, not implied by the charter text.
+- **Exactly one condition operator supported (`difference_percent`), modeled as a union rather than a hardcoded single shape**: the charter gives no second example to generalize from, so inventing more operators now would be speculative (violates "no abstractions beyond what's needed"). The union type and the parser's operator-key dispatch are the minimal honest shape of "a DSL with one operator today, room for a second tomorrow" — not a pre-built plugin registry with nothing plugged into it.
+- **Fact-path resolution by plain object navigation, not a real expression-evaluation library**: the DSL's `left`/`right` are simple dot-paths (`"application.monthly_income"`), not arbitrary expressions — a general expression engine would be more machinery than this shape needs, and would reopen exactly the "arbitrary code execution over untrusted content" risk Section 9.7 is written to close off.
+- **Missing or non-numeric facts, and a zero left-hand value, both resolve to `matched: false` with an explanatory reason, not a thrown error**: an inconclusive evaluation isn't the same failure mode as a malformed rule (which does throw, at parse time). Section 10.8's "fails closed" spirit means an ambiguous evaluation should not silently match and create a condition — returning a non-match with a clear reason keeps the caller (a future policy-evaluation service) able to distinguish "this case doesn't need the condition" from "this rule couldn't be evaluated," which is a real distinction the not-yet-built resolver will need.
+- **This slice evaluates one rule in isolation — no resolver, no snapshot, no binding guard**: Section 10.3's applicability resolver (selecting *which* released rule(s) apply to a case) is separate, larger scope with its own bitemporal and dependency-generation machinery; building it before the DSL it resolves against actually exists and is testable would be the wrong order.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+npx jest src/policy --no-coverage
+  2 suites passed, 16 tests passed (parser: 9, evaluator: 7)
+  No database or Temporal dependency — pure unit tests, always run.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — this module has no REST/GraphQL entry point yet.
+- Deliberately avoids `eval`/`Function()`/any dynamic-code-execution path for evaluating policy content, since policy rules may eventually be authored or ingested from less-trusted sources (Section 10.6's future connectors) — the fact-path-navigation design means a malicious or malformed rule string can produce a validation error or a non-match, never code execution.
+- No new dependency; no new cost.
+
+### Known gaps
+
+- No connection to `PolicyVersion.dsl` yet — nothing reads a persisted `PolicyVersion` row, parses its `dsl` jsonb, and evaluates it; this module works against a raw object handed to it directly, proven only by the golden tests' inline fixtures.
+- No applicability resolver (Section 10.3), so nothing yet selects which policy version(s) apply to a given case.
+- No connection to the M2 case-conditions workflow's `hasSyntheticDiscrepancy` — that hardcoded rule remains unreplaced (same gap noted in M3-001).
+- Only one condition operator exists; the charter's own policy invariants (Section 10.8: "units, money, ratios, dates, and rounding behavior are explicit") imply richer operators will eventually be needed (e.g. absolute thresholds, ratio comparisons) — not built until a real second example motivates them.
+
+### Next safe step
+
+Wire `PolicyVersion.dsl` to this parser/evaluator: a small service that loads a released `PolicyVersion` row, parses it once, and evaluates it against a fact context — the first real integration between the M3-001 schema and this slice's pure logic, and a necessary building block before the applicability resolver (Section 10.3) can select *which* version to load in the first place.
