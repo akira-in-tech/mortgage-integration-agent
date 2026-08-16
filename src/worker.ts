@@ -6,6 +6,7 @@ import { WorkerModule } from './worker.module';
 import { PlaidService } from './integrations/plaid/plaid.service';
 import { CreditService } from './integrations/credit/credit.service';
 import { DocumentService } from './integrations/document/document.service';
+import { PolicyApplicabilityResolverService } from './policy/policy-applicability-resolver.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 
@@ -21,6 +22,7 @@ async function bootstrap(): Promise<void> {
     plaidService: appContext.get(PlaidService),
     creditService: appContext.get(CreditService),
     documentService: appContext.get(DocumentService),
+    policyResolver: appContext.get(PolicyApplicabilityResolverService),
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',

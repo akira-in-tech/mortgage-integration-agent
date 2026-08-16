@@ -17,13 +17,21 @@ import {
 } from '../database/entities/evidence-fact.entity';
 import { LoanApplication } from '../database/entities/loan-application.entity';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
+import { Jurisdiction } from '../database/entities/jurisdiction.entity';
+import { PolicySource } from '../database/entities/policy-source.entity';
+import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
+import { PolicyVersion } from '../database/entities/policy-version.entity';
+import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
+import {
+  JurisdictionLevel,
+  JurisdictionCoverageStatus,
+} from '../database/enums/jurisdiction.enum';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
-import { CreditBureauData } from '../integrations/credit/credit.types';
-import { DocumentVerificationResult } from '../integrations/document/document.types';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
+import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -34,34 +42,23 @@ const describeOrSkip = DATABASE_URL ? describe : describe.skip;
 
 const OUTBOX_SIGNING_SECRET = 'activities-spec-signing-secret-32-chars';
 
+// Matches the SeedIncomeDiscrepancyPolicy migration's seeded rule exactly
+// (jurisdiction, product, lifecycle event) — this suite relies on that
+// migration having run against DATABASE_URL, the same way it already
+// relies on the schema migrations having run.
+const SEEDED_JURISDICTION_CODE = 'US-CA';
+const NOT_COVERED_JURISDICTION_CODE = 'US-ZZ-ACTSPEC';
+
 const GOOD_INCOME: PlaidIncomeData = {
   monthlyIncome: 9000,
   employmentStatus: 'FULL_TIME',
   bankAccountAge: 48,
   incomeStability: 88,
 };
-const CLEAN_CREDIT: CreditBureauData = {
-  creditScore: 760,
-  debtToIncomeRatio: 0.3,
-  paymentHistory: 'EXCELLENT',
-  openAccounts: 4,
-  derogatoryMarks: 0,
-};
-const DISCREPANT_CREDIT: CreditBureauData = {
-  ...CLEAN_CREDIT,
-  derogatoryMarks: 2,
-};
-const VALID_DOCS: DocumentVerificationResult = {
-  w2Valid: true,
-  payStubValid: true,
-  bankStatementValid: true,
-  taxReturnValid: true,
-  allDocumentsValid: true,
-  failedDocuments: [],
-};
 
 describeOrSkip('createCaseConditionsActivities', () => {
   let dataSource: DataSource;
+  let policyResolver: PolicyApplicabilityResolverService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -78,9 +75,20 @@ describeOrSkip('createCaseConditionsActivities', () => {
         EvidenceFact,
         LoanApplication,
         OutboxEvent,
+        Jurisdiction,
+        PolicySource,
+        PolicySourceRevision,
+        PolicyVersion,
+        PolicyApplicability,
       ],
     });
     await dataSource.initialize();
+
+    policyResolver = new PolicyApplicabilityResolverService(
+      dataSource.getRepository(Jurisdiction),
+      dataSource.getRepository(PolicyApplicability),
+      dataSource.getRepository(PolicyVersion),
+    );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
     const creditService = { getCreditData: jest.fn() } as any;
@@ -90,6 +98,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService,
       documentService,
+      policyResolver,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -101,6 +110,19 @@ describeOrSkip('createCaseConditionsActivities', () => {
           .create({ name: 'Activities Spec Tenant' }),
       );
     tenantId = tenant.id;
+
+    // A real, catalogued jurisdiction that simply hasn't been reviewed for
+    // coverage yet — a case CAN legally reference it (the FK just requires
+    // the jurisdiction to exist), but the resolver must still fail closed
+    // rather than treat "exists but not COVERED" as good enough.
+    await dataSource.getRepository(Jurisdiction).save(
+      dataSource.getRepository(Jurisdiction).create({
+        code: NOT_COVERED_JURISDICTION_CODE,
+        level: JurisdictionLevel.STATE,
+        name: 'Not-yet-covered (activities spec)',
+        coverageStatus: JurisdictionCoverageStatus.NOT_COVERED,
+      }),
+    );
   }, 30_000);
 
   afterAll(async () => {
@@ -124,11 +146,18 @@ describeOrSkip('createCaseConditionsActivities', () => {
         await caseRepo.delete(caseIds);
       }
       await dataSource.getRepository(Tenant).delete({ id: tenantId });
+      // After every case referencing it is gone (RESTRICT FK).
+      await dataSource
+        .getRepository(Jurisdiction)
+        .delete({ code: NOT_COVERED_JURISDICTION_CODE });
       await dataSource.destroy();
     }
   }, 30_000);
 
-  async function makeCase(): Promise<string> {
+  async function makeCase(overrides: {
+    statedMonthlyIncome: number;
+    jurisdictionCode?: string;
+  }): Promise<string> {
     const caseRepo = dataSource.getRepository(LoanCase);
     const loanCase = await caseRepo.save(
       caseRepo.create({
@@ -137,6 +166,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
         borrowerId: 'activities-spec-borrower',
         requestedAmount: 300_000,
         loanType: LoanType.CONVENTIONAL,
+        statedMonthlyIncome: overrides.statedMonthlyIncome,
+        jurisdictionCode:
+          overrides.jurisdictionCode ?? SEEDED_JURISDICTION_CODE,
         status: CaseStatus.DRAFT,
       }),
     );
@@ -151,7 +183,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   }
 
   it('markCollectingEvidence sets the case status and writes a signed workflow_run.started event', async () => {
-    const caseId = await makeCase();
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
     await activities.markCollectingEvidence({ tenantId, caseId });
 
     const updated = await dataSource
@@ -184,7 +216,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   });
 
   it('fetchIncomeEvidence persists an INCOME evidence fact, returns the simulator data, and writes an evidence.updated event', async () => {
-    const caseId = await makeCase();
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
     const plaidService = {
       getIncomeData: jest.fn().mockResolvedValue(GOOD_INCOME),
     } as any;
@@ -193,6 +225,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService: { getCreditData: jest.fn() } as any,
       documentService: { verifyDocuments: jest.fn() } as any,
+      policyResolver,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -220,18 +253,18 @@ describeOrSkip('createCaseConditionsActivities', () => {
     });
   });
 
-  it('evaluateConditions with clean data marks the case ready, opens no condition, and writes workflow_run.completed', async () => {
-    const caseId = await makeCase();
+  it('evaluateConditions with no income discrepancy marks the case ready and writes workflow_run.completed', async () => {
+    // statedMonthlyIncome === verified income -> 0% difference, well under
+    // the seeded rule's 10% threshold.
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
 
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
       income: GOOD_INCOME,
-      credit: CLEAN_CREDIT,
-      documents: VALID_DOCS,
     });
 
-    expect(result).toEqual({ hasOpenCondition: false });
+    expect(result).toEqual({ outcome: 'READY' });
     const updated = await dataSource
       .getRepository(LoanCase)
       .findOneByOrFail({ id: caseId });
@@ -250,18 +283,18 @@ describeOrSkip('createCaseConditionsActivities', () => {
     });
   });
 
-  it('evaluateConditions with a discrepancy opens a condition, sets CONDITIONS_OPEN, and writes condition.opened + workflow_run.waiting_for_review atomically', async () => {
-    const caseId = await makeCase();
+  it('evaluateConditions with an income discrepancy opens a condition from the resolved rule and writes condition.opened + workflow_run.waiting_for_review atomically', async () => {
+    // statedMonthlyIncome=12000 vs verified 9000 -> 25% difference, over
+    // the seeded rule's 10% threshold.
+    const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
 
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
       income: GOOD_INCOME,
-      credit: DISCREPANT_CREDIT,
-      documents: VALID_DOCS,
     });
 
-    expect(result.hasOpenCondition).toBe(true);
+    expect(result.outcome).toBe('CONDITION_OPENED');
     expect(result.conditionId).toBeDefined();
 
     const updated = await dataSource
@@ -273,8 +306,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
       .getRepository(LoanCondition)
       .findOneByOrFail({ id: result.conditionId });
     expect(condition.status).toBe(ConditionStatus.OPEN);
-    expect(condition.code).toBe('SYNTHETIC_DISCREPANCY_REVIEW');
-    expect(condition.description).toContain('derogatory mark');
+    // Code comes from the resolved policy rule's own outcome, not a
+    // hardcoded string — this is the seeded Section 10.7 example rule.
+    expect(condition.code).toBe('VERIFY_INCOME_DISCREPANCY');
+    expect(condition.description).toContain('difference_percent');
 
     const events = await outboxEventsFor(caseId);
     expect(events.map((e) => e.eventType)).toEqual([
@@ -284,17 +319,41 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(events[0].payload).toMatchObject({
       caseId,
       conditionId: result.conditionId,
+      ruleId: 'synthetic-income-discrepancy-review',
     });
   });
 
+  it('evaluateConditions routes to REVIEW_REQUIRED when the jurisdiction exists but is not COVERED', async () => {
+    const caseId = await makeCase({
+      statedMonthlyIncome: 9000,
+      jurisdictionCode: NOT_COVERED_JURISDICTION_CODE,
+    });
+
+    const result = await activities.evaluateConditions({
+      tenantId,
+      caseId,
+      income: GOOD_INCOME,
+    });
+
+    expect(result.outcome).toBe('REVIEW_REQUIRED');
+    expect(result.reviewReason).toContain(NOT_COVERED_JURISDICTION_CODE);
+
+    const updated = await dataSource
+      .getRepository(LoanCase)
+      .findOneByOrFail({ id: caseId });
+    // evaluateConditions itself does not write case state for
+    // REVIEW_REQUIRED — the workflow calls markManualReview separately
+    // (case-conditions.workflow.ts), so status is still whatever it was
+    // before this call.
+    expect(updated.status).toBe(CaseStatus.DRAFT);
+  });
+
   it('resolveCondition updates the condition, records an attributed transition, and writes condition.satisfied or condition.waived', async () => {
-    const caseId = await makeCase();
+    const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
     const { conditionId } = await activities.evaluateConditions({
       tenantId,
       caseId,
       income: GOOD_INCOME,
-      credit: DISCREPANT_CREDIT,
-      documents: VALID_DOCS,
     });
 
     await activities.resolveCondition({
@@ -336,7 +395,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   });
 
   it('markReadyForUnderwriting sets the case status and writes workflow_run.completed', async () => {
-    const caseId = await makeCase();
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
     await activities.markReadyForUnderwriting({ tenantId, caseId });
 
     const updated = await dataSource
@@ -350,7 +409,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   });
 
   it('markManualReview sets the case status and writes a workflow_run.failed event with the given reason', async () => {
-    const caseId = await makeCase();
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
     await activities.markManualReview({
       tenantId,
       caseId,
@@ -385,12 +444,13 @@ describeOrSkip('createCaseConditionsActivities', () => {
         plaidService: new PlaidService(),
         creditService: new CreditService(),
         documentService: new DocumentService(),
+        policyResolver,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
 
     it('classifies a synthetic transient provider failure as retryable', async () => {
-      const caseId = await makeCase();
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
       await expect(
         realActivities.fetchIncomeEvidence({
           tenantId,
@@ -412,7 +472,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     });
 
     it('classifies a synthetic terminal provider failure as non-retryable', async () => {
-      const caseId = await makeCase();
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
       await expect(
         realActivities.fetchCreditEvidence({
           tenantId,
@@ -426,7 +486,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     });
 
     it('leaves an unrecognized error unclassified (propagated as-is)', async () => {
-      const caseId = await makeCase();
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
       const brokenPlaid = {
         getIncomeData: jest.fn().mockRejectedValue(new Error('unrelated bug')),
       } as any;
@@ -435,6 +495,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         plaidService: brokenPlaid,
         creditService: new CreditService(),
         documentService: new DocumentService(),
+        policyResolver,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

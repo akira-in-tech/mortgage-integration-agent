@@ -13,4 +13,12 @@ export class CreateCaseDto {
 
   @IsEnum(LoanType)
   loanType!: LoanType;
+
+  /** Borrower-declared monthly income (Section 10.7's `application.monthly_income`). */
+  @IsPositive()
+  statedMonthlyIncome!: number;
+
+  /** Governing jurisdiction code, e.g. "US-CA" — must exist in the jurisdiction catalog. */
+  @Length(1, 20)
+  jurisdictionCode!: string;
 }

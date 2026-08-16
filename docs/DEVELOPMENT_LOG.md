@@ -2541,3 +2541,114 @@ leftover jurisdiction/policy rows in the real dev database.
 ### Next safe step
 
 Two roughly-equal-sized options going into the next slice: (a) build the immutable `CasePolicySnapshot` persistence and the Section 10.4 binding-validation guard on top of this resolver, or (b) wire this resolver + the M3-002 evaluator into the M2 case-conditions workflow, replacing `hasSyntheticDiscrepancy` with a real policy-driven decision — the latter proves the whole M2-M3 integration end-to-end sooner and is probably higher-value before investing further in policy-internal machinery nothing outside this module exercises yet.
+
+## M3-004: Wire the policy engine into the M2 workflow, replacing the synthetic discrepancy rule
+
+### Status
+
+Implemented and verified, including a full hands-on run through the real REST API and a real worker: a case with a genuine income discrepancy opened a condition whose code, description, and reasoning trace all came from the charter's own Section 10.7 example rule (not a hardcoded string); a case with matching stated/verified income went straight to `READY_FOR_UNDERWRITING`; an unrecognized jurisdiction was rejected by the REST layer before ever reaching the workflow. Chosen directly by the user over the recommended alternative (persisting `CasePolicySnapshot`/binding-guard machinery before anything outside the policy module used it) — real user direction: "design should match the charter, and match reality," i.e. make the M2 workflow actually run on the charter's own canonical policy example rather than continuing to defer that integration.
+
+### Acceptance criterion
+
+The M2 case-conditions workflow's decision to open a condition must be made by the M3 policy engine (resolver + evaluator), not the M2-launch `hasSyntheticDiscrepancy` stand-in — using the charter's own Section 10.7 example rule as real, seeded, evaluable policy content, reachable end-to-end from a real REST request through a real Temporal worker.
+
+### Problem (carried over from M3-003's status update)
+
+The charter's own canonical DSL example (Section 10.7) compares a borrower's *stated* income against *verified* income — a fact pair that didn't exist anywhere in the M2 schema (`LoanCase` had no stated-income field, and no jurisdiction concept at all). `hasSyntheticDiscrepancy`'s actual gate was credit/document thresholds, unrelated to the charter's own flagship example. Wiring the two together honestly required adding real schema, not reshaping the DSL example to fit what already existed.
+
+### Implementation
+
+- `src/database/entities/loan-case.entity.ts` — two new columns: `statedMonthlyIncome` (decimal, the borrower's declared figure — Section 10.7's `application.monthly_income`) and `jurisdictionCode` (varchar, FK to `jurisdictions.code`, `RESTRICT`). A real mortgage application collects both; this schema had neither.
+- `src/database/migrations/1786910916794-LoanCaseIncomeAndJurisdiction.ts` — the schema migration (generated, verified apply/revert against a scratch database, same discipline as every prior migration).
+- `src/database/migrations/1786910931703-SeedIncomeDiscrepancyPolicy.ts` — a hand-written **data** migration (not generated — no entity diff produces seed rows) inserting: `US` (FEDERAL) and `US-CA` (STATE, child of `US`, both `COVERED`); a `SYNTHETIC` policy source scoped to `US-CA`; a source revision; a `RELEASED` `PolicyVersion` carrying the Section 10.7 DSL verbatim except for one deliberate change (see Decisions); and its `PolicyApplicability` row (`US-CA` / `CONVENTIONAL_MORTGAGE` / `UNDERWRITING_REVIEW`). Reproducible and revertible the same way schema migrations already are — Section 10.6 frames exactly this ("curated synthetic policy sources") as real, shippable reference data, not a one-off script.
+- `src/policy/product-code.ts` — `loanTypeToProductCode`: explicit mapping from M2's `LoanType` enum (`"CONVENTIONAL"`) to the DSL's product vocabulary (`"CONVENTIONAL_MORTGAGE"`, Section 10.7's own literal) — the two are the same concept in different namespaces, not the same string, so the mapping is a named function, not an assumption.
+- `src/workflows/case-conditions.activities.ts` — `evaluateConditions` rewritten: loads the case's `jurisdictionCode`/`loanType`/`statedMonthlyIncome`, calls `PolicyApplicabilityResolverService.resolve(...)`, builds a `PolicyFactContext` from `statedMonthlyIncome` and the fetched `income.monthlyIncome`, evaluates every resolved version, and opens a condition using the **matched rule's own** `outcome.condition` as the code and the evaluator's own reason string as the description — never a hardcoded string, unlike the old `'SYNTHETIC_DISCREPANCY_REVIEW'`. A `REVIEW_REQUIRED` resolution returns that outcome directly rather than writing case state itself (the caller — the workflow — decides what to do with it). `hasSyntheticDiscrepancy` and its credit/document-threshold logic are deleted, not kept as a fallback.
+- `src/workflows/case-conditions.workflow.ts` — `evaluateConditions`'s result is now a 3-way `outcome` (`'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED'`) instead of a `hasOpenCondition` boolean. `REVIEW_REQUIRED` calls `markManualReview` (M2-007's escape hatch, now with a second real trigger besides retry exhaustion) and returns `MANUAL_REVIEW` — deliberately *not* the durable-wait/condition flow, since an unresolved policy binding is a system-level ambiguity, not a specific resolvable business condition. Credit and document evidence are still fetched and recorded (audit value), just no longer consulted by the decision itself.
+- `src/cases/dto/create-case.dto.ts`, `cases.service.ts`, `cases.module.ts` — `CreateCaseDto` gains `statedMonthlyIncome`/`jurisdictionCode`; `CasesService.createCase` validates the jurisdiction exists (404, not a raw FK-violation 500) before attempting the insert, and persists both fields transactionally with the rest of the case row (unchanged transactional-outbox pattern from M2-006).
+- `src/worker.module.ts`, `worker.ts` — the worker process now also resolves `PolicyApplicabilityResolverService` via `PolicyModule` and passes it into the activities factory, the same established pattern as `PlaidService` et al. (M3-003's own stated design, now actually used).
+- Test updates across `case-conditions.activities.spec.ts`, `case-conditions.workflow.spec.ts`, `cases.service.spec.ts`, `test/cases.e2e-spec.ts`, `schema-migrations.spec.ts`, and `database/entities/policy-schema.spec.ts` (the last two needed fixing only because the new seed data now permanently occupies the `synthetic-income-discrepancy-review` / `1.0.0` identity and the `US-CA`/varchar(20) space their fixtures previously assumed were free — see Failures below).
+
+### Failures and resolution
+
+- **Leftover test debris found in the real dev database before this slice's schema migration could safely add `NOT NULL` columns**: `loan_cases` had 6 orphaned rows from an "Activities Spec Tenant" whose `afterAll` cleanup apparently didn't complete on some earlier run this session (evidence/outbox rows for it were already gone, case/tenant rows were not — consistent with a run that was interrupted partway through cleanup, e.g. a killed docker-compose stack, rather than a code defect in the cleanup logic itself). Cleaned up manually before proceeding; not otherwise investigated further since it's an artifact of this session's own iteration, not a reproducible bug.
+- **The new `LoanCase.jurisdictionCode` FK made one already-written test unrunnable as designed**: a test meant to prove `PolicyApplicabilityResolverService` fails closed for "jurisdiction has no coverage" tried to create a `LoanCase` referencing a jurisdiction code that was never seeded — but the new FK constraint (added in this same slice) now makes that impossible; a case can only ever reference a jurisdiction that already exists in the catalog. Fixed by seeding a real jurisdiction row with `coverageStatus: NOT_COVERED` instead of using a nonexistent code — a more realistic scenario anyway (a jurisdiction can be catalogued but not yet reviewed for coverage), and one the FK constraint does *not* prevent.
+- **Two existing test fixtures collided with the newly-seeded permanent data**: `database/entities/policy-schema.spec.ts` used the exact `ruleId`/`version` pair (`synthetic-income-discrepancy-review` / `1.0.0`) the seed migration now permanently owns, hitting `UQ_policy_versions_rule_version`; a resolver test's synthetic jurisdiction code exceeded the (real, correct) `varchar(20)` limit once lengthened to avoid an unrelated collision. Both are test-identity conflicts introduced by this slice's own seed data, not defects in the schema — renamed the test fixtures to be obviously test-scoped and within the real column-length constraint.
+
+### Affected files
+
+- `src/database/entities/loan-case.entity.ts`
+- `src/database/migrations/1786910916794-LoanCaseIncomeAndJurisdiction.ts`, `1786910931703-SeedIncomeDiscrepancyPolicy.ts` (new); `schema-migrations.spec.ts`
+- `src/database/entities/policy-schema.spec.ts` (test-fixture rename only)
+- `src/policy/product-code.ts` (new)
+- `src/workflows/case-conditions.activities.ts`, `case-conditions.activities.spec.ts`
+- `src/workflows/case-conditions.workflow.ts`, `case-conditions.workflow.spec.ts`
+- `src/cases/dto/create-case.dto.ts`, `cases.service.ts`, `cases.service.spec.ts`, `cases.module.ts`
+- `src/worker.module.ts`, `worker.ts`
+- `test/cases.e2e-spec.ts`
+- `README.md`
+
+### Decisions and alternatives
+
+- **Seeded `effective_from` is 2025-01-01, not the charter's literal 2027-01-01**: Section 10.7's own example is dated in what is, relative to this project's actual timeline, the future. Seeding that exact date would make the rule correctly-modeled but permanently inert in the running system until 2027 — nothing could ever prove the wiring works end-to-end against a live `asOf = now()` evaluation. The DSL's operator, fact paths, and 10% threshold are otherwise identical to the charter's text; only the date was adjusted, and why is recorded in the migration file's own comment, not left for a future reader to puzzle out.
+- **`hasSyntheticDiscrepancy` deleted outright, not kept as a fallback or a second policy rule**: it was always documented (M2-004) as "a deliberately simple, deterministic stand-in for the real policy engine that M3 introduces" — keeping it running in parallel once that engine exists would mean two independent, potentially-disagreeing sources of truth for the same decision. Its credit/document-threshold logic could return later as its own DSL rule (the resolver already supports multiple simultaneously-applicable rules), but that's new work with its own DSL operators, not a reason to keep the old hardcoded path alive today.
+- **`REVIEW_REQUIRED` routes to `MANUAL_REVIEW`, not the `CONDITIONS_OPEN`/durable-wait flow**: the DSL's own `outcome.route: "MANUAL_REVIEW"` field could be read as directly selecting a `CaseStatus`, but `outcome.condition` also exists and is what M2's proven, tested `LoanCondition`/`resolveCondition`-signal flow already expects for "a specific resolvable business condition was found." Reserving `MANUAL_REVIEW` for cases where the *system* can't determine applicable policy (no coverage, overlapping versions) — as opposed to a condition the *policy itself* identified — keeps the two failure modes distinguishable, matching how M2-007 already used `MANUAL_REVIEW` for a different system-level failure (exhausted activity retries). This is an interpretation choice the charter doesn't fully specify; recorded here as a judgment call, not an obvious reading.
+- **Jurisdiction validated in `CasesService` before the transaction, not left to the FK to reject**: an FK-violation surfaces as a generic Postgres error that would otherwise need its own error-code detection (like the existing unique-violation handling) to turn into a clean 404 — validating up front is simpler and gives a clearer error message (`"Jurisdiction {code} not found"` vs. a raw constraint-name string).
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  24 suites passed, 182 tests passed (net +5 over M3-003's 177, no new
+  suites: jurisdiction-not-found and REVIEW_REQUIRED coverage added to
+  cases.service.spec.ts and case-conditions.activities.spec.ts, plus a
+  REVIEW_REQUIRED-routes-to-MANUAL_REVIEW test added to
+  case-conditions.workflow.spec.ts)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed
+
+Manual end-to-end proof (real API + real worker process, scratchpad
+Temporal + the real dev Postgres database):
+  1. POSTed a case with statedMonthlyIncome=25000 for a borrowerId whose
+     deterministic simulated Plaid income is 20023 (19.91% difference,
+     over the seeded rule's 10% threshold) and jurisdictionCode=US-CA.
+     Started its workflow; the real worker resolved the seeded policy,
+     evaluated it, and opened a condition with code
+     VERIFY_INCOME_DISCREPANCY and description
+     "difference_percent(application.monthly_income=25000,
+     evidence.verified_monthly_income=20023) = 19.91% > 10%" — both
+     values traced directly to the resolved rule, not hardcoded.
+     Confirmed the condition.opened outbox event's payload references
+     the real policyVersionId/ruleId. case status: CONDITIONS_OPEN.
+  2. POSTed a resolution (SATISFIED) -> case status:
+     READY_FOR_UNDERWRITING.
+  3. POSTed a second case for the same borrower with
+     statedMonthlyIncome=20023 (0% difference) -> workflow completed
+     straight through with zero conditions opened, case status:
+     READY_FOR_UNDERWRITING directly.
+  4. POSTed a case with an unrecognized jurisdictionCode -> 404 from
+     the REST layer, confirming the case was never created and the
+     workflow was never reachable for it.
+  5. Independently re-verified every outbox event's signature from
+     both cases against what Postgres actually stored — all valid.
+  Cleaned up synthetic tenant/case/outbox rows, both processes, and
+  the scratchpad Temporal stack afterward.
+```
+
+### Security, privacy, cost, and compatibility
+
+- `statedMonthlyIncome` is borrower-provided financial data, stored in plaintext on `loan_cases` — same treatment (and same gap) already noted for outbox payloads in M2-006: acceptable for synthetic data with no deployment target, revisit before any real exposure.
+- Jurisdiction validation closes a real gap that would otherwise have surfaced as an unhandled 500 on a foreign-key violation — a small but genuine hardening, not just a schema formality.
+- No new dependency; no new cost.
+
+### Known gaps
+
+- Credit/document-based conditions (the old `hasSyntheticDiscrepancy` behavior) have no policy-rule equivalent yet — a case with severe derogatory marks or invalid documents but *matching* income no longer opens any condition. This is a real, deliberate scope reduction (see Decisions), not an oversight, but worth flagging plainly: this slice narrows what M2's workflow catches until credit/document rules exist as their own DSL content.
+- Still no `CasePolicySnapshot` persistence, binding-validation guard, or dependency-generation invalidation (M3-003's carried-forward gaps) — this slice proved the resolver and evaluator work correctly *in* the workflow, it didn't add the bitemporal machinery around them.
+- The seed migration's policy content lives only in `US-CA` — a case in any other jurisdiction (even a covered one, if seeded later) has no applicable rule and always completes straight through, which is a true "no matching policy" `RESOLVED` outcome, not a bug, but worth knowing when testing with other jurisdiction codes.
+
+### Next safe step
+
+Ask whether to continue toward `CasePolicySnapshot`/binding-guard persistence (Section 10.4) next, or pivot to the `AgentRuntime` port and LangGraph.js v1 adapter (Section 9) — both are substantial, independent pieces of M3's remaining scope, and this integration slice was the natural forcing function for the policy side; the Agent side hasn't been started at all yet.

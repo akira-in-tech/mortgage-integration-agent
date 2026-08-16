@@ -127,7 +127,7 @@ describeOrSkip('Policy schema (M3-001)', () => {
     // The literal Section 10.7 example, persisted as the immutable DSL blob.
     const dsl = {
       rule: {
-        id: 'synthetic-income-discrepancy-review',
+        id: 'm3-001-schema-test-income-discrepancy-review',
         version: '1.0.0',
         applicability: {
           jurisdictions: ['US-CA'],
@@ -153,7 +153,7 @@ describeOrSkip('Policy schema (M3-001)', () => {
     const versionRepo = dataSource.getRepository(PolicyVersion);
     const version = await versionRepo.save(
       versionRepo.create({
-        ruleId: 'synthetic-income-discrepancy-review',
+        ruleId: 'm3-001-schema-test-income-discrepancy-review',
         version: '1.0.0',
         sourceRevisionId: revision.id,
         dsl,
@@ -207,7 +207,7 @@ describeOrSkip('Policy schema (M3-001)', () => {
     await expect(
       versionRepo.save(
         versionRepo.create({
-          ruleId: 'synthetic-income-discrepancy-review',
+          ruleId: 'm3-001-schema-test-income-discrepancy-review',
           version: '1.0.0',
           sourceRevisionId: revision.id,
           dsl,

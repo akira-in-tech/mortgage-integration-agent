@@ -5,6 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 import { WorkflowNotFoundError } from '@temporalio/client';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
+import { Jurisdiction } from '../database/entities/jurisdiction.entity';
 import { TemporalClientService } from '../workflows/temporal-client.service';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
@@ -42,6 +43,8 @@ export class CasesService {
     private readonly caseRepository: Repository<LoanCase>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
+    @InjectRepository(Jurisdiction)
+    private readonly jurisdictionRepository: Repository<Jurisdiction>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly temporalClient: TemporalClientService,
@@ -63,6 +66,15 @@ export class CasesService {
     const tenant = await this.tenantRepository.findOneBy({ id: dto.tenantId });
     if (!tenant) {
       throw new NotFoundException(`Tenant ${dto.tenantId} not found`);
+    }
+
+    const jurisdiction = await this.jurisdictionRepository.findOneBy({
+      code: dto.jurisdictionCode,
+    });
+    if (!jurisdiction) {
+      throw new NotFoundException(
+        `Jurisdiction ${dto.jurisdictionCode} not found`,
+      );
     }
 
     const existing = await this.caseRepository.findOneBy({
@@ -88,6 +100,8 @@ export class CasesService {
             borrowerId: dto.borrowerId,
             requestedAmount: dto.requestedAmount,
             loanType: dto.loanType,
+            statedMonthlyIncome: dto.statedMonthlyIncome,
+            jurisdictionCode: dto.jurisdictionCode,
             status: CaseStatus.DRAFT,
           }),
         );
@@ -100,6 +114,8 @@ export class CasesService {
             borrowerId: dto.borrowerId,
             requestedAmount: dto.requestedAmount,
             loanType: dto.loanType,
+            statedMonthlyIncome: dto.statedMonthlyIncome,
+            jurisdictionCode: dto.jurisdictionCode,
           },
         });
         return loanCase;

@@ -46,9 +46,7 @@ function makeMockActivities(
       allDocumentsValid: true,
       failedDocuments: [],
     }),
-    evaluateConditions: jest
-      .fn()
-      .mockResolvedValue({ hasOpenCondition: false }),
+    evaluateConditions: jest.fn().mockResolvedValue({ outcome: 'READY' }),
     resolveCondition: jest.fn().mockResolvedValue(undefined),
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
     markManualReview: jest.fn().mockResolvedValue(undefined),
@@ -120,7 +118,7 @@ describeOrSkip('caseConditionsWorkflow', () => {
   it('durably waits for resolveCondition, then completes', async () => {
     const activities = makeMockActivities({
       evaluateConditions: jest.fn().mockResolvedValue({
-        hasOpenCondition: true,
+        outcome: 'CONDITION_OPENED',
         conditionId: 'condition-1',
       }),
     });
@@ -169,7 +167,7 @@ describeOrSkip('caseConditionsWorkflow', () => {
   it('loses no acknowledged work across a worker restart while durably waiting', async () => {
     const activities = makeMockActivities({
       evaluateConditions: jest.fn().mockResolvedValue({
-        hasOpenCondition: true,
+        outcome: 'CONDITION_OPENED',
         conditionId: 'condition-2',
       }),
     });
@@ -222,7 +220,7 @@ describeOrSkip('caseConditionsWorkflow', () => {
   it('rejects a duplicate signal payload without creating a duplicate resolution', async () => {
     const activities = makeMockActivities({
       evaluateConditions: jest.fn().mockResolvedValue({
-        hasOpenCondition: true,
+        outcome: 'CONDITION_OPENED',
         conditionId: 'condition-3',
       }),
     });
@@ -259,6 +257,37 @@ describeOrSkip('caseConditionsWorkflow', () => {
     });
     expect(activities.resolveCondition).toHaveBeenCalledTimes(1);
     expect(activities.markReadyForUnderwriting).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes to MANUAL_REVIEW when evaluateConditions cannot resolve policy applicability', async () => {
+    const activities = makeMockActivities({
+      evaluateConditions: jest.fn().mockResolvedValue({
+        outcome: 'REVIEW_REQUIRED',
+        reviewReason:
+          'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+      }),
+    });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, () =>
+      env.client.workflow.execute(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      }),
+    );
+
+    expect(result).toEqual({ finalStatus: CaseStatus.MANUAL_REVIEW });
+    expect(activities.markManualReview).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      caseId: 'case-1',
+      reason: 'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+    });
+    // Unresolved policy applicability is not a specific business
+    // condition — the durable-wait/resolveCondition flow must not run.
+    expect(activities.resolveCondition).not.toHaveBeenCalled();
   });
 
   it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {

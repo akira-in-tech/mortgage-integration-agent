@@ -24,12 +24,19 @@ import { ConditionTransition } from '../database/entities/condition-transition.e
 import { ConditionResolutionKind } from './case-conditions.signals';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
+import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
+import { evaluatePolicyRule } from '../policy/dsl/policy-rule-evaluator';
+import { PolicyFactContext } from '../policy/dsl/policy-rule.types';
+import { loanTypeToProductCode } from '../policy/product-code';
+
+const UNDERWRITING_REVIEW_LIFECYCLE_EVENT = 'UNDERWRITING_REVIEW';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
   plaidService: PlaidService;
   creditService: CreditService;
   documentService: DocumentService;
+  policyResolver: PolicyApplicabilityResolverService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -41,13 +48,12 @@ interface CaseRef {
 
 interface EvaluateConditionsInput extends CaseRef {
   income: PlaidIncomeData;
-  credit: CreditBureauData;
-  documents: DocumentVerificationResult;
 }
 
 interface EvaluateConditionsResult {
-  hasOpenCondition: boolean;
+  outcome: 'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED';
   conditionId?: string;
+  reviewReason?: string;
 }
 
 interface ResolveConditionInput extends CaseRef {
@@ -55,24 +61,6 @@ interface ResolveConditionInput extends CaseRef {
   actorId: string;
   resolution: ConditionResolutionKind;
   reason?: string;
-}
-
-/**
- * Synthetic discrepancy rule for the M2 launch scenario (Section 7.1): a
- * deliberately simple, deterministic stand-in for the real policy engine
- * that M3 introduces. Never treated as a lending decision — it only decides
- * whether the case needs a human-resolvable operational condition before
- * reaching READY_FOR_UNDERWRITING.
- */
-function hasSyntheticDiscrepancy(
-  credit: CreditBureauData,
-  documents: DocumentVerificationResult,
-): boolean {
-  return (
-    credit.derogatoryMarks >= 1 ||
-    credit.debtToIncomeRatio > 0.4 ||
-    !documents.allDocumentsValid
-  );
 }
 
 /**
@@ -131,6 +119,7 @@ export function createCaseConditionsActivities(
     plaidService,
     creditService,
     documentService,
+    policyResolver,
     outboxSigningSecret,
   } = deps;
 
@@ -247,13 +236,55 @@ export function createCaseConditionsActivities(
       return documents;
     },
 
+    /**
+     * Policy-driven condition check (Section 10.3's resolver + the M3
+     * DSL evaluator), replacing the M2 launch's `hasSyntheticDiscrepancy`
+     * stand-in now that a real policy engine exists to drive this
+     * decision instead. Resolves which released policy version(s) apply
+     * to this case's jurisdiction/product/lifecycle event, evaluates each
+     * against the case's actual fact context, and opens a condition using
+     * the first match's own `outcome.condition`/`reason` — never a
+     * hardcoded code/description. An unresolved policy binding (Section
+     * 10.3: `REVIEW_REQUIRED` — missing coverage, overlapping versions)
+     * routes to manual review rather than silently treating the case as
+     * clean.
+     */
     async evaluateConditions({
       tenantId,
       caseId,
-      credit,
-      documents,
+      income,
     }: EvaluateConditionsInput): Promise<EvaluateConditionsResult> {
-      if (!hasSyntheticDiscrepancy(credit, documents)) {
+      const loanCase = await dataSource
+        .getRepository(LoanCase)
+        .findOneByOrFail({ id: caseId, tenantId });
+
+      const resolution = await policyResolver.resolve({
+        jurisdictionCode: loanCase.jurisdictionCode,
+        productCode: loanTypeToProductCode(loanCase.loanType),
+        lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+        asOf: new Date(),
+      });
+
+      if (resolution.status === 'REVIEW_REQUIRED') {
+        return {
+          outcome: 'REVIEW_REQUIRED',
+          reviewReason: resolution.unresolvedReasons.join('; '),
+        };
+      }
+
+      const factContext: PolicyFactContext = {
+        application: { monthly_income: Number(loanCase.statedMonthlyIncome) },
+        evidence: { verified_monthly_income: income.monthlyIncome },
+      };
+
+      const match = resolution.versions
+        .map((resolved) => ({
+          resolved,
+          result: evaluatePolicyRule(resolved.rule, factContext),
+        }))
+        .find(({ result }) => result.matched);
+
+      if (!match) {
         await dataSource.transaction(async (manager) => {
           await manager
             .getRepository(LoanCase)
@@ -268,22 +299,7 @@ export function createCaseConditionsActivities(
             payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
           });
         });
-        return { hasOpenCondition: false };
-      }
-
-      const reasons: string[] = [];
-      if (credit.derogatoryMarks >= 1) {
-        reasons.push(`${credit.derogatoryMarks} derogatory mark(s) on file`);
-      }
-      if (credit.debtToIncomeRatio > 0.4) {
-        reasons.push(
-          `DTI of ${(credit.debtToIncomeRatio * 100).toFixed(1)}% exceeds 40%`,
-        );
-      }
-      if (!documents.allDocumentsValid) {
-        reasons.push(
-          `unresolved document issues: ${documents.failedDocuments.join(', ')}`,
-        );
+        return { outcome: 'READY' };
       }
 
       const conditionId = await dataSource.transaction(async (manager) => {
@@ -292,8 +308,8 @@ export function createCaseConditionsActivities(
           conditionRepo.create({
             tenantId,
             caseId,
-            code: 'SYNTHETIC_DISCREPANCY_REVIEW',
-            description: `Review required: ${reasons.join('; ')}.`,
+            code: match.resolved.rule.outcome.condition,
+            description: match.result.reason,
             status: ConditionStatus.OPEN,
           }),
         );
@@ -307,7 +323,13 @@ export function createCaseConditionsActivities(
           tenantId,
           caseId,
           eventType: OutboxEventType.ConditionOpened,
-          payload: { caseId, conditionId: condition.id, code: condition.code },
+          payload: {
+            caseId,
+            conditionId: condition.id,
+            code: condition.code,
+            policyVersionId: match.resolved.policyVersionId,
+            ruleId: match.resolved.ruleId,
+          },
         });
         await writeOutboxEvent(manager, outboxSigningSecret, {
           tenantId,
@@ -318,7 +340,7 @@ export function createCaseConditionsActivities(
         return condition.id;
       });
 
-      return { hasOpenCondition: true, conditionId };
+      return { outcome: 'CONDITION_OPENED', conditionId };
     },
 
     async resolveCondition({

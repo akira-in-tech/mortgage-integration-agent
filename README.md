@@ -183,13 +183,17 @@ A narrower slice of the target `/v1/loan-cases` contract (see the project charte
 
 | Method & path | Purpose |
 | --- | --- |
-| `POST /v1/loan-cases` | Create a case. Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. |
+| `POST /v1/loan-cases` | Create a case (`{ tenantId, borrowerId, requestedAmount, loanType, statedMonthlyIncome, jurisdictionCode }`). Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. `jurisdictionCode` must reference a row in the jurisdiction catalog (404 otherwise). |
 | `GET /v1/loan-cases/{caseId}` | Fetch a case. |
 | `POST /v1/loan-cases/{caseId}/workflow-runs` | Start the case-conditions workflow. `202 Accepted`; safe to retry — a case with a workflow already running returns that same run rather than starting a second one. |
 | `GET /v1/loan-cases/{caseId}/workflow-runs/{runId}` | Current Temporal status of that run. |
 | `POST /v1/loan-cases/{caseId}/reviews` | A reviewer resolves the case's open condition (`{ actorId, resolution: "SATISFIED" \| "WAIVED", reason? }`), delivered as the workflow's `resolveCondition` signal. `202 Accepted`. |
 
 No authentication or tenant-scoped access control exists yet (`tenantId` is a plain request field) — full RBAC/RLS is M5 scope. There is also no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use.
+
+### Policy-driven conditions
+
+The case-conditions workflow's decision to open a condition is no longer a hardcoded rule — it's driven by the policy engine (`src/policy/`): `evaluateConditions` resolves which released policy version(s) apply to the case's jurisdiction/product/lifecycle event (Section 10.3's applicability resolver, simplified — see `docs/DEVELOPMENT_LOG.md`), then evaluates each against the case's real evidence. The database ships seeded with the charter's own canonical example (`docs/PROJECT_CHARTER.md` Section 10.7): a `US-CA` / `CONVENTIONAL_MORTGAGE` / `UNDERWRITING_REVIEW` rule that opens a `VERIFY_INCOME_DISCREPANCY` condition when a case's `statedMonthlyIncome` differs from Plaid's verified income by more than 10%. A case whose jurisdiction has no reviewed policy coverage, or whose applicable policy is ambiguous (overlapping released versions), routes to `MANUAL_REVIEW` instead of guessing.
 
 ### Transactional outbox
 

@@ -4,6 +4,7 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { CasesService } from './cases.service';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
+import { Jurisdiction } from '../database/entities/jurisdiction.entity';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CreateCaseDto } from './dto/create-case.dto';
@@ -16,11 +17,14 @@ const BASE_DTO: CreateCaseDto = {
   borrowerId: 'borrower-1',
   requestedAmount: 300_000,
   loanType: LoanType.CONVENTIONAL,
+  statedMonthlyIncome: 9000,
+  jurisdictionCode: 'US-CA',
 };
 
 describe('CasesService', () => {
   let caseRepo: { findOneBy: jest.Mock; findOneByOrFail: jest.Mock };
   let tenantRepo: { findOneBy: jest.Mock };
+  let jurisdictionRepo: { findOneBy: jest.Mock };
   let txCaseRepo: { create: jest.Mock; save: jest.Mock };
   let txOutboxRepo: { create: jest.Mock; save: jest.Mock };
   let dataSource: { transaction: jest.Mock };
@@ -35,6 +39,10 @@ describe('CasesService', () => {
   beforeEach(() => {
     caseRepo = { findOneBy: jest.fn(), findOneByOrFail: jest.fn() };
     tenantRepo = { findOneBy: jest.fn() };
+    jurisdictionRepo = { findOneBy: jest.fn() };
+    jurisdictionRepo.findOneBy.mockResolvedValue({
+      code: 'US-CA',
+    } as Jurisdiction);
     // dataSource.transaction is mocked to actually invoke the callback
     // (not just record the call) so CasesService's real transaction body —
     // the case save, the outbox write, and the unique-violation catch —
@@ -74,6 +82,7 @@ describe('CasesService', () => {
     service = new CasesService(
       caseRepo as never,
       tenantRepo as never,
+      jurisdictionRepo as never,
       dataSource as never,
       temporalClient as never,
       configService as never,
@@ -83,6 +92,16 @@ describe('CasesService', () => {
   describe('createCase', () => {
     it('throws NotFoundException when the tenant does not exist', async () => {
       tenantRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the jurisdiction does not exist', async () => {
+      tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
+      jurisdictionRepo.findOneBy.mockResolvedValue(null);
 
       await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
         NotFoundException,
@@ -102,6 +121,8 @@ describe('CasesService', () => {
           tenantId: TENANT_ID,
           idempotencyKey: 'key-1',
           status: CaseStatus.DRAFT,
+          statedMonthlyIncome: 9000,
+          jurisdictionCode: 'US-CA',
         }),
       );
       expect(txOutboxRepo.create).toHaveBeenCalledWith(

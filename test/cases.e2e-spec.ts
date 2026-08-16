@@ -102,6 +102,12 @@ describeOrSkip(
         borrowerId: `e2e-borrower-${uuidv4()}`,
         requestedAmount: 350_000,
         loanType: 'CONVENTIONAL',
+        // Matches SeedIncomeDiscrepancyPolicy's seeded jurisdiction/
+        // product; equal to the Plaid simulator's typical range so this
+        // suite's cases don't incidentally trigger the income-discrepancy
+        // condition when a workflow is started against them.
+        statedMonthlyIncome: 9000,
+        jurisdictionCode: 'US-CA',
       };
     }
 

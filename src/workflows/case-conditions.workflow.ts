@@ -46,10 +46,13 @@ export async function caseConditionsWorkflow(
   await activities.markCollectingEvidence({ tenantId, caseId });
 
   let income: Awaited<ReturnType<typeof activities.fetchIncomeEvidence>>;
-  let credit: Awaited<ReturnType<typeof activities.fetchCreditEvidence>>;
-  let documents: Awaited<ReturnType<typeof activities.fetchDocumentEvidence>>;
   try {
-    [income, credit, documents] = await Promise.all([
+    // Credit and document evidence are still fetched and recorded for
+    // audit purposes — evaluateConditions no longer consults them
+    // directly, only income (Section 10.7's own example rule compares
+    // stated vs. verified income); a future policy rule could reintroduce
+    // credit/document-based conditions the same way, as its own DSL rule.
+    [income] = await Promise.all([
       activities.fetchIncomeEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchCreditEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchDocumentEvidence({ tenantId, caseId, borrowerId }),
@@ -76,11 +79,26 @@ export async function caseConditionsWorkflow(
     tenantId,
     caseId,
     income,
-    credit,
-    documents,
   });
 
-  if (!evaluation.hasOpenCondition) {
+  if (evaluation.outcome === 'REVIEW_REQUIRED') {
+    // Policy applicability could not be resolved (Section 10.3: missing
+    // coverage or an overlapping version conflict) — a system-level
+    // ambiguity, not a specific resolvable business condition, so this
+    // routes to manual review rather than the condition-wait flow below.
+    log.warn('Policy resolution unresolved, routing to manual review', {
+      caseId,
+      reason: evaluation.reviewReason,
+    });
+    await activities.markManualReview({
+      tenantId,
+      caseId,
+      reason: evaluation.reviewReason ?? 'policy resolution unresolved',
+    });
+    return { finalStatus: CaseStatus.MANUAL_REVIEW };
+  }
+
+  if (evaluation.outcome === 'READY') {
     return { finalStatus: CaseStatus.READY_FOR_UNDERWRITING };
   }
 

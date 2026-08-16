@@ -141,8 +141,57 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // jurisdictions -> jurisdictions (self, parentCode), policy_sources ->
     // jurisdictions, policy_source_revisions -> policy_sources,
     // policy_versions -> policy_source_revisions, policy_applicability ->
-    // policy_versions
-    expect(foreignKeys).toHaveLength(9);
+    // policy_versions, loan_cases -> jurisdictions
+    expect(foreignKeys).toHaveLength(10);
+
+    // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
+    // Section 10.7 example rule, reproducible and revertible the same way
+    // every other migration is (see that migration's own class comment).
+    const seededVersions: Array<{ ruleId: string; releaseStatus: string }> =
+      await scratchDataSource.query(
+        `SELECT "ruleId", "releaseStatus" FROM policy_versions WHERE "ruleId" = 'synthetic-income-discrepancy-review'`,
+      );
+    expect(seededVersions).toEqual([
+      {
+        ruleId: 'synthetic-income-discrepancy-review',
+        releaseStatus: 'RELEASED',
+      },
+    ]);
+  });
+
+  it('reverts the seed-data migration without touching schema', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'condition_transitions',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_versions',
+      'tenants',
+    ]);
+    const remainingVersions = await scratchDataSource.query(
+      `SELECT * FROM policy_versions WHERE "ruleId" = 'synthetic-income-discrepancy-review'`,
+    );
+    expect(remainingVersions).toEqual([]);
+  });
+
+  it('reverts the loan_cases income/jurisdiction migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    const caseColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'loan_cases'
+           AND column_name IN ('statedMonthlyIncome', 'jurisdictionCode')`,
+      );
+    expect(caseColumns).toEqual([]);
   });
 
   it('reverts the policy schema migration without touching case/evidence/condition/outbox tables', async () => {

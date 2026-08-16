@@ -11,6 +11,7 @@ import {
   Index,
 } from 'typeorm';
 import { Tenant } from './tenant.entity';
+import { Jurisdiction } from './jurisdiction.entity';
 import { LoanType } from '../enums/loan-type.enum';
 import { CaseStatus } from '../enums/case-status.enum';
 
@@ -49,6 +50,29 @@ export class LoanCase {
 
   @Column({ type: 'enum', enum: LoanType })
   loanType!: LoanType;
+
+  /**
+   * Borrower-declared monthly income at application time (Section 10.7's
+   * example rule: `application.monthly_income`, compared against Plaid's
+   * verified figure to detect a discrepancy worth reviewing). Distinct
+   * from any evidence fact — this is what the borrower stated, not what a
+   * provider verified.
+   */
+  @Column({ type: 'decimal', precision: 14, scale: 2 })
+  statedMonthlyIncome!: number;
+
+  /**
+   * Governing jurisdiction for policy applicability (Section 10.3). Real
+   * mortgage applications collect this from the property/borrower state;
+   * this schema has no address model yet, so it is caller-supplied
+   * directly rather than derived.
+   */
+  @Column({ type: 'varchar', length: 20 })
+  jurisdictionCode!: string;
+
+  @ManyToOne(() => Jurisdiction, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'jurisdictionCode' })
+  jurisdiction?: Jurisdiction;
 
   @Column({ type: 'enum', enum: CaseStatus, default: CaseStatus.DRAFT })
   status!: CaseStatus;
