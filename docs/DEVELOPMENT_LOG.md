@@ -3602,3 +3602,109 @@ the scratch stack):
 ### Next safe step
 
 A real token/cost/provider-call budget ledger remains the largest unbuilt piece of Section 9, still deliberately deferred (no genuine consumer exists). Next queued: the evaluation corpus + report command (Section 18.2), and `EvaluationInputManifest`'s remaining honestly-buildable fields (Section 10.5 — `policyBindingId`, `observedPolicyDependencyDigest`, `evidenceRefs`, `manifestHash` are all now constructible from real data; `authorizationDecisionId`/`consentVersionRefs` still have no backing entity).
+
+## M3-014: `EvaluationInputManifest` (Section 10.5)
+
+### Status
+
+Implemented and verified. `EvaluationInputManifest` — previously not built as any entity or interface, only referenced in comments — is now a real, immutable, database-backed audit record assembled from real data for every evaluation that goes on to justify a condition write, honestly scoped: fields with no backing subsystem stay null/empty rather than fabricated.
+
+### Acceptance criterion
+
+Requested via an ad-hoc M3-closure audit (charter Section 20, M3 scope bullet 5: "immutable evaluation input manifests and expected case-version writes") that found `EvaluationInputManifest` did not exist as any entity or TypeScript interface, despite `create-condition.tool.ts`'s own comment claiming to implement "the specific protective behavior the manifest exists to provide." A manifest must be persisted per evaluation, referencing exactly the real inputs that evaluation read (policy binding, dependency digest, evaluator version, the specific evidence facts used) — never inventing values for fields whose backing subsystem doesn't exist yet (authorization grants, consent versioning, calculations, model calls).
+
+### Implementation
+
+- `EvaluationInputManifest` (new entity, `src/database/entities/evaluation-input-manifest.entity.ts`): `caseVersion`, `policyBindingId`, `observedPolicyDependencyDigest`, `evaluatorVersion`, `evidenceRefs` (`{evidenceId, version, contentHash, validThrough}[]`) are all real, sourced from data this codebase already tracks. `authorizationDecisionId`/`modelAndPromptManifestId` are nullable and always null; `consentVersionRefs`/`calculationRefs` are always `[]` — no authorization-grant, consent-versioning, or calculation subsystem exists yet, and the M3 Agent graph makes no model calls at all, so there is nothing real to reference (the entity's own comment documents exactly why, matching the session's established refusal to fabricate `EvaluationInputManifest` fields with no backing data).
+- `EvaluationManifestService` (new, `src/policy/evaluation-manifest.service.ts`): `assemble()` takes exactly the evidence facts a caller says it used (not a blanket "every fact on the case" query — the DSL evaluator in `resolveOutcomeNode` only ever reads the case's latest `INCOME` fact today, so that's exactly what's referenced), computes each fact's `contentHash` via the existing `computeDigest()` utility (already used for policy digests and communication content hashes — reused, not duplicated), computes an overall `manifestHash` the same way, and persists.
+- `PolicyEvaluationService.RESOLVER_VERSION` exported (was a private module constant) and `EvaluatePolicyResult` gained `observedPolicyDependencyDigest` (sourced from `evaluation.binding?.dependencyDigest`) — both were already real values inside `PolicyEvaluationService`, just not previously surfaced to callers.
+- `lending-operations-agent-runtime.ts`'s `resolveOutcomeNode`: right before calling `create_condition` (the same pairing Section 10.5's own text uses — "condition writes use compare-and-swap... requires a new evaluation manifest"), assembles the manifest and passes its `id` as the new `evaluationManifestId` arg to `create_condition`. The manifest is a durable audit record, not a new gate — `create-condition.tool.ts`'s existing `expectedCaseVersion` compare-and-swap (built in M3-010/M3-013's predecessor work) remains the actual enforcement.
+- `LoanCondition.evaluationManifestId` (new nullable column, no FK — same pattern as the existing `policySnapshotId` column) references the manifest that justified that condition.
+
+### Affected files
+
+- `src/database/entities/evaluation-input-manifest.entity.ts` (new)
+- `src/policy/evaluation-manifest.service.ts`, `.spec.ts` (new)
+- `src/policy/policy-evaluation.service.ts`, `policy.module.ts`
+- `src/agent-runtime/tools/evaluate-policy.tool.ts`, `.spec.ts`
+- `src/agent-runtime/tools/create-condition.tool.ts`, `.spec.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/database/entities/loan-condition.entity.ts`
+- `src/database/migrations/1786990484784-EvaluationInputManifest.ts` (new), `schema-migrations.spec.ts`
+- `src/workflows/case-conditions.activities.ts`, `.spec.ts`
+- `src/worker.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **`evidenceRefs` scopes to exactly the evidence a caller says it used, not every fact on the case.** `EvaluationManifestService.assemble()` takes an `evidence: EvidenceFact[]` array rather than querying all facts for the case itself. `resolveOutcomeNode` today only reads the latest `INCOME` fact for its DSL evaluation — referencing every other fact on the case (credit, document) would overstate what the evaluation actually depended on. The pattern extends cleanly if a future rule reads more fact types: pass more facts in.
+- **The manifest is assembled only when a matched rule is about to justify a condition write, not on every `evaluate_policy` call.** Section 10.5's own text pairs manifest assembly with condition writes specifically ("condition writes use compare-and-swap... requires a new evaluation manifest"); assembling one for every evaluation regardless of outcome would be scope beyond what the charter text actually asks for, and would persist manifests for evaluations that concluded "no condition needed" — audit noise with no corresponding decision to audit.
+- **`authorizationDecisionId`/`consentVersionRefs`/`calculationRefs`/`modelAndPromptManifestId` stay null/empty rather than backfilled with placeholder or synthetic values.** This is the same principle applied throughout the session (`consentStatus`'s hardcoded `'VALID'` placeholder, the deliberately-unbuilt budget ledger): a field with no real backing subsystem gets an honest empty value and a comment explaining why, never a fabricated one that would misrepresent what was actually checked. `consentStatus` itself being a hardcoded placeholder is exactly why `consentVersionRefs` has nothing real to reference — there is no real *version* of a *hardcoded* consent status.
+- **No FK constraint from `LoanCondition.evaluationManifestId` to `EvaluationInputManifest.id`.** Matches the existing `policySnapshotId` column's own precedent — both reference immutable, append-only, audit-purpose tables where a dangling reference from a hypothetical future deletion pass is an acceptable, already-accepted risk, not a new one this slice introduces.
+- **The manifest itself is not a new enforcement gate.** `create-condition.tool.ts`'s `expectedCaseVersion` compare-and-swap already provides the actual protection Section 10.5 describes (built earlier, before this slice). This slice adds the durable, evidence-backed *record* of what an evaluation read — closing the "no full manifest struct" gap that create-condition.tool.ts's own comment had documented since M3-010 — without duplicating or replacing the existing enforcement.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting)
+  both passed clean
+
+migration:generate against a scratch DB with all prior migrations
+  applied — one new table (evaluation_input_manifests, no FKs) and one
+  new nullable column (loan_conditions.evaluationManifestId), no
+  hand-editing needed
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the new table,
+  its index, and the new column — nothing else), re-applied cleanly
+
+Scratch stack (m3014-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    36 suites passed, 256 tests passed (253 -> 256: +3, covering
+    evaluation-manifest.service.spec.ts's real-database assertions:
+    evidenceRefs/manifestHash assembled correctly from real EvidenceFact
+    rows, identical inputs produce an identical hash, different
+    evidence content produces a different hash)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    12/12 passed (cumulative apply + 11 per-migration revert steps,
+    including the new first revert test for EvaluationInputManifest)
+
+Manual live verification (real REST API + real Temporal worker):
+  created a case (BORROWER-M3014, US-CA, statedMonthlyIncome=9000),
+  started the workflow — the real evaluation opened a
+  VERIFY_INCOME_DISCREPANCY condition with a real evaluationManifestId;
+  queried evaluation_input_manifests directly and confirmed
+  caseVersion=2, a real policyBindingId matching the case's actual
+  CasePolicyBinding, a real 64-character observedPolicyDependencyDigest,
+  evaluatorVersion="1.0.0", evidenceRefs referencing the case's actual
+  INCOME EvidenceFact row (confirmed by a direct join query — the
+  referenced evidenceId's real value matched what the manifest's
+  contentHash was computed from), and authorizationDecisionId/
+  consentVersionRefs/calculationRefs/modelAndPromptManifestId all
+  honestly null/empty
+
+  synthetic tenant/case/evidence/conditions/manifests/outbox/agent-run
+  rows deleted afterward; scratch stack torn down (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface — manifests are not yet exposed via REST/GraphQL, only persisted and internally referenced.
+- `evidenceRefs`/`manifestHash` are plaintext in the database, same as every other case-related table in this codebase (no field-level encryption exists anywhere yet — pre-existing, not newly introduced).
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- No REST/GraphQL endpoint exposes a manifest directly yet — it exists as an internal audit record, reachable only by direct database query or by following `LoanCondition.evaluationManifestId`.
+- `authorizationDecisionId`, `consentVersionRefs`, `calculationRefs`, `modelAndPromptManifestId` remain null/empty until their backing subsystems (authorization grants, consent versioning, a calculation subsystem, Agent model calls) exist — tracked here, not silently assumed done.
+- A manifest is only assembled on the path that leads to `create_condition`; an evaluation that concludes "no condition needed" produces no manifest (see Decisions) — if a future use case needs an audit trail for those evaluations too, this would need broadening.
+- `evidenceRefs.adapterVersion`/`normalizationSchemaVersion` (named in the charter's own `EvaluationInputManifest` interface) are omitted entirely rather than included as always-null fields — no provider-adapter versioning subsystem exists yet (Section 11, M4 scope).
+
+### Next safe step
+
+Per the M3-closure audit that prompted this slice: a real token/cost/provider-call budget ledger, the remaining ~12 of Section 9.4's 16 registered tools, a real communication delivery channel, a "transition approval" workflow for future-effective policy versions, and the evaluation corpus + report command (Section 18.2) remain M3's largest open items — continuing down that list next.

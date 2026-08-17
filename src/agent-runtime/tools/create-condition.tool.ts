@@ -22,6 +22,8 @@ export interface CreateConditionArgs {
    * `StaleCaseVersionError`.
    */
   expectedCaseVersion: number;
+  /** The `EvaluationInputManifest` (M3-014) assembled for this evaluation, if the caller built one — not every caller does yet. */
+  evaluationManifestId?: string;
 }
 
 export type CreateConditionResult =
@@ -74,12 +76,12 @@ export class StaleCaseVersionError extends Error {
  * concurrency for compare-and-swap writes (Section 10.5, 17.1)" since it
  * was added, but nothing actually checked it until now (every write used
  * `Repository.update()`, which TypeORM does not version-guard the way
- * `.save()` on a loaded entity would). The full manifest struct is not
- * built here — most of its fields (`authorizationDecisionId`,
- * `consentVersionRefs`, evidence content hashes, calculation refs) have
- * no backing subsystem yet — this implements the specific protective
- * behavior the manifest exists to provide, honestly scoped to what this
- * codebase can actually check today.
+ * `.save()` on a loaded entity would). `evaluationManifestId` (M3-014)
+ * references the actual immutable manifest a caller assembled
+ * (`EvaluationManifestService`) — this tool still only checks
+ * `expectedCaseVersion` itself, not the manifest's own contents; the
+ * manifest is the durable audit record of what justified the write, the
+ * version check is what enforces it.
  */
 export function createConditionTool(
   deps: CreateConditionToolDeps,
@@ -109,6 +111,7 @@ export function createConditionTool(
             description: args.description,
             status: ConditionStatus.OPEN,
             policySnapshotId: args.policySnapshotId,
+            evaluationManifestId: args.evaluationManifestId ?? null,
           }),
         );
         const updateResult = await caseRepo.update(

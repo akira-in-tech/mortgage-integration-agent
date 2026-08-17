@@ -28,7 +28,11 @@ import {
   CreateConditionResult,
   StaleCaseVersionError,
 } from '../tools/create-condition.tool';
-import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
+import {
+  PolicyEvaluationService,
+  RESOLVER_VERSION,
+} from '../../policy/policy-evaluation.service';
+import { EvaluationManifestService } from '../../policy/evaluation-manifest.service';
 import { evaluatePolicyRule } from '../../policy/dsl/policy-rule-evaluator';
 import { PolicyFactContext } from '../../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../../policy/product-code';
@@ -48,6 +52,7 @@ import {
 export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
   policyEvaluationService: PolicyEvaluationService;
+  evaluationManifestService: EvaluationManifestService;
   outboxSigningSecret: string;
 }
 
@@ -388,6 +393,20 @@ export function createLendingOperationsAgentRuntime(
           return { agentState: stepped, route: 'PROPOSED_ACTION' };
         }
 
+        // Section 10.5: assembled right before the condition write it
+        // justifies, referencing exactly the evidence this evaluation
+        // actually read (`latestIncomeFact`), not every fact on the case.
+        const manifest = await deps.evaluationManifestService.assemble({
+          tenantId: toolContext.tenantId,
+          caseId: toolContext.caseId,
+          caseVersion: state.agentState.caseVersion,
+          policyBindingId: state.agentState.policyBindingId!,
+          observedPolicyDependencyDigest:
+            evaluation.observedPolicyDependencyDigest!,
+          evaluatorVersion: RESOLVER_VERSION,
+          evidence: latestIncomeFact ? [latestIncomeFact] : [],
+        });
+
         const invocation = await invokeTool(
           registry,
           'create_condition',
@@ -399,6 +418,7 @@ export function createLendingOperationsAgentRuntime(
             ruleId: match.version.ruleId,
             policySnapshotId: evaluation.policySnapshotId,
             expectedCaseVersion: state.agentState.caseVersion,
+            evaluationManifestId: manifest.id,
           },
         );
         const nextState = recordAttempt(

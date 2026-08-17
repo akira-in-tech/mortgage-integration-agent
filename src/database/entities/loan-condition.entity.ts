@@ -61,6 +61,10 @@ export class LoanCondition {
   @Column({ type: 'uuid', nullable: true })
   policySnapshotId!: string | null;
 
+  /** The immutable `EvaluationInputManifest` (Section 10.5) whose inputs justified this condition — nullable because not every condition-creation path builds one (M3-014). */
+  @Column({ type: 'uuid', nullable: true })
+  evaluationManifestId!: string | null;
+
   @VersionColumn()
   version!: number;
 

@@ -10,10 +10,12 @@ import { CasePolicyBinding } from '../database/entities/case-policy-binding.enti
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
 import { LoanCase } from '../database/entities/loan-case.entity';
+import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { PolicyEvaluationService } from './policy-evaluation.service';
 import { PolicyChangeImpactService } from './policy-change-impact.service';
 import { PolicyActivationService } from './policy-activation.service';
+import { EvaluationManifestService } from './evaluation-manifest.service';
 
 @Module({
   imports: [
@@ -28,6 +30,7 @@ import { PolicyActivationService } from './policy-activation.service';
       PolicyCatalogGeneration,
       PolicyChangeImpactAssessment,
       LoanCase,
+      EvaluationInputManifest,
     ]),
   ],
   providers: [
@@ -35,12 +38,14 @@ import { PolicyActivationService } from './policy-activation.service';
     PolicyEvaluationService,
     PolicyChangeImpactService,
     PolicyActivationService,
+    EvaluationManifestService,
   ],
   exports: [
     PolicyApplicabilityResolverService,
     PolicyEvaluationService,
     PolicyChangeImpactService,
     PolicyActivationService,
+    EvaluationManifestService,
   ],
 })
 export class PolicyModule {}

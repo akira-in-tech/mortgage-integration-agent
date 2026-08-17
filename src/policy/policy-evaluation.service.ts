@@ -12,7 +12,7 @@ import {
   PolicyResolutionResult,
 } from './policy-resolution.types';
 
-const RESOLVER_VERSION = '1.0.0';
+export const RESOLVER_VERSION = '1.0.0';
 // Section 10.4: "configured maximum validation interval" — the ceiling on
 // how long a binding can go without at least confirming the catalog
 // generation still matches, regardless of whether anything ever changes.

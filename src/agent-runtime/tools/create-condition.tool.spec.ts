@@ -110,6 +110,7 @@ describeOrSkip('createConditionTool', () => {
   it('creates an OPEN condition with the given policy references, moves the case to CONDITIONS_OPEN, and writes both outbox events atomically', async () => {
     const caseId = await makeCase();
     const policySnapshotId = '11111111-1111-1111-1111-111111111111';
+    const evaluationManifestId = '33333333-3333-3333-3333-333333333333';
 
     const result = await tool.execute(
       { tenantId, caseId },
@@ -120,6 +121,7 @@ describeOrSkip('createConditionTool', () => {
         ruleId: 'test-rule',
         policySnapshotId,
         expectedCaseVersion: 1,
+        evaluationManifestId,
       },
     );
     if (result.outcome !== 'CREATED') {
@@ -133,6 +135,7 @@ describeOrSkip('createConditionTool', () => {
     expect(condition.status).toBe(ConditionStatus.OPEN);
     expect(condition.code).toBe('VERIFY_INCOME_DISCREPANCY');
     expect(condition.policySnapshotId).toBe(policySnapshotId);
+    expect(condition.evaluationManifestId).toBe(evaluationManifestId);
 
     const updatedCase = await dataSource
       .getRepository(LoanCase)

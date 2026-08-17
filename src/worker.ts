@@ -7,6 +7,7 @@ import { PlaidService } from './integrations/plaid/plaid.service';
 import { CreditService } from './integrations/credit/credit.service';
 import { DocumentService } from './integrations/document/document.service';
 import { PolicyEvaluationService } from './policy/policy-evaluation.service';
+import { EvaluationManifestService } from './policy/evaluation-manifest.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 
@@ -23,6 +24,7 @@ async function bootstrap(): Promise<void> {
     creditService: appContext.get(CreditService),
     documentService: appContext.get(DocumentService),
     policyEvaluationService: appContext.get(PolicyEvaluationService),
+    evaluationManifestService: appContext.get(EvaluationManifestService),
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',

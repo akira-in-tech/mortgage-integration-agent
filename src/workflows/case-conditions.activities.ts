@@ -25,6 +25,7 @@ import { ConditionResolutionKind } from './case-conditions.signals';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
+import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
 import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
 import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
 import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.tool';
@@ -35,6 +36,7 @@ export interface CaseConditionsActivitiesDeps {
   creditService: CreditService;
   documentService: DocumentService;
   policyEvaluationService: PolicyEvaluationService;
+  evaluationManifestService: EvaluationManifestService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -140,12 +142,14 @@ export function createCaseConditionsActivities(
     creditService,
     documentService,
     policyEvaluationService,
+    evaluationManifestService,
     outboxSigningSecret,
   } = deps;
 
   const agentRuntime = createLendingOperationsAgentRuntime({
     dataSource,
     policyEvaluationService,
+    evaluationManifestService,
     outboxSigningSecret,
   });
 

@@ -20,6 +20,7 @@ import { PolicyApplicability } from '../../database/entities/policy-applicabilit
 import { CasePolicySnapshot } from '../../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../../database/entities/policy-catalog-generation.entity';
+import { EvaluationInputManifest } from '../../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../../database/entities/agent-run.entity';
 import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
 import {
@@ -31,6 +32,7 @@ import { PolicyReleaseStatus } from '../../database/enums/policy-version.enum';
 import { LoanType } from '../../database/enums/loan-type.enum';
 import { PolicyApplicabilityResolverService } from '../../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
+import { EvaluationManifestService } from '../../policy/evaluation-manifest.service';
 import { LendingOperationsAgentState } from '../agent-state.types';
 import { AgentRunInput } from '../agent-runtime.types';
 import { createLendingOperationsAgentRuntime } from './lending-operations-agent-runtime';
@@ -55,6 +57,7 @@ describeOrSkip(
   () => {
     let dataSource: DataSource;
     let policyEvaluationService: PolicyEvaluationService;
+    let evaluationManifestService: EvaluationManifestService;
     let runtime: ReturnType<typeof createLendingOperationsAgentRuntime>;
     let tenantId: string;
     const caseIds: string[] = [];
@@ -77,6 +80,7 @@ describeOrSkip(
           CasePolicySnapshot,
           CasePolicyBinding,
           PolicyCatalogGeneration,
+          EvaluationInputManifest,
           AgentRun,
           ToolAttempt,
         ],
@@ -94,9 +98,13 @@ describeOrSkip(
         dataSource.getRepository(CasePolicyBinding),
         dataSource.getRepository(PolicyCatalogGeneration),
       );
+      evaluationManifestService = new EvaluationManifestService(
+        dataSource.getRepository(EvaluationInputManifest),
+      );
       runtime = createLendingOperationsAgentRuntime({
         dataSource,
         policyEvaluationService,
+        evaluationManifestService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 
@@ -187,6 +195,9 @@ describeOrSkip(
       if (dataSource?.isInitialized) {
         // ToolAttempt cascades on AgentRun's delete.
         await dataSource.getRepository(AgentRun).delete({ tenantId });
+        await dataSource
+          .getRepository(EvaluationInputManifest)
+          .delete({ tenantId });
         await dataSource.getRepository(OutboxEvent).delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
         await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
@@ -362,6 +373,35 @@ describeOrSkip(
       expect(condition.status).toBe(ConditionStatus.OPEN);
       expect(condition.code).toBe('VERIFY_INCOME_DISCREPANCY');
       expect(condition.policySnapshotId).not.toBeNull();
+
+      // M3-014: the evaluation that justified this condition is now a
+      // real, evidence-backed, immutable manifest — not just the CAS
+      // check on LoanCase.version.
+      expect(condition.evaluationManifestId).not.toBeNull();
+      const manifest = await dataSource
+        .getRepository(EvaluationInputManifest)
+        .findOneByOrFail({ id: condition.evaluationManifestId! });
+      expect(manifest.caseId).toBe(caseId);
+      expect(manifest.policyBindingId).not.toBeNull();
+      expect(manifest.observedPolicyDependencyDigest).toHaveLength(64);
+      expect(manifest.evaluatorVersion).toBe('1.0.0');
+      expect(manifest.manifestHash).toHaveLength(64);
+      const incomeFact = await dataSource
+        .getRepository(EvidenceFact)
+        .findOneByOrFail({ caseId, factType: EvidenceType.INCOME });
+      expect(manifest.evidenceRefs).toEqual([
+        expect.objectContaining({
+          evidenceId: incomeFact.id,
+          version: incomeFact.version,
+        }),
+      ]);
+      // No backing subsystem yet — honestly empty/null, not fabricated
+      // (see the entity's own comment).
+      expect(manifest.authorizationDecisionId).toBeNull();
+      expect(manifest.consentVersionRefs).toEqual([]);
+      expect(manifest.calculationRefs).toEqual([]);
+      expect(manifest.modelAndPromptManifestId).toBeNull();
+
       const updatedCase = await dataSource
         .getRepository(LoanCase)
         .findOneByOrFail({ id: caseId });

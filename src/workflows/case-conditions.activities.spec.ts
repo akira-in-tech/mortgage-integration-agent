@@ -26,6 +26,7 @@ import { PolicyApplicability } from '../database/entities/policy-applicability.e
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
+import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
@@ -39,6 +40,7 @@ import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
 import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
+import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -67,6 +69,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let dataSource: DataSource;
   let policyResolver: PolicyApplicabilityResolverService;
   let policyEvaluationService: PolicyEvaluationService;
+  let evaluationManifestService: EvaluationManifestService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -91,6 +94,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         CasePolicySnapshot,
         CasePolicyBinding,
         PolicyCatalogGeneration,
+        EvaluationInputManifest,
         AgentRun,
         ToolAttempt,
       ],
@@ -108,6 +112,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(CasePolicyBinding),
       dataSource.getRepository(PolicyCatalogGeneration),
     );
+    evaluationManifestService = new EvaluationManifestService(
+      dataSource.getRepository(EvaluationInputManifest),
+    );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
     const creditService = { getCreditData: jest.fn() } as any;
@@ -118,6 +125,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       creditService,
       documentService,
       policyEvaluationService,
+      evaluationManifestService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -153,6 +161,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
       if (caseIds.length > 0) {
         // ToolAttempt cascades on AgentRun's delete.
         await dataSource.getRepository(AgentRun).delete({ tenantId });
+        await dataSource
+          .getRepository(EvaluationInputManifest)
+          .delete({ tenantId });
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
@@ -290,6 +301,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       creditService: { getCreditData: jest.fn() } as any,
       documentService: { verifyDocuments: jest.fn() } as any,
       policyEvaluationService,
+      evaluationManifestService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -541,6 +553,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         creditService: new CreditService(),
         documentService: new DocumentService(),
         policyEvaluationService,
+        evaluationManifestService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -592,6 +605,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         creditService: new CreditService(),
         documentService: new DocumentService(),
         policyEvaluationService,
+        evaluationManifestService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

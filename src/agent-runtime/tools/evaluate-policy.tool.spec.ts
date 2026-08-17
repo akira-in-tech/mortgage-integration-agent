@@ -40,7 +40,7 @@ describe('evaluatePolicyTool', () => {
         unresolvedReasons: [],
       },
       snapshot: { id: 'snapshot-1' },
-      binding: { id: 'binding-1' },
+      binding: { id: 'binding-1', dependencyDigest: 'digest-1' },
     });
     const tool = evaluatePolicyTool({
       policyEvaluationService: { evaluate } as any,
@@ -58,6 +58,7 @@ describe('evaluatePolicyTool', () => {
       status: 'RESOLVED',
       policySnapshotId: 'snapshot-1',
       policyBindingId: 'binding-1',
+      observedPolicyDependencyDigest: 'digest-1',
       matchedVersions: [
         {
           policyVersionId: 'pv-1',

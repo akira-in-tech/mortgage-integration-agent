@@ -13,6 +13,7 @@ export interface EvaluatePolicyResult {
   status: 'RESOLVED' | 'REVIEW_REQUIRED';
   policySnapshotId: string;
   policyBindingId?: string;
+  observedPolicyDependencyDigest?: string;
   /**
    * `rule` is the same parsed DSL document `PolicyEvaluationService`
    * already resolved internally — surfaced here (not just the id/version
@@ -63,6 +64,7 @@ export function evaluatePolicyTool(
         status: evaluation.resolution.status,
         policySnapshotId: evaluation.snapshot.id,
         policyBindingId: evaluation.binding?.id,
+        observedPolicyDependencyDigest: evaluation.binding?.dependencyDigest,
         matchedVersions: evaluation.resolution.versions.map((v) => ({
           policyVersionId: v.policyVersionId,
           ruleId: v.ruleId,
