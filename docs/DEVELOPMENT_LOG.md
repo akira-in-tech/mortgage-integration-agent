@@ -3778,3 +3778,68 @@ No manual live-API check this slice: nothing new is reachable via REST/GraphQL, 
 ### Next safe step
 
 Continuing the M3-closure punch list: a properly case-scoped `check_policy_change_impact` tool variant (deferred this slice, see Decisions), the remaining ~11 Section 9.4 tools that need real backing subsystems before they can be honestly built, the budget ledger, a communication delivery channel, transition approval, and the evaluation corpus + report command.
+
+## M3-016: `check_policy_change_impact` tool (Section 9.4)
+
+### Status
+
+Implemented and verified. `check_policy_change_impact` — "Compare an approved policy change with open cases" — is now the sixth real Section 9.4 tool, built on a new `PolicyChangeImpactService.assessImpactForCase()` method that finally gives the existing catalog-wide impact-assessment machinery (M3-011) a genuine per-case entry point.
+
+### Acceptance criterion
+
+Closes the specific gap M3-015 deferred: `PolicyChangeImpactService.assessImpact(policyVersionId)` only ever ran catalog-wide (every case an activation/withdrawal's applicability might affect), which doesn't fit an `AgentTool`'s `{tenantId, caseId}`-scoped contract — "does this policy change affect *my* case?" is a different, real question a case-scoped Agent run can ask on demand, independent of whether an activation/withdrawal ever triggered a scan.
+
+### Implementation
+
+- `PolicyChangeImpactService`: extracted the existing per-case dry-run-and-classify logic (previously inline in `assessImpact`'s loop) into a private `assessOneCase()` helper, reused by both the existing catalog-wide `assessImpact()` and a new public `assessImpactForCase(tenantId, caseId, policyVersionId)`. The new method derives the case's own applicability triple directly from the case itself (`jurisdictionCode`, `loanTypeToProductCode(loanType)`, the same `UNDERWRITING_REVIEW_LIFECYCLE_EVENT` constant `evaluatePolicyNode` already uses) rather than requiring a caller to already know it. Returns `null` when the case has no live binding to compare against — the same case `assessImpact`'s loop silently skips.
+- `src/agent-runtime/tools/check-policy-change-impact.tool.ts` (new): thin wrapper, shapes `assessImpactForCase`'s result (or `null`) into the tool contract (`{assessed: true, impact, details, assessmentId}` or `{assessed: false, reason}`).
+- Not wired into the LangGraph graph — same status as `draft_information_request`/`escalate_to_reviewer`: real and independently tested, no current run scenario calls it.
+
+### Affected files
+
+- `src/policy/policy-change-impact.service.ts`, `src/policy/policy-activation.service.spec.ts` (where `PolicyChangeImpactService` is already tested)
+- `src/agent-runtime/tools/check-policy-change-impact.tool.ts`, `.spec.ts` (new)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Refactored to a shared private `assessOneCase()` rather than duplicating the dry-run-and-classify logic.** `assessImpact`'s loop and the new per-case method now differ only in *how* they arrive at the applicability triple to assess (enumerated from `PolicyApplicability` rows vs. derived directly from one case) — the assessment logic itself (find binding, dry-run, classify, persist) has exactly one implementation, so the two paths can never silently drift apart.
+- **No new database table** — reuses the existing `PolicyChangeImpactAssessment` table (M3-011); a per-case assessment is written the same way a catalog-wide scan's per-case assessment already was, just triggered on demand instead of after an activation/withdrawal.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for spec
+formatting)
+  both passed clean
+
+No new migration — reuses the existing policy_change_impact_assessments
+table and PolicyChangeImpactKind enum from M3-011.
+
+Scratch stack (m3016-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    38 suites passed, 264 tests passed (259 -> 264: +5 — 2 new
+    real-database assessImpactForCase tests in
+    policy-activation.service.spec.ts [REQUIRES_REEVALUATION for a
+    directly-withdrawn version, null for a case with no live binding],
+    +3 check-policy-change-impact.tool.spec.ts tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+```
+
+No manual live-API check this slice: nothing new is reachable via REST/GraphQL, and the tool isn't wired into the live Agent graph (same reasoning as M3-012/M3-015) — the real-database automated test suite is the verification evidence.
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface.
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- Not wired into the LangGraph graph — real and tested, but no current run scenario invokes it.
+- Like `assessImpact`, only distinguishes `NO_IMPACT`/`REQUIRES_REEVALUATION`/`AMBIGUOUS` — no transition-rule/grandfathering-aware outcome (Section 10.6's own documented gap, unchanged by this slice).
+
+### Next safe step
+
+Six of Section 9.4's sixteen tools are now real. The remaining ten (document inspection, four calculation tools, `send_information_request`, `publish_case_update`, `inspect_documents`, `check_identity_consistency`, `fetch_*_evidence`) each need a real backing subsystem (provider adapters, a calculation engine, or a communication delivery channel) that doesn't exist yet in this codebase — building them honestly means building those subsystems first, not wrapping them prematurely. Continuing the M3-closure punch list: the budget ledger, a communication delivery channel, transition approval, and the evaluation corpus + report command remain the largest open items.

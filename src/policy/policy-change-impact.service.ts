@@ -9,6 +9,7 @@ import { PolicyChangeImpactAssessment } from '../database/entities/policy-change
 import { PolicyChangeImpactKind } from '../database/enums/policy-change-impact.enum';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { loanTypeToProductCode } from './product-code';
+import { UNDERWRITING_REVIEW_LIFECYCLE_EVENT } from './lifecycle-events';
 import { PolicyResolutionResult } from './policy-resolution.types';
 
 function classifyImpact(
@@ -98,46 +99,95 @@ export class PolicyChangeImpactService {
       );
 
       for (const loanCase of affectedCases) {
-        const activeBinding = await this.bindingRepository.findOne({
-          where: {
-            tenantId: loanCase.tenantId,
-            caseId: loanCase.id,
-            invalidatedAt: IsNull(),
-          },
-          order: { boundAt: 'DESC' },
-        });
-        if (!activeBinding) {
-          // No live binding to impact — this case has never been
-          // evaluated, or its last evaluation was already REVIEW_REQUIRED
-          // (which invalidates any binding rather than creating one).
-          continue;
-        }
-
-        const priorSnapshot = await this.snapshotRepository.findOneByOrFail({
-          id: activeBinding.policySnapshotId,
-        });
-        const dryRun = await this.resolver.resolve({
+        const assessment = await this.assessOneCase(loanCase, {
+          policyVersionId,
           jurisdictionCode: applicability.jurisdictionCode,
           productCode: applicability.productCode,
           lifecycleEvent: applicability.lifecycleEvent,
-          asOf: new Date(),
         });
-        const { impact, details } = classifyImpact(priorSnapshot, dryRun);
-
-        const assessment = await this.assessmentRepository.save(
-          this.assessmentRepository.create({
-            policyVersionId,
-            tenantId: loanCase.tenantId,
-            caseId: loanCase.id,
-            priorPolicyBindingId: activeBinding.id,
-            impact,
-            details,
-          }),
-        );
-        assessments.push(assessment);
+        if (assessment) {
+          assessments.push(assessment);
+        }
       }
     }
 
     return assessments;
+  }
+
+  /**
+   * The per-case counterpart to `assessImpact`, for Section 9.4's
+   * `check_policy_change_impact` tool: one specific case asking "does this
+   * policy change affect me?" rather than the catalog-wide "which open
+   * cases does this change affect?" scan `assessImpact` runs after an
+   * activation/withdrawal. Derives the case's own applicability triple
+   * directly from its own jurisdiction/product/lifecycle-event (the same
+   * ones `evaluatePolicyNode` uses) rather than requiring the caller to
+   * already know it.
+   *
+   * Returns `null` when the case has no live binding to compare against —
+   * the same "nothing to assess" case `assessImpact`'s loop silently skips.
+   */
+  async assessImpactForCase(
+    tenantId: string,
+    caseId: string,
+    policyVersionId: string,
+  ): Promise<PolicyChangeImpactAssessment | null> {
+    const loanCase = await this.caseRepository.findOneByOrFail({
+      id: caseId,
+      tenantId,
+    });
+    return this.assessOneCase(loanCase, {
+      policyVersionId,
+      jurisdictionCode: loanCase.jurisdictionCode,
+      productCode: loanTypeToProductCode(loanCase.loanType),
+      lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+    });
+  }
+
+  private async assessOneCase(
+    loanCase: LoanCase,
+    context: {
+      policyVersionId: string;
+      jurisdictionCode: string;
+      productCode: string;
+      lifecycleEvent: string;
+    },
+  ): Promise<PolicyChangeImpactAssessment | null> {
+    const activeBinding = await this.bindingRepository.findOne({
+      where: {
+        tenantId: loanCase.tenantId,
+        caseId: loanCase.id,
+        invalidatedAt: IsNull(),
+      },
+      order: { boundAt: 'DESC' },
+    });
+    if (!activeBinding) {
+      // No live binding to impact — this case has never been evaluated,
+      // or its last evaluation was already REVIEW_REQUIRED (which
+      // invalidates any binding rather than creating one).
+      return null;
+    }
+
+    const priorSnapshot = await this.snapshotRepository.findOneByOrFail({
+      id: activeBinding.policySnapshotId,
+    });
+    const dryRun = await this.resolver.resolve({
+      jurisdictionCode: context.jurisdictionCode,
+      productCode: context.productCode,
+      lifecycleEvent: context.lifecycleEvent,
+      asOf: new Date(),
+    });
+    const { impact, details } = classifyImpact(priorSnapshot, dryRun);
+
+    return this.assessmentRepository.save(
+      this.assessmentRepository.create({
+        policyVersionId: context.policyVersionId,
+        tenantId: loanCase.tenantId,
+        caseId: loanCase.id,
+        priorPolicyBindingId: activeBinding.id,
+        impact,
+        details,
+      }),
+    );
   }
 }

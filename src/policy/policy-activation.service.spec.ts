@@ -38,6 +38,7 @@ const JURISDICTION_CODES = [
   'US-PAS-BASE',
   'US-PAS-REEVAL',
   'US-PAS-AMBIG',
+  'US-PAS-PERCASE',
 ] as const;
 
 describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
@@ -384,5 +385,74 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       impact: PolicyChangeImpactKind.AMBIGUOUS,
     });
     expect(result.assessments[0].details).toContain('overlapping');
+  });
+
+  it('assessImpactForCase assesses one specific case directly, without a catalog-wide scan', async () => {
+    const jurisdictionCode = JURISDICTION_CODES[3];
+    const versionId = await seedDraftVersion(
+      jurisdictionCode,
+      'pas-rule-percase',
+      '1.0.0',
+      PolicyReleaseStatus.RELEASED,
+    );
+    await dataSource.query(
+      `UPDATE policy_catalog_generation SET generation = generation + 1 WHERE id = 1`,
+    );
+
+    const caseId = await makeCase(jurisdictionCode);
+    await evaluationService.evaluate(tenantId, caseId, {
+      jurisdictionCode,
+      productCode: PRODUCT_CODE,
+      lifecycleEvent: LIFECYCLE_EVENT,
+      asOf: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    // A newer version withdraws the case's own bound version directly
+    // (not via activationService.activate/withdraw's own catalog-wide
+    // trigger) — assessImpactForCase must still find the real impact for
+    // this one case on demand.
+    await dataSource
+      .getRepository(PolicyVersion)
+      .update(
+        { id: versionId },
+        { releaseStatus: PolicyReleaseStatus.WITHDRAWN },
+      );
+
+    const assessment = await impactService.assessImpactForCase(
+      tenantId,
+      caseId,
+      versionId,
+    );
+
+    expect(assessment).toMatchObject({
+      tenantId,
+      caseId,
+      policyVersionId: versionId,
+      impact: PolicyChangeImpactKind.REQUIRES_REEVALUATION,
+    });
+
+    const persisted = await dataSource
+      .getRepository(PolicyChangeImpactAssessment)
+      .find({ where: { caseId, policyVersionId: versionId } });
+    expect(persisted).toHaveLength(1);
+  });
+
+  it('assessImpactForCase returns null for a case with no live policy binding', async () => {
+    const jurisdictionCode = JURISDICTION_CODES[3];
+    const versionId = await seedDraftVersion(
+      jurisdictionCode,
+      'pas-rule-percase-nobinding',
+      '1.0.0',
+      PolicyReleaseStatus.RELEASED,
+    );
+    const caseId = await makeCase(jurisdictionCode);
+
+    const assessment = await impactService.assessImpactForCase(
+      tenantId,
+      caseId,
+      versionId,
+    );
+
+    expect(assessment).toBeNull();
   });
 });
