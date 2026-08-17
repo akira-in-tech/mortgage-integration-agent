@@ -3708,3 +3708,73 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 Per the M3-closure audit that prompted this slice: a real token/cost/provider-call budget ledger, the remaining ~12 of Section 9.4's 16 registered tools, a real communication delivery channel, a "transition approval" workflow for future-effective policy versions, and the evaluation corpus + report command (Section 18.2) remain M3's largest open items — continuing down that list next.
+
+## M3-015: `escalate_to_reviewer` tool (Section 9.4)
+
+### Status
+
+Implemented and verified. `escalate_to_reviewer` — "Pause and create review task" — is now a real, tested, registered Section 9.4 tool, giving the Agent an explicit way to request human review distinct from the LangGraph runtime's automatic ambiguity/failure routing.
+
+### Acceptance criterion
+
+Continuing the M3-closure audit's punch list (registered tools: only 4 of 16 existed). `escalate_to_reviewer` must be a real, CAS-protected case-status transition with a signed audit event — not a stub — usable by any future caller (a detector for one of Section 9.6's mandatory review triggers, or a human-configured policy) that decides a case needs a human before continuing.
+
+### Implementation
+
+- `src/agent-runtime/tools/escalate-to-reviewer.tool.ts` (new): CAS-protected on `expectedCaseVersion` (same discipline as `create_condition`, M3-010), transitions `LoanCase.status` to `WAITING_FOR_REVIEW` — reused deliberately rather than `MANUAL_REVIEW`, since `markWaitingForReview`'s own existing comment defines that status as "paused, can resume" (a reviewer resolves it and work continues), which is what an Agent-initiated escalation is, not `MANUAL_REVIEW`'s "cannot proceed safely" terminal meaning — and writes a new signed `case.escalated` outbox event.
+- `OutboxEventType.CaseEscalated` (`'case.escalated'`, new) — distinct from the existing `EvaluationInterrupted` (`'evaluation.interrupted'`), which is specifically the runtime's own automatic ambiguity-interrupt path; this event is for an explicit tool invocation covering any of Section 9.6's broader trigger list.
+- Not wired into the LangGraph graph — no current run scenario decides to escalate rather than follow its existing deterministic routing (verify consent → check completeness → evaluate policy → resolve outcome). Same status `check_case_completeness` had before M3-006 gave it a caller, and `draft_information_request` (M3-012) still has today: a real, independently tested, registered tool with no current graph caller.
+- No new registered-tool wrapper for `check_policy_change_impact` this slice, despite being next on the audit's tool list: `PolicyChangeImpactService.assessImpact(policyVersionId)` operates catalog-wide (every case matching a policy version's applicability, across tenants), not per-case — the shape an `AgentTool<Args, Result>` (scoped to one `{tenantId, caseId}` context) expects. Wrapping it as-is would either silently ignore the tool-call's own case context or require a real case-scoped variant; forcing an ill-fitting wrapper together in the same slice as `escalate_to_reviewer` risked rushing a design that deserves its own slice.
+
+### Affected files
+
+- `src/agent-runtime/tools/escalate-to-reviewer.tool.ts`, `.spec.ts` (new)
+- `src/database/outbox/outbox-event-types.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Reuses `WAITING_FOR_REVIEW`, not a new case status.** Introducing a third "paused" status (distinct from both `WAITING_FOR_REVIEW` and `MANUAL_REVIEW`) would let a future caller distinguish "the Agent explicitly escalated" from "the runtime detected policy ambiguity" at the case-status level — but nothing today reads case status to make that distinction (the outbox event type already carries it), so a new status would be unused surface, not real behavior.
+- **CAS-protected the same way `create_condition` is**, rather than an unconditional update: an Agent tool acting on stale in-memory case state is exactly the race Section 10.5 exists to prevent, and this tool mutates case status just as directly as `create_condition` mutates it.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for spec
+formatting)
+  both passed clean
+
+No new migration — OutboxEvent.eventType is a plain varchar column
+(not a Postgres enum), and CaseStatus.WAITING_FOR_REVIEW already
+existed — this slice adds no schema.
+
+Scratch stack (m3015-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    37 suites passed, 259 tests passed (256 -> 259: +3, covering
+    escalate-to-reviewer.tool.spec.ts: tool metadata, a real
+    WAITING_FOR_REVIEW transition with a real signed case.escalated
+    event, and STALE_CASE_VERSION on a concurrent case mutation)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    12/12 passed (sanity check — unchanged, no migration this slice)
+```
+
+No manual live-API check this slice: nothing new is reachable via REST/GraphQL, and the tool isn't wired into the live Agent graph (same reasoning as `draft_information_request`'s M3-012 entry) — the real-database automated test suite is the verification evidence.
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface.
+- `reason` is stored in plaintext in the outbox event payload, same as every other case-related field in this codebase.
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- Not wired into the LangGraph graph — real and tested, but no current run scenario invokes it (see Decisions/Implementation).
+- No consumer yet reads `case.escalated` events or the `WAITING_FOR_REVIEW` transition this tool produces differently from an ambiguity-interrupt's `WAITING_FOR_REVIEW` transition — both currently look identical to any downstream reader that doesn't also inspect outbox event history.
+
+### Next safe step
+
+Continuing the M3-closure punch list: a properly case-scoped `check_policy_change_impact` tool variant (deferred this slice, see Decisions), the remaining ~11 Section 9.4 tools that need real backing subsystems before they can be honestly built, the budget ledger, a communication delivery channel, transition approval, and the evaluation corpus + report command.

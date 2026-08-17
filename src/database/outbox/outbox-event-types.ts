@@ -27,6 +27,13 @@ export const OutboxEventType = {
    * exists to resolve.
    */
   EvaluationInterrupted: 'evaluation.interrupted',
+  /**
+   * Distinct from `EvaluationInterrupted` (the runtime automatically
+   * interrupting for policy-applicability ambiguity): this is the
+   * `escalate_to_reviewer` tool (Section 9.4) being explicitly selected —
+   * any of Section 9.6's mandatory review triggers, not only ambiguity.
+   */
+  CaseEscalated: 'case.escalated',
 } as const;
 
 export type OutboxEventType =
