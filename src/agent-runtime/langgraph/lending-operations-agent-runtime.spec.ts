@@ -359,6 +359,27 @@ describeOrSkip(
       expect(updatedCase.status).toBe(CaseStatus.CONDITIONS_OPEN);
     });
 
+    it('propagates a stale-version failure instead of creating a condition when the case has moved on since the run began', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 25_000 });
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 20_000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      // A fresh case's version is 1 (VersionColumn) — passing a
+      // mismatched caseVersion here simulates the case having been
+      // mutated concurrently since this run's initial state was captured,
+      // without needing real concurrent execution to trigger it.
+      const state = makeInitialState(caseId, { caseVersion: 2 });
+
+      await expect(runtime.run(makeInput(state))).rejects.toThrow(
+        /version changed/,
+      );
+
+      const conditions = await dataSource
+        .getRepository(LoanCondition)
+        .find({ where: { caseId } });
+      expect(conditions).toHaveLength(0);
+    });
+
     it('routes to ROUTED_TO_MANUAL_REVIEW when the case jurisdiction has no policy coverage', async () => {
       const caseId = await makeCase({
         jurisdictionCode: NOT_COVERED_JURISDICTION_CODE,
@@ -391,6 +412,23 @@ describeOrSkip(
       expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
       expect(result.finalState.reviewState?.reason).toContain(
         'check_case_completeness unavailable',
+      );
+    });
+
+    it('fails closed to ROUTED_TO_MANUAL_REVIEW without calling any tool when consent is not VALID', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+
+      const result = await runtime.run(
+        makeInput(makeInitialState(caseId, { consentStatus: 'REVOKED' })),
+      );
+
+      expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
+      expect(result.finalState.attemptedTools).toHaveLength(0);
+      expect(result.finalState.reviewState?.reason).toContain(
+        'consentStatus is "REVOKED"',
       );
     });
 

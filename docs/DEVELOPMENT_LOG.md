@@ -3085,3 +3085,102 @@ Postgres/Temporal, a real tenant seeded directly):
 ### Next safe step
 
 Section 9.6's mandatory review triggers and a real budget ledger remain the largest unbuilt pieces of Section 9 — building them would let this same wired-in runtime start producing `INTERRUPTED_FOR_REVIEW` and enforcing token/cost dimensions it currently only carries as unenforced state. Independently, `EvaluationInputManifest` (Section 10.5) is still the largest unbuilt piece of the policy side of M3.
+
+## M3-009: Consent-status review trigger and compare-and-swap condition writes
+
+### Status
+
+Implemented and verified. Two of the three items queued after M3-008 (consent-status trigger, Section 10.5's compare-and-swap protection) are done; the third (a real token/cost/provider-call budget ledger) was deliberately not built this slice — see Decisions.
+
+### Acceptance criterion
+
+Of Section 9.6's twelve mandatory-review-trigger categories, every one that has real, checkable signal in this codebase today must actually gate the Agent run; every one that doesn't must be named as a known gap rather than faked. Separately, a condition-opening or case-readiness write driven by a stale evaluation (the case having changed since that evaluation's initial state was captured) must never silently commit — it must be detected and handled without a human needing to intervene for the routine case.
+
+### Findings: honest scope of Section 9.6
+
+Re-read against the current codebase state before writing anything, of the twelve triggers:
+
+- **Reachable with real signal today**: unresolved jurisdiction/effective-date/transition-rule conflict (already implemented — `evaluate_policy`'s `REVIEW_REQUIRED` path); step/time budget exhaustion (already implemented — `budgetExceeded`); a tool's own execution failure (already implemented — `invokeTool`'s `FAILURE` outcome routes to review); **consent revoked/missing/expired mid-case** (field exists, was never checked — closed by this slice).
+- **No backing signal exists in this codebase**: contradictory evidence (single-source-per-type model, nothing to contradict); evidence confidence threshold (no confidence field on `EvidenceFact`); malformed *model* output (no model call exists anywhere in this graph); every communication-related trigger (no communication system at all — Section 6.4's classifier is unbuilt); provider result outside the normalized contract (no contract/schema validation layer — that's M4/Section 11 scope); prompt-injection or tool-manipulation signal (there is no prompt for anything to inject into — this graph is deterministic tool orchestration, not model-driven); tenant risk policy category (no tenant configuration surface for this exists); manual waiver/override of a deterministic condition (this happens through `resolveCondition`, a separate human-driven activity outside the Agent run entirely — not something the run itself observes or gates).
+
+Building stub checks for the second group would create the appearance of coverage the system cannot actually back — left as known gaps instead.
+
+### Implementation
+
+#### Consent-status trigger
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`: new `consentInvalid()` guard and `verifyConsent` graph node, wired as the graph's first step (before `checkCompleteness`), matching Section 9.5's Agent loop ("VERIFY TENANT, CONSENT, TRUSTED DEADLINE, AND AUTHORITATIVE BUDGET LEDGER" is explicitly the second loop step, before evidence inspection) and Section 6.3's authority order (consent is listed first of all controls). Any `consentStatus !== 'VALID'` routes to `ROUTED_TO_MANUAL_REVIEW` before any tool is invoked or any step budget consumed. `evaluateConditions` still always constructs `consentStatus: 'VALID'` (no consent-tracking entity exists to source anything else from), so this guard is inert in production today — its value is that it's now real, tested logic ready the moment a consent system exists, not a TODO comment.
+
+#### Compare-and-swap condition/readiness writes (Section 10.5's core protection, honestly scoped)
+
+- `LoanCase.version`'s own doc comment has said "Optimistic concurrency for compare-and-swap writes (Section 10.5, 17.1)" since the column was added — nothing actually checked it. Every existing write used `Repository.update(criteria, partial)`, which TypeORM does not version-guard the way `.save()` on a loaded entity would; a case's version was incrementing on every write, but nothing was ever rejected for having the wrong one.
+- `src/agent-runtime/tools/create-condition.tool.ts`: `CreateConditionArgs` gains `expectedCaseVersion: number`. `execute()` now reads the case fresh inside its transaction and compares `.version` against `expectedCaseVersion` *before* writing anything; a mismatch returns `{ outcome: 'STALE_CASE_VERSION' }` (a typed, non-exceptional result — staleness is an expected outcome in a concurrent system, not a bug) with no condition row, no case mutation, and no outbox events. On a match, the actual `LoanCase` update additionally carries `version: expectedCaseVersion` in its `WHERE` criteria (closing the residual race between the read and the write within the same transaction); if that atomic update still affects zero rows — a true race within the transaction's own lifetime, not the routine case — it throws `StaleCaseVersionError` instead, rolling back the condition insert too.
+- `CreateConditionResult` changed from a bare `{ conditionId }` to a discriminated union (`{ outcome: 'CREATED'; conditionId }` or `{ outcome: 'STALE_CASE_VERSION' }`).
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`: `resolveOutcomeNode` passes `expectedCaseVersion: state.agentState.caseVersion` (captured once, at the very start of the Agent run, in `LendingOperationsAgentState.caseVersion` — already existed since M3-006) and, on a `STALE_CASE_VERSION` result, throws `StaleCaseVersionError` rather than routing to `ROUTED_TO_MANUAL_REVIEW` — deliberately not treated as a tool failure, since routing a routine concurrency race to a human would be an unnecessary escalation for something the system can self-heal (see Decisions).
+- `src/workflows/case-conditions.activities.ts`: `finalizeReadyForUnderwriting` (the "no condition needed, case ready" write, previously duplicated inline and factored out in M3-008) gains an optional `expectedCaseVersion` parameter using the identical check-in-`WHERE`-clause pattern; `evaluateConditions`'s own call to it now passes `initialState.caseVersion`. The plain `markReadyForUnderwriting` activity (called after a human resolves a condition via signal, not from an evaluation) keeps calling it without `expectedCaseVersion` — that write isn't driven by an aging evaluation snapshot, so CAS protection doesn't apply there.
+- `src/workflows/case-conditions.workflow.ts`: `evaluateConditions`'s call is now wrapped in try/catch (mirroring the existing evidence-fetch block) — previously this activity had no realistic way to throw after Temporal's retries, so the workflow never needed to catch it; a `StaleCaseVersionError` surviving all retries now routes to `MANUAL_REVIEW` instead of crashing the whole workflow.
+
+### Affected files
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/agent-runtime/tools/create-condition.tool.ts`, `.spec.ts`
+- `src/workflows/case-conditions.activities.ts`
+- `src/workflows/case-conditions.workflow.ts`, `.spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Token/cost/provider-call budget ledger: deliberately not built this slice.** No tool in this codebase makes a model call or a real outbound provider call — evidence is fetched by separate workflow activities before the Agent run ever starts, and all three registered tools are database-only. Every consumer of these budget dimensions is currently and permanently zero. Building the atomic, versioned, multi-level (run/workflow/tenant) reservation system Section 9.3 describes for dimensions with no real consumer would be exactly the kind of premature scaffolding this codebase has consistently avoided (M3-005 made the identical call for the policy-binding fast path: "no policy-activation write-path exists yet"). Documented as a known gap rather than stubbed.
+- **A full `EvaluationInputManifest` struct was not built.** Roughly half its fields (`authorizationDecisionId`, `consentVersionRefs`, evidence `contentHash`/`adapterVersion`/`normalizationSchemaVersion`, `calculationRefs`) depend on subsystems that don't exist yet (authorization grants, evidence content-hashing, provider adapter versioning, a calculation subsystem). Fabricating placeholder values for those fields would misrepresent what's actually being tracked. Instead, this slice builds the specific protective *behavior* the manifest exists to guarantee for condition writes — the compare-and-swap semantics — using the `LoanCase.version` column that already exists for exactly this purpose. The full manifest struct remains a known gap.
+- **Staleness is a typed tool result, not an exception, for the routine case.** The version mismatch is read and compared *before* any write is attempted, so it's cheap to detect and doesn't need transaction rollback semantics to signal — modeling it as `{ outcome: 'STALE_CASE_VERSION' }` keeps `create_condition.execute()`'s control flow honest (staleness is an expected, common outcome in a system with concurrent evaluations, not a programming error). The one place a real throw remains is the genuinely exceptional residual race inside the same transaction, which does need rollback.
+- **A stale-version result is *not* routed to `ROUTED_TO_MANUAL_REVIEW`; it propagates and lets Temporal retry.** Section 10.5 itself prescribes the fix for staleness: "a concurrent... case mutation... requires a new evaluation manifest" — i.e., re-evaluate, not escalate to a human. `evaluateConditions` is already wrapped in `proxyActivities`' retry policy (3 attempts); letting the failure propagate naturally re-runs the whole evaluation against the case's current state, which is both simpler and more correct than manufacturing a special-case retry mechanism or asking a person to resolve what's fundamentally routine concurrency.
+- **`markReadyForUnderwriting` (the post-signal-resolution activity) keeps its unconditional write.** CAS protection matters for writes driven by an evaluation's possibly-stale view of the case; this activity's write is driven by a human's just-delivered signal, not by data gathered earlier in a run — there's no "expected version" concept for it to check against without inventing one that doesn't correspond to anything real.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed, no manual fixes needed beyond eslint --fix's prettier pass
+
+scratch stack: docker compose (postgres 5433, temporal 7234) + migration:run
+  all 8 migrations applied cleanly (fresh scratch database)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  31 suites passed, 216 tests passed (212 -> 216: +2 in
+  lending-operations-agent-runtime.spec.ts [consent-invalid,
+  stale-case-version], +1 in create-condition.tool.spec.ts
+  [STALE_CASE_VERSION returns cleanly with zero writes], +1 in
+  case-conditions.workflow.spec.ts [evaluateConditions rejecting routes
+  to MANUAL_REVIEW])
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 13 tests passed (unchanged)
+
+Manual smoke test (real REST API + real Temporal worker, scratch
+Postgres/Temporal): created a case with a genuine income discrepancy,
+started its workflow-run, confirmed the unchanged happy path still
+produces CONDITIONS_OPEN with policySnapshotId populated and the case
+version incrementing exactly as before (1 -> 2 -> 3) — proving the new
+expectedCaseVersion check correctly passes on the non-racing path, not
+just that it correctly rejects on the racing one (already covered by
+the unit tests' mismatched-caseVersion technique, which simulates
+staleness without needing genuine concurrent execution). All synthetic
+rows deleted afterward; scratch stack torn down.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No externally-visible API contract change.
+- The CAS check is strictly additive safety — it can only cause a write that would previously have silently succeeded against stale data to instead be rejected and retried; it cannot reject a write that was already going to succeed against current data.
+- `verifyConsent`'s guard is inert today (production always constructs `consentStatus: 'VALID'`), so this introduces no behavior change for any current caller — its cost is one cheap in-memory check per run.
+
+### Known gaps
+
+- Section 9.6's eight remaining trigger categories (contradictory evidence, evidence confidence, malformed model output, every communication-related trigger, provider-contract conformance, prompt-injection signals, tenant risk policy, manual condition override) have no backing signal in this codebase and are not implemented — see Findings above for exactly why each one currently can't be honest.
+- No token/cost/provider-call budget ledger — unchanged from M3-007/M3-008, and now explicitly re-affirmed as deliberately deferred rather than merely unaddressed.
+- No full `EvaluationInputManifest` — only the compare-and-swap protection it exists to guarantee for condition/readiness writes is implemented, not the immutable-input-references struct itself (authorization, consent-version, evidence-hash, and calculation refs all remain unbuilt).
+- `caseVersion` is still captured once at Agent-run start and never refreshed mid-run (unchanged from M3-008) — the new CAS check is what makes that acceptable: a stale observation is now caught at write time instead of silently producing an incorrect write.
+
+### Next safe step
+
+Nothing further is queued specifically by this slice. The two largest remaining pieces of Section 9/10 for M3 are unchanged from M3-008's own note: a real token/cost/provider-call budget ledger (deliberately deferred here, would need a genuine consumer — e.g. a model-based planning node or a real provider adapter — to be worth building), and the communication classification system (Section 6.4) that would make the communication-related Section 9.6 triggers implementable instead of permanently out of reach.

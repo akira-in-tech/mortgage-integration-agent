@@ -27,6 +27,7 @@ import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
 import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
+import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.tool';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -141,14 +142,26 @@ export function createCaseConditionsActivities(
 
   async function finalizeReadyForUnderwriting(
     manager: EntityManager,
-    { tenantId, caseId }: CaseRef,
+    {
+      tenantId,
+      caseId,
+      expectedCaseVersion,
+    }: CaseRef & { expectedCaseVersion?: number },
   ): Promise<void> {
-    await manager
+    const criteria: Record<string, unknown> = { id: caseId, tenantId };
+    if (expectedCaseVersion !== undefined) {
+      criteria.version = expectedCaseVersion;
+    }
+    const updateResult = await manager
       .getRepository(LoanCase)
-      .update(
-        { id: caseId, tenantId },
-        { status: CaseStatus.READY_FOR_UNDERWRITING },
-      );
+      .update(criteria, { status: CaseStatus.READY_FOR_UNDERWRITING });
+    if (expectedCaseVersion !== undefined && updateResult.affected === 0) {
+      // Section 10.5: the case changed since the evaluation that decided
+      // it was ready began. Throwing (not silently marking it ready
+      // anyway) lets Temporal's activity retry re-run evaluateConditions
+      // against the case's current state instead.
+      throw new StaleCaseVersionError(caseId, expectedCaseVersion);
+    }
     await writeOutboxEvent(manager, outboxSigningSecret, {
       tenantId,
       caseId,
@@ -344,7 +357,11 @@ export function createCaseConditionsActivities(
             return { outcome: 'CONDITION_OPENED', conditionId };
           }
           await dataSource.transaction((manager) =>
-            finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
+            finalizeReadyForUnderwriting(manager, {
+              tenantId,
+              caseId,
+              expectedCaseVersion: initialState.caseVersion,
+            }),
           );
           return { outcome: 'READY' };
         }

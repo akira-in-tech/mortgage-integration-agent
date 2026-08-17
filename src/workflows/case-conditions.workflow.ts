@@ -74,11 +74,31 @@ export async function caseConditionsWorkflow(
     return { finalStatus: CaseStatus.MANUAL_REVIEW };
   }
 
-  const evaluation = await activities.evaluateConditions({
-    tenantId,
-    caseId,
-    workflowRunId: workflowInfo().runId,
-  });
+  let evaluation: Awaited<ReturnType<typeof activities.evaluateConditions>>;
+  try {
+    // Can exhaust its retries when the case keeps changing out from
+    // under the evaluation (Section 10.5's compare-and-swap protection,
+    // src/agent-runtime/tools/create-condition.tool.ts's
+    // StaleCaseVersionError) — Temporal's own retry policy already gives
+    // this several tries against the case's latest state before this
+    // catch is ever reached.
+    evaluation = await activities.evaluateConditions({
+      tenantId,
+      caseId,
+      workflowRunId: workflowInfo().runId,
+    });
+  } catch (error) {
+    log.warn('evaluateConditions failed, routing to manual review', {
+      caseId,
+      error: String(error),
+    });
+    await activities.markManualReview({
+      tenantId,
+      caseId,
+      reason: String(error),
+    });
+    return { finalStatus: CaseStatus.MANUAL_REVIEW };
+  }
 
   if (evaluation.outcome === 'REVIEW_REQUIRED') {
     // Policy applicability could not be resolved (Section 10.3: missing

@@ -290,6 +290,43 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.resolveCondition).not.toHaveBeenCalled();
   });
 
+  it('routes to MANUAL_REVIEW when evaluateConditions itself fails (e.g. a stale-case-version failure that outlasted its retries)', async () => {
+    // Section 10.5: create_condition/finalizeReadyForUnderwriting throw
+    // StaleCaseVersionError, which case-conditions.activities.ts lets
+    // propagate rather than catching, so Temporal's own retry re-runs
+    // evaluateConditions against the case's current state. Marked
+    // non-retryable here purely to keep this test fast — it's testing the
+    // workflow's catch, not Temporal's retry mechanics (already covered
+    // by the transient/terminal fetch-activity tests above).
+    const evaluateConditions = jest
+      .fn()
+      .mockRejectedValue(
+        ApplicationFailure.nonRetryable(
+          'case case-1 version changed during the write (expected 3); re-evaluation required',
+          'StaleCaseVersionError',
+        ),
+      );
+    const activities = makeMockActivities({ evaluateConditions });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, () =>
+      env.client.workflow.execute(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      }),
+    );
+
+    expect(result).toEqual({ finalStatus: CaseStatus.MANUAL_REVIEW });
+    expect(evaluateConditions).toHaveBeenCalledTimes(1);
+    expect(activities.markManualReview).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-1', caseId: 'case-1' }),
+    );
+    expect(activities.resolveCondition).not.toHaveBeenCalled();
+  });
+
   it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {
     const fetchIncomeEvidence = jest
       .fn()

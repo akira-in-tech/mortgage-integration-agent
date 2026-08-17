@@ -111,7 +111,7 @@ describeOrSkip('createConditionTool', () => {
     const caseId = await makeCase();
     const policySnapshotId = '11111111-1111-1111-1111-111111111111';
 
-    const { conditionId } = await tool.execute(
+    const result = await tool.execute(
       { tenantId, caseId },
       {
         code: 'VERIFY_INCOME_DISCREPANCY',
@@ -119,8 +119,13 @@ describeOrSkip('createConditionTool', () => {
         policyVersionId: '22222222-2222-2222-2222-222222222222',
         ruleId: 'test-rule',
         policySnapshotId,
+        expectedCaseVersion: 1,
       },
     );
+    if (result.outcome !== 'CREATED') {
+      throw new Error(`expected CREATED, got ${result.outcome}`);
+    }
+    const { conditionId } = result;
 
     const condition = await dataSource
       .getRepository(LoanCondition)
@@ -133,6 +138,7 @@ describeOrSkip('createConditionTool', () => {
       .getRepository(LoanCase)
       .findOneByOrFail({ id: caseId });
     expect(updatedCase.status).toBe(CaseStatus.CONDITIONS_OPEN);
+    expect(updatedCase.version).toBe(2);
 
     const events = await dataSource
       .getRepository(OutboxEvent)
@@ -146,5 +152,41 @@ describeOrSkip('createConditionTool', () => {
       policySnapshotId,
       ruleId: 'test-rule',
     });
+  });
+
+  it('returns STALE_CASE_VERSION and writes nothing when the case has changed since the expected version', async () => {
+    const caseId = await makeCase();
+    // Any update bumps LoanCase.version (VersionColumn) — this simulates a
+    // concurrent mutation between when an evaluation observed the case
+    // and when it tries to act on that observation (Section 10.5).
+    await dataSource
+      .getRepository(LoanCase)
+      .update({ id: caseId }, { borrowerId: 'ccr-tool-spec-borrower-2' });
+
+    const result = await tool.execute(
+      { tenantId, caseId },
+      {
+        code: 'VERIFY_INCOME_DISCREPANCY',
+        description: 'test description',
+        policyVersionId: '22222222-2222-2222-2222-222222222222',
+        ruleId: 'test-rule',
+        policySnapshotId: '11111111-1111-1111-1111-111111111111',
+        expectedCaseVersion: 1,
+      },
+    );
+
+    expect(result).toEqual({ outcome: 'STALE_CASE_VERSION' });
+    const conditions = await dataSource
+      .getRepository(LoanCondition)
+      .find({ where: { caseId } });
+    expect(conditions).toHaveLength(0);
+    const events = await dataSource
+      .getRepository(OutboxEvent)
+      .find({ where: { caseId } });
+    expect(events).toHaveLength(0);
+    const updatedCase = await dataSource
+      .getRepository(LoanCase)
+      .findOneByOrFail({ id: caseId });
+    expect(updatedCase.status).toBe(CaseStatus.DRAFT);
   });
 });

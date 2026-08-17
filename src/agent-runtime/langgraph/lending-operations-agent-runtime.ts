@@ -26,6 +26,7 @@ import {
 import {
   createConditionTool,
   CreateConditionResult,
+  StaleCaseVersionError,
 } from '../tools/create-condition.tool';
 import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
 import { evaluatePolicyRule } from '../../policy/dsl/policy-rule-evaluator';
@@ -99,13 +100,37 @@ function consumeStep(
 }
 
 /**
+ * Section 9.5's Agent loop names this the run's second step — "VERIFY
+ * TENANT, CONSENT, TRUSTED DEADLINE, AND AUTHORITATIVE BUDGET LEDGER" —
+ * before evidence is even inspected, and Section 6.3's authority order
+ * puts it first of all: "Consent, authorization, and security controls
+ * may stop processing." `consentStatus` is the only piece of that this
+ * codebase can check today — no authorization-grant or budget-ledger
+ * model exists yet (see `budgetExceeded` above and
+ * docs/DEVELOPMENT_LOG.md's Known gaps for what else Section 9.6 lists
+ * that has no real backing signal yet: contradictory evidence, evidence
+ * confidence thresholds, communication classification, provider-contract
+ * conformance, and prompt-injection signals, since this graph makes no
+ * model calls at all today).
+ */
+function consentInvalid(
+  agentState: LendingOperationsAgentState,
+): string | undefined {
+  if (agentState.consentStatus !== 'VALID') {
+    return `consentStatus is "${agentState.consentStatus}", not VALID`;
+  }
+  return undefined;
+}
+
+/**
  * Section 9.2's `AgentRuntimePort` implemented against a real LangGraph.js
  * v1 `StateGraph`, orchestrating the three tools that exist today
  * (src/agent-runtime/tools/) in the same order Section 9.5's Agent loop
- * describes: check completeness, request a guarded policy evaluation,
- * then propose (and, since `create_condition`'s approval boundary is a
- * structural guard rather than a human gate, execute) a condition
- * transition. `allowedTools` is enforced by only registering the subset
+ * describes: verify consent, check completeness, request a guarded
+ * policy evaluation, then propose (and, since `create_condition`'s
+ * approval boundary is a structural guard rather than a human gate,
+ * execute) a condition transition. `allowedTools` is enforced by only
+ * registering the subset
  * of tools it names — an unlisted tool is simply not in the registry
  * `invokeTool` looks up, so it fails the same tested way an unregistered
  * name always does (agent-tool.types.spec.ts), rather than through a
@@ -154,6 +179,14 @@ export function createLendingOperationsAgentRuntime(
           },
           route: 'ROUTED_TO_MANUAL_REVIEW',
         };
+      }
+
+      async function verifyConsentNode(
+        state: RuntimeState,
+      ): Promise<Partial<RuntimeState>> {
+        const reason = consentInvalid(state.agentState);
+        if (reason) return manualReview(state.agentState, reason);
+        return {};
       }
 
       async function checkCompletenessNode(
@@ -291,6 +324,7 @@ export function createLendingOperationsAgentRuntime(
             policyVersionId: match.version.policyVersionId,
             ruleId: match.version.ruleId,
             policySnapshotId: evaluation.policySnapshotId,
+            expectedCaseVersion: state.agentState.caseVersion,
           },
         );
         const nextState = recordAttempt(
@@ -306,6 +340,18 @@ export function createLendingOperationsAgentRuntime(
           );
         }
         const created = invocation.result as CreateConditionResult;
+        if (created.outcome === 'STALE_CASE_VERSION') {
+          // Not a tool failure — the tool ran correctly and found the
+          // case has moved on since this run's initial state was
+          // captured (Section 10.5). Propagating out of the graph (not
+          // routing to manual review) lets Temporal's own activity retry
+          // re-run evaluateConditions against the case's current state,
+          // which is what a stale evaluation actually needs.
+          throw new StaleCaseVersionError(
+            toolContext.caseId,
+            state.agentState.caseVersion,
+          );
+        }
         return {
           agentState: {
             ...nextState,
@@ -322,10 +368,14 @@ export function createLendingOperationsAgentRuntime(
       }
 
       const graph = new StateGraph(RuntimeAnnotation)
+        .addNode('verifyConsent', verifyConsentNode)
         .addNode('checkCompleteness', checkCompletenessNode)
         .addNode('evaluatePolicy', evaluatePolicyNode)
         .addNode('resolveOutcome', resolveOutcomeNode)
-        .addEdge(START, 'checkCompleteness')
+        .addEdge(START, 'verifyConsent')
+        .addConditionalEdges('verifyConsent', (state) =>
+          state.route ? END : 'checkCompleteness',
+        )
         .addConditionalEdges('checkCompleteness', (state) =>
           state.route ? END : 'evaluatePolicy',
         )

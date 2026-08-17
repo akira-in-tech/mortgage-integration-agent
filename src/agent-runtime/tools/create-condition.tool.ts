@@ -14,15 +14,42 @@ export interface CreateConditionArgs {
   policyVersionId: string;
   ruleId: string;
   policySnapshotId: string;
+  /**
+   * `LoanCase.version` as observed when the evaluation that justified
+   * this condition began (Section 10.5: "a concurrent... case mutation
+   * cannot alter a running evaluation; it creates a new case version and
+   * requires a new evaluation manifest"). Checked, not trusted — see
+   * `StaleCaseVersionError`.
+   */
+  expectedCaseVersion: number;
 }
 
-export interface CreateConditionResult {
-  conditionId: string;
-}
+export type CreateConditionResult =
+  | { outcome: 'CREATED'; conditionId: string }
+  | { outcome: 'STALE_CASE_VERSION' };
 
 export interface CreateConditionToolDeps {
   dataSource: DataSource;
   outboxSigningSecret: string;
+}
+
+/**
+ * Raised only for the residual race between this tool's own version check
+ * and its write within the same transaction (the ordinary case — the case
+ * having moved on since the evaluation that's calling this tool began
+ * well before this call — is reported as `{ outcome: 'STALE_CASE_VERSION'
+ * }` instead, not an exception). Callers let this propagate rather than
+ * catching it: Temporal's own activity retry naturally re-runs
+ * `evaluateConditions` from scratch against the case's current state,
+ * which is exactly what a stale evaluation needs (Section 10.5).
+ */
+export class StaleCaseVersionError extends Error {
+  constructor(caseId: string, expectedVersion: number) {
+    super(
+      `case ${caseId} version changed during the write (expected ${expectedVersion}); re-evaluation required`,
+    );
+    this.name = 'StaleCaseVersionError';
+  }
 }
 
 /**
@@ -40,6 +67,19 @@ export interface CreateConditionToolDeps {
  * and, in the process, finally populates `LoanCondition.policySnapshotId`
  * (a column that has existed since M2-001 specifically for this, per its
  * own comment: "M3 will make it required... Section 6.2").
+ *
+ * `expectedCaseVersion` implements the compare-and-swap property Section
+ * 10.5's `EvaluationInputManifest` exists to guarantee for condition
+ * writes — `LoanCase.version`'s own comment has said "Optimistic
+ * concurrency for compare-and-swap writes (Section 10.5, 17.1)" since it
+ * was added, but nothing actually checked it until now (every write used
+ * `Repository.update()`, which TypeORM does not version-guard the way
+ * `.save()` on a loaded entity would). The full manifest struct is not
+ * built here — most of its fields (`authorizationDecisionId`,
+ * `consentVersionRefs`, evidence content hashes, calculation refs) have
+ * no backing subsystem yet — this implements the specific protective
+ * behavior the manifest exists to provide, honestly scoped to what this
+ * codebase can actually check today.
  */
 export function createConditionTool(
   deps: CreateConditionToolDeps,
@@ -51,6 +91,15 @@ export function createConditionTool(
     approvalBoundary: 'Validated binding and evaluation required',
     async execute({ tenantId, caseId }, args) {
       return deps.dataSource.transaction(async (manager) => {
+        const caseRepo = manager.getRepository(LoanCase);
+        const currentCase = await caseRepo.findOneByOrFail({
+          id: caseId,
+          tenantId,
+        });
+        if (currentCase.version !== args.expectedCaseVersion) {
+          return { outcome: 'STALE_CASE_VERSION' as const };
+        }
+
         const conditionRepo = manager.getRepository(LoanCondition);
         const condition = await conditionRepo.save(
           conditionRepo.create({
@@ -62,12 +111,18 @@ export function createConditionTool(
             policySnapshotId: args.policySnapshotId,
           }),
         );
-        await manager
-          .getRepository(LoanCase)
-          .update(
-            { id: caseId, tenantId },
-            { status: CaseStatus.CONDITIONS_OPEN },
-          );
+        const updateResult = await caseRepo.update(
+          { id: caseId, tenantId, version: args.expectedCaseVersion },
+          { status: CaseStatus.CONDITIONS_OPEN },
+        );
+        if (updateResult.affected === 0) {
+          // The version check above passed, but the case changed again
+          // before this same transaction's write — genuinely exceptional
+          // (not the routine "evaluation is old" case above), so this
+          // throws rather than returning a typed result, which also
+          // rolls back the condition insert.
+          throw new StaleCaseVersionError(caseId, args.expectedCaseVersion);
+        }
         await writeOutboxEvent(manager, deps.outboxSigningSecret, {
           tenantId,
           caseId,
@@ -87,7 +142,7 @@ export function createConditionTool(
           eventType: OutboxEventType.WorkflowRunWaitingForReview,
           payload: { caseId, conditionId: condition.id },
         });
-        return { conditionId: condition.id };
+        return { outcome: 'CREATED' as const, conditionId: condition.id };
       });
     },
   };
