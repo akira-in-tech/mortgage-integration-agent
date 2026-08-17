@@ -1,0 +1,14 @@
+{
+  "id": "NORMAL-004",
+  "description": "Stated income is well above Plaid-verified income (26.0% difference, the overstatement direction) — the discrepancy rule is symmetric (absolute difference), so a condition should still open.",
+  "category": "normal",
+  "borrowerId": "EVAL-CASE-006",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 20000,
+  "requestedAmount": 500000,
+  "expected": {
+    "outcome": "CONDITION_OPENED",
+    "conditionCode": "VERIFY_INCOME_DISCREPANCY"
+  }
+}

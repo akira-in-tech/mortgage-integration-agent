@@ -1,0 +1,14 @@
+{
+  "id": "BOUNDARY-002",
+  "description": "Income difference is 10.10%, just over the rule's \"greater than 10%\" threshold — a condition should open.",
+  "category": "boundary",
+  "borrowerId": "EVAL-CASE-004",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 13399,
+  "requestedAmount": 300000,
+  "expected": {
+    "outcome": "CONDITION_OPENED",
+    "conditionCode": "VERIFY_INCOME_DISCREPANCY"
+  }
+}

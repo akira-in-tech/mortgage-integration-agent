@@ -4017,3 +4017,97 @@ No manual live-API check this slice: nothing new is reachable via REST/GraphQL, 
 ### Next safe step
 
 Seven of Section 9.4's sixteen tools are now real. Continuing the M3-closure punch list: the budget ledger (still deliberately deferred — no genuine consumer), and the evaluation corpus + report command (Section 18.2, deliberately scoped down from its full spec) remain the two largest open items.
+
+## M3-019: Evaluation corpus + report command (Section 18.2)
+
+### Status
+
+Implemented and verified. `npm run evaluate` drives a real, 12-case corpus through the actual `case-conditions.activities.ts` functions (the same code the M2 Temporal workflow calls) against a real database, and writes a reproducible JSON report to `evaluation/reports/`. This closes the last scope-list item from M3's own charter text (Section 20: "initial release evaluation corpus and report command") that hadn't been started.
+
+### Acceptance criterion
+
+Section 18.2 names a `evaluation/` directory structure and a first-release target of "at least 150 synthetic cases across normal, boundary, contradiction, missing-data, provider-failure, and adversarial categories." Section 18.3 requires the report to record aggregate metrics and pin "model, prompt, policy, dataset, and code revisions... in every report." This codebase's actual maturity — one seeded synthetic policy rule, no document/model-facing surface, no contradiction detector — makes the full spec impossible to satisfy without fabricating either case count or category coverage. The bar this slice actually meets: every case that exists is real (drives real production code, asserts a real, previously-verified outcome), every category included has a genuine target to test against, and categories with no real target are omitted and explicitly documented rather than faked.
+
+### Implementation
+
+- `evaluation/cases/*.json` (12 new fixtures, one file per case): `normal` (4 — two income-matches, two discrepancies, including an overstatement case proving the DSL rule's `Math.abs()` symmetry), `boundary` (2 — 9.90% and 10.10% difference, precisely either side of the seeded rule's ">10%" threshold), `missing-data` (1 — an INCOME evidence fact that exists but is missing the field the rule reads), `policy-coverage` (1 — a jurisdiction that exists but was never reviewed for coverage), `provider-failure` (4 — transient and terminal synthetic failures across the income/credit/document fetch steps). Every numeric value was computed exactly against `PlaidService`'s real deterministic-per-`borrowerId` seed function, not chosen approximately — the boundary cases land at 9.900% and 10.098% difference precisely.
+- `src/evaluation/types.ts`: fixture and report type definitions. `EvaluationCategory` deliberately omits `contradiction` and `adversarial` from Section 18.2's list — no contradiction detector exists (Section 9.6's own documented gap) and no document/model-facing surface exists for an adversarial input to target, so there is nothing real for either category to check.
+- `src/evaluation/runner.ts`: `runCorpus()` calls `createCaseConditionsActivities()` — the exact factory `worker.ts` uses in production — and drives each fixture through `fetchIncomeEvidence`/`fetchCreditEvidence`/`fetchDocumentEvidence`/`evaluateConditions` directly (no Temporal needed, same pattern `case-conditions.activities.spec.ts` already established). `missing-data` fixtures insert a deliberately incomplete `EvidenceFact` instead of calling the real Plaid simulator; `provider-failure` fixtures call only the one fetch step expected to fail (a `SYNTHETIC-TRANSIENT-FAILURE-`/`SYNTHETIC-TERMINAL-FAILURE-` `borrowerId` prefix, the same real fault-injection mechanism `case-conditions.activities.spec.ts`'s retry-classification tests already use) and classify the resulting `ApplicationFailure`. `cleanupEvaluationRun()` deletes every row a run created, tenant-scoped, matching this session's established manual-verification cleanup discipline — so repeated `npm run evaluate` invocations never accumulate synthetic data.
+- `src/evaluation/report.ts`: `buildReport()` computes per-category pass counts and condition precision/recall (defined literally: recall = of cases expecting `CONDITION_OPENED`, the fraction that got it; precision = of cases that actually got `CONDITION_OPENED`, the fraction that were expected to), pins the real git commit/branch (`git rev-parse`, soft-failing to `null` outside a git checkout rather than fabricating a revision) and the real released `PolicyVersion` ids from the database, and explicitly records `modelAndPromptRevisions: null` with a note explaining why — the M3 Agent graph makes no model calls, so there is nothing real to pin, and Section 18.3 requires this be *recorded*, not silently absent.
+- `src/evaluation-report.ts`: the `npm run evaluate` entry point (`ts-node`, same pattern as `start:worker:dev`) — loads `.env` the same way `data-source.ts` does (outside Nest's DI container), runs the corpus, writes the report, prints a pass/fail summary, exits `1` if any case failed (CI-usable), and cleans up its own synthetic tenant/case data in a `finally` block regardless of outcome.
+
+### Affected files
+
+- `evaluation/cases/*.json` (12 new fixture files)
+- `src/evaluation/types.ts`, `load-corpus.ts`, `runner.ts`, `runner.spec.ts`, `report.ts`, `report.spec.ts` (all new)
+- `src/evaluation-report.ts` (new)
+- `package.json` (new `evaluate` script)
+- `.gitignore` (generated `evaluation/reports/*.json` excluded)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **12 precisely-designed cases, not 150.** Section 18.2's 150-case target assumes a mature policy catalog with many rules to generate meaningful variation across. This codebase has exactly one seeded synthetic rule (`synthetic-income-discrepancy-review`) — every one of 150 cases against that single rule would necessarily be a numeric variation on the same three real code paths (match / discrepancy / boundary), which is padding, not coverage. Twelve cases that each exercise a genuinely distinct, real code path (including two provider-failure paths and the missing-data fail-safe) is more honest evaluation evidence than 150 that don't.
+- **`contradiction` and `adversarial` categories omitted, not faked.** Section 9.6 already documents "contradictory... evidence" as a mandatory review trigger with no real detector behind it yet; building a corpus fixture that asserts a passing result for a check that doesn't exist would be exactly the kind of fabrication this session has consistently refused. Same reasoning for `adversarial`/`prompt-injection`: no document-processing or model-facing surface exists in the M3 Agent for adversarial input to target.
+- **The corpus runner calls the real activity functions, not a reimplementation.** `runCorpus()` imports and calls `createCaseConditionsActivities()` directly — the identical factory `worker.ts` wires into the real Temporal worker — rather than reimplementing policy-evaluation or Agent-routing logic for evaluation purposes. A corpus that tested a parallel reimplementation could pass while the real system behaved differently; this one cannot.
+- **A genuine finding surfaced while building the `missing-data` fixture, not smoothed over**: the DSL evaluator's own "cannot evaluate: missing or non-numeric fact(s)" reason (`policy-rule-evaluator.ts`) is computed internally but never surfaced through `evaluateConditions`'s return value when nothing matches — a below-threshold difference and genuinely missing data both collapse to the identical `READY`/no-condition outcome with no distinguishing detail at that level. The fixture and its test still pass (the fail-safe behavior itself — no crash, no false-positive condition — is correct and verified), but the corpus's own `MISSING-DATA-001` description and `runner.spec.ts`'s test comment record this gap explicitly rather than asserting a "cannot evaluate" string that isn't actually there. Recorded here as a known gap, not fixed in this slice (fixing it would mean adding a distinct outcome/reason-surfacing path to `EvaluateConditionsResult`, a real behavior change beyond what "build the evaluation corpus" asked for).
+- **Reports are gitignored, not committed.** A report is a snapshot tied to a specific run's timestamp, git commit, and database state — committing one would immediately go stale and misrepresent itself as current. The corpus (`evaluation/cases/`) is the durable, reviewable artifact; reports are regenerated on demand.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for spec
+formatting)
+  both passed clean
+
+No new migration — this slice adds no schema, only application code
+and JSON fixtures.
+
+Scratch stack (m3019-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    43 suites passed, 289 tests passed (280 -> 289: +9, covering
+    runner.spec.ts [6, real-database: matched/discrepancy/boundary
+    cases against the real seeded rule, the missing-data fail-safe,
+    policy-coverage seeding the not-covered jurisdiction on demand,
+    both provider-failure classifications, a deliberately-mismatched
+    expectation correctly reported as failed rather than silently
+    passing, and cleanupEvaluationRun's completeness] and report.spec.ts
+    [3, precision/recall math, null-when-no-condition-cases, real
+    released policy version ids from the database])
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    14/14 passed (unchanged — no migration this slice)
+
+  DATABASE_URL=... OUTBOX_SIGNING_SECRET=... npm run evaluate
+    ran against the real scratch stack twice (once to catch a real bug
+    — see below — once to confirm the fix): 12/12 cases passed,
+    condition recall=1, condition precision=1, a real report JSON
+    written with a real pinned git commit and real released
+    PolicyVersion id, and confirmed via direct SQL query that the
+    run's synthetic tenant/case/evidence rows were fully removed
+    afterward
+```
+
+A real bug was caught and fixed during this slice's own verification, not after: the first `npm run evaluate` run left its synthetic `Tenant` row behind (`cleanupEvaluationRun` deletes every case-scoped table but never the tenant itself) — confirmed by a direct `SELECT count(*) FROM tenants WHERE name LIKE 'Evaluation report%'` returning 1 after a run. Fixed by adding an explicit tenant delete to `evaluation-report.ts`'s `finally` block (symmetric with who created it), then re-verified the count returns 0.
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface — `npm run evaluate` is a local/CI command, not a service endpoint.
+- Every corpus fixture uses synthetic data only (Section 16.2: "no real consumer data in... evaluation corpora") — borrower ids like `EVAL-CASE-001` and `SYNTHETIC-TRANSIENT-FAILURE-income1`, never anything resembling a real identity.
+- No new external dependency (`dotenv` was already a transitive dependency, used the same way `data-source.ts` already uses it) — no new provider call.
+- The report JSON includes a real git commit hash — no secrets or credentials, just a revision pointer already visible in the repository's own history.
+
+### Known gaps
+
+- 12 cases, not Section 18.2's 150 — deliberately scoped to this codebase's actual maturity (see Decisions). Growing the corpus toward 150 needs more real policy rules to generate genuine variation against, not more numeric permutations of the one that exists.
+- `contradiction` and `adversarial`/`prompt-injection` categories are not represented — no real detector or model-facing surface exists yet for either.
+- `evaluateConditions`'s missing-data reason is not surfaced in its return value (see Decisions) — a real, corpus-discovered gap, not fixed here.
+- No `model-configs/`, `documents/`, `expected-facts/`, or `policy-timelines/` subdirectories (Section 18.2's full structure) — no document-extraction or model-config subsystem exists to populate them honestly.
+- The report command has no retention/comparison tooling yet (e.g., diffing two reports, tracking a metric trend release over release) — each run is a self-contained snapshot.
+
+### Next safe step
+
+This closes the last unstarted item from M3's own charter scope list. What remains open across the whole M3-closure punch list: a real token/cost/provider-call budget ledger (still deliberately deferred — no genuine consumer exists in an Agent graph that makes no model calls and incurs no real cost), and the ~9 remaining Section 9.4 tools that each need a real backing subsystem (provider adapters, a calculation engine, a webhook subsystem) not yet built. Both are M4-adjacent scope rather than something this session can honestly close incrementally the way the last several slices did.

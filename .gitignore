@@ -34,3 +34,7 @@ coverage/
 
 # GraphQL generated schema (regenerated on start)
 src/schema.gql
+
+# Generated evaluation reports (Section 18.2) — reproducible from
+# evaluation/cases/ + npm run evaluate, not durable source content.
+evaluation/reports/*.json

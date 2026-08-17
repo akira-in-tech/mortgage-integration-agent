@@ -1,0 +1,14 @@
+{
+  "id": "NORMAL-002",
+  "description": "Stated income is far below Plaid-verified income (63.4% difference) — the seeded income-discrepancy rule should open a condition.",
+  "category": "normal",
+  "borrowerId": "EVAL-CASE-002",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 9000,
+  "requestedAmount": 350000,
+  "expected": {
+    "outcome": "CONDITION_OPENED",
+    "conditionCode": "VERIFY_INCOME_DISCREPANCY"
+  }
+}

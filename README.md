@@ -303,6 +303,15 @@ Tests are automatically skipped with a warning if either env var is missing.
 
 The Temporal workflow and activities suites (`src/workflows/*.spec.ts`) follow the same convention: they run against a real Temporal server and database when `TEMPORAL_ADDRESS`/`DATABASE_URL` are set, and skip otherwise.
 
+### Evaluation corpus (Section 18.2)
+
+```bash
+# Set DATABASE_URL in .env, then:
+npm run evaluate
+```
+
+Drives every fixture in `evaluation/cases/*.json` through the real `case-conditions.activities.ts` functions (the same code the M2 Temporal workflow calls, no Temporal server required) against a real database, then writes a reproducible JSON report to `evaluation/reports/` (gitignored — a report is a snapshot of one run, not durable source content) with per-category pass counts, condition precision/recall, and pinned git commit + released policy version ids. Exits non-zero if any case fails, so it's usable as a CI gate. 12 real cases across `normal`/`boundary`/`missing-data`/`policy-coverage`/`provider-failure` categories — deliberately not Section 18.2's full 150-case target, since this codebase has exactly one seeded synthetic policy rule to test meaningful variation against; `contradiction`/`adversarial` categories are omitted rather than faked, since no contradiction detector or model-facing surface exists yet to genuinely check against. See `docs/DEVELOPMENT_LOG.md`'s M3-019 entry for the full reasoning, including a real gap the corpus itself surfaced: `evaluateConditions` doesn't currently distinguish "evidence was missing" from "evidence was fine" in its return value — both collapse to the same no-condition outcome.
+
 ## Design Notes
 
 The three integration calls (Plaid, credit bureau, document parser) run in parallel via `Promise.all` before decisioning. This keeps latency low since the integrations are independent of each other.

@@ -1,0 +1,14 @@
+{
+  "id": "PROVIDER-FAILURE-003",
+  "description": "The credit bureau provider fails with a synthetic terminal error — must be classified non-retryable.",
+  "category": "provider-failure",
+  "borrowerId": "SYNTHETIC-TERMINAL-FAILURE-credit1",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 9000,
+  "requestedAmount": 300000,
+  "failingStep": "credit",
+  "expected": {
+    "outcome": "PROVIDER_TERMINAL_FAILURE"
+  }
+}

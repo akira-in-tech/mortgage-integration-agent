@@ -1,0 +1,14 @@
+{
+  "id": "PROVIDER-FAILURE-001",
+  "description": "The income provider fails with a synthetic transient error — must be classified retryable, not terminal.",
+  "category": "provider-failure",
+  "borrowerId": "SYNTHETIC-TRANSIENT-FAILURE-income1",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 9000,
+  "requestedAmount": 300000,
+  "failingStep": "income",
+  "expected": {
+    "outcome": "PROVIDER_TRANSIENT_FAILURE"
+  }
+}
