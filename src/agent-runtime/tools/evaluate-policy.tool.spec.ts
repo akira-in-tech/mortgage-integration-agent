@@ -59,7 +59,12 @@ describe('evaluatePolicyTool', () => {
       policySnapshotId: 'snapshot-1',
       policyBindingId: 'binding-1',
       matchedVersions: [
-        { policyVersionId: 'pv-1', ruleId: 'rule-1', version: '1.0.0' },
+        {
+          policyVersionId: 'pv-1',
+          ruleId: 'rule-1',
+          version: '1.0.0',
+          rule: {},
+        },
       ],
       unresolvedReasons: [],
     });

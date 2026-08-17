@@ -28,9 +28,8 @@ import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { evaluatePolicyRule } from '../policy/dsl/policy-rule-evaluator';
 import { PolicyFactContext } from '../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../policy/product-code';
+import { UNDERWRITING_REVIEW_LIFECYCLE_EVENT } from '../policy/lifecycle-events';
 import { createConditionTool } from '../agent-runtime/tools/create-condition.tool';
-
-const UNDERWRITING_REVIEW_LIFECYCLE_EVENT = 'UNDERWRITING_REVIEW';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;

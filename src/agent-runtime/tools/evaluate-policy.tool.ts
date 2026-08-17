@@ -1,4 +1,5 @@
 import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
+import { PolicyRuleDocument } from '../../policy/dsl/policy-rule.types';
 import { AgentTool } from '../agent-tool.types';
 
 export interface EvaluatePolicyArgs {
@@ -12,10 +13,18 @@ export interface EvaluatePolicyResult {
   status: 'RESOLVED' | 'REVIEW_REQUIRED';
   policySnapshotId: string;
   policyBindingId?: string;
+  /**
+   * `rule` is the same parsed DSL document `PolicyEvaluationService`
+   * already resolved internally — surfaced here (not just the id/version
+   * refs) so a caller can run `evaluatePolicyRule` against real evidence
+   * without a second resolution. It is not sensitive: the DSL is
+   * tenant-authored, reviewed policy content, not a secret.
+   */
   matchedVersions: Array<{
     policyVersionId: string;
     ruleId: string;
     version: string;
+    rule: PolicyRuleDocument;
   }>;
   unresolvedReasons: string[];
 }
@@ -58,6 +67,7 @@ export function evaluatePolicyTool(
           policyVersionId: v.policyVersionId,
           ruleId: v.ruleId,
           version: v.version,
+          rule: v.rule,
         })),
         unresolvedReasons: evaluation.resolution.unresolvedReasons,
       };

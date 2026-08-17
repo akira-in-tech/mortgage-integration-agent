@@ -2902,3 +2902,93 @@ No application test is required for this documentation-only correction — no co
 ### Next safe step
 
 No charter follow-up is queued by this entry. Resume the M3 roadmap: add `@langchain/langgraph` as a dependency and build the `AgentRuntimePort` implementation, per M3-006's own next-safe-step note.
+
+## M3-007: Real LangGraph.js v1 `AgentRuntimePort` implementation
+
+### Status
+
+Implemented and verified. `@langchain/langgraph` (v1.4.10) is now a real dependency, and `AgentRuntimePort` (M3-006) has its first implementation: a compiled LangGraph.js `StateGraph` orchestrating the three existing tools. Standalone — not wired into the M2 Temporal workflow, which continues to call `PolicyEvaluationService`/`createConditionTool` directly (see Decisions).
+
+### Acceptance criterion
+
+`AgentRuntimePort.run()` must be implemented by a real, compiled LangGraph.js v1 `StateGraph` (not a hand-rolled loop that merely satisfies the TypeScript interface), exercising the three existing tools (`check_case_completeness`, `evaluate_policy`, `create_condition`) through the same `buildToolRegistry`/`invokeTool` contract every tool already uses, and producing every `AgentRunRoute` the Agent loop (Section 9.5) actually reaches with today's tools: `AWAITING_INFORMATION` (missing evidence), `PROPOSED_ACTION` (ready, with or without a condition), and `ROUTED_TO_MANUAL_REVIEW` (policy review-required, disallowed tool, or budget/deadline exhaustion). `INTERRUPTED_FOR_REVIEW` is out of scope — no human-interrupt/resume flow exists yet (Known gaps).
+
+### Implementation
+
+- `npm install @langchain/langgraph@^1.4.10 @langchain/core@^1.1.48 zod@^4.2.0` — `zod` and `@langchain/core` are `@langchain/langgraph`'s declared peer dependencies.
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` — `createLendingOperationsAgentRuntime(deps)` returns an `AgentRuntimePort`. Internally: a `StateGraph` built from `Annotation.Root` (three nodes — `checkCompleteness`, `evaluatePolicy`, `resolveOutcome` — wired with `addConditionalEdges` that route to `END` the moment any node sets `route`, or continue otherwise), compiled and invoked fresh on every `run()` call. Each node:
+  - Checks `budgetExceeded()` first (trusted-clock deadline check against `runDeadlineAt`, plus `remainingStepBudget <= 0`) and fails closed to `ROUTED_TO_MANUAL_REVIEW` without calling a tool if either is already exhausted.
+  - Calls its tool through `invokeTool(registry, ...)`, where `registry` is built via `buildToolRegistry` from **only** the tools named in `input.allowedTools` — an unlisted tool is simply absent from the registry, so it fails the same tested "unregistered tool" path `agent-tool.types.spec.ts` already covers, rather than a second, independently-written allow-check that could drift from it.
+  - Records every attempt in `agentState.attemptedTools` (Section 9.3), win or lose.
+  - `checkCompleteness`: incomplete evidence → `AWAITING_INFORMATION`.
+  - `evaluatePolicy`: loads the case's `jurisdictionCode`/`loanType` to build the tool's args (product code via the existing `loanTypeToProductCode`, lifecycle event via the newly shared `UNDERWRITING_REVIEW_LIFECYCLE_EVENT`); `REVIEW_REQUIRED` → `ROUTED_TO_MANUAL_REVIEW` with the resolver's own unresolved reasons as the review reason.
+  - `resolveOutcome`: loads the case's `statedMonthlyIncome` and its latest `INCOME` evidence fact, runs the existing pure `evaluatePolicyRule` against each matched policy version, and — on a match — calls `create_condition` directly (its Section 9.4 approval boundary is "Validated binding and evaluation required," a structural guard already satisfied by this point, not a human-approval gate) before returning `PROPOSED_ACTION` with `proposedAction` recording what was created. No match → `PROPOSED_ACTION` with no `proposedAction` (ready, nothing to do).
+- `src/agent-runtime/tools/evaluate-policy.tool.ts` — widened `EvaluatePolicyResult.matchedVersions` to include each version's parsed `rule: PolicyRuleDocument` (previously only `policyVersionId`/`ruleId`/`version` refs). `PolicyEvaluationService.evaluate()` already resolves this internally; the tool just wasn't surfacing it. Without this, the graph would have needed a second, duplicate resolution or a direct `PolicyEvaluationService` call that bypassed the tool layer — the DSL document itself isn't sensitive (tenant-authored, reviewed policy content, not a secret), so surfacing it is a safe widening, not a guard weakening.
+- `src/policy/lifecycle-events.ts` (new) — `UNDERWRITING_REVIEW_LIFECYCLE_EVENT`, extracted from a private constant `case-conditions.activities.ts` already had, now shared with the new runtime so the two independent callers of `PolicyEvaluationService` can't drift to different lifecycle-event strings.
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.spec.ts` (new) — real database, real seeded policy version (Section 10.7's example, isolated jurisdiction codes), real `graph.invoke()` calls. Seven cases: missing evidence → `AWAITING_INFORMATION`; matching income → `PROPOSED_ACTION` with no condition created; diverging income → `PROPOSED_ACTION` with a real `LoanCondition` row created and `policySnapshotId` populated, case moved to `CONDITIONS_OPEN`; uncovered jurisdiction → `ROUTED_TO_MANUAL_REVIEW` with the resolver's reason surfaced; a disallowed required tool → fails closed to `ROUTED_TO_MANUAL_REVIEW` without ever reaching the policy step; zero starting step budget → `ROUTED_TO_MANUAL_REVIEW` without invoking any tool; already-past deadline → same.
+
+### Affected files
+
+- `package.json`, `package-lock.json`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts` (new)
+- `src/agent-runtime/tools/evaluate-policy.tool.ts`, `.spec.ts`
+- `src/policy/lifecycle-events.ts` (new)
+- `src/workflows/case-conditions.activities.ts` (import-only change: shares the extracted lifecycle-event constant)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **`Annotation.Root` over a Zod state schema**: LangGraph.js v1 supports both; `Annotation.Root` needs no new modeling of `LendingOperationsAgentState` as a Zod schema (it already exists as a plain TS interface) and keeps the graph's state definition a thin wrapper (`agentState`, `route`, a `policyEvaluation` scratch field) rather than a parallel schema to keep in sync.
+- **A fresh `StateGraph` built and compiled inside every `run()` call, not once at factory time**: each run's node closures need that run's own `input.allowedTools`/`runDeadlineAt`/tool-context — building the graph once and threading that through LangGraph's `config`/`Runtime` parameter would work too, but a fresh build is simpler, correct, and this is not a hot path (one Agent run per case-conditions cycle, not per request).
+- **`allowedTools` enforced by registry membership, not a separate check**: reusing `invokeTool`'s already-tested "unregistered tool → FAILURE, never throws" behavior for two different reasons (tool doesn't exist vs. tool exists but isn't authorized for this run) means one code path to trust instead of two.
+- **`create_condition` executed directly on a match, not staged as a proposal awaiting a separate approval step**: Section 9.4's approval boundary for this tool is "Validated binding and evaluation required" — a structural precondition (policy binding validated, rule matched), not "Human ... approval" the way `send_information_request`/protected communications require (Section 6.3/6.4/9.4). `case-conditions.activities.ts` already executes the identical tool call directly for the same reason; the Agent runtime does the same rather than inventing a different approval model for the same tool.
+- **Standalone, not wired into `case-conditions.activities.ts`**: Section 9.2's runtime-separation diagram is explicit that the Temporal workflow, the bounded Agent run, and the deterministic policy engine are three separate layers — the workflow does not have to route a fully deterministic decision through an Agent run. Swapping the M2 workflow's `evaluateConditions` activity to call this runtime instead of the policy engine directly would be a real behavior change (different retry semantics, different failure surface under Temporal's activity model, a new step-budget/deadline concern layered onto Temporal's own timeout/retry policy) that deserves its own deliberate slice and justification, not a byproduct of proving the port works.
+- **Only `remainingStepBudget` and the trusted deadline enforced, not token/cost/provider-call budgets**: those need the ledger/reservation system Section 9.3 describes, which doesn't exist yet (M3-006's Known gaps, unchanged). Enforcing the two dimensions that need no ledger is real, additive progress; claiming the rest would be false completeness.
+
+### Verification
+
+```text
+npm install @langchain/langgraph @langchain/core zod
+  20 packages added, 0 vulnerabilities
+
+npm run build / npm run lint:check
+  both passed
+
+node -e "require('dist/agent-runtime/langgraph/lending-operations-agent-runtime.js')"
+  loads cleanly under plain Node — no ESM/CJS interop failure between
+  the compiled CommonJS output and @langchain/langgraph's package
+
+scratch stack: docker compose (postgres 5433, temporal 7234) + migration:run
+  all 8 migrations applied cleanly, including the M3 policy schema and
+  seed migrations
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  31 suites passed, 212 tests passed (30->31 suites, 205->212 tests;
+  +7 from lending-operations-agent-runtime.spec.ts, all real-database,
+  real-graph-invocation cases)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 13 tests passed (unchanged)
+
+scratch stack torn down (docker compose down -v); no synthetic data
+left in any persistent database
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — this runtime has no controller/resolver caller yet.
+- `evaluate_policy`'s widened result surfaces policy DSL content (not borrower data) to a caller that already receives the guard's pass/fail outcome; no new sensitive-data exposure.
+- New dependencies (`@langchain/langgraph`, `@langchain/core`, `zod`) add real supply-chain surface — all three are widely-used, actively maintained packages already implied by the charter's own Section 9.2 ("LangGraph is an Agent runtime adapter"). No paid API or external network call is introduced; the graph runs entirely in-process against the same Postgres the rest of the app uses.
+- `npm install` reported an unrelated pre-existing peer-dependency warning between `@apollo/server` and `@apollo/server-plugin-landing-page-graphql-playground` (present before this change) and an `EBADENGINE` warning for the local Node version (v22) against `package.json`'s `engines.node >=24` — both pre-existing environment conditions, unaffected by and unrelated to this slice.
+
+### Known gaps
+
+- Not wired into the M2 Temporal workflow — `case-conditions.activities.ts` is unchanged in behavior (only its lifecycle-event constant now comes from a shared file). Whether/how to route the workflow's decision through this runtime instead of calling the policy engine directly is an open, separate decision.
+- No token, provider-call, or cost-ledger enforcement — only step count and trusted deadline are checked (M3-006's original Known gaps, narrowed but not closed).
+- `INTERRUPTED_FOR_REVIEW` is never produced — no mandatory-review-trigger logic (Section 9.6) or human-interrupt/resume flow exists yet; today's three tools only ever reach `AWAITING_INFORMATION`, `PROPOSED_ACTION`, or `ROUTED_TO_MANUAL_REVIEW`.
+- Only 3 of Section 9.4's 16 tools are wired into this graph, same as M3-006's own gap — the graph structure would need real nodes for any additional tool, not just a registry entry.
+- No checkpointer/persistence configured on the compiled graph (`compile({ checkpointer: ... })` was left at its default) — a run is fully in-memory for its duration; nothing depends on LangGraph's own durability features, since Temporal (when this is eventually wired in) or the caller's own retry is the durability boundary Section 9.2 assigns to that layer.
+
+### Next safe step
+
+Decide whether/how `case-conditions.activities.ts`'s `evaluateConditions` should route through this runtime instead of calling `PolicyEvaluationService`/`createConditionTool` directly — and if so, design how Temporal's own retry/timeout semantics compose with the runtime's step/deadline budget rather than fighting it. Independently, Section 9.6's mandatory review triggers and a real token/cost budget ledger are the next pieces of Section 9 that would make `ROUTED_TO_MANUAL_REVIEW`/`INTERRUPTED_FOR_REVIEW` reflect the charter's actual safety requirements rather than only the two dimensions checked today.
