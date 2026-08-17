@@ -4,7 +4,10 @@ import { Worker } from '@temporalio/worker';
 import { ApplicationFailure } from '@temporalio/common';
 import { v4 as uuidv4 } from 'uuid';
 import { caseConditionsWorkflow } from './case-conditions.workflow';
-import { resolveConditionSignal } from './case-conditions.signals';
+import {
+  resolveConditionSignal,
+  resumeInterruptedEvaluationSignal,
+} from './case-conditions.signals';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import type { CaseConditionsActivities } from './case-conditions.activities';
 
@@ -49,6 +52,7 @@ function makeMockActivities(
     evaluateConditions: jest.fn().mockResolvedValue({ outcome: 'READY' }),
     resolveCondition: jest.fn().mockResolvedValue(undefined),
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
+    markWaitingForReview: jest.fn().mockResolvedValue(undefined),
     markManualReview: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as CaseConditionsActivities;
@@ -259,12 +263,16 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markReadyForUnderwriting).toHaveBeenCalledTimes(1);
   });
 
-  it('routes to MANUAL_REVIEW when evaluateConditions cannot resolve policy applicability', async () => {
+  it('routes to MANUAL_REVIEW when evaluateConditions reports a runtime failure (REVIEW_REQUIRED)', async () => {
+    // REVIEW_REQUIRED is the Agent run's fail-closed default for a
+    // runtime failure (consent invalid, budget/deadline exhaustion, a
+    // tool's own failure — Section 9.5: "budget or runtime failure:
+    // route to manual review") — distinct from INTERRUPTED (policy
+    // ambiguity, resumable), tested separately below.
     const activities = makeMockActivities({
       evaluateConditions: jest.fn().mockResolvedValue({
         outcome: 'REVIEW_REQUIRED',
-        reviewReason:
-          'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+        reviewReason: 'consentStatus is "REVOKED", not VALID',
       }),
     });
     const taskQueue = `test-${uuidv4()}`;
@@ -283,10 +291,10 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markManualReview).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       caseId: 'case-1',
-      reason: 'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+      reason: 'consentStatus is "REVOKED", not VALID',
     });
-    // Unresolved policy applicability is not a specific business
-    // condition — the durable-wait/resolveCondition flow must not run.
+    // A runtime failure is not a specific business condition — the
+    // durable-wait/resolveCondition flow must not run.
     expect(activities.resolveCondition).not.toHaveBeenCalled();
   });
 
@@ -325,6 +333,94 @@ describeOrSkip('caseConditionsWorkflow', () => {
       expect.objectContaining({ tenantId: 'tenant-1', caseId: 'case-1' }),
     );
     expect(activities.resolveCondition).not.toHaveBeenCalled();
+  });
+
+  it('durably waits when evaluation is interrupted, then re-evaluates and completes once resumed', async () => {
+    const evaluateConditions = jest
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: 'INTERRUPTED',
+        reviewReason:
+          'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+      })
+      .mockResolvedValueOnce({ outcome: 'READY' });
+    const activities = makeMockActivities({ evaluateConditions });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, async () => {
+      const handle = await env.client.workflow.start(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      });
+
+      // Give the workflow time to reach the interrupt's durable wait
+      // before signaling — signaling too early would race the first
+      // evaluateConditions call.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      await handle.signal(resumeInterruptedEvaluationSignal, {
+        actorId: 'reviewer-4',
+        note: 'coverage activated for US-ZZ',
+      });
+
+      return handle.result();
+    });
+
+    expect(result).toEqual({ finalStatus: CaseStatus.READY_FOR_UNDERWRITING });
+    expect(evaluateConditions).toHaveBeenCalledTimes(2);
+    expect(activities.markWaitingForReview).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      caseId: 'case-1',
+      reason: 'jurisdiction "US-ZZ" has no reviewed, covered policy source',
+    });
+    // A resumed-and-cleared evaluation completes straight through, same
+    // as the non-interrupted READY path — no condition-resolution flow.
+    expect(activities.resolveCondition).not.toHaveBeenCalled();
+    expect(activities.markManualReview).not.toHaveBeenCalled();
+  });
+
+  it('supports multiple interrupt cycles before the evaluation finally resolves', async () => {
+    const evaluateConditions = jest
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: 'INTERRUPTED',
+        reviewReason: 'first ambiguity',
+      })
+      .mockResolvedValueOnce({
+        outcome: 'INTERRUPTED',
+        reviewReason: 'second ambiguity',
+      })
+      .mockResolvedValueOnce({ outcome: 'READY' });
+    const activities = makeMockActivities({ evaluateConditions });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, async () => {
+      const handle = await env.client.workflow.start(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await handle.signal(resumeInterruptedEvaluationSignal, {
+        actorId: 'reviewer-5',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await handle.signal(resumeInterruptedEvaluationSignal, {
+        actorId: 'reviewer-5',
+      });
+
+      return handle.result();
+    });
+
+    expect(result).toEqual({ finalStatus: CaseStatus.READY_FOR_UNDERWRITING });
+    expect(evaluateConditions).toHaveBeenCalledTimes(3);
+    expect(activities.markWaitingForReview).toHaveBeenCalledTimes(2);
   });
 
   it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {

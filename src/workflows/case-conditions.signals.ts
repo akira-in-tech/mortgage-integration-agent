@@ -18,3 +18,22 @@ export interface ResolveConditionSignalPayload {
  */
 export const resolveConditionSignal =
   defineSignal<[ResolveConditionSignalPayload]>('resolveCondition');
+
+export interface ResumeInterruptedEvaluationSignalPayload {
+  actorId: string;
+  note?: string;
+}
+
+/**
+ * Section 9.5's Agent loop: "ambiguity... interrupt for review" — sent
+ * once a reviewer has addressed whatever made policy applicability
+ * ambiguous (uncovered jurisdiction, overlapping released versions), by
+ * some means outside this workflow (no dedicated "fix the ambiguity" API
+ * exists yet — see docs/DEVELOPMENT_LOG.md's Known gaps). The payload
+ * carries no resolution data of its own; it only tells the workflow "try
+ * evaluating again," the same way `resolveConditionSignal` tells it "the
+ * condition I opened has been addressed."
+ */
+export const resumeInterruptedEvaluationSignal = defineSignal<
+  [ResumeInterruptedEvaluationSignalPayload]
+>('resumeInterruptedEvaluation');

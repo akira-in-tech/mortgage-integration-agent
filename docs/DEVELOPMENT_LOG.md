@@ -3184,3 +3184,105 @@ rows deleted afterward; scratch stack torn down.
 ### Next safe step
 
 Nothing further is queued specifically by this slice. The two largest remaining pieces of Section 9/10 for M3 are unchanged from M3-008's own note: a real token/cost/provider-call budget ledger (deliberately deferred here, would need a genuine consumer — e.g. a model-based planning node or a real provider adapter — to be worth building), and the communication classification system (Section 6.4) that would make the communication-related Section 9.6 triggers implementable instead of permanently out of reach.
+
+## M3-010: Reviewer interrupt and resume flow
+
+### Status
+
+Implemented and verified. `AgentRunRoute.INTERRUPTED_FOR_REVIEW` — typed since M3-006, never produced until now — is real: policy-applicability ambiguity interrupts the Agent run, the case durably waits in a genuinely new status (`WAITING_FOR_REVIEW`), and a reviewer signal resumes it by re-running the evaluation from scratch. First read against the charter's actual M3 exit-evidence list (Section 20) rather than working from memory, to scope this precisely rather than improvised.
+
+### Acceptance criterion
+
+Section 9.5's Agent loop distinguishes "ambiguity... interrupt for review" from "budget or runtime failure: route to manual review" — these must actually route differently, not both collapse into `MANUAL_REVIEW`. An interrupted case must durably wait (survives a worker restart, per the existing `resolveCondition` pattern) and, once a reviewer signals resumption, must re-run the evaluation — through the real REST API and a real Temporal worker, not just mocked activities.
+
+### Implementation
+
+#### Where "ambiguity" comes from, and where it doesn't
+
+Of the two things that used to both route to `ROUTED_TO_MANUAL_REVIEW`, only policy-applicability ambiguity (`evaluate_policy`'s `REVIEW_REQUIRED` — uncovered jurisdiction or an overlapping released version conflict) is genuinely an "ambiguity" a reviewer can resolve and ask to retry. Consent invalid, budget/deadline exhaustion, and a tool's own failure are runtime failures per Section 9.5's own text, not ambiguities — those stay routed to manual review, unchanged.
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`: new `interruptForReview()` helper (parallel to `manualReview()`, setting `route: 'INTERRUPTED_FOR_REVIEW'` instead). `evaluatePolicyNode`'s `REVIEW_REQUIRED` branch now calls it instead of `manualReview()`. Nothing else in the graph changed — `budgetExceeded`, `consentInvalid`, and tool-`FAILURE` handling still route to manual review, matching the charter's own taxonomy exactly.
+
+#### Interrupt is not a LangGraph-level suspension
+
+Considered and rejected: using LangGraph's own `interrupt()`/checkpointer primitives to pause and resume mid-graph-execution. Section 9.2's runtime-separation design and Section 9.3's own text ("time spent durably waiting for information or review is governed by workflow timers and is not hidden Agent runtime... **resume may create a new server-authorized run deadline**") both say the long human-wait belongs to Temporal, not to a bounded Agent run — a run interrupts by *ending* (with `INTERRUPTED_FOR_REVIEW`), and resumption is a **new**, independent bounded run, not a magically-continued old one. This is architecturally simpler (no checkpointer, no cross-activity LangGraph state persistence to reason about) and matches how `resolveCondition`'s existing durable-wait-then-continue pattern already works at the workflow level.
+
+- `src/workflows/case-conditions.signals.ts`: new `resumeInterruptedEvaluationSignal` (`{ actorId, note? }`) — carries no resolution data of its own, mirroring how a reviewer is expected to have already fixed the underlying ambiguity (activated jurisdiction coverage, resolved an overlapping policy version) through some means outside this workflow before signaling "try again."
+- `src/database/enums/case-status.enum.ts`'s `WAITING_FOR_REVIEW` — defined since the schema's first migration, never once set by any code path — is now genuinely used, distinct from `MANUAL_REVIEW`'s "cannot proceed safely within the configured automation boundary" (its own Section 6.1 definition: "a protected or ambiguous action requires a person," exactly this case).
+- `src/database/outbox/outbox-event-types.ts`: new `EvaluationInterrupted` (`evaluation.interrupted`) event — distinct from `WorkflowRunWaitingForReview` (waiting for a reviewer to resolve an *already-opened* condition); this fires before any condition exists.
+- `src/workflows/case-conditions.activities.ts`: `EvaluateConditionsResult.outcome` gains `'INTERRUPTED'`, mapped from `AgentRunRoute.INTERRUPTED_FOR_REVIEW` (previously folded into the same fail-closed bucket as the never-reachable `AWAITING_INFORMATION`). New `markWaitingForReview` activity sets the case to `WAITING_FOR_REVIEW` and writes the new outbox event.
+- `src/workflows/case-conditions.workflow.ts`: the evaluate-and-dispatch section is now a loop. On `INTERRUPTED`, it calls `markWaitingForReview`, durably waits (`condition()`) for `resumeInterruptedEvaluationSignal`, resets the local signal variable, and loops back to call `evaluateConditions` again — supporting any number of interrupt cycles, not just one. `REVIEW_REQUIRED` (now only reachable for genuine runtime failures) still routes straight to `MANUAL_REVIEW`, unchanged.
+- `src/workflows/temporal-client.service.ts`: new `resumeInterruptedEvaluation()`, mirroring `resolveCondition()`'s shape and `WorkflowNotFoundError` contract.
+
+#### REST surface: one endpoint, two review actions
+
+Section 15.1's target contract lists exactly one review endpoint (`POST .../reviews`) — not a second URL per review type. `src/cases/dto/review.dto.ts` (replacing `resolve-condition.dto.ts`) generalizes the existing DTO into `ReviewDto` with a required `reviewType: 'CONDITION_RESOLUTION' | 'RESUME_EVALUATION'` discriminator; `resolution` is now conditionally required (`@ValidateIf`) only for `CONDITION_RESOLUTION`. `CasesController.resolveCondition` → `submitReview`; `CasesService.resolveCondition` → `submitReview`, dispatching to `TemporalClientService.resolveCondition` or `.resumeInterruptedEvaluation` by `reviewType`. This is a breaking change to the existing endpoint's request shape (every caller must now include `reviewType`) — acceptable since this API has no real external callers yet (still exit-evidence/demo scope per Section 7), and every existing caller in this repo (tests, e2e spec) was updated in the same slice.
+
+### Affected files
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/workflows/case-conditions.signals.ts`, `.activities.ts`, `.activities.spec.ts`, `.workflow.ts`, `.workflow.spec.ts`, `temporal-client.service.ts`
+- `src/database/outbox/outbox-event-types.ts`
+- `src/cases/dto/review.dto.ts` (new, replaces `resolve-condition.dto.ts`), `cases.controller.ts`, `.controller.spec.ts`, `cases.service.ts`, `.service.spec.ts`
+- `test/cases.e2e-spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Resume re-runs the whole evaluation; it does not accept reviewer-supplied override data.** The signal payload carries no resolution content — a reviewer is expected to fix the ambiguity itself (via direct data access; no dedicated "fix the ambiguity" API exists) and then say "try again." Building a genuine override mechanism (a reviewer directly forcing a specific policy binding despite unresolved ambiguity) would contradict Section 6.3's authority order ("the resolved, released case policy snapshot determine condition state") and is a materially larger, separate feature.
+- **Unbounded interrupt cycles, no cap.** A case can interrupt, resume, and interrupt again indefinitely if the underlying ambiguity keeps recurring. This matches Temporal's standard durable-loop pattern (the workflow yields at every iteration via activity calls and `condition()`) and is arguably correct: a human should keep being asked until the ambiguity is actually resolved, not silently given up on after N tries.
+- **`reviewType` is required, not defaulted, on the generalized endpoint.** A default-to-`CONDITION_RESOLUTION`-when-omitted design would have avoided touching every existing caller, but this codebase's own testing/e2e call sites are the only current callers (no real external contract to preserve yet), and an explicit, always-required discriminator is simpler to validate correctly than conditional-default logic layered on top of `@ValidateIf`.
+- **`TemporalClientService.resolveCondition` keeps its name** (only the `CasesService`/`CasesController` layer's method was renamed to `submitReview`) — it's still a faithful, single-purpose signal-delivery wrapper; the *dispatch* between two review actions belongs one layer up, where the two DTOs' shapes actually diverge.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed, no manual fixes needed beyond eslint --fix's prettier pass
+
+scratch stack: docker compose (postgres 5433, temporal 7234) + migration:run
+  all 8 migrations applied cleanly (fresh scratch database)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  31 suites passed, 221 tests passed (216 -> 221: +1 markWaitingForReview
+  activity test, +2 workflow-level interrupt/resume tests [single cycle,
+  multi-cycle], +2 CasesService RESUME_EVALUATION tests; several existing
+  tests renamed/reframed in place without changing the count, since the
+  scenario they exercise now produces INTERRUPTED instead of
+  ROUTED_TO_MANUAL_REVIEW)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 14 tests passed (13 -> 14: +1 RESUME_EVALUATION
+  e2e acceptance test)
+
+Manual end-to-end proof (real REST API + real Temporal worker, scratch
+Postgres/Temporal): created a case in a real, freshly-seeded
+NOT_COVERED jurisdiction; workflow interrupted, case reached
+WAITING_FOR_REVIEW, evaluation.interrupted outbox event recorded with
+the resolver's exact reason. Activated the jurisdiction's coverage
+directly (simulating a reviewer's out-of-band fix), then
+POST .../reviews with reviewType=RESUME_EVALUATION -> 202. Workflow
+resumed, re-ran evaluateConditions against the now-fixed jurisdiction,
+and the case reached READY_FOR_UNDERWRITING (no rule applies to this
+jurisdiction, so no condition was needed) -- outbox trail confirmed
+the full sequence: loan_case.created, workflow_run.started, 3x
+evidence.updated, evaluation.interrupted, workflow_run.completed.
+All synthetic rows deleted afterward; scratch stack torn down.
+```
+
+### Security, privacy, cost, and compatibility
+
+- **Breaking REST change**: `POST .../reviews` now requires `reviewType` in the request body; a request in the old shape (no `reviewType`) is rejected by validation. No known external caller exists yet (Section 7's synthetic-launch scope) — the previous shape was itself already narrower than Section 15.1's target contract and explicitly not a stable public API.
+- No new externally-reachable data — `resumeInterruptedEvaluationSignal`'s payload (`actorId`, optional `note`) is the same shape/sensitivity class as `resolveConditionSignal`'s.
+- `WAITING_FOR_REVIEW` was already a modeled, migrated case-status value; using it doesn't touch the schema.
+
+### Known gaps
+
+- No dedicated API for a reviewer to actually *fix* an ambiguity (correct a case's jurisdiction, activate policy coverage, resolve an overlapping version) — this slice only provides the interrupt/resume *mechanism*; the fix itself still requires direct data access, same as this manual verification did.
+- No timeout or escalation on an interrupted case sitting in `WAITING_FOR_REVIEW` indefinitely — a case can wait forever with no automatic re-routing to `MANUAL_REVIEW` if nobody ever resumes it.
+- No audit trail correlating a specific `resumeInterruptedEvaluationSignal`'s `actorId`/`note` to the outbox event history beyond the signal delivery itself — the `note` is not currently persisted anywhere (not written to any table or outbox payload).
+- Every other Section 9.6 trigger category not already covered (see M3-009's Findings) remains unimplemented for the same reasons as before — this slice only builds the interrupt/resume *mechanism* for the one category (`ambiguity`) that already had a real, honest trigger.
+
+### Next safe step
+
+The two items M3-009 already queued (token/cost/provider-call budget ledger, communication classification system) remain the largest unbuilt pieces of Section 9. Independently, a minimal "fix the ambiguity" surface (even just a jurisdiction-coverage-activation endpoint) would close the most visible gap this slice's own manual verification had to work around by hand.

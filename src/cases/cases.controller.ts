@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { CasesService, WorkflowRunStatus } from './cases.service';
 import { CreateCaseDto } from './dto/create-case.dto';
-import { ResolveConditionDto } from './dto/resolve-condition.dto';
+import { ReviewDto } from './dto/review.dto';
 import { LoanCase } from '../database/entities/loan-case.entity';
 
 /**
@@ -62,16 +62,17 @@ export class CasesController {
     return this.casesService.getWorkflowRun(caseId, runId);
   }
 
-  // Maps to the reviewer-decision endpoint in Section 15.1
-  // (`POST .../reviews`) — resolving an open condition is this slice's
-  // only implemented review action. 202: delivers the signal and returns;
-  // the workflow applies it asynchronously.
+  // The reviewer-decision endpoint in Section 15.1 (`POST .../reviews`) —
+  // `dto.reviewType` picks which review action a signal encodes: resolving
+  // an open condition, or resuming an evaluation the Agent run interrupted
+  // for policy-applicability ambiguity. 202: delivers the signal and
+  // returns; the workflow applies it asynchronously.
   @Post(':caseId/reviews')
   @HttpCode(HttpStatus.ACCEPTED)
-  async resolveCondition(
+  async submitReview(
     @Param('caseId', ParseUUIDPipe) caseId: string,
-    @Body() dto: ResolveConditionDto,
+    @Body() dto: ReviewDto,
   ): Promise<void> {
-    await this.casesService.resolveCondition(caseId, dto);
+    await this.casesService.submitReview(caseId, dto);
   }
 }

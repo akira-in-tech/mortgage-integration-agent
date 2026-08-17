@@ -244,7 +244,35 @@ describeOrSkip(
       // on and already verifies end-to-end with a live worker.
       const res = await request(app.getHttpServer())
         .post(`/v1/loan-cases/${caseId}/reviews`)
-        .send({ actorId: 'e2e-reviewer', resolution: 'SATISFIED' });
+        .send({
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId: 'e2e-reviewer',
+          resolution: 'SATISFIED',
+        });
+
+      expect(res.status).toBe(202);
+    }, 30_000);
+
+    it('accepts a RESUME_EVALUATION review for a running workflow', async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      const caseId = created.body.id;
+
+      const start = await request(app.getHttpServer()).post(
+        `/v1/loan-cases/${caseId}/workflow-runs`,
+      );
+      startedWorkflowIds.push(start.body.workflowId);
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/reviews`)
+        .send({
+          reviewType: 'RESUME_EVALUATION',
+          actorId: 'e2e-reviewer',
+          reason: 'coverage activated',
+        });
 
       expect(res.status).toBe(202);
     }, 30_000);
@@ -258,7 +286,11 @@ describeOrSkip(
 
       const res = await request(app.getHttpServer())
         .post(`/v1/loan-cases/${created.body.id}/reviews`)
-        .send({ actorId: 'e2e-reviewer', resolution: 'SATISFIED' });
+        .send({
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId: 'e2e-reviewer',
+          resolution: 'SATISFIED',
+        });
 
       expect(res.status).toBe(404);
     });

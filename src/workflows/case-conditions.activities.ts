@@ -50,7 +50,16 @@ interface EvaluateConditionsInput extends CaseRef {
 }
 
 interface EvaluateConditionsResult {
-  outcome: 'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED';
+  /**
+   * `INTERRUPTED` (Section 9.5: "ambiguity... interrupt for review") is
+   * distinct from `REVIEW_REQUIRED`: the latter never happens from a
+   * real Agent run today (see `evaluateConditions` below), the former is
+   * this activity's actual mapping of `AgentRunRoute`'s
+   * `INTERRUPTED_FOR_REVIEW` — a reviewer can address the ambiguity and
+   * signal the workflow to resume, rather than the case being routed
+   * straight to `MANUAL_REVIEW`.
+   */
+  outcome: 'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED' | 'INTERRUPTED';
   conditionId?: string;
   reviewReason?: string;
 }
@@ -372,11 +381,16 @@ export function createCaseConditionsActivities(
               result.finalState.reviewState?.reason ??
               'agent run routed to manual review',
           };
-        case 'AWAITING_INFORMATION':
         case 'INTERRUPTED_FOR_REVIEW':
-          // Neither route is reachable here today: the workflow always
-          // fetches all three evidence types before calling this
-          // activity, and no human-interrupt/resume flow exists yet. Fail
+          return {
+            outcome: 'INTERRUPTED',
+            reviewReason:
+              result.finalState.reviewState?.reason ??
+              'ambiguity requires review',
+          };
+        case 'AWAITING_INFORMATION':
+          // Not reachable here today: the workflow always fetches all
+          // three evidence types before calling this activity. Fail
           // closed rather than silently treat an unexpected route as
           // readiness.
           return {
@@ -439,6 +453,34 @@ export function createCaseConditionsActivities(
       await dataSource.transaction((manager) =>
         finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
       );
+    },
+
+    /**
+     * Section 9.5: "ambiguity... interrupt for review" — the case genuinely
+     * pauses here (`WAITING_FOR_REVIEW`, distinct from `MANUAL_REVIEW`'s
+     * "cannot proceed safely within the configured automation boundary")
+     * until a reviewer signals `resumeInterruptedEvaluationSignal`, at
+     * which point the workflow re-runs `evaluateConditions` from scratch.
+     */
+    async markWaitingForReview({
+      tenantId,
+      caseId,
+      reason,
+    }: CaseRef & { reason: string }): Promise<void> {
+      await dataSource.transaction(async (manager) => {
+        await manager
+          .getRepository(LoanCase)
+          .update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.WAITING_FOR_REVIEW },
+          );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.EvaluationInterrupted,
+          payload: { caseId, reason },
+        });
+      });
     },
 
     /**

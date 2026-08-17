@@ -9,6 +9,8 @@ import type { CaseConditionsActivities } from './case-conditions.activities';
 import {
   resolveConditionSignal,
   ResolveConditionSignalPayload,
+  resumeInterruptedEvaluationSignal,
+  ResumeInterruptedEvaluationSignalPayload,
 } from './case-conditions.signals';
 import {
   CaseConditionsWorkflowInput,
@@ -44,6 +46,11 @@ export async function caseConditionsWorkflow(
     resolution = payload;
   });
 
+  let interruptResolution: ResumeInterruptedEvaluationSignalPayload | undefined;
+  setHandler(resumeInterruptedEvaluationSignal, (payload) => {
+    interruptResolution = payload;
+  });
+
   await activities.markCollectingEvidence({ tenantId, caseId });
 
   try {
@@ -75,44 +82,73 @@ export async function caseConditionsWorkflow(
   }
 
   let evaluation: Awaited<ReturnType<typeof activities.evaluateConditions>>;
-  try {
-    // Can exhaust its retries when the case keeps changing out from
-    // under the evaluation (Section 10.5's compare-and-swap protection,
-    // src/agent-runtime/tools/create-condition.tool.ts's
-    // StaleCaseVersionError) — Temporal's own retry policy already gives
-    // this several tries against the case's latest state before this
-    // catch is ever reached.
-    evaluation = await activities.evaluateConditions({
+  for (;;) {
+    try {
+      // Can exhaust its retries when the case keeps changing out from
+      // under the evaluation (Section 10.5's compare-and-swap protection,
+      // src/agent-runtime/tools/create-condition.tool.ts's
+      // StaleCaseVersionError) — Temporal's own retry policy already gives
+      // this several tries against the case's latest state before this
+      // catch is ever reached.
+      evaluation = await activities.evaluateConditions({
+        tenantId,
+        caseId,
+        workflowRunId: workflowInfo().runId,
+      });
+    } catch (error) {
+      log.warn('evaluateConditions failed, routing to manual review', {
+        caseId,
+        error: String(error),
+      });
+      await activities.markManualReview({
+        tenantId,
+        caseId,
+        reason: String(error),
+      });
+      return { finalStatus: CaseStatus.MANUAL_REVIEW };
+    }
+
+    if (evaluation.outcome !== 'INTERRUPTED') {
+      break;
+    }
+
+    // Section 9.5: "ambiguity... interrupt for review" — policy
+    // applicability was ambiguous (Section 10.3: missing coverage or an
+    // overlapping version conflict). Unlike REVIEW_REQUIRED below, this
+    // is not a runtime failure: a reviewer can address the ambiguity (by
+    // some means outside this workflow — no dedicated "fix the
+    // ambiguity" API exists yet) and signal resumption, which re-runs the
+    // whole evaluation rather than continuing mid-run (Section 9.2:
+    // Temporal owns durable waiting, the Agent run itself stays bounded
+    // and short-lived).
+    log.info('Evaluation interrupted for review, waiting to resume', {
+      caseId,
+      reason: evaluation.reviewReason,
+    });
+    await activities.markWaitingForReview({
       tenantId,
       caseId,
-      workflowRunId: workflowInfo().runId,
+      reason: evaluation.reviewReason ?? 'ambiguity requires review',
     });
-  } catch (error) {
-    log.warn('evaluateConditions failed, routing to manual review', {
-      caseId,
-      error: String(error),
-    });
-    await activities.markManualReview({
-      tenantId,
-      caseId,
-      reason: String(error),
-    });
-    return { finalStatus: CaseStatus.MANUAL_REVIEW };
+    interruptResolution = undefined;
+    await condition(() => interruptResolution !== undefined);
+    interruptResolution = undefined;
   }
 
   if (evaluation.outcome === 'REVIEW_REQUIRED') {
-    // Policy applicability could not be resolved (Section 10.3: missing
-    // coverage or an overlapping version conflict) — a system-level
-    // ambiguity, not a specific resolvable business condition, so this
-    // routes to manual review rather than the condition-wait flow below.
-    log.warn('Policy resolution unresolved, routing to manual review', {
+    // A runtime failure other than ambiguity (consent invalid, budget or
+    // deadline exhaustion, a tool's own failure — Section 9.5: "budget or
+    // runtime failure: route to manual review") reached this activity's
+    // fail-closed default. Not resumable the way an interrupted
+    // evaluation is, so this routes straight to manual review.
+    log.warn('Agent run routed to manual review', {
       caseId,
       reason: evaluation.reviewReason,
     });
     await activities.markManualReview({
       tenantId,
       caseId,
-      reason: evaluation.reviewReason ?? 'policy resolution unresolved',
+      reason: evaluation.reviewReason ?? 'agent run routed to manual review',
     });
     return { finalStatus: CaseStatus.MANUAL_REVIEW };
   }

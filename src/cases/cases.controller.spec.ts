@@ -10,7 +10,7 @@ describe('CasesController', () => {
     getCase: jest.Mock;
     startWorkflow: jest.Mock;
     getWorkflowRun: jest.Mock;
-    resolveCondition: jest.Mock;
+    submitReview: jest.Mock;
   };
   let controller: CasesController;
 
@@ -27,7 +27,7 @@ describe('CasesController', () => {
       getCase: jest.fn(),
       startWorkflow: jest.fn(),
       getWorkflowRun: jest.fn(),
-      resolveCondition: jest.fn(),
+      submitReview: jest.fn(),
     };
     controller = new CasesController(casesService as never);
   });
@@ -81,15 +81,16 @@ describe('CasesController', () => {
       );
     });
 
-    it('resolveCondition delegates to CasesService.resolveCondition', async () => {
-      const resolveDto = {
+    it('submitReview delegates to CasesService.submitReview', async () => {
+      const reviewDto = {
+        reviewType: 'CONDITION_RESOLUTION' as const,
         actorId: 'reviewer-1',
         resolution: 'SATISFIED' as const,
       };
-      await controller.resolveCondition('case-1', resolveDto);
-      expect(casesService.resolveCondition).toHaveBeenCalledWith(
+      await controller.submitReview('case-1', reviewDto);
+      expect(casesService.submitReview).toHaveBeenCalledWith(
         'case-1',
-        resolveDto,
+        reviewDto,
       );
     });
   });

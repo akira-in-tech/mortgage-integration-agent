@@ -10,6 +10,8 @@ import {
   CASE_CONDITIONS_TASK_QUEUE,
   resolveConditionSignal,
   ResolveConditionSignalPayload,
+  resumeInterruptedEvaluationSignal,
+  ResumeInterruptedEvaluationSignalPayload,
 } from './case-conditions.signals';
 import { CaseConditionsWorkflowInput } from './case-conditions.types';
 
@@ -94,6 +96,21 @@ export class TemporalClientService implements OnModuleDestroy {
     const client = await this.getClient();
     const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
     await handle.signal(resolveConditionSignal, payload);
+  }
+
+  /**
+   * Delivers the resumeInterruptedEvaluation signal — tells the workflow
+   * a reviewer has addressed whatever made policy applicability ambiguous
+   * and it should re-run the evaluation. Same `WorkflowNotFoundError`
+   * contract as `resolveCondition`.
+   */
+  async resumeInterruptedEvaluation(
+    caseId: string,
+    payload: ResumeInterruptedEvaluationSignalPayload,
+  ): Promise<void> {
+    const client = await this.getClient();
+    const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
+    await handle.signal(resumeInterruptedEvaluationSignal, payload);
   }
 
   /**

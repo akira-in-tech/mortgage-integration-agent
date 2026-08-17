@@ -380,7 +380,12 @@ describeOrSkip(
       expect(conditions).toHaveLength(0);
     });
 
-    it('routes to ROUTED_TO_MANUAL_REVIEW when the case jurisdiction has no policy coverage', async () => {
+    it('interrupts for review (does not route to manual review) when the case jurisdiction has no policy coverage', async () => {
+      // Section 9.5: "ambiguity... interrupt for review" — unresolved
+      // policy applicability is an ambiguity a reviewer can fix (activate
+      // coverage, resolve an overlapping version) and signal resumption
+      // from, distinct from a runtime failure that routes to manual
+      // review outright.
       const caseId = await makeCase({
         jurisdictionCode: NOT_COVERED_JURISDICTION_CODE,
       });
@@ -390,7 +395,7 @@ describeOrSkip(
 
       const result = await runtime.run(makeInput(makeInitialState(caseId)));
 
-      expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
+      expect(result.route).toBe('INTERRUPTED_FOR_REVIEW');
       expect(result.finalState.reviewState?.requested).toBe(true);
       expect(result.finalState.reviewState?.reason).toContain(
         NOT_COVERED_JURISDICTION_CODE,

@@ -10,7 +10,7 @@ import { TemporalClientService } from '../workflows/temporal-client.service';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
-import { ResolveConditionDto } from './dto/resolve-condition.dto';
+import { ReviewDto } from './dto/review.dto';
 
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
@@ -167,13 +167,28 @@ export class CasesService {
     }
   }
 
-  async resolveCondition(
-    caseId: string,
-    dto: ResolveConditionDto,
-  ): Promise<void> {
+  /**
+   * `dto.reviewType` picks the signal: `CONDITION_RESOLUTION` resolves
+   * the case's open condition; `RESUME_EVALUATION` tells the workflow a
+   * reviewer has addressed whatever made policy applicability ambiguous
+   * and it should re-run the evaluation (Section 9.5's "interrupt for
+   * review", `case-conditions.workflow.ts`'s interrupt/resume loop).
+   */
+  async submitReview(caseId: string, dto: ReviewDto): Promise<void> {
     await this.getCase(caseId);
     try {
-      await this.temporalClient.resolveCondition(caseId, dto);
+      if (dto.reviewType === 'RESUME_EVALUATION') {
+        await this.temporalClient.resumeInterruptedEvaluation(caseId, {
+          actorId: dto.actorId,
+          note: dto.reason,
+        });
+      } else {
+        await this.temporalClient.resolveCondition(caseId, {
+          actorId: dto.actorId,
+          resolution: dto.resolution!,
+          reason: dto.reason,
+        });
+      }
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) {
         throw new NotFoundException(`No running workflow for case ${caseId}`);

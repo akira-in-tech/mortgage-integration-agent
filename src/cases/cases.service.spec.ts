@@ -32,6 +32,7 @@ describe('CasesService', () => {
   let temporalClient: {
     startCaseConditionsWorkflow: jest.Mock;
     resolveCondition: jest.Mock;
+    resumeInterruptedEvaluation: jest.Mock;
     getWorkflowStatus: jest.Mock;
   };
   let service: CasesService;
@@ -77,6 +78,7 @@ describe('CasesService', () => {
     temporalClient = {
       startCaseConditionsWorkflow: jest.fn(),
       resolveCondition: jest.fn(),
+      resumeInterruptedEvaluation: jest.fn(),
       getWorkflowStatus: jest.fn(),
     };
     service = new CasesService(
@@ -252,25 +254,31 @@ describe('CasesService', () => {
     });
   });
 
-  describe('resolveCondition', () => {
+  describe('submitReview', () => {
     beforeEach(() => {
       caseRepo.findOneBy.mockResolvedValue({ id: CASE_ID } as LoanCase);
     });
 
-    const dto = { actorId: 'reviewer-1', resolution: 'SATISFIED' as const };
+    const resolutionDto = {
+      reviewType: 'CONDITION_RESOLUTION' as const,
+      actorId: 'reviewer-1',
+      resolution: 'SATISFIED' as const,
+    };
 
-    it('delivers the signal via TemporalClientService', async () => {
+    it('delivers the resolveCondition signal for a CONDITION_RESOLUTION review', async () => {
       temporalClient.resolveCondition.mockResolvedValue(undefined);
 
-      await service.resolveCondition(CASE_ID, dto);
+      await service.submitReview(CASE_ID, resolutionDto);
 
-      expect(temporalClient.resolveCondition).toHaveBeenCalledWith(
-        CASE_ID,
-        dto,
-      );
+      expect(temporalClient.resolveCondition).toHaveBeenCalledWith(CASE_ID, {
+        actorId: 'reviewer-1',
+        resolution: 'SATISFIED',
+        reason: undefined,
+      });
+      expect(temporalClient.resumeInterruptedEvaluation).not.toHaveBeenCalled();
     });
 
-    it('translates WorkflowNotFoundError into a 404', async () => {
+    it('translates WorkflowNotFoundError into a 404 for a CONDITION_RESOLUTION review', async () => {
       temporalClient.resolveCondition.mockRejectedValue(
         new WorkflowNotFoundError(
           'not found',
@@ -279,9 +287,43 @@ describe('CasesService', () => {
         ),
       );
 
-      await expect(service.resolveCondition(CASE_ID, dto)).rejects.toThrow(
-        NotFoundException,
+      await expect(
+        service.submitReview(CASE_ID, resolutionDto),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('delivers the resumeInterruptedEvaluation signal for a RESUME_EVALUATION review', async () => {
+      temporalClient.resumeInterruptedEvaluation.mockResolvedValue(undefined);
+      const resumeDto = {
+        reviewType: 'RESUME_EVALUATION' as const,
+        actorId: 'reviewer-2',
+        reason: 'coverage activated',
+      };
+
+      await service.submitReview(CASE_ID, resumeDto);
+
+      expect(temporalClient.resumeInterruptedEvaluation).toHaveBeenCalledWith(
+        CASE_ID,
+        { actorId: 'reviewer-2', note: 'coverage activated' },
       );
+      expect(temporalClient.resolveCondition).not.toHaveBeenCalled();
+    });
+
+    it('translates WorkflowNotFoundError into a 404 for a RESUME_EVALUATION review', async () => {
+      temporalClient.resumeInterruptedEvaluation.mockRejectedValue(
+        new WorkflowNotFoundError(
+          'not found',
+          `case-conditions-${CASE_ID}`,
+          undefined,
+        ),
+      );
+
+      await expect(
+        service.submitReview(CASE_ID, {
+          reviewType: 'RESUME_EVALUATION' as const,
+          actorId: 'reviewer-2',
+        }),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

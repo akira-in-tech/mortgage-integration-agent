@@ -383,7 +383,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
     });
   });
 
-  it('evaluateConditions routes to REVIEW_REQUIRED when the jurisdiction exists but is not COVERED', async () => {
+  it('evaluateConditions routes to INTERRUPTED when the jurisdiction exists but is not COVERED', async () => {
+    // Policy-applicability ambiguity (Section 9.5: "ambiguity...
+    // interrupt for review") is resumable, distinct from REVIEW_REQUIRED
+    // (a runtime failure — see the workflow-level try/catch's tests).
     const caseId = await makeCase({
       statedMonthlyIncome: 9000,
       jurisdictionCode: NOT_COVERED_JURISDICTION_CODE,
@@ -393,20 +396,42 @@ describeOrSkip('createCaseConditionsActivities', () => {
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
-      workflowRunId: 'activities-spec-run-review-required',
+      workflowRunId: 'activities-spec-run-interrupted',
     });
 
-    expect(result.outcome).toBe('REVIEW_REQUIRED');
+    expect(result.outcome).toBe('INTERRUPTED');
     expect(result.reviewReason).toContain(NOT_COVERED_JURISDICTION_CODE);
 
     const updated = await dataSource
       .getRepository(LoanCase)
       .findOneByOrFail({ id: caseId });
     // evaluateConditions itself does not write case state for
-    // REVIEW_REQUIRED — the workflow calls markManualReview separately
+    // INTERRUPTED — the workflow calls markWaitingForReview separately
     // (case-conditions.workflow.ts), so status is still whatever it was
     // before this call.
     expect(updated.status).toBe(CaseStatus.DRAFT);
+  });
+
+  it('markWaitingForReview sets the case status and writes an evaluation.interrupted event', async () => {
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+    await activities.markWaitingForReview({
+      tenantId,
+      caseId,
+      reason: 'synthetic ambiguity for markWaitingForReview test',
+    });
+
+    const updated = await dataSource
+      .getRepository(LoanCase)
+      .findOneByOrFail({ id: caseId });
+    expect(updated.status).toBe(CaseStatus.WAITING_FOR_REVIEW);
+
+    const events = await outboxEventsFor(caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe(OutboxEventType.EvaluationInterrupted);
+    expect(events[0].payload).toMatchObject({
+      caseId,
+      reason: 'synthetic ambiguity for markWaitingForReview test',
+    });
   });
 
   it('resolveCondition updates the condition, records an attributed transition, and writes condition.satisfied or condition.waived', async () => {

@@ -181,6 +181,28 @@ export function createLendingOperationsAgentRuntime(
         };
       }
 
+      /**
+       * Section 9.5: "ambiguity or protected action: interrupt for
+       * review" — distinct from `manualReview`'s "budget or runtime
+       * failure: route to manual review". Only policy-applicability
+       * ambiguity uses this today; everything else this graph can detect
+       * (consent invalid, budget/deadline exhausted, a tool's own
+       * failure) is a runtime failure, not an ambiguity, per that same
+       * loop text, and stays routed to manual review.
+       */
+      function interruptForReview(
+        agentState: LendingOperationsAgentState,
+        reason: string,
+      ): Partial<RuntimeState> {
+        return {
+          agentState: {
+            ...agentState,
+            reviewState: { requested: true, reason },
+          },
+          route: 'INTERRUPTED_FOR_REVIEW',
+        };
+      }
+
       async function verifyConsentNode(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
@@ -257,7 +279,7 @@ export function createLendingOperationsAgentRuntime(
         }
         const result = invocation.result as EvaluatePolicyResult;
         if (result.status === 'REVIEW_REQUIRED') {
-          return manualReview(
+          return interruptForReview(
             nextState,
             result.unresolvedReasons.join('; ') || 'policy review required',
           );

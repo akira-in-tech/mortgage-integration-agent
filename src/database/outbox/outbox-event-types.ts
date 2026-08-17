@@ -19,6 +19,14 @@ export const OutboxEventType = {
   ConditionOpened: 'condition.opened',
   ConditionSatisfied: 'condition.satisfied',
   ConditionWaived: 'condition.waived',
+  /**
+   * Distinct from `WorkflowRunWaitingForReview` (waiting for a reviewer to
+   * resolve an already-opened condition): this is the Agent run itself
+   * interrupting because policy applicability was ambiguous (Section
+   * 9.5's "ambiguity... interrupt for review"), before any condition
+   * exists to resolve.
+   */
+  EvaluationInterrupted: 'evaluation.interrupted',
 } as const;
 
 export type OutboxEventType =
