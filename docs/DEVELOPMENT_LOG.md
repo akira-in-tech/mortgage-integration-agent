@@ -3843,3 +3843,86 @@ No manual live-API check this slice: nothing new is reachable via REST/GraphQL, 
 ### Next safe step
 
 Six of Section 9.4's sixteen tools are now real. The remaining ten (document inspection, four calculation tools, `send_information_request`, `publish_case_update`, `inspect_documents`, `check_identity_consistency`, `fetch_*_evidence`) each need a real backing subsystem (provider adapters, a calculation engine, or a communication delivery channel) that doesn't exist yet in this codebase — building them honestly means building those subsystems first, not wrapping them prematurely. Continuing the M3-closure punch list: the budget ledger, a communication delivery channel, transition approval, and the evaluation corpus + report command remain the largest open items.
+
+## M3-017: Policy transition approval (Section 16.1)
+
+### Status
+
+Implemented and verified. `PolicyActivationService.activate()` now requires a real, independently-approved `PolicyTransitionApproval` before it will move a version to `RELEASED` — closing the gap that service's own comment has documented since M3-011 ("no separate policy-author/policy-approver role distinction yet, so this service itself is the whole activation authority").
+
+### Acceptance criterion
+
+Section 16.1: "separate policy-author and policy-approver roles, with independent approval for releases and transition logic." No formal OIDC/RBAC system exists anywhere in this codebase, so "roles" here means what this codebase can actually check today: a real, persisted approval record where the approving actor id must differ from the proposing actor id — self-approval rejected, no exceptions — required before activation can proceed, the same honest scoping `CommunicationApprovalService` (M3-012) already established for human approval without a real identity system.
+
+### Implementation
+
+- `PolicyTransitionApproval` (new entity): `policyVersionId`, `proposedBy`/`proposedAt`, `approvedBy`/`approvedAt` (both null until approved), `notes`. One row per proposal — never mutated except once, when `approve()` sets the two approval fields; a second proposal for the same version would be a new row (matching `PolicyVersion`'s own never-mutate-a-released-row discipline), though no code path currently creates a second proposal for the same version since `propose()` requires status `DRAFT` and `propose()` itself moves the version to `PROPOSED`.
+- `PolicyTransitionApprovalService` (new): `propose(policyVersionId, proposedBy, notes?)` requires `DRAFT` status, flips it to `PROPOSED` (the existing, previously-unused `PolicyReleaseStatus.PROPOSED` value — `PolicyActivationService.activate()` already accepted `PROPOSED` as an activatable status without anything setting it). `approve(policyVersionId, approvedBy)` rejects self-approval and rejects when there's no pending proposal. `hasApprovedTransition(policyVersionId)` — the gate `PolicyActivationService.activate()` checks.
+- `PolicyActivationService.activate()`: added a check for `hasApprovedTransition()` before the existing status check proceeds; throws `BadRequestException` with a message pointing at the propose/approve methods if missing. `withdraw()` is deliberately unchanged — Section 16.1's language and M3-011's original Known gap were both specifically about *activation*.
+
+### Affected files
+
+- `src/database/entities/policy-transition-approval.entity.ts` (new)
+- `src/policy/policy-transition-approval.service.ts` (new)
+- `src/policy/policy-activation.service.ts`, `.spec.ts`, `policy.module.ts`
+- `src/database/migrations/1786992218898-PolicyTransitionApproval.ts` (new), `schema-migrations.spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **No formal RBAC/OIDC — self-approval rejection is the whole enforcement mechanism.** Section 16.1's first bullet ("OIDC/OAuth 2.0 for people... service-layer RBAC") is entirely unbuilt in this codebase (confirmed by the README's own "No authentication or tenant-scoped access control exists yet"). Building a real roles system just to gate this one workflow would be exactly the kind of premature infrastructure this session has consistently avoided (see the deliberately-unbuilt budget ledger). Comparing two plain actor-id strings is honest about what it actually checks: *a different person approved this*, not *a person with the policy-approver role approved this* — the entity's own comment says so explicitly.
+- **Reuses the existing, previously dead `PolicyReleaseStatus.PROPOSED` value** rather than adding a new status or a separate boolean flag — the schema already had a place for "author submitted this for release, not yet approved," nothing had ever set it.
+- **`withdraw()` is not gated.** Broadening the same approval requirement to withdrawal was in scope for consideration, but Section 16.1's own language and the specific Known gap this closes are both about *activation*; gating withdrawal too is a real, separate design question (should an emergency withdrawal require the same two-person friction an activation does?) that deserves its own decision, not a default extension bundled into this slice.
+- **`hasApprovedTransition` checks the single most recent proposal for a version, not "any approved proposal ever."** Since `propose()` requires `DRAFT` status and a version can only be `DRAFT` once (it moves to `PROPOSED` immediately), only one proposal per version exists in practice today — but writing the check as "most recent, must be approved" rather than "any approved row exists" keeps the invariant correct if a future change ever allows re-proposing (e.g., after some rejection flow this slice does not build).
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting)
+  both passed clean
+
+migration:generate against a scratch DB with all prior migrations
+  applied — one new table, no FKs, no hand-editing needed
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the new table
+  and its index), re-applied cleanly
+
+Scratch stack (m3017-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    38 suites passed, 269 tests passed (264 -> 269: +5, covering:
+    activate() rejects with no approved proposal; the existing
+    DRAFT-activation test now proposes+approves first; the AMBIGUOUS
+    test's second activation now proposes+approves first; propose()
+    moves DRAFT->PROPOSED and creates a pending approval, and rejects
+    a second proposal on an already-PROPOSED version; approve()
+    rejects self-approval and succeeds for a different actor;
+    approve() rejects with no pending proposal)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    13/13 passed (cumulative apply + 12 per-migration revert steps,
+    including the new first revert test for PolicyTransitionApproval)
+```
+
+No manual live-API check this slice: `PolicyActivationService`/`PolicyTransitionApprovalService` have no REST/GraphQL surface (same as M3-011's original note — "Neither service has a REST/GraphQL surface yet") — the real-database automated test suite is the verification evidence.
+
+### Security, privacy, cost, and compatibility
+
+- **Behavior change for any existing caller of `PolicyActivationService.activate()`**: a version that was previously activatable directly from `DRAFT` now requires `propose()`+`approve()` first, or `activate()` throws `BadRequestException`. The only real call site in this codebase (`policy-activation.service.spec.ts`) was updated; no REST/GraphQL/CLI caller exists yet to be affected in production use, and the `SeedIncomeDiscrepancyPolicy` migration inserts its seed row directly as `RELEASED` (bypassing `PolicyActivationService` entirely), so it is unaffected.
+- `proposedBy`/`approvedBy`/`notes` are stored in plaintext, same as every other actor-attribution field in this codebase (no field-level encryption exists anywhere yet).
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- No real identity/RBAC system — `proposedBy`/`approvedBy` are trusted plain strings, not verified against an authenticated actor (see Decisions).
+- `withdraw()` has no approval gate (see Decisions) — a deliberate, separate scope decision, not an oversight.
+- No `reject()`/reset-to-DRAFT path — a `PROPOSED` version with no approval yet simply stays `PROPOSED` forever if never approved; there is no way to send it back to `DRAFT` for revision.
+- No REST/GraphQL surface for proposing or approving — same gap `PolicyActivationService` itself already had.
+
+### Next safe step
+
+Continuing the M3-closure punch list: the budget ledger (still deliberately deferred — no genuine consumer exists for token/cost dimensions in an Agent graph that makes no model calls and incurs no real cost), a communication delivery channel, and the evaluation corpus + report command (Section 18.2) remain the largest open items. The full Section 18.2 corpus spec (150 cases, adversarial documents, prompt-injection fixtures, model-configs) is too large to build without fabrication against this codebase's current maturity — the next step there is deliberately scoping down to what's honestly buildable from data this codebase already produces, not attempting the full spec at once.

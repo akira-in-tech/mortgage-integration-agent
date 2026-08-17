@@ -106,6 +106,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'policy_change_impact_assessments',
       'policy_source_revisions',
       'policy_sources',
+      'policy_transition_approvals',
       'policy_versions',
       'tenants',
       'tool_attempts',
@@ -178,6 +179,35 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the policy transition approval migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_versions',
+      'tenants',
+      'tool_attempts',
+    ]);
   });
 
   it('reverts the evaluation input manifest migration without touching other tables', async () => {

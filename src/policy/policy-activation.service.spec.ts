@@ -12,6 +12,7 @@ import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.en
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
+import { PolicyTransitionApproval } from '../database/entities/policy-transition-approval.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -24,6 +25,7 @@ import { PolicyApplicabilityResolverService } from './policy-applicability-resol
 import { PolicyEvaluationService } from './policy-evaluation.service';
 import { PolicyChangeImpactService } from './policy-change-impact.service';
 import { PolicyActivationService } from './policy-activation.service';
+import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
@@ -47,6 +49,7 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
   let evaluationService: PolicyEvaluationService;
   let impactService: PolicyChangeImpactService;
   let activationService: PolicyActivationService;
+  let transitionApprovalService: PolicyTransitionApprovalService;
   let tenantId: string;
   const caseIds: string[] = [];
   const versionIds: string[] = [];
@@ -69,6 +72,7 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
         CasePolicyBinding,
         PolicyCatalogGeneration,
         PolicyChangeImpactAssessment,
+        PolicyTransitionApproval,
       ],
     });
     await dataSource.initialize();
@@ -92,10 +96,15 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       dataSource.getRepository(PolicyChangeImpactAssessment),
       resolver,
     );
+    transitionApprovalService = new PolicyTransitionApprovalService(
+      dataSource.getRepository(PolicyTransitionApproval),
+      dataSource.getRepository(PolicyVersion),
+    );
     activationService = new PolicyActivationService(
       dataSource,
       dataSource.getRepository(PolicyVersion),
       impactService,
+      transitionApprovalService,
     );
 
     const tenant = await dataSource
@@ -122,6 +131,11 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       await dataSource
         .getRepository(PolicyChangeImpactAssessment)
         .delete({ tenantId });
+      if (versionIds.length) {
+        await dataSource
+          .getRepository(PolicyTransitionApproval)
+          .delete(versionIds.map((id) => ({ policyVersionId: id })));
+      }
       await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
       await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
       if (caseIds.length) {
@@ -246,12 +260,26 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
     return loanCase.id;
   }
 
-  it('activates a DRAFT version, bumps the catalog generation, and rejects re-activation', async () => {
+  it('rejects activation with no approved transition proposal', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-noapproval',
+      '1.0.0',
+    );
+
+    await expect(activationService.activate(versionId)).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('activates a DRAFT version once independently approved, bumps the catalog generation, and rejects re-activation', async () => {
     const versionId = await seedDraftVersion(
       JURISDICTION_CODES[0],
       'pas-rule-activate',
       '1.0.0',
     );
+    await transitionApprovalService.propose(versionId, 'author-1');
+    await transitionApprovalService.approve(versionId, 'approver-1');
 
     const before: Array<{ generation: number }> = await dataSource.query(
       `SELECT generation FROM policy_catalog_generation WHERE id = 1`,
@@ -376,6 +404,8 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       'pas-rule-ambiguous',
       '1.0.1',
     );
+    await transitionApprovalService.propose(conflictingVersionId, 'author-1');
+    await transitionApprovalService.approve(conflictingVersionId, 'approver-1');
     const result = await activationService.activate(conflictingVersionId);
 
     expect(result.assessments).toHaveLength(1);
@@ -454,5 +484,70 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
     );
 
     expect(assessment).toBeNull();
+  });
+
+  it('propose() moves a DRAFT version to PROPOSED and creates a pending approval', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-propose',
+      '1.0.0',
+    );
+
+    const approval = await transitionApprovalService.propose(
+      versionId,
+      'author-1',
+      'ready for release',
+    );
+
+    expect(approval.proposedBy).toBe('author-1');
+    expect(approval.approvedBy).toBeNull();
+    expect(approval.approvedAt).toBeNull();
+    expect(approval.notes).toBe('ready for release');
+    const updated = await dataSource
+      .getRepository(PolicyVersion)
+      .findOneByOrFail({ id: versionId });
+    expect(updated.releaseStatus).toBe(PolicyReleaseStatus.PROPOSED);
+
+    await expect(
+      transitionApprovalService.propose(versionId, 'author-1'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('approve() rejects self-approval and succeeds when a different actor approves', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-selfapproval',
+      '1.0.0',
+    );
+    await transitionApprovalService.propose(versionId, 'author-2');
+
+    await expect(
+      transitionApprovalService.approve(versionId, 'author-2'),
+    ).rejects.toThrow(BadRequestException);
+    expect(
+      await transitionApprovalService.hasApprovedTransition(versionId),
+    ).toBe(false);
+
+    const approved = await transitionApprovalService.approve(
+      versionId,
+      'approver-2',
+    );
+    expect(approved.approvedBy).toBe('approver-2');
+    expect(approved.approvedAt).not.toBeNull();
+    expect(
+      await transitionApprovalService.hasApprovedTransition(versionId),
+    ).toBe(true);
+  });
+
+  it('approve() rejects when there is no pending proposal for the version', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-nopending',
+      '1.0.0',
+    );
+
+    await expect(
+      transitionApprovalService.approve(versionId, 'approver-3'),
+    ).rejects.toThrow(BadRequestException);
   });
 });

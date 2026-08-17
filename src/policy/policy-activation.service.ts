@@ -6,6 +6,7 @@ import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-gen
 import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
 import { PolicyReleaseStatus } from '../database/enums/policy-version.enum';
 import { PolicyChangeImpactService } from './policy-change-impact.service';
+import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
 
 export interface PolicyActivationResult {
   policyVersionId: string;
@@ -24,14 +25,18 @@ async function bumpCatalogGeneration(manager: EntityManager): Promise<number> {
 /**
  * Section 10.2's lifecycle verbs — "activate without mutating prior
  * versions," "supersede, correct, withdraw, or retire while retaining
- * history" — made real for the two verbs this codebase can support
- * without a proposal-approval workflow (Known gap; there is no
- * separate policy-author/policy-approver role distinction yet, so this
- * service itself is the whole activation authority for now). Every
- * activation or withdrawal bumps `PolicyCatalogGeneration` (Section
- * 10.4's fast-path key) and triggers `PolicyChangeImpactService` so the
- * dry-run assessment Section 10.6 requires actually happens, not just
- * the invalidation.
+ * history." `activate()` now requires a real, independently-approved
+ * `PolicyTransitionApproval` (Section 16.1: "separate policy-author and
+ * policy-approver roles, with independent approval for releases and
+ * transition logic") — closing the gap this service's own comment
+ * documented since M3-011. `withdraw()` has no such gate yet — Section
+ * 16.1's language and M3-011's original gap were both specifically about
+ * *activation*; extending the same gate to withdrawal is a deliberately
+ * separate, not-yet-built extension (Known gap). Every activation or
+ * withdrawal bumps `PolicyCatalogGeneration` (Section 10.4's fast-path
+ * key) and triggers `PolicyChangeImpactService` so the dry-run
+ * assessment Section 10.6 requires actually happens, not just the
+ * invalidation.
  */
 @Injectable()
 export class PolicyActivationService {
@@ -41,6 +46,7 @@ export class PolicyActivationService {
     @InjectRepository(PolicyVersion)
     private readonly versionRepository: Repository<PolicyVersion>,
     private readonly impactService: PolicyChangeImpactService,
+    private readonly transitionApprovalService: PolicyTransitionApprovalService,
   ) {}
 
   async activate(policyVersionId: string): Promise<PolicyActivationResult> {
@@ -53,6 +59,15 @@ export class PolicyActivationService {
     ) {
       throw new BadRequestException(
         `policy version ${policyVersionId} cannot be activated from status ${version.releaseStatus}`,
+      );
+    }
+    const approved =
+      await this.transitionApprovalService.hasApprovedTransition(
+        policyVersionId,
+      );
+    if (!approved) {
+      throw new BadRequestException(
+        `policy version ${policyVersionId} has no independently-approved transition proposal — call PolicyTransitionApprovalService.propose()/approve() first`,
       );
     }
 

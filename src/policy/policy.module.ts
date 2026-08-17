@@ -11,11 +11,13 @@ import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-gen
 import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
 import { LoanCase } from '../database/entities/loan-case.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
+import { PolicyTransitionApproval } from '../database/entities/policy-transition-approval.entity';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { PolicyEvaluationService } from './policy-evaluation.service';
 import { PolicyChangeImpactService } from './policy-change-impact.service';
 import { PolicyActivationService } from './policy-activation.service';
 import { EvaluationManifestService } from './evaluation-manifest.service';
+import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
 
 @Module({
   imports: [
@@ -31,6 +33,7 @@ import { EvaluationManifestService } from './evaluation-manifest.service';
       PolicyChangeImpactAssessment,
       LoanCase,
       EvaluationInputManifest,
+      PolicyTransitionApproval,
     ]),
   ],
   providers: [
@@ -39,6 +42,7 @@ import { EvaluationManifestService } from './evaluation-manifest.service';
     PolicyChangeImpactService,
     PolicyActivationService,
     EvaluationManifestService,
+    PolicyTransitionApprovalService,
   ],
   exports: [
     PolicyApplicabilityResolverService,
@@ -46,6 +50,7 @@ import { EvaluationManifestService } from './evaluation-manifest.service';
     PolicyChangeImpactService,
     PolicyActivationService,
     EvaluationManifestService,
+    PolicyTransitionApprovalService,
   ],
 })
 export class PolicyModule {}
