@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.9 |
+| Version | 2.10 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -1296,8 +1296,8 @@ MCP is an optional adapter over the same registered tools and authorization laye
 
 ### 16.2 Privacy controls
 
-- case-, subject-, provider-, capability-, purpose-, data-, and time-bound authorization checked immediately before every external request, retry, and fallback;
-- data minimization and field-level access policy;
+- case-, subject-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound authorization checked immediately before every external request, retry, and fallback;
+- data minimization and data-class-level access policy, narrowed to specific fields only where a capability's contract exposes field-addressable data;
 - lineage-aware retention, deletion, legal-hold, backup-expiry, and deletion-verification workflows;
 - redacted logs, traces, errors, prompts, and evaluation artifacts;
 - environment and tenant separation;

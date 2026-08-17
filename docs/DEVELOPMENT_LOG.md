@@ -2830,3 +2830,75 @@ resulting loan_conditions row, not null.
 ### Next safe step
 
 Add `@langchain/langgraph` as a dependency and build a minimal, real `AgentRuntimePort` implementation using it — a graph with at least the three existing tools as nodes, proving the port contract against a real LangGraph.js v1 graph rather than leaving it unimplemented. Budgets, mandatory review triggers, and the remaining tools are all larger, separate pieces of Section 9 best tackled after the adapter itself is proven to work end-to-end with something small.
+
+## M0-011: Field-level privacy-control phrasing residual audit
+
+### Status
+
+A five-point charter logic review was independently drafted against an earlier charter revision (v2.4) before this milestone's implementation work began. Re-run against the charter's current text (v2.9) before acting on it, four of the five originally-identified issues were found already resolved by the intervening M0-009 and M0-010 audits. One residual phrasing gap survived and is corrected here.
+
+### Acceptance criterion
+
+Every clause in the charter that describes provider-authorization or privacy-control granularity must use the same, schema-accurate vocabulary: `ProviderAuthorizationGrant`'s only defined scoping field is `permittedDataClasses`, with `permittedFields` as an optional narrowing used only when a capability contract exposes field-addressable data. No section may claim unqualified "field-level"/"field-bound" authorization as a blanket guarantee.
+
+### Findings
+
+Re-verified against the current charter text (not the stale draft) before any edit, per standing practice of checking a claim against present reality rather than a remembered or previously-drafted description:
+
+1. **Structural funds-movement boundary (originally flagged)** — already resolved by M0-009. Section 2's product-boundary paragraph, Section 5.2's non-goals, Section 7.4/7.5's deferred-vs-structurally-excluded split, and Section 11.8's certification-boundary language are internally consistent: provider certification is scoped adapter readiness, never product-authority. No edit needed.
+2. **Protected-communication approval boundary (originally flagged)** — already resolved by M0-009. Section 6.3's authority order, Section 6.4's protected/routine communication classes, and Section 9.4's `send_information_request` approval-boundary cell all now state the same rule: configured policy may only pre-approve a narrow, version-pinned routine template; every protected, uncertain, or modified message requires exact human approval. No edit needed.
+3. **Agent duration/cost budget fields (originally flagged)** — already resolved by M0-009. Section 9.3's `LendingOperationsAgentState` carries `remainingDurationBudgetMs`, `budgetCurrency`, `remainingCostBudgetMinorUnits`, `budgetLedgerVersion`, `runStartedAt`, and `runDeadlineAt`, matching Section 9.7's promised budget classes and Section 9.6's exhaustion trigger. No edit needed.
+4. **Field-level authorization granularity vs. schema (originally flagged)** — mostly resolved by M0-010, one residual instance found. M0-010 reworded Section 11.5's prose and `ProviderAuthorizationGrant` (adding `permittedFields?: string[]` as an optional narrowing of `permittedDataClasses`) and the Section 14.1 entity description, but its own implementation list never mentions Section 16.2 — and Section 16.2's privacy-controls bullet still read "data minimization and **field-level** access policy" unqualified, the exact overclaim M0-010 set out to remove. M0-010's own verification log claimed a whole-file search found "unqualified field-bound/field-level claims... absent," which was not accurate for Section 16.2 at the time it was written. Corrected in this entry: reworded to "data minimization and data-class-level access policy, narrowed to specific fields only where a capability's contract exposes field-addressable data," and Section 16.2's authorization-binding bullet now says "data-class-, optionally field-," matching Section 11.5's exact phrasing instead of the looser "data-bound."
+5. **Consent-revocation state (originally flagged)** — already resolved by M0-010. `consentStatus` includes `'REVOKED'`, and Section 9.6's mandatory review triggers list mid-case consent revocation first. No edit needed.
+
+### Implementation
+
+- `docs/PROJECT_CHARTER.md` Section 16.2: reworded the authorization-binding bullet and the field-level-access bullet to match Section 11.5's already-corrected vocabulary.
+- Charter version bumped 2.9 → 2.10.
+
+### Affected files
+
+- `docs/PROJECT_CHARTER.md`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Re-verify against current file text before editing, rather than trust a previously-drafted finding list** — the draft review was accurate against v2.4 but stale against v2.9; four of its five points had already been fixed by two intervening audit rounds (M0-009, M0-010) that happened after the draft was written. Applying all five suggested edits blindly would have reintroduced already-resolved contradictions (for example, re-adding a "public launch" qualifier to the funds-movement non-goal) or produced redundant, conflicting phrasing next to text that had already been corrected more precisely.
+- **One-line rewording over a schema change** — Section 16.2's gap was phrasing that had fallen out of sync with an already-correct schema and an already-correct sibling section (11.5), not a missing capability; the fix is vocabulary alignment, not new modeling.
+- **Recorded as a new M0 entry rather than amending M0-010** — M0-010's own text and verification claim are now demonstrably inaccurate for Section 16.2; the honest record is a new entry noting the gap in the prior entry's verification, not a silent retroactive edit of M0-010 that would hide that the earlier verification step had a real blind spot (it searched, but not thoroughly enough to catch every instance).
+
+### Verification
+
+```text
+grep -n "field-level|field-bound|field authorization|field-addressable" docs/PROJECT_CHARTER.md
+  three matches: Section 11.5 (already correct — "optionally field-",
+  "field-addressable"), Section 11.8 (correct — internal RBAC "field
+  authorization," a distinct concept per M0-010's own decision note),
+  Section 16.2 (was the unqualified overclaim; now reworded)
+
+post-edit re-grep of the same pattern
+  Section 16.2 no longer contains an unqualified "field-level" claim;
+  its wording now matches Section 11.5's "data-class-, optionally
+  field-" phrasing exactly
+
+funds-movement, communication-approval, budget-field, and
+consent-revocation cross-section re-read (Sections 2, 5.2, 6.3, 6.4,
+7.4, 7.5, 9.3, 9.4, 9.6, 11.8)
+  all internally consistent; no contradiction found
+```
+
+No application test is required for this documentation-only correction — no code changed.
+
+### Security, privacy, cost, and compatibility
+
+- No behavioral change; no application code touched. This is a documentation-precision correction to a target-state charter, not a change to any implemented control.
+- The corrected phrasing does not loosen or tighten any actual privacy guarantee — the enforced boundary (`permittedDataClasses` as the floor, `permittedFields` as an optional narrowing) was already correctly defined in Section 11.5 and `ProviderAuthorizationGrant`; only Section 16.2's prose was out of step with it.
+
+### Known gaps
+
+- No `permittedFields`-aware access-control enforcement exists in application code yet (tracked since M0-010 — no current provider capability exposes field-addressable contracts).
+- This entry only re-verified the five points from the earlier draft review plus a targeted whole-file grep for field-level/field-bound phrasing; it is not a full re-audit of all 30 charter sections. A prior verification step (M0-010's) already demonstrated that a targeted search can miss an instance, so a fuller reread would need a different method (e.g., grepping every privacy/authorization-adjacent section individually) to have materially higher confidence than this one.
+
+### Next safe step
+
+No charter follow-up is queued by this entry. Resume the M3 roadmap: add `@langchain/langgraph` as a dependency and build the `AgentRuntimePort` implementation, per M3-006's own next-safe-step note.
