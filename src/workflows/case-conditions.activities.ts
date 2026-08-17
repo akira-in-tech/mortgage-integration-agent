@@ -25,11 +25,8 @@ import { ConditionResolutionKind } from './case-conditions.signals';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
-import { evaluatePolicyRule } from '../policy/dsl/policy-rule-evaluator';
-import { PolicyFactContext } from '../policy/dsl/policy-rule.types';
-import { loanTypeToProductCode } from '../policy/product-code';
-import { UNDERWRITING_REVIEW_LIFECYCLE_EVENT } from '../policy/lifecycle-events';
-import { createConditionTool } from '../agent-runtime/tools/create-condition.tool';
+import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
+import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -47,7 +44,8 @@ interface CaseRef {
 }
 
 interface EvaluateConditionsInput extends CaseRef {
-  income: PlaidIncomeData;
+  /** Sourced from `workflowInfo().runId` in the workflow — correlates this Agent run to its Temporal workflow run (Section 9.3). Threaded in explicitly rather than read via `activityInfo()` here, so this activity behaves identically whether invoked through a real Temporal worker or called directly, as case-conditions.activities.spec.ts does. */
+  workflowRunId: string;
 }
 
 interface EvaluateConditionsResult {
@@ -55,6 +53,18 @@ interface EvaluateConditionsResult {
   conditionId?: string;
   reviewReason?: string;
 }
+
+// Comfortably inside case-conditions.workflow.ts's 30s activity
+// startToCloseTimeout, so the Agent run's own trusted deadline can never
+// legitimately outlive Temporal's activity timeout — the two budgets
+// don't compete, the inner one is strictly the tighter constraint.
+const AGENT_RUN_STEP_BUDGET = 10;
+const AGENT_RUN_DURATION_BUDGET_MS = 20_000;
+const AGENT_ALLOWED_TOOLS = [
+  'check_case_completeness',
+  'evaluate_policy',
+  'create_condition',
+];
 
 interface ResolveConditionInput extends CaseRef {
   conditionId: string;
@@ -123,10 +133,29 @@ export function createCaseConditionsActivities(
     outboxSigningSecret,
   } = deps;
 
-  const createCondition = createConditionTool({
+  const agentRuntime = createLendingOperationsAgentRuntime({
     dataSource,
+    policyEvaluationService,
     outboxSigningSecret,
   });
+
+  async function finalizeReadyForUnderwriting(
+    manager: EntityManager,
+    { tenantId, caseId }: CaseRef,
+  ): Promise<void> {
+    await manager
+      .getRepository(LoanCase)
+      .update(
+        { id: caseId, tenantId },
+        { status: CaseStatus.READY_FOR_UNDERWRITING },
+      );
+    await writeOutboxEvent(manager, outboxSigningSecret, {
+      tenantId,
+      caseId,
+      eventType: OutboxEventType.WorkflowRunCompleted,
+      payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
+    });
+  }
 
   async function recordEvidence(
     manager: EntityManager,
@@ -242,88 +271,102 @@ export function createCaseConditionsActivities(
     },
 
     /**
-     * Policy-driven condition check (Section 10.3's resolver + the M3
-     * DSL evaluator, gated through `PolicyEvaluationService`'s binding
-     * guard — Section 10.4), replacing the M2 launch's
-     * `hasSyntheticDiscrepancy` stand-in now that a real policy engine
-     * exists to drive this decision instead. Resolves which released
-     * policy version(s) apply to this case's jurisdiction/product/
-     * lifecycle event, evaluates each against the case's actual fact
-     * context, and opens a condition using the first match's own
-     * `outcome.condition`/`reason` — never a hardcoded code/description.
-     * An unresolved policy binding (Section 10.3: `REVIEW_REQUIRED` —
-     * missing coverage, overlapping versions) routes to manual review
-     * rather than silently treating the case as clean.
+     * Runs a bounded Agent run (Section 9.2/9.5) through the LangGraph.js
+     * runtime (`src/agent-runtime/langgraph/`) instead of calling the
+     * policy engine and condition tool directly — the runtime's own three
+     * nodes do exactly what this activity used to do inline (check
+     * completeness, request a guarded policy evaluation, evaluate the
+     * matched rule against real evidence and open a condition on a
+     * match), now exercised through the same tool-registry contract a
+     * future non-deterministic Agent run will use too. An unresolved
+     * policy binding (Section 10.3: `REVIEW_REQUIRED` — missing coverage,
+     * overlapping versions) routes to manual review rather than silently
+     * treating the case as clean.
      */
     async evaluateConditions({
       tenantId,
       caseId,
-      income,
+      workflowRunId,
     }: EvaluateConditionsInput): Promise<EvaluateConditionsResult> {
       const loanCase = await dataSource
         .getRepository(LoanCase)
         .findOneByOrFail({ id: caseId, tenantId });
 
-      const evaluation = await policyEvaluationService.evaluate(
+      const now = new Date();
+      const runDeadlineAt = new Date(
+        now.getTime() + AGENT_RUN_DURATION_BUDGET_MS,
+      ).toISOString();
+      const initialState: LendingOperationsAgentState = {
         tenantId,
         caseId,
-        {
-          jurisdictionCode: loanCase.jurisdictionCode,
-          productCode: loanTypeToProductCode(loanCase.loanType),
-          lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
-          asOf: new Date(),
-        },
-      );
-
-      if (evaluation.outcome === 'REVIEW_REQUIRED') {
-        return {
-          outcome: 'REVIEW_REQUIRED',
-          reviewReason: evaluation.resolution.unresolvedReasons.join('; '),
-        };
-      }
-
-      const factContext: PolicyFactContext = {
-        application: { monthly_income: Number(loanCase.statedMonthlyIncome) },
-        evidence: { verified_monthly_income: income.monthlyIncome },
+        caseVersion: loanCase.version,
+        workflowRunId,
+        workflowStatus: loanCase.status,
+        // No consent-tracking entity exists yet (M0-010's Known gaps) —
+        // this Agent run has nothing to check consent against, same
+        // placeholder every other LendingOperationsAgentState in this
+        // codebase uses today.
+        consentStatus: 'VALID',
+        evidenceSummary: [],
+        openConditions: [],
+        providerHealth: [],
+        attemptedTools: [],
+        remainingStepBudget: AGENT_RUN_STEP_BUDGET,
+        remainingDurationBudgetMs: AGENT_RUN_DURATION_BUDGET_MS,
+        remainingTokenBudget: 0, // this graph makes no model calls
+        remainingProviderCallBudget: 0, // its tools make no outbound provider calls; evidence was already fetched by earlier workflow activities
+        budgetCurrency: 'USD',
+        remainingCostBudgetMinorUnits: 0, // all providers are synthetic; no real cost is ever incurred
+        budgetLedgerVersion: 1,
+        runStartedAt: now.toISOString(),
+        runDeadlineAt,
       };
 
-      const match = evaluation.resolution.versions
-        .map((resolved) => ({
-          resolved,
-          result: evaluatePolicyRule(resolved.rule, factContext),
-        }))
-        .find(({ result }) => result.matched);
-
-      if (!match) {
-        await dataSource.transaction(async (manager) => {
-          await manager
-            .getRepository(LoanCase)
-            .update(
-              { id: caseId, tenantId },
-              { status: CaseStatus.READY_FOR_UNDERWRITING },
-            );
-          await writeOutboxEvent(manager, outboxSigningSecret, {
-            tenantId,
-            caseId,
-            eventType: OutboxEventType.WorkflowRunCompleted,
-            payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
-          });
-        });
-        return { outcome: 'READY' };
-      }
-
-      const { conditionId } = await createCondition.execute(
-        { tenantId, caseId },
-        {
-          code: match.resolved.rule.outcome.condition,
-          description: match.result.reason,
-          policyVersionId: match.resolved.policyVersionId,
-          ruleId: match.resolved.ruleId,
-          policySnapshotId: evaluation.snapshot.id,
+      const result = await agentRuntime.run({
+        initialState,
+        allowedTools: AGENT_ALLOWED_TOOLS,
+        budget: {
+          stepBudget: AGENT_RUN_STEP_BUDGET,
+          durationBudgetMs: AGENT_RUN_DURATION_BUDGET_MS,
+          tokenBudget: 0,
+          providerCallBudget: 0,
+          costBudgetMinorUnits: 0,
+          currency: 'USD',
         },
-      );
+        runDeadlineAt,
+      });
 
-      return { outcome: 'CONDITION_OPENED', conditionId };
+      switch (result.route) {
+        case 'PROPOSED_ACTION': {
+          const conditionId = result.finalState.proposedAction?.arguments
+            .conditionId as string | undefined;
+          if (conditionId) {
+            return { outcome: 'CONDITION_OPENED', conditionId };
+          }
+          await dataSource.transaction((manager) =>
+            finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
+          );
+          return { outcome: 'READY' };
+        }
+        case 'ROUTED_TO_MANUAL_REVIEW':
+          return {
+            outcome: 'REVIEW_REQUIRED',
+            reviewReason:
+              result.finalState.reviewState?.reason ??
+              'agent run routed to manual review',
+          };
+        case 'AWAITING_INFORMATION':
+        case 'INTERRUPTED_FOR_REVIEW':
+          // Neither route is reachable here today: the workflow always
+          // fetches all three evidence types before calling this
+          // activity, and no human-interrupt/resume flow exists yet. Fail
+          // closed rather than silently treat an unexpected route as
+          // readiness.
+          return {
+            outcome: 'REVIEW_REQUIRED',
+            reviewReason: `unexpected Agent run route "${result.route}"`,
+          };
+      }
     },
 
     async resolveCondition({
@@ -376,20 +419,9 @@ export function createCaseConditionsActivities(
       tenantId,
       caseId,
     }: CaseRef): Promise<void> {
-      await dataSource.transaction(async (manager) => {
-        await manager
-          .getRepository(LoanCase)
-          .update(
-            { id: caseId, tenantId },
-            { status: CaseStatus.READY_FOR_UNDERWRITING },
-          );
-        await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId,
-          caseId,
-          eventType: OutboxEventType.WorkflowRunCompleted,
-          payload: { caseId, finalStatus: CaseStatus.READY_FOR_UNDERWRITING },
-        });
-      });
+      await dataSource.transaction((manager) =>
+        finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
+      );
     },
 
     /**

@@ -3,6 +3,7 @@ import {
   setHandler,
   condition,
   log,
+  workflowInfo,
 } from '@temporalio/workflow';
 import type { CaseConditionsActivities } from './case-conditions.activities';
 import {
@@ -45,14 +46,12 @@ export async function caseConditionsWorkflow(
 
   await activities.markCollectingEvidence({ tenantId, caseId });
 
-  let income: Awaited<ReturnType<typeof activities.fetchIncomeEvidence>>;
   try {
-    // Credit and document evidence are still fetched and recorded for
-    // audit purposes — evaluateConditions no longer consults them
-    // directly, only income (Section 10.7's own example rule compares
-    // stated vs. verified income); a future policy rule could reintroduce
-    // credit/document-based conditions the same way, as its own DSL rule.
-    [income] = await Promise.all([
+    // All three are fetched and recorded for audit purposes and so the
+    // Agent run's check_case_completeness tool (src/agent-runtime/tools/)
+    // finds them — evaluateConditions reads evidence back from the
+    // database itself rather than taking it as an activity parameter.
+    await Promise.all([
       activities.fetchIncomeEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchCreditEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchDocumentEvidence({ tenantId, caseId, borrowerId }),
@@ -78,7 +77,7 @@ export async function caseConditionsWorkflow(
   const evaluation = await activities.evaluateConditions({
     tenantId,
     caseId,
-    income,
+    workflowRunId: workflowInfo().runId,
   });
 
   if (evaluation.outcome === 'REVIEW_REQUIRED') {

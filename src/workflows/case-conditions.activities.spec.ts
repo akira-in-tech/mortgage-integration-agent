@@ -14,6 +14,7 @@ import { ConditionTransition } from '../database/entities/condition-transition.e
 import {
   EvidenceFact,
   EvidenceType,
+  EvidenceSourceKind,
 } from '../database/entities/evidence-fact.entity';
 import { LoanApplication } from '../database/entities/loan-application.entity';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
@@ -189,6 +190,47 @@ describeOrSkip('createCaseConditionsActivities', () => {
     return loanCase.id;
   }
 
+  // evaluateConditions now runs a bounded Agent run whose
+  // check_case_completeness/resolveOutcome tools read real EvidenceFact
+  // rows, not a directly-passed income parameter — this seeds the same
+  // three fact types the workflow's fetch activities would have recorded
+  // by the time evaluateConditions actually runs in production.
+  async function seedEvidence(
+    caseId: string,
+    verifiedMonthlyIncome: number,
+  ): Promise<void> {
+    const evidenceRepo = dataSource.getRepository(EvidenceFact);
+    await evidenceRepo.save([
+      evidenceRepo.create({
+        tenantId,
+        caseId,
+        factType: EvidenceType.INCOME,
+        sourceKind: EvidenceSourceKind.SIMULATOR,
+        sourceIdentifier: 'plaid-simulator',
+        value: { ...GOOD_INCOME, monthlyIncome: verifiedMonthlyIncome },
+        observedAt: new Date(),
+      }),
+      evidenceRepo.create({
+        tenantId,
+        caseId,
+        factType: EvidenceType.CREDIT,
+        sourceKind: EvidenceSourceKind.SIMULATOR,
+        sourceIdentifier: 'credit-bureau-simulator',
+        value: {},
+        observedAt: new Date(),
+      }),
+      evidenceRepo.create({
+        tenantId,
+        caseId,
+        factType: EvidenceType.DOCUMENT,
+        sourceKind: EvidenceSourceKind.SIMULATOR,
+        sourceIdentifier: 'document-verification-simulator',
+        value: {},
+        observedAt: new Date(),
+      }),
+    ]);
+  }
+
   async function outboxEventsFor(caseId: string) {
     return dataSource
       .getRepository(OutboxEvent)
@@ -270,11 +312,12 @@ describeOrSkip('createCaseConditionsActivities', () => {
     // statedMonthlyIncome === verified income -> 0% difference, well under
     // the seeded rule's 10% threshold.
     const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+    await seedEvidence(caseId, 9000);
 
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
-      income: GOOD_INCOME,
+      workflowRunId: 'activities-spec-run-ready',
     });
 
     expect(result).toEqual({ outcome: 'READY' });
@@ -300,11 +343,12 @@ describeOrSkip('createCaseConditionsActivities', () => {
     // statedMonthlyIncome=12000 vs verified 9000 -> 25% difference, over
     // the seeded rule's 10% threshold.
     const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
+    await seedEvidence(caseId, 9000);
 
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
-      income: GOOD_INCOME,
+      workflowRunId: 'activities-spec-run-condition-opened',
     });
 
     expect(result.outcome).toBe('CONDITION_OPENED');
@@ -344,11 +388,12 @@ describeOrSkip('createCaseConditionsActivities', () => {
       statedMonthlyIncome: 9000,
       jurisdictionCode: NOT_COVERED_JURISDICTION_CODE,
     });
+    await seedEvidence(caseId, 9000);
 
     const result = await activities.evaluateConditions({
       tenantId,
       caseId,
-      income: GOOD_INCOME,
+      workflowRunId: 'activities-spec-run-review-required',
     });
 
     expect(result.outcome).toBe('REVIEW_REQUIRED');
@@ -366,10 +411,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
 
   it('resolveCondition updates the condition, records an attributed transition, and writes condition.satisfied or condition.waived', async () => {
     const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
+    await seedEvidence(caseId, 9000);
     const { conditionId } = await activities.evaluateConditions({
       tenantId,
       caseId,
-      income: GOOD_INCOME,
+      workflowRunId: 'activities-spec-run-resolve-condition',
     });
 
     await activities.resolveCondition({

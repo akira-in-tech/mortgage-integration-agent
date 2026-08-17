@@ -2992,3 +2992,96 @@ left in any persistent database
 ### Next safe step
 
 Decide whether/how `case-conditions.activities.ts`'s `evaluateConditions` should route through this runtime instead of calling `PolicyEvaluationService`/`createConditionTool` directly — and if so, design how Temporal's own retry/timeout semantics compose with the runtime's step/deadline budget rather than fighting it. Independently, Section 9.6's mandatory review triggers and a real token/cost budget ledger are the next pieces of Section 9 that would make `ROUTED_TO_MANUAL_REVIEW`/`INTERRUPTED_FOR_REVIEW` reflect the charter's actual safety requirements rather than only the two dimensions checked today.
+
+## M3-008: Wire the LangGraph Agent runtime into the M2 workflow
+
+### Status
+
+Implemented and verified. `case-conditions.activities.ts`'s `evaluateConditions` now runs a bounded Agent run through `createLendingOperationsAgentRuntime` (M3-007) instead of calling `PolicyEvaluationService`/`createConditionTool` directly — the decision that opens a condition (or clears a case to `READY_FOR_UNDERWRITING`, or routes it to `MANUAL_REVIEW`) is now genuinely produced by the LangGraph.js graph. `case-conditions.workflow.ts` itself is unchanged in structure — it still calls a single `evaluateConditions` activity and interprets the same `EvaluateConditionsResult` shape.
+
+### Acceptance criterion
+
+The real M2 Temporal workflow, run through a real worker against a real database, must produce its condition-opening/ready/review-required decisions via the LangGraph runtime — not as a parallel, unused code path. Every existing workflow-level behavior (durable wait, signal-driven resolution, retry classification, replay-safety) must keep working unchanged, since none of that is specific to how `evaluateConditions` reaches its decision internally.
+
+### Implementation
+
+- `src/workflows/case-conditions.activities.ts`:
+  - `evaluateConditions`'s body replaced: loads the case, builds a `LendingOperationsAgentState` (caseVersion from `LoanCase.version`, an already-existing optimistic-lock column; workflowStatus from the case's own status; consentStatus hardcoded `'VALID'`, same placeholder every other state construction in this codebase uses since no consent-tracking entity exists yet), and calls `agentRuntime.run(...)` with `allowedTools: ['check_case_completeness', 'evaluate_policy', 'create_condition']` and a budget/deadline bounded well inside the workflow's own 30s activity `startToCloseTimeout` (`AGENT_RUN_STEP_BUDGET = 10`, `AGENT_RUN_DURATION_BUDGET_MS = 20_000`).
+  - The `AgentRunRoute` result is mapped back to the pre-existing `EvaluateConditionsResult` shape (`'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED'`) so the workflow needs no changes: `PROPOSED_ACTION` with a `create_condition` action → `CONDITION_OPENED`; `PROPOSED_ACTION` with no action → `READY` (the activity itself still performs the `READY_FOR_UNDERWRITING` write + `workflow_run.completed` outbox event, now factored into a shared `finalizeReadyForUnderwriting` helper also used by the `markReadyForUnderwriting` activity — deduplicating what were previously two near-identical inline blocks); `ROUTED_TO_MANUAL_REVIEW` → `REVIEW_REQUIRED`; `AWAITING_INFORMATION`/`INTERRUPTED_FOR_REVIEW` (neither reachable at this call site today) → `REVIEW_REQUIRED`, failing closed rather than treating an unrecognized route as readiness.
+  - `EvaluateConditionsInput` changed from `{ tenantId, caseId, income }` to `{ tenantId, caseId, workflowRunId }` — the Agent run's `resolveOutcome` node reads evidence back from the database itself (the same `EvidenceFact` rows the workflow's fetch activities already recorded), so passing `income` through as a parameter is no longer meaningful; `workflowRunId` correlates the Agent run to its Temporal run for Section 9.3's `LendingOperationsAgentState.workflowRunId`.
+  - `workflowRunId` is threaded in as an explicit parameter from the *workflow* (`workflowInfo().runId`, deterministic-safe to call from workflow code) rather than read via `activityInfo()` inside the activity — `@temporalio/activity`'s `Context.current()` throws `Activity context not initialized` when an activity function is invoked directly outside a real Temporal worker execution, which is exactly how `case-conditions.activities.spec.ts` calls every activity in this file. Threading the value in keeps `evaluateConditions` identically callable both ways.
+  - Removed now-unused imports (`evaluatePolicyRule`, `PolicyFactContext`, `loanTypeToProductCode`, `UNDERWRITING_REVIEW_LIFECYCLE_EVENT`, `createConditionTool`) — all of that logic now lives inside the Agent runtime's nodes (M3-007).
+- `src/workflows/case-conditions.workflow.ts`: fetches income/credit/document evidence the same as before (still needed for the audit trail and for `check_case_completeness` to find), but no longer destructures/passes `income` — just `await Promise.all([...])`. Calls `evaluateConditions` with `workflowRunId: workflowInfo().runId` instead of `income`.
+- `src/workflows/case-conditions.activities.spec.ts`: added a `seedEvidence` helper (writes real `INCOME`/`CREDIT`/`DOCUMENT` `EvidenceFact` rows) and updated all four `evaluateConditions` call sites to seed evidence first and pass `workflowRunId` instead of `income` — the new implementation genuinely requires real evidence rows to exist (via `check_case_completeness`) rather than accepting income as a bare parameter, which is a real, correct behavioral tightening: it now matches how the workflow actually calls it in production.
+- No changes needed to `case-conditions.workflow.spec.ts` — it mocks the whole `CaseConditionsActivities` interface and never asserts on `evaluateConditions`'s call arguments, only its mocked return value, so the activity's internal rewrite and input-shape change didn't require touching this suite.
+
+### Affected files
+
+- `src/workflows/case-conditions.activities.ts`
+- `src/workflows/case-conditions.activities.spec.ts`
+- `src/workflows/case-conditions.workflow.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Rewrite `evaluateConditions`'s internals, keep its name/signature shape and the workflow untouched** — the workflow only depends on `EvaluateConditionsResult`'s three-way outcome, never on how the activity gets there. Changing the activity's implementation without changing the workflow's call graph is the smallest change that satisfies "wire the runtime into the workflow": the workflow now runs on the LangGraph decision by construction, with zero workflow-level risk (no new activity call sequencing, no history-shape change, no replay-compatibility question).
+- **`workflowRunId` passed in from the workflow, not read via `activityInfo()`** — this was the one real design fork in this slice. `activityInfo()`/`Context.current()` only works inside a live Temporal activity execution (real worker), and would have broken every direct-call test in `case-conditions.activities.spec.ts`, which is the established, deliberate testing pattern for this file (call activities as plain functions against a real database, no worker needed). `workflowInfo().runId` is available synchronously and deterministically in workflow code with no such restriction, and the workflow already has to call this activity anyway — passing the value through is strictly simpler than making the activity layer's correlation-id sourcing conditional on its caller.
+- **`finalizeReadyForUnderwriting` extracted as a shared private helper** — the old code had two near-identical 12-line blocks (case's "no match" branch, and the separate `markReadyForUnderwriting` activity) doing the same status update + outbox write. Rewriting `evaluateConditions` anyway made this duplication newly visible; factoring it out is a same-scope cleanup of code already being touched, not a speculative abstraction.
+- **The Agent run's own budget is fixed, small constants (10 steps, 20s), not derived from Temporal's configured retry/timeout policy** — Section 9.3's budget model is a run-level concept, and this activity performs exactly one bounded run per invocation. Deriving it dynamically from `proxyActivities`' `startToCloseTimeout` would require threading workflow-side configuration into the activity for no present benefit; a fixed constant with a comment stating the containment relationship (inner budget stays clearly inside the outer timeout) is honest and sufficient until there's a second caller with different needs.
+- **Evidence-seeding tightening in the test suite treated as correct, not worked around** — some tests previously passed a bare `income` object without any `EvidenceFact` rows existing at all, which no longer reflects how `evaluateConditions` is actually invoked in production (always after the workflow's fetch activities have written evidence). Seeding real rows in the test, rather than finding a way to keep accepting a parameter the production code path no longer uses, keeps the test honest about what the activity now requires.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed, no manual fixes needed beyond eslint --fix's prettier
+  formatting pass
+
+scratch stack: docker compose (postgres 5433, temporal 7234) + migration:run
+  all 8 migrations applied cleanly (fresh scratch database, independent
+  of M3-007's)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  31 suites passed, 212 tests passed (unchanged counts from M3-007 —
+  this slice rewires an existing call path rather than adding new
+  tests; case-conditions.activities.spec.ts's evaluateConditions tests
+  now exercise the real LangGraph runtime instead of the old inline
+  logic, and case-conditions.workflow.spec.ts's 7 tests — real Temporal
+  worker, mocked activities — passed unchanged)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 13 tests passed (unchanged)
+
+Manual end-to-end proof (real REST API + real Temporal worker, scratch
+Postgres/Temporal, a real tenant seeded directly):
+  created a case (statedMonthlyIncome=25000, jurisdictionCode=US-CA),
+  started its workflow-run. Worker log confirms the real sequence:
+  evidence fetched -> check_case_completeness's EvidenceFact query ->
+  evaluate_policy's resolver queries (Jurisdiction/PolicyApplicability/
+  PolicyVersion/CasePolicyBinding) -> CasePolicySnapshot+CasePolicyBinding
+  inserted (REFRESHED) -> resolveOutcome's own LoanCase+latest-INCOME-
+  EvidenceFact query -> LoanCondition inserted with description
+  "difference_percent(application.monthly_income=25000,
+  evidence.verified_monthly_income=5218) = 79.13% > 10%" -> LoanCase
+  status -> CONDITIONS_OPEN. GET confirmed policySnapshotId populated
+  on the condition row. POST .../reviews (WAIVED) resumed the durable
+  wait and drove the case to READY_FOR_UNDERWRITING, proving the
+  signal/resume path is unaffected by the rewiring.
+  All synthetic rows deleted afterward; scratch stack torn down.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No externally-visible API contract change — `POST .../workflow-runs` and `POST .../reviews` behave identically from a caller's perspective; only the internal decision path changed.
+- No new outbox event types or schema changes; the exact same `condition.opened`/`workflow_run.completed`/`workflow_run.waiting_for_review` events are produced as before, now via `finalizeReadyForUnderwriting`/`createConditionTool` reached through the Agent runtime instead of inline code.
+- The Agent run's budget (10 steps / 20s) sits strictly inside the workflow's existing 30s activity timeout, so this cannot introduce a new source of activity timeout under normal operation; if anything, an exhausted Agent-run budget now fails closed to `MANUAL_REVIEW` slightly earlier than Temporal's own timeout would have.
+
+### Known gaps
+
+- The Agent run's budget is currently unconditional constants, not derived from or reconciled with the workflow's actual configured retry policy — acceptable for a single caller today, called out explicitly as a design decision above rather than left implicit.
+- Everything M3-007 already listed as a known gap (no token/cost/provider-call ledger enforcement, no `INTERRUPTED_FOR_REVIEW`/mandatory-review-trigger logic, only 3 of 16 registered tools) is unchanged by this slice — wiring the runtime in didn't add new capability to the runtime itself, only a new real caller.
+- `caseVersion`/`workflowStatus`/`consentStatus` are populated once at the start of the Agent run and never re-read mid-run; a concurrent modification to the case during the (currently sub-second) run window would not be reflected in the Agent's state, though `create_condition`'s own transaction still operates on the case's current row at write time regardless.
+
+### Next safe step
+
+Section 9.6's mandatory review triggers and a real budget ledger remain the largest unbuilt pieces of Section 9 — building them would let this same wired-in runtime start producing `INTERRUPTED_FOR_REVIEW` and enforcing token/cost dimensions it currently only carries as unenforced state. Independently, `EvaluationInputManifest` (Section 10.5) is still the largest unbuilt piece of the policy side of M3.
