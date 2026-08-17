@@ -24,10 +24,11 @@ export interface ResolvedPolicyVersionRef {
 }
 
 /**
- * Simplified stand-in for Section 10.3's `CasePolicySnapshot`. Not
- * persisted anywhere yet — this slice returns the resolution result
- * in-memory; an immutable, storable snapshot is separate, larger scope
- * (see docs/DEVELOPMENT_LOG.md).
+ * In-memory resolution result. `PolicyEvaluationService`
+ * (policy-evaluation.service.ts) is what persists this as an immutable
+ * `CasePolicySnapshot` and decides whether an existing `CasePolicyBinding`
+ * can be reused — `PolicyApplicabilityResolverService` itself stays a
+ * stateless, unpersisted resolver (Section 10.3).
  */
 export interface PolicyResolutionResult {
   status: 'RESOLVED' | 'REVIEW_REQUIRED';

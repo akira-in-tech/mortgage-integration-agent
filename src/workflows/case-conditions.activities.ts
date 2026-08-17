@@ -24,7 +24,7 @@ import { ConditionTransition } from '../database/entities/condition-transition.e
 import { ConditionResolutionKind } from './case-conditions.signals';
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
-import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
+import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { evaluatePolicyRule } from '../policy/dsl/policy-rule-evaluator';
 import { PolicyFactContext } from '../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../policy/product-code';
@@ -36,7 +36,7 @@ export interface CaseConditionsActivitiesDeps {
   plaidService: PlaidService;
   creditService: CreditService;
   documentService: DocumentService;
-  policyResolver: PolicyApplicabilityResolverService;
+  policyEvaluationService: PolicyEvaluationService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -119,7 +119,7 @@ export function createCaseConditionsActivities(
     plaidService,
     creditService,
     documentService,
-    policyResolver,
+    policyEvaluationService,
     outboxSigningSecret,
   } = deps;
 
@@ -238,16 +238,17 @@ export function createCaseConditionsActivities(
 
     /**
      * Policy-driven condition check (Section 10.3's resolver + the M3
-     * DSL evaluator), replacing the M2 launch's `hasSyntheticDiscrepancy`
-     * stand-in now that a real policy engine exists to drive this
-     * decision instead. Resolves which released policy version(s) apply
-     * to this case's jurisdiction/product/lifecycle event, evaluates each
-     * against the case's actual fact context, and opens a condition using
-     * the first match's own `outcome.condition`/`reason` — never a
-     * hardcoded code/description. An unresolved policy binding (Section
-     * 10.3: `REVIEW_REQUIRED` — missing coverage, overlapping versions)
-     * routes to manual review rather than silently treating the case as
-     * clean.
+     * DSL evaluator, gated through `PolicyEvaluationService`'s binding
+     * guard — Section 10.4), replacing the M2 launch's
+     * `hasSyntheticDiscrepancy` stand-in now that a real policy engine
+     * exists to drive this decision instead. Resolves which released
+     * policy version(s) apply to this case's jurisdiction/product/
+     * lifecycle event, evaluates each against the case's actual fact
+     * context, and opens a condition using the first match's own
+     * `outcome.condition`/`reason` — never a hardcoded code/description.
+     * An unresolved policy binding (Section 10.3: `REVIEW_REQUIRED` —
+     * missing coverage, overlapping versions) routes to manual review
+     * rather than silently treating the case as clean.
      */
     async evaluateConditions({
       tenantId,
@@ -258,17 +259,21 @@ export function createCaseConditionsActivities(
         .getRepository(LoanCase)
         .findOneByOrFail({ id: caseId, tenantId });
 
-      const resolution = await policyResolver.resolve({
-        jurisdictionCode: loanCase.jurisdictionCode,
-        productCode: loanTypeToProductCode(loanCase.loanType),
-        lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
-        asOf: new Date(),
-      });
+      const evaluation = await policyEvaluationService.evaluate(
+        tenantId,
+        caseId,
+        {
+          jurisdictionCode: loanCase.jurisdictionCode,
+          productCode: loanTypeToProductCode(loanCase.loanType),
+          lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+          asOf: new Date(),
+        },
+      );
 
-      if (resolution.status === 'REVIEW_REQUIRED') {
+      if (evaluation.outcome === 'REVIEW_REQUIRED') {
         return {
           outcome: 'REVIEW_REQUIRED',
-          reviewReason: resolution.unresolvedReasons.join('; '),
+          reviewReason: evaluation.resolution.unresolvedReasons.join('; '),
         };
       }
 
@@ -277,7 +282,7 @@ export function createCaseConditionsActivities(
         evidence: { verified_monthly_income: income.monthlyIncome },
       };
 
-      const match = resolution.versions
+      const match = evaluation.resolution.versions
         .map((resolved) => ({
           resolved,
           result: evaluatePolicyRule(resolved.rule, factContext),
@@ -329,6 +334,7 @@ export function createCaseConditionsActivities(
             code: condition.code,
             policyVersionId: match.resolved.policyVersionId,
             ruleId: match.resolved.ruleId,
+            policySnapshotId: evaluation.snapshot.id,
           },
         });
         await writeOutboxEvent(manager, outboxSigningSecret, {

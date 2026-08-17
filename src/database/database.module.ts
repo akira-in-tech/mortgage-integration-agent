@@ -12,6 +12,8 @@ import { PolicySource } from './entities/policy-source.entity';
 import { PolicySourceRevision } from './entities/policy-source-revision.entity';
 import { PolicyVersion } from './entities/policy-version.entity';
 import { PolicyApplicability } from './entities/policy-applicability.entity';
+import { CasePolicySnapshot } from './entities/case-policy-snapshot.entity';
+import { CasePolicyBinding } from './entities/case-policy-binding.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -32,6 +34,8 @@ import { PolicyApplicability } from './entities/policy-applicability.entity';
       PolicySourceRevision,
       PolicyVersion,
       PolicyApplicability,
+      CasePolicySnapshot,
+      CasePolicyBinding,
     ]),
   ],
   exports: [TypeOrmModule],

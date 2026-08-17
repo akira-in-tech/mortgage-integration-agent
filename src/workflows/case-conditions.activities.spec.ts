@@ -22,6 +22,8 @@ import { PolicySource } from '../database/entities/policy-source.entity';
 import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
 import { PolicyVersion } from '../database/entities/policy-version.entity';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
+import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
+import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -32,6 +34,7 @@ import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
 import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
+import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -59,6 +62,7 @@ const GOOD_INCOME: PlaidIncomeData = {
 describeOrSkip('createCaseConditionsActivities', () => {
   let dataSource: DataSource;
   let policyResolver: PolicyApplicabilityResolverService;
+  let policyEvaluationService: PolicyEvaluationService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -80,6 +84,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
         PolicySourceRevision,
         PolicyVersion,
         PolicyApplicability,
+        CasePolicySnapshot,
+        CasePolicyBinding,
       ],
     });
     await dataSource.initialize();
@@ -88,6 +94,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(Jurisdiction),
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(PolicyVersion),
+    );
+    policyEvaluationService = new PolicyEvaluationService(
+      policyResolver,
+      dataSource.getRepository(CasePolicySnapshot),
+      dataSource.getRepository(CasePolicyBinding),
     );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
@@ -98,7 +109,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService,
       documentService,
-      policyResolver,
+      policyEvaluationService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -134,6 +145,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
       if (caseIds.length > 0) {
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
+        await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
+        await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
         const conditions = await conditionRepo.find({
           where: caseIds.map((caseId) => ({ caseId })),
         });
@@ -225,7 +238,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       plaidService,
       creditService: { getCreditData: jest.fn() } as any,
       documentService: { verifyDocuments: jest.fn() } as any,
-      policyResolver,
+      policyEvaluationService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -444,7 +457,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         plaidService: new PlaidService(),
         creditService: new CreditService(),
         documentService: new DocumentService(),
-        policyResolver,
+        policyEvaluationService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -495,7 +508,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         plaidService: brokenPlaid,
         creditService: new CreditService(),
         documentService: new DocumentService(),
-        policyResolver,
+        policyEvaluationService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

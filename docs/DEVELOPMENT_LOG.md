@@ -2652,3 +2652,101 @@ Temporal + the real dev Postgres database):
 ### Next safe step
 
 Ask whether to continue toward `CasePolicySnapshot`/binding-guard persistence (Section 10.4) next, or pivot to the `AgentRuntime` port and LangGraph.js v1 adapter (Section 9) — both are substantial, independent pieces of M3's remaining scope, and this integration slice was the natural forcing function for the policy side; the Agent side hasn't been started at all yet.
+
+## M3-005: CasePolicySnapshot persistence and the PolicyEvaluationService binding guard
+
+### Status
+
+Implemented and verified, including a hands-on run through the real REST API and a real worker confirming a live evaluation persists a real `CasePolicySnapshot` and `CasePolicyBinding`, correctly cross-referenced from the `condition.opened` outbox event. Closes the "unavoidable `PolicyEvaluationService` binding-validation guard" M3 scope line — with one deliberate, documented simplification (see Decisions): this implements the guard's correctness/audit contract, not yet its target performance mechanism. Chosen over the Agent-runtime alternative because the charter's own `evaluate_policy`/`create_condition` Agent tools (Section 9.4) require "mandatory policy-binding validation" as something the Agent cannot bypass — building the Agent side first would mean building it against a guard that didn't yet exist.
+
+### Acceptance criterion
+
+Every policy evaluation for a case must go through an unavoidable guard, never the raw resolver directly, and must produce: an immutable, queryable record of what was resolved and when (`CasePolicySnapshot`); a reusable case-to-snapshot binding that a later evaluation can trust without re-deriving from scratch when nothing has changed (`CasePolicyBinding`); and correct invalidation when the underlying resolution genuinely changes or becomes unresolvable.
+
+### Implementation
+
+- `src/database/entities/case-policy-snapshot.entity.ts` — `CasePolicySnapshot`: immutable, one row per distinct resolution outcome (`resolutionStatus`, the matched `versions` with their policy version IDs and effective windows, `unresolvedReasons`, a `contextHash` digest, `resolverVersion`). Never updated in place.
+- `src/database/entities/case-policy-binding.entity.ts` — `CasePolicyBinding`: one active (non-invalidated) row per case, pointing at the snapshot it's currently bound to, with `dependencyDigest`, `boundAt`, `revalidateAfter`, and `invalidatedAt`. A refresh invalidates the prior row rather than deleting it, preserving *why* a case's binding changed, not just that it did.
+- `src/database/enums/policy-resolution-status.enum.ts` — `PolicyResolutionStatus` (RESOLVED/REVIEW_REQUIRED), the DB-typed counterpart to `PolicyResolutionResult.status`'s plain string union.
+- `src/policy/policy-digest.ts` — `computeDigest`: a plain SHA-256 content fingerprint (not HMAC-signed like `outbox-signer.ts` — a digest only needs to detect change for one process talking to its own database, not cross a trust boundary). Reuses the same key-canonicalization approach as outbox signing, for the same reason (stable regardless of construction order).
+- `src/policy/policy-evaluation.service.ts` — `PolicyEvaluationService.evaluate(tenantId, caseId, context)`: calls the resolver, computes a digest over the resolution's status/versions/reasons (with `versions` explicitly sorted by `policyVersionId` before hashing — see Failures), then: `REVIEW_REQUIRED` persists a snapshot recording why and invalidates any existing binding (nothing to bind to); otherwise, an existing non-invalidated binding whose digest matches and whose `revalidateAfter` hasn't passed is `REUSED` as-is; anything else is `REFRESHED` — a new snapshot and binding are persisted, and the prior binding (if any) is invalidated.
+- `src/database/migrations/1786965356650-CasePolicySnapshotAndBinding.ts` — schema migration (generated, apply/revert verified against a scratch database).
+- `src/policy/policy.module.ts` — registers the two new entities and `PolicyEvaluationService`, exported alongside the resolver.
+- `src/workflows/case-conditions.activities.ts` — `evaluateConditions` now calls `policyEvaluationService.evaluate(...)` instead of the raw resolver; the `condition.opened` outbox event gains a `policySnapshotId` field, giving the audit trail a direct pointer from "a condition was opened" to "the exact snapshot that justified it."
+- `src/worker.ts` — resolves `PolicyEvaluationService` (not the raw resolver) from the worker's DI container and passes it into the activities factory.
+- `src/policy/policy-evaluation.service.spec.ts` (new), `policy-digest.spec.ts` (new) — real-database and pure-unit coverage respectively; `case-conditions.activities.spec.ts` updated to construct and pass the new service.
+
+### Failures and resolution
+
+- **A subtle digest-instability risk, caught before it caused spurious churn, not after**: `PolicyResolutionResult.versions` comes from a `Map` populated during resolver iteration — its array order isn't guaranteed stable across calls even when the underlying data hasn't changed (unlike jsonb key order, this isn't a storage-layer surprise, it's an iteration-order one, but the failure mode is the same: an unstable serialization breaks a digest comparison meant to detect real change). Fixed by explicitly sorting `versions` by `policyVersionId` before hashing, in the same place `computeDigest` is called — `computeDigest` itself deliberately stays array-order-sensitive as a general-purpose utility (Sorting is the caller's job, since only the caller knows which arrays are semantically order-independent); documented in both `policy-digest.ts`'s and `policy-evaluation.service.ts`'s comments so a future caller doesn't rediscover this the hard way.
+
+### Affected files
+
+- `src/database/entities/case-policy-snapshot.entity.ts`, `case-policy-binding.entity.ts` (new)
+- `src/database/enums/policy-resolution-status.enum.ts` (new)
+- `src/database/migrations/1786965356650-CasePolicySnapshotAndBinding.ts` (new); `schema-migrations.spec.ts`
+- `src/database/database.module.ts`
+- `src/policy/policy-digest.ts`, `policy-digest.spec.ts` (new)
+- `src/policy/policy-evaluation.service.ts`, `policy-evaluation.service.spec.ts` (new)
+- `src/policy/policy.module.ts`, `policy-resolution.types.ts`
+- `src/workflows/case-conditions.activities.ts`, `case-conditions.activities.spec.ts`
+- `src/worker.ts`
+- `README.md`
+
+### Decisions and alternatives
+
+- **The guard always re-runs full resolution — the target design's fast indexed-generation-vector path is not implemented**: Section 10.4's actual mechanism (a bounded, indexed read of 8 dependency-generation keys, incremented atomically on policy activation) needs a `policy_dependency_generations` table and an activation write-path that increments it — neither exists, because nothing in this codebase can activate, withdraw, or supersede a policy version after the fact yet (the only policy content that exists is the one seed migration). Building the fast-path infrastructure before there's any real activation event to invalidate against would be speculative. What's implemented instead — always resolve, then compare a content digest to decide reuse-vs-refresh — delivers the same *correctness* contract (a case's evaluation is provably bound to an immutable snapshot; reuse only happens when nothing relevant changed) without the *performance* property (skip resolution entirely on the fast path). This is a real, named simplification, not a silent shortcut — Section 10.4 itself is flagged in the class-level comments of both `CasePolicyBinding` and `PolicyEvaluationService`.
+- **`MAX_VALIDATION_INTERVAL_MS` (1 hour) is the only piece of `revalidateAfter`'s definition implemented**: Section 10.4 defines it as "the earliest known scheduled activation boundary, source-freshness deadline, or configured maximum validation interval" — the first two require infrastructure (scheduled activations, freshness tracking) this codebase doesn't have; the third is a plain constant, honestly implementable today.
+- **One active binding per case, refresh invalidates rather than deletes**: matches `CasePolicyBinding`'s own `invalidatedAt` field in the charter's target interface, and preserves the same kind of "what changed and when" audit trail `ConditionTransition` already provides for conditions — deleting and recreating would lose that history for no benefit.
+- **A digest, not a signature, for `dependencyDigest`/`contextHash`**: unlike outbox events (M2-006), which cross a trust boundary and need tamper-evidence, this digest only needs to answer "did the resolver's output change" for one process reading its own database — no secret, no HMAC, matching the general principle of not adding security machinery a threat model doesn't call for.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  26 suites passed, 193 tests passed (24->26 suites, +2 new:
+  policy-digest.spec.ts [4 tests], policy-evaluation.service.spec.ts
+  [6 tests]; net +11 tests over M3-004's 182)
+  policy-evaluation.service.spec.ts covers: first evaluation creates a
+  snapshot+binding (REFRESHED); an unchanged second evaluation reuses
+  both (REUSED) without creating duplicate rows; a genuine policy
+  change (a second applicable rule becomes available) produces a new
+  snapshot+binding and invalidates the prior one; an expired
+  revalidateAfter forces a refresh even with unchanged content;
+  REVIEW_REQUIRED persists a snapshot but creates no binding; a
+  previously-valid binding is invalidated if a later evaluation for
+  the same case becomes REVIEW_REQUIRED.
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed
+
+Manual end-to-end proof (real API + real worker process, scratchpad
+Temporal + the real dev Postgres database): created and started a
+case with a genuine income discrepancy; confirmed a real
+case_policy_snapshots row (RESOLVED, the matched rule's version and
+window) and a real case_policy_bindings row (correct dependencyDigest,
+boundAt, a revalidateAfter one hour out, invalidatedAt null) were
+persisted, and that the condition.opened outbox event's payload
+correctly references the snapshot's real id. Cleaned up synthetic
+tenant/case/snapshot/binding rows, both processes, and the scratchpad
+Temporal stack afterward.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — no REST/GraphQL entry point reads snapshots or bindings yet.
+- `CasePolicySnapshot`/`CasePolicyBinding` contain no borrower data directly (policy version IDs, digests, timestamps) — the fact context they were evaluated against is not itself stored here (it lives in the case row and evidence facts already covered by M2's data-handling notes).
+- No new dependency; no new cost.
+
+### Known gaps
+
+- No dependency-generation vector / fast-path validation (see Decisions) — every evaluation call does full resolution work, just not full snapshot/binding *persistence* when nothing changed.
+- No scheduled-activation-boundary or source-freshness-deadline tracking feeding `revalidateAfter` — only the flat maximum-interval fallback exists.
+- No REST/GraphQL surface exposing a case's policy snapshot/binding history for audit/review — the data is there, nothing reads it back yet.
+- Still no `EvaluationInputManifest` (Section 10.5) — the next-larger piece of the policy-evaluation pipeline, referencing `policyBindingId` among other immutable evaluation inputs.
+
+### Next safe step
+
+M3's policy side now has schema, DSL engine, resolver, and binding guard all wired into the real M2 workflow — a coherent, closeable unit. The Agent side (Section 9: `AgentRuntime` port, LangGraph.js v1 adapter, registered tools, budgets) hasn't been started at all and is the largest remaining piece of M3. Recommend starting there next, or building `EvaluationInputManifest` first if continuing to deepen the policy pipeline is preferred — ask before choosing, since both are substantial, independent slices.

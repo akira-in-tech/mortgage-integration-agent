@@ -87,6 +87,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     await scratchDataSource.runMigrations();
 
     expect(await tableNames()).toEqual([
+      'case_policy_bindings',
+      'case_policy_snapshots',
       'condition_transitions',
       'evidence_facts',
       'jurisdictions',
@@ -141,8 +143,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // jurisdictions -> jurisdictions (self, parentCode), policy_sources ->
     // jurisdictions, policy_source_revisions -> policy_sources,
     // policy_versions -> policy_source_revisions, policy_applicability ->
-    // policy_versions, loan_cases -> jurisdictions
-    expect(foreignKeys).toHaveLength(10);
+    // policy_versions, loan_cases -> jurisdictions, case_policy_bindings ->
+    // case_policy_snapshots
+    expect(foreignKeys).toHaveLength(11);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -156,6 +159,25 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         ruleId: 'synthetic-income-discrepancy-review',
         releaseStatus: 'RELEASED',
       },
+    ]);
+  });
+
+  it('reverts the case policy snapshot/binding migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'condition_transitions',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_versions',
+      'tenants',
     ]);
   });
 
@@ -239,7 +261,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
          AND (t.typname LIKE 'loan_applications_%' OR t.typname LIKE 'loan_cases_%'
               OR t.typname LIKE 'loan_conditions_%' OR t.typname LIKE 'evidence_facts_%'
               OR t.typname LIKE 'condition_transitions_%' OR t.typname LIKE 'jurisdictions_%'
-              OR t.typname LIKE 'policy_sources_%' OR t.typname LIKE 'policy_versions_%')`,
+              OR t.typname LIKE 'policy_sources_%' OR t.typname LIKE 'policy_versions_%'
+              OR t.typname LIKE 'case_policy_snapshots_%')`,
     );
     expect(enumTypes).toEqual([]);
   });

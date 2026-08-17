@@ -5,7 +5,10 @@ import { PolicySource } from '../database/entities/policy-source.entity';
 import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
 import { PolicyVersion } from '../database/entities/policy-version.entity';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
+import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
+import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
+import { PolicyEvaluationService } from './policy-evaluation.service';
 
 @Module({
   imports: [
@@ -15,9 +18,11 @@ import { PolicyApplicabilityResolverService } from './policy-applicability-resol
       PolicySourceRevision,
       PolicyVersion,
       PolicyApplicability,
+      CasePolicySnapshot,
+      CasePolicyBinding,
     ]),
   ],
-  providers: [PolicyApplicabilityResolverService],
-  exports: [PolicyApplicabilityResolverService],
+  providers: [PolicyApplicabilityResolverService, PolicyEvaluationService],
+  exports: [PolicyApplicabilityResolverService, PolicyEvaluationService],
 })
 export class PolicyModule {}
