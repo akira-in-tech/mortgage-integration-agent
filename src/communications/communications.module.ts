@@ -5,6 +5,8 @@ import { CommunicationMessage } from '../database/entities/communication-message
 import { CommunicationApproval } from '../database/entities/communication-approval.entity';
 import { CommunicationMessageService } from './communication-message.service';
 import { CommunicationApprovalService } from './communication-approval.service';
+import { CommunicationDeliverySimulator } from './communication-delivery-simulator';
+import { CommunicationDeliveryService } from './communication-delivery.service';
 
 @Module({
   imports: [
@@ -14,7 +16,17 @@ import { CommunicationApprovalService } from './communication-approval.service';
       CommunicationApproval,
     ]),
   ],
-  providers: [CommunicationMessageService, CommunicationApprovalService],
-  exports: [CommunicationMessageService, CommunicationApprovalService],
+  providers: [
+    CommunicationMessageService,
+    CommunicationApprovalService,
+    CommunicationDeliverySimulator,
+    CommunicationDeliveryService,
+  ],
+  exports: [
+    CommunicationMessageService,
+    CommunicationApprovalService,
+    CommunicationDeliverySimulator,
+    CommunicationDeliveryService,
+  ],
 })
 export class CommunicationsModule {}

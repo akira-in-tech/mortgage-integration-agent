@@ -34,6 +34,8 @@ export const OutboxEventType = {
    * any of Section 9.6's mandatory review triggers, not only ambiguity.
    */
   CaseEscalated: 'case.escalated',
+  /** `send_information_request` (Section 9.4) successfully delivered a ready-to-send communication — never includes `renderedContent` itself (see `CommunicationDeliveryService`'s own comment on why). */
+  CommunicationDelivered: 'communication.delivered',
 } as const;
 
 export type OutboxEventType =

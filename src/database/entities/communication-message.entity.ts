@@ -74,4 +74,11 @@ export class CommunicationMessage {
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
+
+  /** Set only by a successful `send_information_request` delivery — a synthetic confirmation id from `CommunicationDeliverySimulator`, not a real provider's message id (no real channel exists, Section 11/M4). */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  deliveryReference!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  sentAt!: Date | null;
 }

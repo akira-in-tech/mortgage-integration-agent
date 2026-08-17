@@ -20,4 +20,6 @@ export enum CommunicationMessageStatus {
   DRAFTED = 'DRAFTED',
   AWAITING_APPROVAL = 'AWAITING_APPROVAL',
   APPROVED = 'APPROVED',
+  /** `send_information_request` (M3-018) reached this only via the ready-to-send gate: ROUTINE+DRAFTED or PROTECTED+APPROVED — never any other status. */
+  SENT = 'SENT',
 }

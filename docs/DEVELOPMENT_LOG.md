@@ -3926,3 +3926,94 @@ No manual live-API check this slice: `PolicyActivationService`/`PolicyTransition
 ### Next safe step
 
 Continuing the M3-closure punch list: the budget ledger (still deliberately deferred — no genuine consumer exists for token/cost dimensions in an Agent graph that makes no model calls and incurs no real cost), a communication delivery channel, and the evaluation corpus + report command (Section 18.2) remain the largest open items. The full Section 18.2 corpus spec (150 cases, adversarial documents, prompt-injection fixtures, model-configs) is too large to build without fabrication against this codebase's current maturity — the next step there is deliberately scoping down to what's honestly buildable from data this codebase already produces, not attempting the full spec at once.
+
+## M3-018: Communication delivery + `send_information_request` (Section 9.4)
+
+### Status
+
+Implemented and verified. `CommunicationDeliveryService` closes the gap `CommunicationMessageService`'s own comment has documented since M3-012 ("No delivery happens here or anywhere in this codebase yet") with a real simulated delivery channel — same honest status as `PlaidService`/`CreditService`/`DocumentService`, not a real email/SMS provider (Section 11, M4 scope) — and `send_information_request` becomes the seventh real Section 9.4 tool.
+
+### Acceptance criterion
+
+Section 9.4's `send_information_request` approval boundary: "Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content." A message must reach a real `SENT` state through exactly two paths — `ROUTINE` classification (already policy-controlled at draft time, M3-012) or `PROTECTED` classification with a real `CommunicationApproval` bound to its exact rendered-content hash — and no other combination, structurally enforced, not just documented.
+
+### Implementation
+
+- `CommunicationMessageStatus.SENT` (new enum value) and two new nullable columns on `CommunicationMessage` — `deliveryReference`, `sentAt`.
+- `CommunicationDeliverySimulator` (new, `src/communications/communication-delivery-simulator.ts`): mock delivery channel matching the existing `src/integrations/` simulator pattern — a deterministic synthetic confirmation id (sha256 of message id + content hash), not a real provider call.
+- `CommunicationDeliveryService` (new): `deliver(communicationMessageId)` is the actual gate — ready to send only when `(ROUTINE && DRAFTED)` or `(PROTECTED && APPROVED)`; anything else (still `AWAITING_APPROVAL`, already `SENT`) returns a typed `NOT_READY` result rather than delivering. On success: calls the simulator, updates the message to `SENT` with `deliveryReference`/`sentAt`, and writes a new signed `communication.delivered` outbox event — deliberately *not* including `renderedContent` in the event payload (unlike, say, `condition.opened`'s full description), since a borrower-facing communication's actual content is more sensitive than an internal condition reason and the outbox event only needs to prove delivery happened, not replay what was sent.
+- `send_information_request` (new Agent tool, `src/agent-runtime/tools/send-information-request.tool.ts`): a thin wrapper, same pattern as `evaluate_policy`. Not wired into the LangGraph graph — same status as `draft_information_request`/`escalate_to_reviewer`/`check_policy_change_impact`.
+- `publish_case_update` (Section 9.4's other communication tool) remains unbuilt this slice — it needs a real webhook subscription/delivery/retry subsystem (Section 11, explicitly M4 scope), not a thin wrapper over something that already exists the way this slice's tool was.
+
+### Affected files
+
+- `src/database/enums/communication.enum.ts`, `src/database/entities/communication-message.entity.ts`
+- `src/communications/communication-delivery-simulator.ts`, `.spec.ts` (new)
+- `src/communications/communication-delivery.service.ts`, `.spec.ts` (new)
+- `src/communications/communications.module.ts`
+- `src/agent-runtime/tools/send-information-request.tool.ts`, `.spec.ts` (new)
+- `src/database/outbox/outbox-event-types.ts`
+- `src/database/migrations/1786992668781-CommunicationDelivery.ts` (new), `schema-migrations.spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **A deterministic simulator, not a synthetic-failure-injectable one.** `PlaidService`/`CreditService`/`DocumentService` all support `maybeThrowSyntheticProviderFailure()` keyed on a magic `borrowerId` prefix; a delivery simulator has no natural equivalent input (a `communicationMessageId`, not a borrower id) to key synthetic failure injection on, and this slice's actual point is the *authorization gate* (is this message allowed to send), not provider-flakiness retry behavior — which is what M2's existing retry-classification tests already cover for the evidence-fetching simulators. Adding synthetic delivery failures here would be scope not asked for by this slice's acceptance criterion.
+- **`renderedContent` deliberately excluded from the `communication.delivered` outbox payload.** Every other outbox event in this codebase includes full domain detail (e.g. `condition.opened`'s complete DSL-evaluator reason string) — a borrower-facing message's actual delivered text is a different sensitivity class, and the event's purpose (proving delivery happened, with a reference an operator could look up) doesn't need to duplicate it.
+- **No delivery gate change to `CommunicationMessageService.draft()` itself** — `ROUTINE` messages still start at `DRAFTED`, exactly as M3-012 left them; this slice adds what happens *after* that state, not a new drafting behavior.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting and spec-file formatting)
+  both passed clean
+
+migration:generate against a scratch DB with all prior migrations
+  applied — two new nullable columns and one enum value added via
+  TypeORM's standard rename-old/create-new/cast pattern for Postgres
+  enum changes, no hand-editing needed
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the two new
+  columns and restoring the enum without SENT), re-applied cleanly
+
+Scratch stack (m3018-verify, ports 5433/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    41 suites passed, 280 tests passed (269 -> 280: +11, covering
+    communication-delivery-simulator.spec.ts [3, deterministic
+    reference generation], communication-delivery.service.spec.ts [4,
+    real-database: ROUTINE/DRAFTED delivers, PROTECTED/APPROVED
+    delivers, PROTECTED/AWAITING_APPROVAL reports NOT_READY without
+    delivering, already-SENT reports NOT_READY without double-delivery
+    or a duplicate outbox event], send-information-request.tool.spec.ts
+    [3, delegation])
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    14/14 passed (cumulative apply + 13 per-migration revert steps,
+    including the new first revert test for CommunicationDelivery —
+    no new table this migration, so the revert test checks the two
+    dropped columns directly rather than a changed table list)
+```
+
+No manual live-API check this slice: nothing new is reachable via REST/GraphQL, and the tool isn't wired into the live Agent graph (same reasoning as M3-012/M3-015/M3-016) — the real-database automated test suite is the verification evidence.
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface.
+- `renderedContent` itself was already stored in plaintext since M3-012 (a pre-existing, not newly-introduced gap); this slice's own new field, `deliveryReference`, is a synthetic simulator id, not a real provider secret or PII.
+- No new external dependency, no real provider call — `CommunicationDeliverySimulator` never leaves the process.
+
+### Known gaps
+
+- Not wired into the LangGraph graph — real and tested, but no current run scenario invokes it.
+- `publish_case_update` remains unbuilt — needs a real webhook subsystem (M4 scope).
+- No synthetic delivery-failure injection (see Decisions) — a real channel's occasional transient failures aren't simulated, only the authorization gate is exercised.
+- `deliveryReference` is a simulator artifact with no real-world meaning — a future real channel integration would need to replace it, not just relabel it.
+
+### Next safe step
+
+Seven of Section 9.4's sixteen tools are now real. Continuing the M3-closure punch list: the budget ledger (still deliberately deferred — no genuine consumer), and the evaluation corpus + report command (Section 18.2, deliberately scoped down from its full spec) remain the two largest open items.
