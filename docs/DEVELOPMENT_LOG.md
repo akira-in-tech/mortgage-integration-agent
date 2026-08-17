@@ -3411,3 +3411,96 @@ All synthetic rows deleted afterward; scratch stack torn down.
 ### Next safe step
 
 Communication classification (Section 6.4) and a real token/cost/provider-call budget ledger remain the two largest unbuilt pieces of Section 9. On the policy side, `EvaluationInputManifest`'s remaining honestly-buildable fields (Section 10.5 — `policyBindingId`, `observedPolicyDependencyDigest`, `evidenceRefs`, `manifestHash` are all now constructible from real data; `authorizationDecisionId`/`consentVersionRefs` still have no backing entity) are the next queued item.
+
+## M3-012: Communication classification (Section 6.4)
+
+### Status
+
+Implemented and verified. Section 6.4's protected/routine classification is a real, deterministic, database-backed system — templates, rendering, classification, and exact-render approval binding — plus `draft_information_request`, the first of Section 9.4's communication tools to become real.
+
+### Acceptance criterion
+
+Given a communication draft, the system must classify it `ROUTINE` only when every one of Section 6.4's conditions holds (version-pinned approved template, no free-form text, no protected meaning, allowlisted recipient/channel/locale/variables/attachments, no case-decision change) and `PROTECTED` otherwise, recording the specific reason(s). Classification and template enforcement must be deterministic application-service guards outside the model (Section 6.4's own requirement) — no model call anywhere in the classification path. A `PROTECTED` message's approval must bind to its exact rendered content, not just its identity.
+
+### Implementation
+
+- `CommunicationTemplate` (new entity): version-pinned, tenant-scoped (`UNIQUE(tenantId, templateKey, version)`), immutable once created — a content change is a new version, the same discipline `PolicyVersion` already uses. `bodyTemplate` uses `{{variableName}}` placeholders; `allowedVariables`/`attachmentsAllowed`/`channel`/`locale`/`recipientRelationship` are the allowlist Section 6.4 requires; `status` (`DRAFT`/`APPROVED`/`RETIRED`) gates whether it can back a routine message at all.
+- `src/communications/communication-render.ts`: pure `renderTemplate()` — exact placeholder substitution only, never free-form concatenation. A placeholder with no supplied value is left visibly unsubstituted (not blanked or dropped) so a reviewer can see exactly what's missing.
+- `src/communications/communication-classifier.ts`: pure `classifyCommunication()` (input + template lookup result → classification), testable with no database. `ROUTINE` requires: no free-form content; a found, `APPROVED` template; matching channel/locale/recipient relationship; attachments within the template's allowance; every supplied variable declared by the template and every declared variable supplied; and no negative-implication keyword in any supplied variable *value* (a deliberately crude, explicit substring blocklist — real sentiment/NLP classification would itself be a model-based judgment, which Section 6.4 requires classification to stay outside of; documented as a known gap, not a claim of semantic understanding). Every failing condition accumulates its own reason rather than stopping at the first.
+- `CommunicationMessage` (new entity): one row per draft, storing the classification, every reason, and the exact `renderedContent` + its `renderedContentHash` (sha256 via the existing `computeDigest()` from `policy-digest.ts` — reused rather than duplicated, since it's already a general-purpose, non-HMAC content fingerprint for one process talking to its own database).
+- `CommunicationApproval` (new entity) + `CommunicationApprovalService`: records a human's approval bound to `message.renderedContentHash` at approval time — the exact-render binding Section 6.4 requires. Rejects approving a `ROUTINE` message (never needed this kind of approval) or an already-approved one. **Not** a registered Agent tool, deliberately: Section 6.4 says "the Agent cannot... supply an approval result."
+- `src/agent-runtime/tools/draft-information-request.tool.ts`: Section 9.4's `draft_information_request` (`purpose: "Prepare a remediation request"`, `approvalBoundary: "No"`) — the fourth real registered tool. Calls `CommunicationMessageService.draft()`, returns the classification and its reasons. Not wired into the LangGraph runtime's graph (no current M2 workflow scenario needs the Agent to send a borrower-facing message — the condition-based flow only opens conditions and waits for reviewer resolution); registered and real, same status `check_case_completeness` had before something needed it.
+
+### Affected files
+
+- `src/database/entities/communication-template.entity.ts`, `communication-message.entity.ts`, `communication-approval.entity.ts` (new)
+- `src/database/enums/communication.enum.ts` (new)
+- `src/database/database.module.ts`
+- `src/database/migrations/1786986804519-CommunicationClassification.ts` (new), `schema-migrations.spec.ts`
+- `src/communications/communication-render.ts`, `communication-classifier.ts`, `.spec.ts`, `communication-message.service.ts`, `.spec.ts`, `communication-approval.service.ts`, `communications.module.ts` (new module)
+- `src/agent-runtime/tools/draft-information-request.tool.ts`, `.spec.ts` (new)
+- `src/app.module.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Negative-implication detection is a keyword blocklist over variable values, not a model.** Section 6.4 lists "negative or ambiguous implication" as one of several conditions that upgrade a message to `PROTECTED`, and Section 6.4's own closing sentence requires classification to be "deterministic application-service guards outside the model." A real semantic/sentiment classifier would itself be exactly the kind of model-based judgment that sentence excludes. A short, explicit, documented substring list is honest about being crude — it catches an obvious case (adverse language leaking into a variable) and nothing subtler.
+- **Only caller-supplied variable *values* are scanned, never the template body.** The template body is human-pre-approved at template-approval time; re-scanning already-reviewed, immutable content on every message would be redundant and could produce a false `PROTECTED` result for content a human already signed off on.
+- **`CommunicationApprovalService` is not a registered Agent tool.** Every other new capability in this codebase becomes a tool if the Agent could plausibly need it; this one deliberately does not, because Section 6.4 states the exclusion explicitly ("the Agent cannot... supply an approval result"), unlike the general default of "build it as a tool if there's a real use."
+- **`draft_information_request` is real but not wired into the LangGraph graph.** Matches the precedent already set by `check_case_completeness` (M3-006): a real, tested, registered tool with no current production caller, because nothing in the M2 workflow's deterministic condition-only flow currently needs the Agent to draft outbound messages. Wiring it in would mean inventing a new trigger condition (when should the Agent decide to request more information via message rather than just opening a condition?) that isn't yet a real, needed behavior.
+- **No real delivery channel, and none faked.** `CommunicationMessage.status` stops at `DRAFTED`/`AWAITING_APPROVAL`/`APPROVED` — there is no `SENT`/`DELIVERED` status, because no code path could honestly reach one. Real message delivery is provider-integration scope (Section 11, M4), the same boundary real credit/income/document provider calls are already behind.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed, no manual fixes needed beyond eslint --fix's prettier pass
+
+migration:generate against a scratch DB with all prior migrations applied
+  produced schema-only DDL (three new tables, two new enums, two new FKs);
+  also correctly detected and dropped the DEFAULT clauses M3-011's
+  hand-written migration had added to case_policy_bindings columns
+  that the entity itself never declared a default for — expected,
+  harmless (existing rows keep their values; the ORM always sets both
+  columns explicitly on every write anyway)
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the three new
+  tables and two enums, restoring the two DEFAULT clauses), re-applied
+  cleanly
+
+DATABASE_URL=... npm test -t schema-migrations.spec.ts
+  10/10 passed (cumulative apply + 9 per-migration revert steps)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  35 suites passed, 249 tests passed (227 -> 249: +14
+  communication-classifier.spec.ts [pure, no database — every Section
+  6.4 condition tested individually plus one accumulates-every-reason
+  case], +6 communication-message.service.spec.ts [real database:
+  ROUTINE draft, PROTECTED-via-freeform draft, approval binds to the
+  exact content hash, approving a ROUTINE message rejected, approving
+  twice rejected], +3 draft-information-request.tool.spec.ts
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 14 tests passed (unchanged)
+```
+
+No manual live-API check this slice: nothing new is reachable via REST/GraphQL or wired into the live M2 workflow (same reasoning as `check_case_completeness`'s original M3-006 entry) — the real-database automated test suite is the verification evidence.
+
+### Security, privacy, cost, and compatibility
+
+- No externally-visible API contract change — nothing new is reachable via REST/GraphQL yet, and the new tool isn't wired into the live Agent graph.
+- `renderedContent`/`renderedContentHash` are stored in plaintext in the database, same as every other case-related table in this codebase (no field-level encryption exists anywhere yet — a pre-existing, not newly-introduced, gap).
+- No real message content is ever transmitted anywhere — this slice only drafts and classifies; nothing in this codebase can deliver a communication.
+
+### Known gaps
+
+- Negative-implication detection is a keyword heuristic over variable values, not semantic understanding (see Decisions) — deliberately, but still a real limitation: a negative implication phrased without any blocklisted substring would not be caught.
+- No real communication channel/delivery — `CommunicationMessage` never leaves `DRAFTED`/`AWAITING_APPROVAL`/`APPROVED`.
+- No template-authoring or template-approval REST/GraphQL surface — templates are seeded/approved directly at the repository level in tests; no admin workflow exists yet (same gap `PolicyActivationService` has, M3-011).
+- `send_information_request`/`publish_case_update` (Section 9.4's other two communication tools) remain unbuilt — both need a real delivery channel to mean anything beyond what `draft_information_request` already provides.
+- Section 9.6's communication-related mandatory review triggers (classification uncertainty, free-form material text, etc.) are now classifiable in principle, but nothing in the Agent runtime graph currently calls this classifier or routes on its result — the classification system exists and is real, but isn't yet a mandatory-review trigger source the way M3-009's consent check is.
+
+### Next safe step
+
+A real token/cost/provider-call budget ledger remains the largest unbuilt piece of Section 9, still deliberately deferred (no genuine consumer exists). Independently: evidence-backed explanations and the Agent run timeline (M3's own scope list), and the evaluation corpus + report command (Section 18.2), are the next queued items from this session's standing plan.
