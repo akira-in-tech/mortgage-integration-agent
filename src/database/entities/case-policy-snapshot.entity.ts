@@ -6,6 +6,7 @@ import {
   Index,
 } from 'typeorm';
 import { PolicyResolutionStatus } from '../enums/policy-resolution-status.enum';
+import { PolicyRuleDocument } from '../../policy/dsl/policy-rule.types';
 
 /**
  * Immutable resolved-policy record for one case (Section 10.3, 14.1:
@@ -43,11 +44,19 @@ export class CasePolicySnapshot {
   @Column({ type: 'enum', enum: PolicyResolutionStatus })
   resolutionStatus!: PolicyResolutionStatus;
 
+  /**
+   * `rule` (the parsed DSL document) is stored here, not just referenced
+   * by `policyVersionId`, so `PolicyEvaluationService`'s fast path
+   * (Section 10.4) can reconstruct a full `PolicyResolutionResult` from
+   * this snapshot alone — no `PolicyVersion` lookups needed — when
+   * reusing a binding without re-running the resolver.
+   */
   @Column({ type: 'jsonb' })
   versions!: Array<{
     policyVersionId: string;
     ruleId: string;
     version: string;
+    rule: PolicyRuleDocument;
     effectiveFrom: string;
     effectiveTo: string | null;
   }>;

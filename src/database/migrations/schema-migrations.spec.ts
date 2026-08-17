@@ -97,6 +97,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_conditions',
       'outbox_events',
       'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
       'policy_source_revisions',
       'policy_sources',
       'policy_versions',
@@ -144,8 +146,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // jurisdictions, policy_source_revisions -> policy_sources,
     // policy_versions -> policy_source_revisions, policy_applicability ->
     // policy_versions, loan_cases -> jurisdictions, case_policy_bindings ->
-    // case_policy_snapshots
-    expect(foreignKeys).toHaveLength(11);
+    // case_policy_snapshots, policy_change_impact_assessments ->
+    // policy_versions
+    expect(foreignKeys).toHaveLength(12);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -159,6 +162,34 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         ruleId: 'synthetic-income-discrepancy-review',
         releaseStatus: 'RELEASED',
       },
+    ]);
+
+    // The single row PolicyEvaluationService's fast path always reads.
+    const generationRows: Array<{ id: number; generation: number }> =
+      await scratchDataSource.query(
+        `SELECT id, generation FROM policy_catalog_generation`,
+      );
+    expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the policy catalog generation/change-impact migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'condition_transitions',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_versions',
+      'tenants',
     ]);
   });
 

@@ -19,6 +19,7 @@ import { PolicyVersion } from '../../database/entities/policy-version.entity';
 import { PolicyApplicability } from '../../database/entities/policy-applicability.entity';
 import { CasePolicySnapshot } from '../../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../../database/entities/case-policy-binding.entity';
+import { PolicyCatalogGeneration } from '../../database/entities/policy-catalog-generation.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -73,6 +74,7 @@ describeOrSkip(
           PolicyApplicability,
           CasePolicySnapshot,
           CasePolicyBinding,
+          PolicyCatalogGeneration,
         ],
       });
       await dataSource.initialize();
@@ -86,6 +88,7 @@ describeOrSkip(
         resolver,
         dataSource.getRepository(CasePolicySnapshot),
         dataSource.getRepository(CasePolicyBinding),
+        dataSource.getRepository(PolicyCatalogGeneration),
       );
       runtime = createLendingOperationsAgentRuntime({
         dataSource,

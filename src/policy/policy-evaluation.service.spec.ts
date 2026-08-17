@@ -7,6 +7,7 @@ import { PolicyVersion } from '../database/entities/policy-version.entity';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -55,6 +56,7 @@ describeOrSkip('PolicyEvaluationService', () => {
         PolicyApplicability,
         CasePolicySnapshot,
         CasePolicyBinding,
+        PolicyCatalogGeneration,
       ],
     });
     await dataSource.initialize();
@@ -68,6 +70,7 @@ describeOrSkip('PolicyEvaluationService', () => {
       resolver,
       dataSource.getRepository(CasePolicySnapshot),
       dataSource.getRepository(CasePolicyBinding),
+      dataSource.getRepository(PolicyCatalogGeneration),
     );
 
     await dataSource.getRepository(Jurisdiction).save([
@@ -194,6 +197,17 @@ describeOrSkip('PolicyEvaluationService', () => {
     );
     cleanup.applicabilityIds.push(applicability.id);
 
+    // A real caller only ever gets a new released version visible through
+    // PolicyActivationService.activate(), which bumps the catalog
+    // generation as part of the same transaction (M3-011) — this helper
+    // bypasses that service (it seeds RELEASED directly, for fixture
+    // simplicity), so it bumps the generation itself to keep the fixture
+    // internally consistent with what PolicyEvaluationService's fast path
+    // now assumes: a new release always means "something changed."
+    await dataSource.query(
+      `UPDATE policy_catalog_generation SET generation = generation + 1 WHERE id = 1`,
+    );
+
     return version.id;
   }
 
@@ -224,17 +238,59 @@ describeOrSkip('PolicyEvaluationService', () => {
     const caseId = '10000000-0000-0000-0000-000000000002';
 
     const first = await service.evaluate(TENANT_ID, caseId, baseContext);
+    // M3-011's actual fast path: the catalog generation hasn't moved
+    // since `first` bound this case, so `second` must not call the
+    // resolver at all — proving this is a real skip, not just an
+    // incidentally-identical re-resolution.
+    const resolveSpy = jest.spyOn(resolver, 'resolve');
     const second = await service.evaluate(TENANT_ID, caseId, baseContext);
 
     expect(second.outcome).toBe('REUSED');
     expect(second.snapshot.id).toBe(first.snapshot.id);
     expect(second.binding?.id).toBe(first.binding?.id);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    resolveSpy.mockRestore();
 
     // Reuse must not create a second snapshot/binding row for the case.
     const snapshots = await dataSource
       .getRepository(CasePolicySnapshot)
       .find({ where: { tenantId: TENANT_ID, caseId } });
     expect(snapshots).toHaveLength(1);
+    const bindings = await dataSource
+      .getRepository(CasePolicyBinding)
+      .find({ where: { tenantId: TENANT_ID, caseId } });
+    expect(bindings).toHaveLength(1);
+  });
+
+  it('takes the slow path but reuses the snapshot when the catalog generation moved but this case is unaffected', async () => {
+    await seedReleasedVersion('pes-rule-unaffected-by-bump');
+    const caseId = '10000000-0000-0000-0000-000000000007';
+
+    const first = await service.evaluate(TENANT_ID, caseId, baseContext);
+    expect(first.binding?.observedCatalogGeneration).toBeDefined();
+    const generationAfterFirst = first.binding!.observedCatalogGeneration;
+
+    // Simulate an unrelated policy activation elsewhere in the catalog —
+    // bumps the global generation without changing anything this case's
+    // own applicability resolves to.
+    await dataSource.query(
+      `UPDATE policy_catalog_generation SET generation = generation + 1 WHERE id = 1`,
+    );
+    const resolveSpy = jest.spyOn(resolver, 'resolve');
+    const second = await service.evaluate(TENANT_ID, caseId, baseContext);
+
+    // Slow path did run (generation had moved) — asserted before
+    // mockRestore(), which itself clears recorded call history.
+    expect(resolveSpy).toHaveBeenCalled();
+    resolveSpy.mockRestore();
+    // ...but since content was unchanged, the SAME snapshot/binding row
+    // is reused (in-place generation refresh), not a new one.
+    expect(second.outcome).toBe('REUSED');
+    expect(second.snapshot.id).toBe(first.snapshot.id);
+    expect(second.binding?.id).toBe(first.binding?.id);
+    expect(second.binding?.observedCatalogGeneration).toBeGreaterThan(
+      generationAfterFirst,
+    );
     const bindings = await dataSource
       .getRepository(CasePolicyBinding)
       .find({ where: { tenantId: TENANT_ID, caseId } });
@@ -263,7 +319,7 @@ describeOrSkip('PolicyEvaluationService', () => {
     expect(priorBinding.invalidatedAt).not.toBeNull();
   });
 
-  it('refreshes once revalidateAfter has passed, even with unchanged content', async () => {
+  it('re-validates once revalidateAfter has passed, reusing the same snapshot in place since content is still unchanged', async () => {
     await seedReleasedVersion('pes-rule-expiry');
     const caseId = '10000000-0000-0000-0000-000000000004';
 
@@ -273,10 +329,23 @@ describeOrSkip('PolicyEvaluationService', () => {
       .getRepository(CasePolicyBinding)
       .update({ id: first.binding!.id }, { revalidateAfter: new Date(0) });
 
+    const resolveSpy = jest.spyOn(resolver, 'resolve');
     const second = await service.evaluate(TENANT_ID, caseId, baseContext);
+    // The expired revalidateAfter forces the slow path (this is the
+    // periodic re-check Section 10.4's "configured maximum validation
+    // interval" exists for) even though the generation never moved.
+    expect(resolveSpy).toHaveBeenCalled();
+    resolveSpy.mockRestore();
 
-    expect(second.outcome).toBe('REFRESHED');
-    expect(second.snapshot.id).not.toBe(first.snapshot.id);
+    // Content is genuinely unchanged, so the same snapshot/binding row is
+    // reused rather than minting a redundant duplicate — only
+    // revalidateAfter (and the observed generation) are refreshed.
+    expect(second.outcome).toBe('REUSED');
+    expect(second.snapshot.id).toBe(first.snapshot.id);
+    expect(second.binding?.id).toBe(first.binding?.id);
+    expect(second.binding?.revalidateAfter.getTime()).toBeGreaterThan(
+      new Date(0).getTime(),
+    );
   });
 
   it('does not create a binding for REVIEW_REQUIRED, and persists a snapshot recording why', async () => {

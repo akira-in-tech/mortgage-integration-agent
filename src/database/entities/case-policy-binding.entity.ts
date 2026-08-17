@@ -15,12 +15,14 @@ import { CasePolicySnapshot } from './case-policy-snapshot.entity';
  * an 8-key dependency-generation vector (catalog/jurisdiction/product/
  * program/tenant/lifecycle/source-coverage/resolver) in one bounded
  * indexed query, so a policy activation can invalidate exactly the
- * bindings it affects without re-running full resolution. This schema has
- * no dependency-generation table yet (nothing in this codebase can
- * activate/withdraw/supersede a policy version after the fact either), so
- * `dependencyDigest` is a single content hash of the resolver's own
- * output instead — real change-detection, not the fast indexed-generation
- * lookup Section 10.4 describes. See PolicyEvaluationService and
+ * bindings it affects without re-running full resolution.
+ * `observedCatalogGeneration` is this codebase's coarsened, single-key
+ * version of that vector (`PolicyCatalogGeneration`) — real
+ * generation-based fast-path validation, not per-dependency-key
+ * precision. `dependencyDigest` (a content hash of the resolver's
+ * output) remains the authority on whether bound *content* actually
+ * changed once the slow path runs; the generation only decides whether
+ * the slow path runs at all. See `PolicyEvaluationService` and
  * docs/DEVELOPMENT_LOG.md's Known gaps for what this does and doesn't
  * cover.
  *
@@ -46,6 +48,21 @@ export class CasePolicyBinding {
 
   @Column({ type: 'varchar', length: 64 })
   dependencyDigest!: string;
+
+  /** Global `PolicyCatalogGeneration.generation` observed when this binding was created or last refreshed — the fast-path comparison key. */
+  @Column({ type: 'integer' })
+  observedCatalogGeneration!: number;
+
+  /**
+   * `${jurisdictionCode}|${productCode}|${lifecycleEvent}` this binding
+   * was resolved for. The fast path must never reuse a binding for a
+   * *different* context than the one actually being requested — a
+   * generation match alone doesn't guarantee that (a caller can ask
+   * about a different jurisdiction for the same case without any catalog
+   * change at all).
+   */
+  @Column({ type: 'varchar', length: 300 })
+  contextKey!: string;
 
   @Column({ type: 'uuid' })
   policySnapshotId!: string;

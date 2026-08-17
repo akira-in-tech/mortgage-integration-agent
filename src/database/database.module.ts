@@ -14,6 +14,8 @@ import { PolicyVersion } from './entities/policy-version.entity';
 import { PolicyApplicability } from './entities/policy-applicability.entity';
 import { CasePolicySnapshot } from './entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from './entities/case-policy-binding.entity';
+import { PolicyCatalogGeneration } from './entities/policy-catalog-generation.entity';
+import { PolicyChangeImpactAssessment } from './entities/policy-change-impact-assessment.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -36,6 +38,8 @@ import { CasePolicyBinding } from './entities/case-policy-binding.entity';
       PolicyApplicability,
       CasePolicySnapshot,
       CasePolicyBinding,
+      PolicyCatalogGeneration,
+      PolicyChangeImpactAssessment,
     ]),
   ],
   exports: [TypeOrmModule],

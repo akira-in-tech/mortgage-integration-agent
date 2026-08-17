@@ -7,8 +7,13 @@ import { PolicyVersion } from '../database/entities/policy-version.entity';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
+import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
+import { LoanCase } from '../database/entities/loan-case.entity';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { PolicyEvaluationService } from './policy-evaluation.service';
+import { PolicyChangeImpactService } from './policy-change-impact.service';
+import { PolicyActivationService } from './policy-activation.service';
 
 @Module({
   imports: [
@@ -20,9 +25,22 @@ import { PolicyEvaluationService } from './policy-evaluation.service';
       PolicyApplicability,
       CasePolicySnapshot,
       CasePolicyBinding,
+      PolicyCatalogGeneration,
+      PolicyChangeImpactAssessment,
+      LoanCase,
     ]),
   ],
-  providers: [PolicyApplicabilityResolverService, PolicyEvaluationService],
-  exports: [PolicyApplicabilityResolverService, PolicyEvaluationService],
+  providers: [
+    PolicyApplicabilityResolverService,
+    PolicyEvaluationService,
+    PolicyChangeImpactService,
+    PolicyActivationService,
+  ],
+  exports: [
+    PolicyApplicabilityResolverService,
+    PolicyEvaluationService,
+    PolicyChangeImpactService,
+    PolicyActivationService,
+  ],
 })
 export class PolicyModule {}

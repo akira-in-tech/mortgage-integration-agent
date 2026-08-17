@@ -3286,3 +3286,128 @@ All synthetic rows deleted afterward; scratch stack torn down.
 ### Next safe step
 
 The two items M3-009 already queued (token/cost/provider-call budget ledger, communication classification system) remain the largest unbuilt pieces of Section 9. Independently, a minimal "fix the ambiguity" surface (even just a jurisdiction-coverage-activation endpoint) would close the most visible gap this slice's own manual verification had to work around by hand.
+
+## M3-011: Dependency-generation fast path, policy activation, and open-case impact assessment
+
+### Status
+
+Implemented and verified, closing the two largest remaining Section 10 items from M3's exit-evidence list: `PolicyEvaluationService`'s real fast path (Section 10.4 — `CasePolicyBinding`'s own doc comment has said "no dependency-generation table yet" since M3-005) and Section 10.6's open-case impact assessment. Two real bugs were found and fixed during verification, documented below rather than smoothed over.
+
+### Acceptance criterion
+
+`PolicyEvaluationService.evaluate()` must skip calling the resolver entirely when nothing in the policy catalog has changed since a case's binding was created (a real fast path, not always-resolve-then-compare). Activating or withdrawing a policy version must be a real, callable action — not just a status column nothing ever transitions — that bumps a real dependency-generation counter and produces a real, persisted dry-run impact assessment for every open case it could affect, per Section 10.6's diagram.
+
+### Implementation
+
+#### Dependency-generation fast path (Section 10.4)
+
+- `PolicyCatalogGeneration` (new entity, single row, `id=1`): a global generation counter, deliberately coarsened from the target 8-key vector (catalog/jurisdiction/product/program/tenant/lifecycle/source-coverage/resolver) to one key. This can only ever over-invalidate (an unrelated jurisdiction's policy change bumps the counter every other case's binding also compares against) — never under-invalidate — so correctness holds even though the target's per-dependency precision doesn't.
+- `CasePolicyBinding` gains `observedCatalogGeneration: number` (the generation observed when this binding was created or last confirmed) and `contextKey: string` (`` `${jurisdictionCode}|${productCode}|${lifecycleEvent}` ``, see Failures below for why this second field turned out to be required).
+- `CasePolicySnapshot.versions` now stores each matched rule's parsed `PolicyRuleDocument`, not just id/version refs — needed so the fast path can reconstruct a full `PolicyResolutionResult` from the snapshot alone (`reconstructResolution()`), with zero `PolicyVersion` lookups, when reusing a binding.
+- `PolicyEvaluationService.evaluate()` restructured: first checks `existingBinding.contextKey === currentContextKey && existingBinding.observedCatalogGeneration === currentGeneration && revalidateAfter > now` — if all three hold, returns `REUSED` immediately, no resolver call. Otherwise (generation moved, revalidateAfter expired, or context changed) it resolves for real; if the resolved digest is *still* identical to what's bound (generation moved elsewhere in the catalog but this case's own content didn't), the existing snapshot/binding is reused in place (observed generation and revalidateAfter refreshed, no duplicate snapshot row) rather than minting a new one — real, additional efficiency beyond just the fast path itself.
+
+#### Policy activation and open-case impact assessment (Sections 10.2, 10.6)
+
+- `PolicyActivationService` (new): `activate()` (DRAFT/PROPOSED → RELEASED) and `withdraw()` (RELEASED → WITHDRAWN), each in a transaction that also bumps `PolicyCatalogGeneration`, then triggers `PolicyChangeImpactService.assessImpact()`. Rejects an activation/withdrawal from an invalid starting status (`BadRequestException`). No proposal-approval workflow exists yet (Known gap — this service is the whole activation authority for now, no separate policy-author/policy-approver role distinction).
+- `PolicyChangeImpactService` (new): given a changed `policyVersionId`, finds its `PolicyApplicability` triples, finds every open case matching each triple's jurisdiction/product that has an active `CasePolicyBinding`, dry-runs the resolver against that triple, and classifies each case as `NO_IMPACT` / `REQUIRES_REEVALUATION` / `AMBIGUOUS` (comparing the prior snapshot's resolved version-id set against the dry run's; `AMBIGUOUS` when the dry run itself comes back `REVIEW_REQUIRED`). Persists one `PolicyChangeImpactAssessment` row per case — advisory only, per Section 10.6 ("Impact assessment is advisory until an authorized reviewer approves the transition configuration"): it never touches the case's actual binding or snapshot, only records what the dry run found. A case's *next* real evaluation (already forced onto the slow path by the generation bump) is what actually applies any change.
+- Known gap: no transition-rule/grandfathering evaluation — `PolicyRuleApplicability.transitionRule` exists and is parsed but nothing evaluates it, so Section 10.6's "future-effective" and "approved grandfathering" outcomes aren't distinguished from `NO_IMPACT`/`REQUIRES_REEVALUATION`.
+- No REST/GraphQL surface calls `PolicyActivationService` yet — verified via real-database tests and direct construction, not through the live API (see Verification).
+
+### Failures and resolution
+
+Both found by the real-database test suite catching genuinely wrong behavior, not by inspection — exactly what running real tests before committing is for.
+
+1. **Missing `contextKey` allowed the fast path to reuse a binding for the wrong context.** The first fast-path design only compared generation and `revalidateAfter`. `policy-evaluation.service.spec.ts`'s existing "invalidates an existing valid binding if a later evaluation becomes REVIEW_REQUIRED" test — which calls `evaluate()` a second time with a *different* `jurisdictionCode` for the same case, generation unchanged — caught this immediately: the fast path incorrectly returned the first jurisdiction's stale `REUSED` result instead of resolving the new, uncovered one to `REVIEW_REQUIRED`. Fixed by adding `contextKey` to `CasePolicyBinding` and requiring it to match before the fast path (or the slow path's reuse-in-place branch) applies.
+2. **`bumpCatalogGeneration`'s raw `UPDATE ... RETURNING` query returned `undefined`.** `policy-activation.service.spec.ts`'s activation/withdrawal tests failed with `result.generation` being `undefined`. Rewritten to use `EntityManager.increment()` followed by a plain `findOneByOrFail()` inside the same transaction — TypeORM-native, no reliance on how a given driver version shapes a raw `RETURNING` result.
+
+A third issue was a test-only bug, not a code bug: an early version of the new fast-path test called `jest.spyOn(...).mockRestore()` *before* asserting on the spy's call count — `mockRestore()` clears recorded calls as part of restoring the original implementation, so the assertion always saw zero calls regardless of actual behavior. Fixed by reordering (assert, then restore) in both new spy-based tests.
+
+Verifying against real Postgres surfaced two of these three issues; only the `mockRestore()` ordering would have been generally reproducible against a mocked resolver too — the `contextKey` gap specifically needed a real second `evaluate()` call sequence to observe, and the `RETURNING` shape issue needed a real Postgres driver round trip.
+
+### Affected files
+
+- `src/database/entities/policy-catalog-generation.entity.ts`, `policy-change-impact-assessment.entity.ts` (new)
+- `src/database/entities/case-policy-binding.entity.ts`, `case-policy-snapshot.entity.ts`
+- `src/database/enums/policy-change-impact.enum.ts` (new)
+- `src/database/database.module.ts`
+- `src/database/migrations/1786985624010-PolicyCatalogGenerationAndChangeImpact.ts` (new), `schema-migrations.spec.ts`
+- `src/policy/policy-evaluation.service.ts`, `.spec.ts`
+- `src/policy/policy-change-impact.service.ts`, `policy-activation.service.ts`, `.spec.ts` (new)
+- `src/policy/policy.module.ts`
+- `src/workflows/case-conditions.activities.spec.ts`, `src/agent-runtime/langgraph/lending-operations-agent-runtime.spec.ts` (constructor-signature updates only, no behavior change)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Global generation counter, not the target 8-key vector.** The full vector needs dimensions (tenant-scoped policy overlays, program-level policy, source-coverage tracking as a first-class signal) that don't exist as real, independent concepts in this codebase yet — building the full key now would mean most of its dimensions are permanently constant, i.e. decorative. A single global key is honestly coarser but genuinely correct (fail-safe direction: over-, never under-invalidate) and is real infrastructure a case's binding actually depends on today.
+- **Snapshot stores the parsed rule, not just refs.** The alternative (fast path re-fetches `PolicyVersion` rows by id from the snapshot's refs) would still avoid the *resolver's* jurisdiction/coverage/overlap-detection work, but would trade that for N point-reads plus N re-parses on every fast-path hit. Storing the already-parsed rule makes the fast path a single query with no further I/O.
+- **Reuse-in-place (not a new snapshot) when generation moved but content didn't.** The pre-M3-011 code always minted a new snapshot once past the initial reuse gate, simply because there was no second check after that point — not a deliberate choice. Since a snapshot's entire purpose is representing distinct resolved content, creating a byte-identical duplicate on every periodic revalidation would be pure bloat with no audit value; refreshing the existing row's generation/`revalidateAfter` in place is strictly more correct.
+- **Impact assessment is fully advisory — no automatic binding invalidation.** Section 10.6 says impact assessment is advisory until an authorized reviewer approves the transition; automatically invalidating bindings the moment an assessment runs would go further than the charter's own model and remove the human decision point it explicitly wants there. The generation bump already guarantees the case's *next* real evaluation takes the slow path regardless — no case can silently keep using stale content forever.
+- **No REST/GraphQL endpoint for activation in this slice.** `PolicyActivationService` is real, tested against a real database, and ready to be called — but Section 15.2 describes this as GraphQL operations-console scope ("policy releases," "activation governance"), a separate, substantial surface-building slice of its own, not a natural extension of what this slice is about (the evaluation-time mechanics).
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed, no manual fixes needed beyond eslint --fix's prettier pass
+
+migration:generate against a scratch DB with all prior migrations applied
+  produced schema-only DDL; hand-added the singleton generation-row
+  INSERT, DEFAULT '0'/DEFAULT '' for the two new case_policy_bindings
+  columns (safe values for any pre-existing row — always forces the
+  slow path, never an incorrect fast-path reuse), and the contextKey
+  column added after the first bug was found
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly, re-applied cleanly against a
+  disposable scratch database
+
+DATABASE_URL=... npm test -t schema-migrations.spec.ts
+  9/9 passed (cumulative apply + 8 per-migration revert steps)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+  32 suites passed, 227 tests passed (221 -> 227: +4
+  policy-activation.service.spec.ts [activate, withdraw,
+  REQUIRES_REEVALUATION, AMBIGUOUS, each against a real database with
+  per-test jurisdiction isolation], +2 policy-evaluation.service.spec.ts
+  [new spy-proven fast-path-skips-resolver test; the pre-existing
+  revalidateAfter-expiry test renamed and its expectation corrected
+  from REFRESHED to REUSED-in-place, reflecting the smarter behavior]
+  — found and fixed the contextKey and RETURNING-shape bugs above
+  before this count was reached
+
+DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+  2 suites passed, 14 tests passed (unchanged)
+
+Manual live check (real REST API + real Temporal worker, scratch
+Postgres/Temporal already carrying residue from the automated suite's
+own generation bumps): created and ran a case through the existing
+M2/M3 flow, confirmed no regression, then inspected the resulting
+case_policy_bindings row directly — observedCatalogGeneration=14 and
+contextKey="US-CA|CONVENTIONAL_MORTGAGE|UNDERWRITING_REVIEW" exactly
+matched the live policy_catalog_generation singleton and the request
+context, proving the new columns are populated correctly by a real,
+unmocked evaluate() call through the live system, not just in tests.
+No REST surface exists yet for activation itself (see Decisions), so
+that specific behavior's live-system evidence is the automated
+real-database test suite, not a manual API call.
+All synthetic rows deleted afterward; scratch stack torn down.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No externally-visible API contract change — nothing new is reachable via REST/GraphQL yet.
+- The fast path is strictly an internal optimization; its failure mode (a bug causing an incorrect fast-path hit) was caught and fixed pre-commit by the real-database test suite, not shipped and discovered later.
+- `PolicyActivationService.activate()`/`.withdraw()` are real, callable NestJS-DI-managed services with no authorization check of their own yet — anything that can resolve them from the DI container can activate or withdraw a policy version. Acceptable today only because nothing outside this codebase's own test suite can reach them (no controller/resolver exposes them) — a real access-control gap the moment a REST/GraphQL surface is added, called out explicitly rather than silently deferred.
+
+### Known gaps
+
+- No REST/GraphQL surface for `PolicyActivationService` — real and tested, not reachable from outside the process.
+- No transition-rule/grandfathering evaluation in impact assessment (Section 10.6's "future-effective" and "approved grandfathering" dry-run outcomes aren't distinguished).
+- No proposal-approval workflow or separate policy-author/policy-approver roles (Section 16.1) — `PolicyActivationService` is the sole activation authority.
+- `PolicyChangeImpactAssessment` rows accumulate with no retention/archival policy.
+- The generation counter's coarseness means a policy change anywhere forces a slow-path re-resolution for every open case everywhere on its next evaluation, even cases nowhere near the actual change — correct, but not maximally efficient; the target 8-key vector would scope this precisely.
+
+### Next safe step
+
+Communication classification (Section 6.4) and a real token/cost/provider-call budget ledger remain the two largest unbuilt pieces of Section 9. On the policy side, `EvaluationInputManifest`'s remaining honestly-buildable fields (Section 10.5 — `policyBindingId`, `observedPolicyDependencyDigest`, `evidenceRefs`, `manifestHash` are all now constructible from real data; `authorizationDecisionId`/`consentVersionRefs` still have no backing entity) are the next queued item.

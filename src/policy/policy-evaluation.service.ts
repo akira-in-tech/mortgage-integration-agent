@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { PolicyResolutionStatus } from '../database/enums/policy-resolution-status.enum';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { computeDigest } from './policy-digest';
@@ -12,10 +13,9 @@ import {
 } from './policy-resolution.types';
 
 const RESOLVER_VERSION = '1.0.0';
-// Section 10.4: "configured maximum validation interval" — the one piece
-// of revalidateAfter's definition this simplified guard can honestly
-// implement without scheduled-activation-boundary or source-freshness
-// tracking (see this service's class comment).
+// Section 10.4: "configured maximum validation interval" — the ceiling on
+// how long a binding can go without at least confirming the catalog
+// generation still matches, regardless of whether anything ever changes.
 const MAX_VALIDATION_INTERVAL_MS = 60 * 60 * 1000;
 
 export type PolicyEvaluationOutcome =
@@ -34,33 +34,50 @@ function snapshotVersions(resolution: PolicyResolutionResult) {
       policyVersionId: v.policyVersionId,
       ruleId: v.ruleId,
       version: v.version,
+      rule: v.rule,
       effectiveFrom: v.effectiveFrom.toISOString(),
       effectiveTo: v.effectiveTo?.toISOString() ?? null,
     }))
     .sort((a, b) => a.policyVersionId.localeCompare(b.policyVersionId));
 }
 
+function contextKey(context: PolicyResolutionContext): string {
+  return `${context.jurisdictionCode}|${context.productCode}|${context.lifecycleEvent}`;
+}
+
+/** Rebuilds a `PolicyResolutionResult` from a persisted snapshot alone — no `PolicyVersion` lookups — for the fast path below. */
+function reconstructResolution(
+  snapshot: CasePolicySnapshot,
+): PolicyResolutionResult {
+  return {
+    status:
+      snapshot.resolutionStatus === PolicyResolutionStatus.RESOLVED
+        ? 'RESOLVED'
+        : 'REVIEW_REQUIRED',
+    versions: snapshot.versions.map((v) => ({
+      policyVersionId: v.policyVersionId,
+      ruleId: v.ruleId,
+      version: v.version,
+      rule: v.rule,
+      effectiveFrom: new Date(v.effectiveFrom),
+      effectiveTo: v.effectiveTo ? new Date(v.effectiveTo) : null,
+    })),
+    unresolvedReasons: snapshot.unresolvedReasons,
+  };
+}
+
 /**
  * The "unavoidable `PolicyEvaluationService` binding-validation guard"
- * named directly in M3's scope (Section 20). A simplified version of
- * Section 10.4's design: the target algorithm reads an 8-key dependency-
- * generation vector (catalog/jurisdiction/product/program/tenant/
- * lifecycle/source-coverage/resolver) in one bounded indexed query, so a
- * policy activation can invalidate exactly the bindings it affects
- * without re-running resolution. No `policy_dependency_generations` table
- * exists yet (nothing in this codebase can activate/withdraw/supersede a
- * policy version after the fact either — see CasePolicyBinding's own
- * class comment), so this guard always re-runs the real resolver, then
- * decides reuse-vs-refresh from a content digest of what it found. That
- * means the correctness/audit contract (a case's evaluation is bound to
- * an immutable snapshot; validation coverage is real, not skipped) holds,
- * but the *performance* property (avoid full resolution on the fast
- * path) does not yet — see docs/DEVELOPMENT_LOG.md's Known gaps.
+ * named directly in M3's scope (Section 20). Section 10.4's dependency-
+ * generation fast path is now real (M3-011), coarsened to a single global
+ * `PolicyCatalogGeneration` counter rather than the target 8-key vector —
+ * see that entity's own comment for why that's a safe (over-, never
+ * under-invalidating) simplification, not a correctness gap.
  *
- * `evaluateConditions` (case-conditions.activities.ts) calls this, never
- * the raw resolver directly — mirroring Section 9.4's "the Agent cannot
- * omit it, supply its result, or choose an older snapshot," applied here
- * to the one caller this codebase currently has.
+ * `evaluateConditions` (case-conditions.activities.ts, via the Agent
+ * runtime's `evaluate_policy` tool) calls this, never the raw resolver
+ * directly — mirroring Section 9.4's "the Agent cannot omit it, supply
+ * its result, or choose an older snapshot."
  */
 @Injectable()
 export class PolicyEvaluationService {
@@ -70,6 +87,8 @@ export class PolicyEvaluationService {
     private readonly snapshotRepository: Repository<CasePolicySnapshot>,
     @InjectRepository(CasePolicyBinding)
     private readonly bindingRepository: Repository<CasePolicyBinding>,
+    @InjectRepository(PolicyCatalogGeneration)
+    private readonly generationRepository: Repository<PolicyCatalogGeneration>,
   ) {}
 
   async evaluate(
@@ -77,11 +96,39 @@ export class PolicyEvaluationService {
     caseId: string,
     context: PolicyResolutionContext,
   ): Promise<PolicyEvaluationResult> {
+    const currentGeneration = await this.getCurrentGeneration();
+    const currentContextKey = contextKey(context);
+    const existingBinding = await this.bindingRepository.findOne({
+      where: { tenantId, caseId, invalidatedAt: IsNull() },
+      order: { boundAt: 'DESC' },
+    });
+    const now = new Date();
+
+    if (
+      existingBinding &&
+      existingBinding.contextKey === currentContextKey &&
+      existingBinding.observedCatalogGeneration === currentGeneration &&
+      existingBinding.revalidateAfter.getTime() > now.getTime()
+    ) {
+      // Fast path: no policy activation or withdrawal has bumped the
+      // catalog generation since this binding was created, and the
+      // periodic revalidation deadline hasn't passed — reuse without
+      // calling the resolver at all.
+      const snapshot = await this.snapshotRepository.findOneByOrFail({
+        id: existingBinding.policySnapshotId,
+      });
+      return {
+        outcome: 'REUSED',
+        resolution: reconstructResolution(snapshot),
+        snapshot,
+        binding: existingBinding,
+      };
+    }
+
+    // Slow path: the generation moved (or revalidateAfter passed) —
+    // resolve for real to find out whether anything this case actually
+    // depends on changed.
     const resolution = await this.resolver.resolve(context);
-    // Sorted before hashing: array order from a Map/query isn't a
-    // meaningful difference here, and an unstable digest would cause
-    // spurious REFRESHED outcomes for a case whose policy genuinely
-    // hasn't changed (see policy-digest.ts's own array-order caveat).
     const digest = computeDigest({
       status: resolution.status,
       unresolvedReasons: [...resolution.unresolvedReasons].sort(),
@@ -99,17 +146,22 @@ export class PolicyEvaluationService {
       return { outcome: 'REVIEW_REQUIRED', resolution, snapshot };
     }
 
-    const existingBinding = await this.bindingRepository.findOne({
-      where: { tenantId, caseId, invalidatedAt: IsNull() },
-      order: { boundAt: 'DESC' },
-    });
-
-    const now = new Date();
     if (
       existingBinding &&
-      existingBinding.dependencyDigest === digest &&
-      existingBinding.revalidateAfter.getTime() > now.getTime()
+      existingBinding.contextKey === currentContextKey &&
+      existingBinding.dependencyDigest === digest
     ) {
+      // Same context, and the generation moved elsewhere in the catalog
+      // but this case's own applicable content is unchanged — refresh
+      // the binding's observed generation in place (no new snapshot) so
+      // the next call can take the fast path again immediately.
+      const revalidateAfter = new Date(
+        now.getTime() + MAX_VALIDATION_INTERVAL_MS,
+      );
+      await this.bindingRepository.update(
+        { id: existingBinding.id },
+        { observedCatalogGeneration: currentGeneration, revalidateAfter },
+      );
       const snapshot = await this.snapshotRepository.findOneByOrFail({
         id: existingBinding.policySnapshotId,
       });
@@ -117,7 +169,11 @@ export class PolicyEvaluationService {
         outcome: 'REUSED',
         resolution,
         snapshot,
-        binding: existingBinding,
+        binding: {
+          ...existingBinding,
+          observedCatalogGeneration: currentGeneration,
+          revalidateAfter,
+        },
       };
     }
 
@@ -138,6 +194,8 @@ export class PolicyEvaluationService {
         tenantId,
         caseId,
         dependencyDigest: digest,
+        contextKey: currentContextKey,
+        observedCatalogGeneration: currentGeneration,
         policySnapshotId: snapshot.id,
         revalidateAfter: new Date(now.getTime() + MAX_VALIDATION_INTERVAL_MS),
         invalidatedAt: null,
@@ -145,6 +203,11 @@ export class PolicyEvaluationService {
     );
 
     return { outcome: 'REFRESHED', resolution, snapshot, binding };
+  }
+
+  private async getCurrentGeneration(): Promise<number> {
+    const row = await this.generationRepository.findOneByOrFail({ id: 1 });
+    return row.generation;
   }
 
   private async persistSnapshot(
