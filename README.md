@@ -203,6 +203,10 @@ Every domain state change that matters externally (`loan_case.created`, `workflo
 
 No real provider integration exists yet, so `case-conditions.activities.ts`'s evidence-fetch activities classify failures from the Plaid/credit/document simulators using a deterministic, opt-in trigger — a `SYNTHETIC-TRANSIENT-FAILURE-` or `SYNTHETIC-TERMINAL-FAILURE-` `borrowerId` prefix (see `src/integrations/synthetic-provider-failures.ts`), the same idea as a payment processor's test-mode card numbers. Transient failures are retried up to the workflow's configured policy (3 attempts, exponential backoff); terminal failures fail immediately, wasting no retries. Either way, an activity failure that survives retries routes the case to `MANUAL_REVIEW` and writes a `workflow_run.failed` outbox event, rather than crashing the workflow outright.
 
+### Agent runtime (Section 9)
+
+`src/agent-runtime/` holds the contract for the charter's stateful, tool-using Agent (Section 9) — distinct from the older `src/agent/` one-shot `evaluateLoan` decisioning path, a naming collision the charter's Section 9 rewrite introduced but that this codebase hasn't renamed away yet. `AgentRuntimePort` (`agent-runtime.types.ts`) is the interface a future LangGraph.js v1 adapter will implement; nothing implements it yet. `AgentTool` (`agent-tool.types.ts`) is the registered-tool contract from Section 9.4's table — `buildToolRegistry`/`invokeTool` never let an unregistered tool name or a tool's own exception escape as a throw, only as a typed `FAILURE` result. Three of Section 9.4's sixteen tools are real: `check_case_completeness`, `evaluate_policy` (a thin wrapper over `PolicyEvaluationService`), and `create_condition` — the last one is the actual implementation `case-conditions.activities.ts` calls to open a condition, not a parallel stub, which is also what closed a long-standing gap: `LoanCondition.policySnapshotId` is now genuinely populated. The rest of the table (document inspection, calculations, communication tools, escalation) has no backing capability yet and isn't stubbed.
+
 ## Example Mutation
 
 ```graphql

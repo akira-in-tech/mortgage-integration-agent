@@ -28,6 +28,7 @@ import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { evaluatePolicyRule } from '../policy/dsl/policy-rule-evaluator';
 import { PolicyFactContext } from '../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../policy/product-code';
+import { createConditionTool } from '../agent-runtime/tools/create-condition.tool';
 
 const UNDERWRITING_REVIEW_LIFECYCLE_EVENT = 'UNDERWRITING_REVIEW';
 
@@ -122,6 +123,11 @@ export function createCaseConditionsActivities(
     policyEvaluationService,
     outboxSigningSecret,
   } = deps;
+
+  const createCondition = createConditionTool({
+    dataSource,
+    outboxSigningSecret,
+  });
 
   async function recordEvidence(
     manager: EntityManager,
@@ -307,44 +313,16 @@ export function createCaseConditionsActivities(
         return { outcome: 'READY' };
       }
 
-      const conditionId = await dataSource.transaction(async (manager) => {
-        const conditionRepo = manager.getRepository(LoanCondition);
-        const condition = await conditionRepo.save(
-          conditionRepo.create({
-            tenantId,
-            caseId,
-            code: match.resolved.rule.outcome.condition,
-            description: match.result.reason,
-            status: ConditionStatus.OPEN,
-          }),
-        );
-        await manager
-          .getRepository(LoanCase)
-          .update(
-            { id: caseId, tenantId },
-            { status: CaseStatus.CONDITIONS_OPEN },
-          );
-        await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId,
-          caseId,
-          eventType: OutboxEventType.ConditionOpened,
-          payload: {
-            caseId,
-            conditionId: condition.id,
-            code: condition.code,
-            policyVersionId: match.resolved.policyVersionId,
-            ruleId: match.resolved.ruleId,
-            policySnapshotId: evaluation.snapshot.id,
-          },
-        });
-        await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId,
-          caseId,
-          eventType: OutboxEventType.WorkflowRunWaitingForReview,
-          payload: { caseId, conditionId: condition.id },
-        });
-        return condition.id;
-      });
+      const { conditionId } = await createCondition.execute(
+        { tenantId, caseId },
+        {
+          code: match.resolved.rule.outcome.condition,
+          description: match.result.reason,
+          policyVersionId: match.resolved.policyVersionId,
+          ruleId: match.resolved.ruleId,
+          policySnapshotId: evaluation.snapshot.id,
+        },
+      );
 
       return { outcome: 'CONDITION_OPENED', conditionId };
     },

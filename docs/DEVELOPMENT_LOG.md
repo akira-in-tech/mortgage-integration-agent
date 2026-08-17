@@ -2750,3 +2750,83 @@ Temporal stack afterward.
 ### Next safe step
 
 M3's policy side now has schema, DSL engine, resolver, and binding guard all wired into the real M2 workflow — a coherent, closeable unit. The Agent side (Section 9: `AgentRuntime` port, LangGraph.js v1 adapter, registered tools, budgets) hasn't been started at all and is the largest remaining piece of M3. Recommend starting there next, or building `EvaluationInputManifest` first if continuing to deepen the policy pipeline is preferred — ask before choosing, since both are substantial, independent slices.
+
+## M3-006: AgentRuntime port, LendingOperationsAgentState, and three real registered tools
+
+### Status
+
+Implemented and verified. The first slice of the Agent side of M3 (Section 9) — deliberately scoped to the port/state contract plus a small number of *genuinely implemented* tools, not the full sixteen-entry registered-tools table and not yet the LangGraph.js v1 adapter itself (see Decisions and Known gaps). Mirrors how M3-001 was schema-only before anything executed against it.
+
+### Acceptance criterion
+
+An `AgentRuntimePort` interface must exist, matching Section 9.2's runtime-separation contract (the workflow/activity layer depends on the port, never on a specific runtime implementation); `LendingOperationsAgentState` must be typed per Section 9.3; and at least a few of Section 9.4's registered tools must be real, independently tested units — not stubs — with at least one demonstrably wired into and used by production code, not left orphaned.
+
+### Implementation
+
+- `src/agent-runtime/agent-state.types.ts` — `LendingOperationsAgentState` (Section 9.3) and its constituent summary types (`EvidenceSummary`, `ConditionSummary`, `ProviderHealthSummary`, `ToolAttemptSummary`, `AgentAction`, `HumanReviewState`), typed as closely to the charter's interface as this codebase's actual data supports.
+- `src/agent-runtime/agent-runtime.types.ts` — `AgentRuntimePort` (`run(input): Promise<AgentRunResult>`), `AgentRunInput`, `AgentRunBudget`, `AgentRunRoute` (`PROPOSED_ACTION | AWAITING_INFORMATION | INTERRUPTED_FOR_REVIEW | ROUTED_TO_MANUAL_REVIEW`, matching Section 9.5's Agent-loop outcomes). No implementation of this port exists yet — it's the contract a LangGraph.js adapter will satisfy next.
+- `src/agent-runtime/agent-tool.types.ts` — `AgentTool<TArgs, TResult>` (Section 9.4's table columns, typed: `purpose`, `sideEffect`, `approvalBoundary`, `execute`), `buildToolRegistry` (throws on a duplicate tool name — an ambiguous registry is a bug to catch at construction, not a runtime concern), `invokeTool` (never throws; an unregistered tool name or a tool's own exception both come back as a `FAILURE` outcome — Section 20's M3 exit evidence: "unauthorized tools remain unreachable" starts with the registry never crashing the caller over one).
+- `src/agent-runtime/tools/check-case-completeness.tool.ts` — Section 9.4's `check_case_completeness`: checks a case has at least one `EvidenceFact` of each type the M2 workflow's fetch activities produce. Real, correct, not yet called by production code (nothing in the deterministic M2 workflow needs to *ask* this — it always fetches all three unconditionally).
+- `src/agent-runtime/tools/evaluate-policy.tool.ts` — Section 9.4's `evaluate_policy`: a thin wrapper around the already-built `PolicyEvaluationService` (M3-005), giving it the right tool metadata (`approvalBoundary: 'Mandatory policy-binding validation'`) without any path that bypasses the guard.
+- `src/agent-runtime/tools/create-condition.tool.ts` — Section 9.4's `create_condition`: extracted verbatim from `case-conditions.activities.ts`'s inline condition-opening logic, which now calls this tool instead of duplicating it. In the process, this closes a real gap that's existed since M2-001: `LoanCondition.policySnapshotId` (a column whose own comment said "M3 will make it required... Section 6.2") is now actually populated on every condition created through this path — it wasn't before this slice.
+- `src/workflows/case-conditions.activities.ts` — `evaluateConditions`'s condition-creation branch now calls `createConditionTool(...).execute(...)` instead of an inline transaction; behavior-preserving (all 11 existing tests passed unmodified), plus one new assertion proving `policySnapshotId` is populated.
+
+### Affected files
+
+- `src/agent-runtime/agent-state.types.ts`, `agent-runtime.types.ts`, `agent-tool.types.ts` (new)
+- `src/agent-runtime/agent-tool.types.spec.ts` (new)
+- `src/agent-runtime/tools/check-case-completeness.tool.ts`, `.spec.ts` (new)
+- `src/agent-runtime/tools/evaluate-policy.tool.ts`, `.spec.ts` (new)
+- `src/agent-runtime/tools/create-condition.tool.ts`, `.spec.ts` (new)
+- `src/workflows/case-conditions.activities.ts`, `case-conditions.activities.spec.ts`
+
+### Decisions and alternatives
+
+- **Three tools implemented for real, not all sixteen stubbed**: Section 9.4's table has entries this codebase has no way to back with real logic yet (`inspect_documents` needs a document-processing capability that doesn't exist; `send_information_request`/`publish_case_update` need the communication-classification system, also unbuilt; `calculate_qualified_income`/`calculate_dti`/`calculate_ltv` need calculation logic never specified). Stubbing all sixteen would produce a registry that looks complete but isn't — exactly the kind of false completeness this project has consistently avoided. Building three real ones and naming the rest as gaps is the honest version of "the registered tools exist."
+- **`create_condition` extracted into a real caller, not built as parallel/unused scaffolding**: a tool nothing calls is unproven — refactoring `case-conditions.activities.ts` to actually use it (rather than leaving the inline logic in place alongside an unused duplicate) is what makes this tool real evidence, not aspirational shape. This also surfaced and fixed the `policySnapshotId` gap, which the refactor would not have caught if the tool had been left uncalled.
+- **`evaluate_policy` is a thin wrapper the M2 workflow does *not* use** (it still calls `PolicyEvaluationService` directly): the workflow's own call is a deterministic Temporal activity step, not an Agent decision — routing it through the tool layer would add indirection with no behavioral benefit. The tool exists for a future LangGraph.js adapter to call the identical guard through the same registry contract every other tool uses, not to replace the workflow's existing, correct direct call.
+- **`invokeTool` never throws**: Section 20's M3 exit evidence explicitly requires "unauthorized tools remain unreachable" — a registry that could crash its caller on a bad tool name would itself be a reliability risk sitting right next to a security boundary. Both "tool doesn't exist" and "tool threw" come back as the same `FAILURE` shape, letting a future runtime implementation treat every tool-invocation failure uniformly.
+- **No NestJS module/DI wiring for the tool registry**: nothing NestJS-DI-managed calls these tools yet (no controller/resolver), and their consumers so far (`case-conditions.activities.ts`) already follow the established "activities avoid heavy DI, receive plain constructed dependencies" pattern (M2-004). Adding a module now would be premature scaffolding for a consumer that doesn't exist.
+- **A distinct `src/agent-runtime/` directory, not reused inside the existing `src/agent/`**: `src/agent/`'s `AgentService`/`RulesUnderwriterService`/`OllamaUnderwriterService` are the legacy one-shot `evaluateLoan` decisioning path, predating and unrelated to Section 9's stateful, bounded, tool-using Agent charter — a real naming collision (both are "the Agent") worth calling out explicitly rather than either renaming the legacy module (out of scope) or conflating two different systems under one directory.
+
+### Verification
+
+```text
+npm run build / npm run lint:check   -> both passed
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm test -- --runInBand --no-cache --silent
+  30 suites passed, 205 tests passed (26->30 suites, +4 new:
+  agent-tool.types.spec.ts [4 tests], check-case-completeness.tool.spec.ts
+  [3 tests], create-condition.tool.spec.ts [1 test],
+  evaluate-policy.tool.spec.ts [3 tests]; net +12 tests over M3-005's
+  193; case-conditions.activities.spec.ts's existing 11 tests all
+  passed unmodified after the refactor, plus one new assertion)
+
+DATABASE_URL=... TEMPORAL_ADDRESS=localhost:7233 npm run test:e2e
+  -> 2 suites passed, 13 tests passed (unchanged)
+
+Manual confirmation (real API + real worker, scratchpad Temporal + the
+real dev database): started a case with a genuine income discrepancy
+through the now-refactored path; confirmed the condition was created
+correctly (code, CONDITIONS_OPEN status) and — the specific thing this
+slice changed — policySnapshotId was actually populated on the
+resulting loan_conditions row, not null.
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-reachable surface — no controller/resolver invokes any tool yet.
+- `create_condition`'s extraction is behavior-preserving except for the `policySnapshotId` fix, which is strictly additive (a previously-null column now has a real value) — no existing consumer reads that column in a way this could break.
+- No new dependency; no new cost. (LangGraph.js is not yet a dependency — see Known gaps.)
+
+### Known gaps
+
+- No `AgentRuntimePort` implementation — the port is defined, nothing implements it. LangGraph.js (`@langchain/langgraph`, v1.4.x confirmed available) is not yet a project dependency.
+- Only 3 of Section 9.4's 16 registered tools exist: `check_case_completeness`, `evaluate_policy`, `create_condition`. Not implemented: `inspect_documents`, `fetch_income_evidence`/`fetch_asset_evidence`/`fetch_credit_evidence`/`check_identity_consistency` (provider-submission tools — the M2 workflow's existing fetch activities do this work today, outside the tool-registry shape), `calculate_qualified_income`/`calculate_dti`/`calculate_ltv`, `compare_evidence` (no multi-source evidence model exists yet to compare against — a single-source-per-type case has nothing to conflict), `check_policy_change_impact`, `draft_information_request`/`send_information_request`, `escalate_to_reviewer`, `publish_case_update`.
+- No budget ledger, trusted deadline enforcement, or reservation system (Section 9.3's `remainingStepBudget` et al. are typed but nothing computes or enforces them).
+- No mandatory review-trigger logic (Section 9.6) or safety controls beyond what tool typing itself provides (Section 9.7).
+- `AgentTool.execute` receives only `{ tenantId, caseId }`, not the full `LendingOperationsAgentState` — deliberately minimal for the three tools that exist today; a real runtime implementation may need to widen this once a tool genuinely needs run-level context (e.g. remaining budget) to decide its own behavior.
+
+### Next safe step
+
+Add `@langchain/langgraph` as a dependency and build a minimal, real `AgentRuntimePort` implementation using it — a graph with at least the three existing tools as nodes, proving the port contract against a real LangGraph.js v1 graph rather than leaving it unimplemented. Budgets, mandatory review triggers, and the remaining tools are all larger, separate pieces of Section 9 best tackled after the adapter itself is proven to work end-to-end with something small.

@@ -323,6 +323,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
     // hardcoded string — this is the seeded Section 10.7 example rule.
     expect(condition.code).toBe('VERIFY_INCOME_DISCREPANCY');
     expect(condition.description).toContain('difference_percent');
+    // policySnapshotId has existed on LoanCondition since M2-001, with a
+    // comment saying M3 would populate it (Section 6.2) — this is that.
+    expect(condition.policySnapshotId).not.toBeNull();
 
     const events = await outboxEventsFor(caseId);
     expect(events.map((e) => e.eventType)).toEqual([
