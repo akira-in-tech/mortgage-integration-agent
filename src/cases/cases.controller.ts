@@ -14,6 +14,7 @@ import { CasesService, WorkflowRunStatus } from './cases.service';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
 import { LoanCase } from '../database/entities/loan-case.entity';
+import { TimelineEntry } from './case-timeline.service';
 
 /**
  * M2 exit-evidence surface (Section 15.1, M2 scope: "REST workflow-start
@@ -40,6 +41,16 @@ export class CasesController {
   @Get(':caseId')
   async get(@Param('caseId', ParseUUIDPipe) caseId: string): Promise<LoanCase> {
     return this.casesService.getCase(caseId);
+  }
+
+  // Section 7.1's "display the full timeline"; Section 15.2 targets
+  // GraphQL for this, but no GraphQL case resolvers exist yet — a plain
+  // REST GET stands in, matching this controller's existing pattern.
+  @Get(':caseId/timeline')
+  async getTimeline(
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+  ): Promise<TimelineEntry[]> {
+    return this.casesService.getTimeline(caseId);
   }
 
   // 202: starting the workflow only enqueues durable execution — the case

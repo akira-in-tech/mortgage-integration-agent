@@ -11,6 +11,7 @@ import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
+import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
 
 const POSTGRES_UNIQUE_VIOLATION = '23505';
 
@@ -49,6 +50,7 @@ export class CasesService {
     private readonly dataSource: DataSource,
     private readonly temporalClient: TemporalClientService,
     private readonly configService: ConfigService,
+    private readonly caseTimelineService: CaseTimelineService,
   ) {}
 
   /**
@@ -195,5 +197,17 @@ export class CasesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Section 7.1's launch scenario (step 17) and Section 15.2's target
+   * GraphQL "timelines" query — exposed as a plain REST GET here instead,
+   * matching this codebase's existing pattern of a narrower REST slice
+   * standing in for target surfaces not yet built (no GraphQL case
+   * resolvers exist at all yet).
+   */
+  async getTimeline(caseId: string): Promise<TimelineEntry[]> {
+    const loanCase = await this.getCase(caseId);
+    return this.caseTimelineService.getTimeline(loanCase.tenantId, caseId);
   }
 }

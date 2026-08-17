@@ -3504,3 +3504,101 @@ No manual live-API check this slice: nothing new is reachable via REST/GraphQL o
 ### Next safe step
 
 A real token/cost/provider-call budget ledger remains the largest unbuilt piece of Section 9, still deliberately deferred (no genuine consumer exists). Independently: evidence-backed explanations and the Agent run timeline (M3's own scope list), and the evaluation corpus + report command (Section 18.2), are the next queued items from this session's standing plan.
+
+## M3-013: Evidence-backed explanations and Agent run timeline
+
+### Status
+
+Implemented and verified. Every `LendingOperationsAgentState` run the LangGraph runtime executes is now durably persisted (`agent_runs`/`tool_attempts`), and a new `CaseTimelineService` assembles a single chronological, evidence-backed account of a case from that data plus the existing `outbox_events` table.
+
+### Acceptance criterion
+
+Section 7.1's launch scenario step 17 ("display the full timeline...") and M3's own scope line ("evidence-backed explanations and Agent run timeline"): a case's timeline must be queryable end-to-end, combining every domain state change already recorded in `outbox_events` with every Agent run's route, proposed action, and tool-by-tool outcome — and every summary shown must be built from data this codebase already persisted (a condition's own DSL-evaluator reason string, a run's actual recorded tool outcomes), never a freshly generated or inferred narrative.
+
+### Implementation
+
+- `AgentRun`/`ToolAttempt` (new entities, `src/database/entities/agent-run.entity.ts`, `tool-attempt.entity.ts`) — one `AgentRun` row per `LendingOperationsAgentRuntime.run()` call (tenantId, caseId, workflowRunId, route, proposedActionTool/Arguments, reviewRequested/Reason, startedAt/completedAt), one `ToolAttempt` row per entry in the run's `attemptedTools` (toolName, outcome, detail, attemptedAt), FK `ON DELETE CASCADE` from `tool_attempts` to `agent_runs`.
+- `lending-operations-agent-runtime.ts`: added `persistAgentRun()`, called from `run()` in one transaction after the graph completes — saves the `AgentRun` row, then every `ToolAttempt` row, using the real `workflowRunId` already threaded through the state (not `activityInfo()`, consistent with the session's established Temporal-context gotcha). This closes a real, previously undocumented gap: the Agent's own run history existed only in `LendingOperationsAgentState` in memory and was discarded after every `evaluateConditions` call — no Agent run was ever queryable after the fact.
+- `CaseTimelineService` (new, `src/cases/case-timeline.service.ts`): `getTimeline(tenantId, caseId)` reads `outbox_events` + `agent_runs`/`tool_attempts` in parallel, merges and sorts by timestamp. `describeEvent()` enriches a `condition.opened` entry with the condition's own real `description` (the DSL evaluator's reason string, e.g. `difference_percent(...) = 11.88% > 10%`) rather than restating the raw event payload — this is the "evidence-backed explanation" M3's scope names: built from data already persisted for another reason, not a narrative generated for this purpose. `describeAgentRun()` summarizes a run's route and its tools' actual recorded outcomes.
+- `CasesController`: new `GET /v1/loan-cases/:caseId/timeline`, delegating through `CasesService.getTimeline()` (which calls `getCase()` first for 404 + tenant scoping, then `CaseTimelineService`). Section 15.2 targets GraphQL for timeline queries, but no GraphQL case resolvers exist yet anywhere in this codebase — REST stands in, the same documented deviation pattern every other case endpoint in this controller already follows.
+- `1786987516961-AgentRunTimeline.ts` (new migration): two tables, two enums (`agent_runs_route_enum`, `tool_attempts_outcome_enum`), one FK. Generated cleanly against a scratch DB with all prior migrations applied — no hand-editing needed.
+
+### Affected files
+
+- `src/database/entities/agent-run.entity.ts`, `tool-attempt.entity.ts` (new); `src/database/enums/agent-run.enum.ts` (new)
+- `src/database/migrations/1786987516961-AgentRunTimeline.ts` (new), `schema-migrations.spec.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/cases/case-timeline.service.ts` (new), `cases.module.ts`, `cases.service.ts`, `.spec.ts`, `cases.controller.ts`, `.spec.ts`
+- `src/workflows/case-conditions.activities.spec.ts` (registers the new entities and cleans them up, since this spec also exercises the LangGraph runtime)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **A new `agent_runs`/`tool_attempts` pair, not a generic append-only event log.** The codebase already has one general-purpose durable event mechanism (`outbox_events`), but that table's contract is specifically "signed, published domain events" — an Agent run's internal tool-by-tool trace is a different shape (nested attempts, no publish/signature semantics) and a different audience (operational/debugging, not integration). Overloading `outbox_events` for this would have meant either faking a signature for data nobody consumes downstream, or weakening the table's existing contract for every other consumer.
+- **`CaseTimelineService` merges from existing tables rather than writing a new denormalized timeline table.** `outbox_events` already captures every domain state change durably; duplicating that into a second table would create a second source of truth that could drift. The merge-and-sort happens at read time, which is cheap at this data volume and keeps exactly one write path per fact.
+- **Enrichment is narrow and explicit (one `if` for `condition.opened`), not a generic "look up related entity" mechanism.** Every other event type's summary is its raw `eventType` string. Building a general enrichment framework for a single current case would be speculative; the pattern is easy to extend the same way if a second event type needs it.
+- **REST, not GraphQL, for the new endpoint** — matches the existing, already-documented deviation in this controller (Section 15.2's GraphQL target vs. the codebase's current REST-only case surface); tracked as a known gap, not silently substituted.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting and a few spec-file spacing
+issues)
+  both passed clean
+
+Scratch stack (m3013-verify, ports 5433/7234):
+  migration:run — all migrations applied cleanly, including the new
+  AgentRunTimeline migration, alongside every prior one
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    35 suites passed, 253 tests passed (249 -> 253: +4, covering
+    persistAgentRun's real-DB assertions in
+    lending-operations-agent-runtime.spec.ts: a real AgentRun row with
+    route=PROPOSED_ACTION and proposedActionTool=create_condition, and
+    3 ordered ToolAttempt rows — check_case_completeness,
+    evaluate_policy, create_condition, all SUCCESS)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    11/11 passed (cumulative apply + 10 per-migration revert steps,
+    including the new first revert test for AgentRunTimeline)
+
+Manual live verification (real REST API + real Temporal worker against
+the scratch stack):
+  created a case (BORROWER-M3013, US-CA, statedMonthlyIncome=9000),
+  started the workflow — the real Plaid/credit/document simulators
+  returned monthlyIncome=10069, the real policy evaluator opened a
+  VERIFY_INCOME_DISCREPANCY condition (11.88% > 10% threshold), and the
+  real LangGraph runtime proposed and executed create_condition,
+  persisting one AgentRun row and 3 ToolAttempt rows
+
+  GET /v1/loan-cases/{caseId}/timeline returned all 6 domain events and
+  the 1 Agent run in correct chronological order, with the
+  condition.opened entry's summary correctly enriched with the
+  condition's real description string — confirmed by inspecting the
+  actual JSON response, not just the 200 status
+
+  synthetic tenant/case/evidence/conditions/outbox/agent-run rows
+  deleted afterward; scratch stack torn down (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible write surface — the new endpoint is read-only (`GET`).
+- `proposedActionArguments`/`detail` are stored in plaintext `jsonb`/`text`, same as every other case-related table in this codebase (no field-level encryption exists anywhere yet — a pre-existing, not newly-introduced, gap).
+- `tool_attempts` cascades on `agent_runs` delete — no orphaned trace rows possible after a future case-deletion/lineage-aware-deletion pass (Section 14.2) touches `agent_runs`.
+- No new external dependency, no new provider call — this slice is pure persistence-and-read over data the runtime already computes.
+
+### Known gaps
+
+- No pagination on the timeline endpoint — every event and run for a case is returned in one response; acceptable at current synthetic data volumes, not yet load-tested for a long-lived case with many runs.
+- No GraphQL surface (see Decisions) — REST only, consistent with every other case endpoint in this controller.
+- Enrichment only covers `condition.opened`; every other event type's `summary` is still its raw `eventType` string. Extending this to other event types (e.g. `workflow_run.waiting_for_review`) is straightforward but not yet done — no current caller has asked for it.
+- `AgentRun.completedAt` is set by `@CreateDateColumn` at INSERT time (i.e., when the run finished and was persisted), not by an explicit graph-completion timestamp threaded through the state — close enough for a single-transaction persist immediately after the graph resolves, but not a millisecond-exact measure of in-graph execution time.
+
+### Next safe step
+
+A real token/cost/provider-call budget ledger remains the largest unbuilt piece of Section 9, still deliberately deferred (no genuine consumer exists). Next queued: the evaluation corpus + report command (Section 18.2), and `EvaluationInputManifest`'s remaining honestly-buildable fields (Section 10.5 — `policyBindingId`, `observedPolicyDependencyDigest`, `evidenceRefs`, `manifestHash` are all now constructible from real data; `authorizationDecisionId`/`consentVersionRefs` still have no backing entity).

@@ -38,11 +38,63 @@ import {
   EvidenceFact,
   EvidenceType,
 } from '../../database/entities/evidence-fact.entity';
+import { AgentRun } from '../../database/entities/agent-run.entity';
+import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
+import {
+  AgentRunRouteStatus,
+  ToolAttemptOutcome,
+} from '../../database/enums/agent-run.enum';
 
 export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
   policyEvaluationService: PolicyEvaluationService;
   outboxSigningSecret: string;
+}
+
+/**
+ * Section 14.1's `agent_runs`/`tool_attempts` — the Agent run's own
+ * history (previously held only in memory for the duration of one
+ * `run()` call, per M3-013's own finding that nothing persisted it) is
+ * now durable. Written once per completed run, after the graph produces
+ * a final route — not per node, so a run that throws (Section 10.5's
+ * `StaleCaseVersionError`, propagated for Temporal to retry) leaves no
+ * partial record, matching that this specific run never really
+ * "completed" in a sense worth recording.
+ */
+async function persistAgentRun(
+  dataSource: DataSource,
+  startedAt: Date,
+  result: AgentRunResult,
+): Promise<void> {
+  await dataSource.transaction(async (manager) => {
+    const agentRun = await manager.getRepository(AgentRun).save(
+      manager.getRepository(AgentRun).create({
+        tenantId: result.finalState.tenantId,
+        caseId: result.finalState.caseId,
+        workflowRunId: result.finalState.workflowRunId,
+        route: result.route as unknown as AgentRunRouteStatus,
+        proposedActionTool: result.finalState.proposedAction?.tool ?? null,
+        proposedActionArguments:
+          result.finalState.proposedAction?.arguments ?? null,
+        reviewRequested: result.finalState.reviewState?.requested ?? false,
+        reviewReason: result.finalState.reviewState?.reason ?? null,
+        startedAt,
+      }),
+    );
+    if (result.finalState.attemptedTools.length > 0) {
+      await manager.getRepository(ToolAttempt).save(
+        result.finalState.attemptedTools.map((attempt) =>
+          manager.getRepository(ToolAttempt).create({
+            agentRunId: agentRun.id,
+            toolName: attempt.toolName,
+            outcome: attempt.outcome as unknown as ToolAttemptOutcome,
+            detail: attempt.detail ?? null,
+            attemptedAt: new Date(attempt.attemptedAt),
+          }),
+        ),
+      );
+    }
+  });
 }
 
 const RuntimeAnnotation = Annotation.Root({
@@ -136,13 +188,12 @@ function consentInvalid(
  * name always does (agent-tool.types.spec.ts), rather than through a
  * separate allow-check that could drift from that behavior.
  *
- * Not wired into the M2 Temporal workflow — `case-conditions.activities
- * .ts` still calls `PolicyEvaluationService`/`createConditionTool`
- * directly, per Section 9.2's own runtime-separation diagram ("Temporal
- * workflow... bounded Agent run... deterministic policy engine" are
- * three separate layers; the workflow does not have to route through an
- * Agent run for a fully deterministic decision). This proves the port is
- * implementable end-to-end, standing on its own.
+ * Wired into the M2 Temporal workflow since M3-008: `case-conditions
+ * .activities.ts`'s `evaluateConditions` calls this runtime instead of
+ * `PolicyEvaluationService`/`createConditionTool` directly, so its
+ * decision is genuinely produced by a bounded Agent run, per Section
+ * 9.2's runtime-separation diagram ("Temporal workflow... bounded Agent
+ * run... deterministic policy engine" as three separate layers).
  */
 export function createLendingOperationsAgentRuntime(
   deps: LendingOperationsAgentRuntimeDeps,
@@ -160,6 +211,7 @@ export function createLendingOperationsAgentRuntime(
 
   return {
     async run(input: AgentRunInput): Promise<AgentRunResult> {
+      const startedAt = new Date();
       const registry = buildToolRegistry(
         allTools.filter((tool) => input.allowedTools.includes(tool.name)),
       );
@@ -413,13 +465,15 @@ export function createLendingOperationsAgentRuntime(
         policyEvaluation: undefined,
       });
 
-      return {
+      const result: AgentRunResult = {
         finalState: finalState.agentState,
         // A route is always set by whichever terminal node ran; this
         // fail-closed fallback only guards against a future graph-wiring
         // bug leaving it unset, never an expected path today.
         route: finalState.route ?? 'ROUTED_TO_MANUAL_REVIEW',
       };
+      await persistAgentRun(deps.dataSource, startedAt, result);
+      return result;
     },
   };
 }

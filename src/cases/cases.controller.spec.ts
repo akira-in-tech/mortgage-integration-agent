@@ -11,6 +11,7 @@ describe('CasesController', () => {
     startWorkflow: jest.Mock;
     getWorkflowRun: jest.Mock;
     submitReview: jest.Mock;
+    getTimeline: jest.Mock;
   };
   let controller: CasesController;
 
@@ -28,6 +29,7 @@ describe('CasesController', () => {
       startWorkflow: jest.fn(),
       getWorkflowRun: jest.fn(),
       submitReview: jest.fn(),
+      getTimeline: jest.fn(),
     };
     controller = new CasesController(casesService as never);
   });
@@ -92,6 +94,21 @@ describe('CasesController', () => {
         'case-1',
         reviewDto,
       );
+    });
+
+    it('getTimeline delegates to CasesService.getTimeline', async () => {
+      const entries = [
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          kind: 'DOMAIN_EVENT',
+          summary: 'x',
+          detail: {},
+        },
+      ];
+      casesService.getTimeline.mockResolvedValue(entries);
+      const result = await controller.getTimeline('case-1');
+      expect(casesService.getTimeline).toHaveBeenCalledWith('case-1');
+      expect(result).toBe(entries);
     });
   });
 });

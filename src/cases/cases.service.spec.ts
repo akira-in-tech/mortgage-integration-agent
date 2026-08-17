@@ -35,6 +35,7 @@ describe('CasesService', () => {
     resumeInterruptedEvaluation: jest.Mock;
     getWorkflowStatus: jest.Mock;
   };
+  let caseTimelineService: { getTimeline: jest.Mock };
   let service: CasesService;
 
   beforeEach(() => {
@@ -81,6 +82,7 @@ describe('CasesService', () => {
       resumeInterruptedEvaluation: jest.fn(),
       getWorkflowStatus: jest.fn(),
     };
+    caseTimelineService = { getTimeline: jest.fn() };
     service = new CasesService(
       caseRepo as never,
       tenantRepo as never,
@@ -88,6 +90,7 @@ describe('CasesService', () => {
       dataSource as never,
       temporalClient as never,
       configService as never,
+      caseTimelineService as never,
     );
   });
 
@@ -324,6 +327,41 @@ describe('CasesService', () => {
           actorId: 'reviewer-2',
         }),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getTimeline', () => {
+    it("delegates to CaseTimelineService with the case's own tenantId", async () => {
+      caseRepo.findOneBy.mockResolvedValue({
+        id: CASE_ID,
+        tenantId: TENANT_ID,
+      } as LoanCase);
+      const entries = [
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          kind: 'DOMAIN_EVENT',
+          summary: 'x',
+          detail: {},
+        },
+      ];
+      caseTimelineService.getTimeline.mockResolvedValue(entries);
+
+      const result = await service.getTimeline(CASE_ID);
+
+      expect(caseTimelineService.getTimeline).toHaveBeenCalledWith(
+        TENANT_ID,
+        CASE_ID,
+      );
+      expect(result).toBe(entries);
+    });
+
+    it('throws 404 for a nonexistent case without calling CaseTimelineService', async () => {
+      caseRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(service.getTimeline(CASE_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(caseTimelineService.getTimeline).not.toHaveBeenCalled();
     });
   });
 });

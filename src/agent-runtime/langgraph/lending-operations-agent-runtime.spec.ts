@@ -20,6 +20,8 @@ import { PolicyApplicability } from '../../database/entities/policy-applicabilit
 import { CasePolicySnapshot } from '../../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../../database/entities/policy-catalog-generation.entity';
+import { AgentRun } from '../../database/entities/agent-run.entity';
+import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -75,6 +77,8 @@ describeOrSkip(
           CasePolicySnapshot,
           CasePolicyBinding,
           PolicyCatalogGeneration,
+          AgentRun,
+          ToolAttempt,
         ],
       });
       await dataSource.initialize();
@@ -181,6 +185,8 @@ describeOrSkip(
 
     afterAll(async () => {
       if (dataSource?.isInitialized) {
+        // ToolAttempt cascades on AgentRun's delete.
+        await dataSource.getRepository(AgentRun).delete({ tenantId });
         await dataSource.getRepository(OutboxEvent).delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
         await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
@@ -360,6 +366,27 @@ describeOrSkip(
         .getRepository(LoanCase)
         .findOneByOrFail({ id: caseId });
       expect(updatedCase.status).toBe(CaseStatus.CONDITIONS_OPEN);
+
+      // M3-013: the run's own history is now durable, not just returned
+      // in memory.
+      const agentRuns = await dataSource
+        .getRepository(AgentRun)
+        .find({ where: { caseId } });
+      expect(agentRuns).toHaveLength(1);
+      expect(agentRuns[0]).toMatchObject({
+        route: 'PROPOSED_ACTION',
+        proposedActionTool: 'create_condition',
+      });
+      const toolAttempts = await dataSource.getRepository(ToolAttempt).find({
+        where: { agentRunId: agentRuns[0].id },
+        order: { attemptedAt: 'ASC' },
+      });
+      expect(toolAttempts.map((a) => a.toolName)).toEqual([
+        'check_case_completeness',
+        'evaluate_policy',
+        'create_condition',
+      ]);
+      expect(toolAttempts.every((a) => a.outcome === 'SUCCESS')).toBe(true);
     });
 
     it('propagates a stale-version failure instead of creating a condition when the case has moved on since the run began', async () => {

@@ -26,6 +26,8 @@ import { PolicyApplicability } from '../database/entities/policy-applicability.e
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
+import { AgentRun } from '../database/entities/agent-run.entity';
+import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -89,6 +91,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
         CasePolicySnapshot,
         CasePolicyBinding,
         PolicyCatalogGeneration,
+        AgentRun,
+        ToolAttempt,
       ],
     });
     await dataSource.initialize();
@@ -147,6 +151,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
       const conditionRepo = dataSource.getRepository(LoanCondition);
       const outboxRepo = dataSource.getRepository(OutboxEvent);
       if (caseIds.length > 0) {
+        // ToolAttempt cascades on AgentRun's delete.
+        await dataSource.getRepository(AgentRun).delete({ tenantId });
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
