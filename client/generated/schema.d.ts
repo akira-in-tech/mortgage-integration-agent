@@ -138,6 +138,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/webhook-endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later. */
+        post: operations["createWebhookEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhook-deliveries/{deliveryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one webhook delivery and its full attempt history */
+        get: operations["getWebhookDelivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -202,6 +236,56 @@ export interface components {
              */
             resolution?: "SATISFIED" | "WAIVED";
             reason?: string;
+        };
+        CreateWebhookEndpointDto: {
+            /** Format: uuid */
+            tenantId: string;
+            /**
+             * @description Where signed delivery attempts are POSTed.
+             * @example https://partner.example.com/webhooks/mortgage-agent
+             */
+            targetUrl: string;
+            eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
+        };
+        WebhookEndpoint: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            targetUrl: string;
+            /** @description The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it. */
+            secret: string;
+            eventTypes: string[];
+            /** @enum {string} */
+            status: "ACTIVE" | "DISABLED";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        WebhookDeliveryAttempt: {
+            attemptNumber: number;
+            attemptedAt: string;
+            /** @description null on a network-level failure (timeout, connection refused) — no HTTP response was ever received. */
+            httpStatusCode: Record<string, never>;
+            /** @enum {string} */
+            outcome: "SUCCEEDED" | "FAILED";
+            errorMessage?: string;
+        };
+        WebhookDelivery: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: uuid */
+            webhookEndpointId: string;
+            /** Format: uuid */
+            outboxEventId: string;
+            eventType: string;
+            /** @enum {string} */
+            status: "PENDING" | "SUCCEEDED" | "FAILED_FINAL";
+            attempts: components["schemas"]["WebhookDeliveryAttempt"][];
+            nextAttemptAt?: Record<string, never>;
+            /** Format: date-time */
+            createdAt: string;
         };
     };
     responses: never;
@@ -422,6 +506,57 @@ export interface operations {
                 content?: never;
             };
             /** @description No case with this id, or no running workflow for it. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWebhookEndpointDto"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpoint"];
+                };
+            };
+        };
+    };
+    getWebhookDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deliveryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookDelivery"];
+                };
+            };
+            /** @description No delivery with this id. */
             404: {
                 headers: {
                     [name: string]: unknown;

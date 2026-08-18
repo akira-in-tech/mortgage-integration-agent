@@ -4678,3 +4678,120 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 M4-004: webhook subscriptions, delivery retries, history, and replay protection — the other genuinely-buildable-today M4 scope item, building on the existing signed `outbox_events` foundation (M2) the same way this slice built on the existing `CasesController`.
+
+## M4-004: Webhook subscriptions, delivery retries, history, and replay protection (Section 20 M4 scope; Section 14.1's `webhook_endpoints`/`webhook_deliveries`)
+
+### Status
+
+Implemented and verified. `outbox_events` (M2's transactional outbox, dispatcher-less until now) finally has a real dispatcher: `WebhookDispatchService` polls unpublished events, fans each out to a `WebhookDelivery` row per active, subscribed `WebhookEndpoint`, and attempts every due delivery with a real signed HTTP POST — retrying failed attempts with exponential backoff up to a 5-attempt budget before giving up. `POST /v1/webhook-endpoints` and `GET /v1/webhook-deliveries/{deliveryId}` (Section 15.1's exact two webhook routes) are real, OpenAPI-documented endpoints. Every attempt carries a timestamped, HMAC-signed, stable delivery id (`X-Webhook-Id`/`X-Webhook-Timestamp`/`X-Webhook-Signature`) — genuine replay protection, not a name for something unenforced.
+
+### Acceptance criterion
+
+Section 20's M4 scope: "webhook subscriptions, delivery retries, history, and replay protection." Section 14.1: `webhook_endpoints` — "Destination, secret reference, subscriptions, and state"; `webhook_deliveries` — "Signed attempt history and replay state." Section 15.3: "timestamped HMAC webhook signatures and replay protection," "stable event identifiers across retries."
+
+### Implementation
+
+- `WebhookEndpoint`/`WebhookDelivery` entities (`src/database/entities/`), `WebhookEndpointStatus`/`WebhookDeliveryStatus` enums, one migration (`1787042560459-WebhookPlatform.ts`). `WebhookDelivery` is one row per (outbox event, endpoint) pair — a logical delivery, not a single attempt — with a real `attempts: WebhookDeliveryAttempt[]` jsonb column accumulating every physical attempt (Section 14.1's "attempt history," not just a rolling last-attempt summary). Real foreign keys to both `webhook_endpoints` and `outbox_events` (`ON DELETE CASCADE`) — unlike the provider-platform tables (M4-001), this is a genuine parent/child ownership relationship, the same reasoning `tool_attempts -> agent_runs` already used.
+- `webhook-signer.ts` — `signWebhookDelivery`/`verifyWebhookSignature`, the "id.timestamp.body" HMAC scheme (Stripe/GitHub's own prior art). Deliberately not a reuse of `outbox-signer.ts`'s `signOutboxPayload`: that one canonicalizes a `Record<string, unknown>` because it has to survive a round trip through Postgres jsonb (which reorders keys); this one signs the literal JSON string about to go out on the wire, so there's no reordering to canonicalize away. Binding the delivery id and timestamp into the signature (not just the body) is what makes this genuinely replay-resistant — a captured request can't be replayed later (timestamp no longer matches "now") or have its body spliced onto a different delivery.
+- `WebhookEndpointService` — `create()` (generates a real `randomBytes(32)` secret, returned once), `findActiveForTenantAndEventType()`, `findByIdOrFail()`.
+- `WebhookDispatchService` — `dispatchPendingEvents({ now? })`: sweeps unpublished outbox events in batches of 50, creates delivery rows for every currently-subscribed active endpoint, marks each event published (meaning "handed to the webhook subsystem," the outbox pattern's standard meaning — not "delivered to everyone"), then attempts every due delivery (fresh, or past its backoff window) with a real `fetch()` POST, a 10s timeout via `AbortController`, and up to 5 attempts before `FAILED_FINAL`. The injectable `now` clock (same pattern as `webhook-signer.ts`'s `verifyWebhookSignature`) lets tests simulate a backoff window elapsing without a real wall-clock wait, without making production's actual backoff intervals artificially short.
+- `WebhookEndpointsController`/`WebhookDeliveriesController` — the charter's exact two routes, `@nestjs/swagger`-decorated the same way M4-003 decorated `CasesController` (explicit `operationId`s, `@ApiProperty()` throughout).
+- `worker.ts` gained a `setInterval`-driven poll loop (`WEBHOOK_DISPATCH_INTERVAL_MS`, default 5000ms, new validated env var) calling `dispatchPendingEvents()` — Section 12.1's Worker service scope names "webhook delivery" explicitly. Not a Temporal workflow/activity: a `WebhookDelivery` row already *is* the durable record of what's attempted and what's still due, so a crash between polls loses nothing — the next poll just picks it back up. (Section 12.2's own architecture diagram draws "Outbox dispatcher" as hanging off the API service rather than the Worker service, which reads as mildly in tension with 12.1's prose — noted here rather than silently resolved, same discipline as prior charter-tension notes this session; the prose's explicit "webhook delivery" listing under Worker service is what this slice followed.)
+
+### Affected files
+
+- `src/database/entities/webhook-endpoint.entity.ts`, `webhook-delivery.entity.ts`
+- `src/database/enums/webhook.enum.ts`
+- `src/database/migrations/1787042560459-WebhookPlatform.ts`, `schema-migrations.spec.ts`
+- `src/webhooks/webhook-signer.ts` (+`.spec.ts`), `webhook-endpoint.service.ts` (+`.spec.ts`), `webhook-delivery.service.ts`, `webhook-dispatch.service.ts` (+`.spec.ts`), `webhook-endpoints.controller.ts`, `webhook-deliveries.controller.ts`, `webhooks.module.ts`, `dto/create-webhook-endpoint.dto.ts`
+- `src/app.module.ts`, `src/worker.module.ts`, `src/worker.ts`, `src/config/env.validation.ts`
+- `src/openapi.config.ts` (added the `webhooks` tag)
+- `openapi/openapi.json`, `client/generated/schema.d.ts` (regenerated — 10 paths now, up from 8)
+- `test/webhooks.e2e-spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **One `WebhookDelivery` row per (event, endpoint), with an in-place `attempts` array, not a separate parent-delivery + child-attempt-row schema.** A normalized two-table design was considered; given the actual data volumes at this codebase's scale, a jsonb array on the delivery row gives the exact same "signed attempt history" Section 14.1 asks for with one less table and no join required for `GET /v1/webhook-deliveries/{id}` to return the full history in one query.
+- **A `setInterval` poll loop in `worker.ts`, not a new Temporal workflow.** Considered and rejected: Temporal's durable-execution guarantee exists to survive a crash mid-workflow, but a `WebhookDelivery` row already provides that durability for this specific job (its own `status`/`attempts`/`nextAttemptAt` fully describe what's left to do) — wrapping it in a workflow would duplicate state Temporal doesn't need to own, not add real safety.
+- **No `@nestjs/schedule` dependency.** A single `setInterval` matches this codebase's "no premature abstraction" rule for one periodic job; a scheduling library earns its cost once there are multiple jobs needing cron-style expressions, retries-of-the-scheduler-itself, or distributed-lock coordination across multiple worker instances — none of which exist yet (this codebase runs exactly one worker process).
+- **`WebhookDelivery`'s foreign keys are real (`ON DELETE CASCADE`), unlike the M4-001 provider-platform tables' deliberately-loose uuid references.** Different relationship shape: a `ProviderOperationIntent` referencing a `ProviderAuthorizationGrant` is a *citation* (the grant may need to outlive the intent for audit purposes even after a case is purged); a `WebhookDelivery` referencing its `WebhookEndpoint`/`OutboxEvent` is *ownership* — the same shape `tool_attempts -> agent_runs` already has a real FK for. Matching the existing precedent for each relationship's actual shape, not applying one convention uniformly regardless of fit.
+
+### Errors and fixes
+
+- **`@IsUrl({ require_tld: false })` alone did not reject the literal string `'not-a-url'` — it validated successfully.** Found by a deliberate negative-case e2e test failing ("expected 400, got 201"), not by accident. Root cause: `require_tld: false` alone (needed to allow `http://127.0.0.1:PORT/...` targets for local/test receivers) also relaxes `validator.js`'s scheme requirement enough to accept a bare word as a "hostname with no TLD." Fixed by adding `require_protocol: true` alongside it — `not-a-url` (no scheme) is correctly rejected, `http://127.0.0.1:54321/hook` (has a scheme, no TLD) still passes. Verified via a standalone script exercising `class-validator` directly against both inputs before and after the fix, then confirmed via the full e2e suite.
+- **`npm install -D openapi-typescript --legacy-peer-deps` (M4-003) already established the `package.json` `overrides` fix this slice's `npm install` relied on** — no repeat of that incident; installing no new packages this slice (`@nestjs/swagger`, `openapi-fetch` already present) meant nothing new to conflict.
+- **The dispatch tests' first run left the scratch database's `webhook_deliveries`/`webhook_endpoints` tables with residual rows, and a second run picked up a stale in-progress retry from the first run mid-suite.** `WebhookDispatchService.dispatchPendingEvents()` sweeps the *whole* table by design (every unpublished event, every due delivery, not scoped to one test) — a persistent scratch database without cleanup between test-suite invocations accumulates cross-run state, which a later run's assertions could pick up. Fixed by tracking every `tenantId` a test creates and deleting exactly those rows in `afterAll`; verified by running the suite twice in direct succession and confirming zero residual rows and identical results both times.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean after fixing the @IsUrl validation gap and a
+  handful of prettier formatting diffs
+
+Migration (m4003-verify scratch stack, reused from M4-003's own
+session rather than torn down and rebuilt):
+  migration:run applies WebhookPlatform1787042560459 cleanly on top
+  of ProviderPlatform1787031644483
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    18/18 passed (17 -> 18: +1 new revert test proving the webhook
+    platform migration's two new tables and two new foreign keys
+    disappear cleanly and no other table is touched)
+
+  DATABASE_URL=... npm test -- --runInBand --no-cache --silent
+    53 suites passed, 346 tests passed (50 -> 53 suites, 330 -> 346
+    tests: +3 new suites / +16 new tests — webhook-signer,
+    webhook-endpoint.service, webhook-dispatch.service, the last one
+    run twice in direct succession to prove the afterAll cleanup fix
+    actually works, not just once)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 20 tests passed (2 -> 3 suites, 14 -> 20 tests:
+    +1 new suite / +6 new tests, webhooks.e2e-spec.ts against the
+    real, fully-bootstrapped AppModule — no Temporal server actually
+    required for this one, since nothing in the webhooks surface
+    touches TemporalClientService's lazy connection)
+
+Manual live verification (real REST API + real Temporal worker, with
+the new webhook dispatch loop running in the worker process, plus a
+real standalone Node HTTP receiver script — not a test harness):
+  registered a real webhook endpoint via POST /v1/webhook-endpoints
+  subscribed to 4 event types; created a case and started its
+  workflow; the live receiver genuinely received loan_case.created,
+  condition.opened, and workflow_run.waiting_for_review (each with a
+  real X-Webhook-Id/X-Webhook-Timestamp/X-Webhook-Signature) but never
+  evidence.updated (correctly filtered — not a subscribed event type);
+  independently recomputed the HMAC for one delivery using its
+  endpoint's real returned secret and confirmed it matched the
+  received X-Webhook-Signature byte-for-byte; submitted a real review
+  via POST .../reviews and watched workflow_run.completed arrive at
+  the receiver next; fetched that delivery via GET
+  /v1/webhook-deliveries/{deliveryId} and confirmed it returned
+  status=SUCCEEDED with a real one-entry attempts history matching
+  what was actually sent
+
+  processes stopped, scratch stack torn down (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Every delivery attempt is HMAC-signed with a per-endpoint secret and carries a timestamp bound into the signature — a receiver that implements the documented verification contract (`verifyWebhookSignature`, exported for exactly this purpose) can reject both tampered payloads and replayed old requests, not only the former.
+- A webhook secret is returned exactly once, at endpoint creation, and never re-serialized on any other response this codebase has (there is no `GET`/`list` endpoint for `WebhookEndpoint` yet — Known gaps).
+- No new externally-visible *behavior* on the existing six `CasesController` endpoints — this slice is purely additive.
+- Real outbound HTTP calls now originate from the worker process (to whatever `targetUrl` a caller registers) — no allowlist, SSRF guard, or egress restriction exists yet (Known gap; the charter names SSRF-through-webhook-configuration explicitly as a threat-model concern for a later milestone).
+- Bounded work per dispatch tick (`EVENT_BATCH_SIZE`/`DELIVERY_BATCH_SIZE` = 50) and a 10s per-attempt timeout — a slow or hanging receiver can't stall the whole dispatch loop indefinitely.
+
+### Known gaps
+
+- No SSRF/egress protection on `targetUrl` — a caller can currently register an endpoint pointing at an internal address. Named in the charter as a real threat-model item; not built this slice.
+- No endpoint listing, update, disable, or delete REST surface — only `POST` (create) and the delivery `GET` exist, matching the charter's own Section 15.1 list exactly (it names only these two routes), but real operational use would need more.
+- No per-tenant or global rate limit on outbound webhook calls.
+- Retry backoff and the 5-attempt budget are fixed constants, not per-endpoint configurable.
+- `publish_case_update` (Section 9.4's Agent tool, "deliver a signed machine webhook") still has no real backing — this slice built the delivery mechanism itself, not the Agent-tool integration point that would let a run trigger one directly rather than relying on the outbox's own domain-event triggers.
+- No webhook inspector / sandbox scenario catalog (Section 20 M4 scope also names these) — out of this slice.
+
+### Next safe step
+
+Both of M4's genuinely-buildable-today scope items (REST/OpenAPI/client/quickstart, and webhooks) are now done. What remains in M4's scope list either needs a second real provider mode (promotion manifests, authorized-sandbox parity — not buildable honestly yet) or is its own separate vertical (webhook inspector/sandbox scenario catalog, `publish_case_update`'s Agent-tool wiring). The user has not yet directed which M5 or remaining-M4 increment to take next.

@@ -265,17 +265,88 @@
           "loan-cases"
         ]
       }
+    },
+    "/v1/webhook-endpoints": {
+      "post": {
+        "operationId": "createWebhookEndpoint",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/webhook-deliveries/{deliveryId}": {
+      "get": {
+        "operationId": "getWebhookDelivery",
+        "parameters": [
+          {
+            "name": "deliveryId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No delivery with this id."
+          }
+        },
+        "summary": "Get one webhook delivery and its full attempt history",
+        "tags": [
+          "webhooks"
+        ]
+      }
     }
   },
   "info": {
     "title": "Mortgage Integration Agent — Partner API",
-    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations, audit-export) is not yet built and is not represented here.",
+    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions; webhook endpoint registration and delivery lookup) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations, audit-export) is not yet built and is not represented here.",
     "version": "1.0.0",
     "contact": {}
   },
   "tags": [
     {
       "name": "loan-cases",
+      "description": ""
+    },
+    {
+      "name": "webhooks",
       "description": ""
     }
   ],
@@ -499,6 +570,177 @@
         "required": [
           "reviewType",
           "actorId"
+        ]
+      },
+      "CreateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetUrl": {
+            "type": "string",
+            "description": "Where signed delivery attempts are POSTed.",
+            "example": "https://partner.example.com/webhooks/mortgage-agent"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "loan_case.created",
+                "workflow_run.started",
+                "workflow_run.waiting_for_review",
+                "workflow_run.completed",
+                "workflow_run.failed",
+                "evidence.updated",
+                "condition.opened",
+                "condition.satisfied",
+                "condition.waived",
+                "evaluation.interrupted",
+                "case.escalated",
+                "communication.delivered"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tenantId",
+          "targetUrl",
+          "eventTypes"
+        ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetUrl": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it."
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "targetUrl",
+          "secret",
+          "eventTypes",
+          "status",
+          "createdAt"
+        ]
+      },
+      "WebhookDeliveryAttempt": {
+        "type": "object",
+        "properties": {
+          "attemptNumber": {
+            "type": "number"
+          },
+          "attemptedAt": {
+            "type": "string"
+          },
+          "httpStatusCode": {
+            "type": "object",
+            "description": "null on a network-level failure (timeout, connection refused) — no HTTP response was ever received."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED"
+            ]
+          },
+          "errorMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attemptNumber",
+          "attemptedAt",
+          "httpStatusCode",
+          "outcome"
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "webhookEndpointId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outboxEventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "SUCCEEDED",
+              "FAILED_FINAL"
+            ]
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryAttempt"
+            }
+          },
+          "nextAttemptAt": {
+            "type": "object"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "webhookEndpointId",
+          "outboxEventId",
+          "eventType",
+          "status",
+          "attempts",
+          "createdAt"
         ]
       }
     }

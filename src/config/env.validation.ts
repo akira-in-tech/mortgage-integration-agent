@@ -127,6 +127,14 @@ export class EnvironmentVariables {
     message: 'OUTBOX_SIGNING_SECRET must be at least 16 characters',
   })
   OUTBOX_SIGNING_SECRET: string = 'dev-outbox-signing-secret-change-me';
+
+  // ── Webhook dispatch (src/webhooks, src/worker.ts) ──────────────────────
+  // How often the Worker service polls for unpublished outbox events and
+  // due webhook-delivery retries (Section 12.1: "webhook delivery").
+  @IsOptional()
+  @IsInt()
+  @Min(100)
+  WEBHOOK_DISPATCH_INTERVAL_MS: number = 5000;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

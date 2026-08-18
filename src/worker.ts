@@ -10,6 +10,7 @@ import { ProviderAuthorizationService } from './provider-platform/provider-autho
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
+import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
 
 async function bootstrap(): Promise<void> {
   // A plain Nest application context, not createApplicationContext + an
@@ -32,6 +33,22 @@ async function bootstrap(): Promise<void> {
       'dev-outbox-signing-secret-change-me',
     ),
   });
+
+  // Section 12.1's Worker service scope: "webhook delivery." Not a
+  // Temporal workflow/activity — a `WebhookDelivery` row is already the
+  // durable record of what's been attempted and what's still due, so a
+  // crash between polls loses nothing; the next poll just picks it back
+  // up (see WebhookDispatchService's own class comment).
+  const webhookDispatchService = appContext.get(WebhookDispatchService);
+  const webhookDispatchIntervalMs = configService.get<number>(
+    'WEBHOOK_DISPATCH_INTERVAL_MS',
+    5000,
+  );
+  const webhookDispatchTimer = setInterval(() => {
+    webhookDispatchService.dispatchPendingEvents().catch((error) => {
+      console.error('Webhook dispatch tick failed:', error);
+    });
+  }, webhookDispatchIntervalMs);
 
   const connection = await NativeConnection.connect({
     address: configService.get<string>('TEMPORAL_ADDRESS', 'localhost:7233'),
@@ -65,6 +82,7 @@ async function bootstrap(): Promise<void> {
   try {
     await worker.run();
   } finally {
+    clearInterval(webhookDispatchTimer);
     await connection.close();
     await appContext.close();
   }

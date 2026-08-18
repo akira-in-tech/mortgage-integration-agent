@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { DatabaseModule } from './database/database.module';
 import { PolicyModule } from './policy/policy.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import { validateEnvironment } from './config/env.validation';
 import { createTypeOrmOptions } from './database/typeorm-options.factory';
 
@@ -30,6 +31,7 @@ import { createTypeOrmOptions } from './database/typeorm-options.factory';
     DatabaseModule,
     IntegrationsModule,
     PolicyModule,
+    WebhooksModule,
   ],
 })
 export class WorkerModule {}

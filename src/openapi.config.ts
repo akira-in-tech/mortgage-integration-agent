@@ -16,13 +16,15 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setDescription(
       'Section 15.1 partner REST API. This artifact documents only the ' +
         'endpoints this codebase actually implements today (case creation, ' +
-        'lookup, timeline, workflow-run start/status, and reviewer decisions) ' +
-        '— the full Section 15.1 surface (consents, documents, conditions, ' +
-        'evidence, policy-snapshots, provider-operations, audit-export) is ' +
-        'not yet built and is not represented here.',
+        'lookup, timeline, workflow-run start/status, and reviewer decisions; ' +
+        'webhook endpoint registration and delivery lookup) — the full ' +
+        'Section 15.1 surface (consents, documents, conditions, evidence, ' +
+        'policy-snapshots, provider-operations, audit-export) is not yet ' +
+        'built and is not represented here.',
     )
     .setVersion('1.0.0')
     .addTag('loan-cases')
+    .addTag('webhooks')
     .build();
   return SwaggerModule.createDocument(app, config);
 }
