@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { WebhookEndpoint } from '../database/entities/webhook-endpoint.entity';
 import { WebhookEndpointStatus } from '../database/enums/webhook.enum';
 import { WebhookEndpointService } from './webhook-endpoint.service';
+import { runInTenantContext } from '../database/tenant-context';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
@@ -19,9 +20,7 @@ describeOrSkip('WebhookEndpointService', () => {
       entities: [WebhookEndpoint],
     });
     await dataSource.initialize();
-    service = new WebhookEndpointService(
-      dataSource.getRepository(WebhookEndpoint),
-    );
+    service = new WebhookEndpointService(dataSource);
   });
 
   afterAll(async () => {
@@ -76,9 +75,14 @@ describeOrSkip('WebhookEndpointService', () => {
       eventTypes: ['condition.opened'],
     });
     endpointIds.push(disabled.id);
-    await dataSource
-      .getRepository(WebhookEndpoint)
-      .update({ id: disabled.id }, { status: WebhookEndpointStatus.DISABLED });
+    await runInTenantContext(dataSource, tenantId, (manager) =>
+      manager
+        .getRepository(WebhookEndpoint)
+        .update(
+          { id: disabled.id },
+          { status: WebhookEndpointStatus.DISABLED },
+        ),
+    );
 
     const results = await service.findActiveForTenantAndEventType(
       tenantId,
@@ -90,7 +94,7 @@ describeOrSkip('WebhookEndpointService', () => {
 
   it('findByIdOrFail() throws NotFoundException for an unknown id', async () => {
     await expect(
-      service.findByIdOrFail('99999999-9999-9999-9999-999999999999'),
+      service.findByIdOrFail(tenantId, '99999999-9999-9999-9999-999999999999'),
     ).rejects.toThrow('not found');
   });
 });

@@ -5004,3 +5004,109 @@ restarted after the malformed-clientId fix):
 ### Next safe step
 
 The single biggest remaining gap this codebase has is still open: PostgreSQL RLS as genuine defense-in-depth (Decisions above explains why it needs its own dedicated design pass, not a bolt-on). Absent a decision to take that on, M4's remaining separate items (sandbox scenario catalog, webhook inspector, `publish_case_update`'s Agent-tool wiring) or M5's other named pieces (RBAC roles, consent enforcement) are the next honestly-buildable increments. Not started; awaiting direction.
+
+## M5-002: PostgreSQL row-level security for `webhook_endpoints`/`webhook_deliveries` (Section 20 M5, database layer)
+
+### Status
+
+Implemented and verified for exactly the two tables named in scope: `webhook_endpoints` and `webhook_deliveries`. `loan_cases` and its dependent tables (`evidence_facts`, `loan_conditions`, `condition_transitions`, `agent_runs`, `tool_attempts`, `outbox_events`, `case_policy_bindings`, `case_policy_snapshots`) are deliberately out of scope — explicit user decision, not an oversight (see Decisions). This is the "database layer" third of Section 20 M5's own exit evidence, closing the gap M5-001 named and deferred: "cross-tenant tests fail closed at API, service, **and database** layers."
+
+Real, working PostgreSQL RLS — but it is only real when the connecting role is not a superuser, and this codebase's own default `DATABASE_URL` convention connects as one. This is stated with full prominence in Known gaps, not softened: shipping RLS policies that are correct SQL but inert under the project's own documented default setup would itself be exactly the kind of overclaim this project's standing "never fabricate coverage for a capability with no real backing subsystem" rule exists to prevent.
+
+### Acceptance criterion
+
+Section 20's M5 exit evidence, database-layer third: a cross-tenant query against `webhook_endpoints`/`webhook_deliveries` fails closed (returns zero rows / affects zero rows) at the PostgreSQL level itself, independent of whether any application code remembered to add a `WHERE tenantId = ...` clause. Proven by `src/webhooks/webhook-tenant-isolation.spec.ts` against a real, dedicated, non-superuser Postgres role — the only way to actually exercise what `FORCE ROW LEVEL SECURITY` enforces for a genuinely restricted role, since a superuser connection would pass every one of these tests trivially by bypassing the policy entirely, proving nothing.
+
+### Implementation
+
+- `src/database/tenant-context.ts` (new) — `runInTenantContext(dataSource, tenantId, work)` and `runWithRlsBypass(dataSource, work)`. Both wrap `dataSource.transaction()` and call `manager.query("SELECT set_config($1, $2, true)", [...])` — `set_config` rather than a raw `SET LOCAL` specifically because `SET` doesn't accept bound parameters (`set_config` does, so there's no string-interpolation injection surface even though `tenantId` is always a validated UUID in practice) — with `is_local = true`, i.e. `SET LOCAL` semantics: the setting reverts at transaction end regardless of commit/rollback, so it can never leak across a pooled connection into an unrelated later request. Code that calls neither helper sees zero rows on an RLS-protected table by construction, including this codebase's own future bugs, not only a hostile external caller.
+- `src/database/migrations/1787069708184-WebhookTenantIsolation.ts` (new) — for each of `webhook_endpoints`/`webhook_deliveries`: `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` (the part that matters as much as `ENABLE` — without it, the table owner, i.e. the role every migration in this codebase has ever run as, bypasses the policy by Postgres's own default), and one policy: `USING (current_setting('app.bypass_rls', true) = 'true' OR "tenantId" = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)` (the `NULLIF` is a fix for a real bug found mid-slice — see Errors and fixes). `down()` reverses cleanly: drop policy, `NO FORCE`, `DISABLE`.
+- `WebhookEndpointService`/`WebhookDeliveryService` — every method wrapped in `runInTenantContext` with the tenantId the caller already has (from `AuthTenantId()` all the way down from M5-001); `findByIdOrFail` on both now takes `tenantId` as a required first parameter rather than trusting an unscoped id lookup.
+- `WebhookDispatchService` — per-event delivery-row creation and per-delivery status updates use `runInTenantContext` with the tenantId already known from the event/delivery row being processed. `runWithRlsBypass` is used in exactly one place: the "find any tenant's due deliveries" batch scan, which is genuinely cross-tenant by design (a background dispatcher, not a caller-driven request) — the one explicit, auditable exception, not a general escape hatch. `outbox_events` carries no RLS policy this slice, so queries against it are unchanged. The real network `fetch()` in `attemptDelivery()` is deliberately left outside any transaction/tenant-context wrapper — a slow or hanging receiver must not hold a pooled DB connection open for up to its 10s timeout.
+- `src/webhooks/webhook-tenant-isolation.spec.ts` (new) — the actual proof. Creates a dedicated Postgres role (`rls_spec_restricted_role`, `LOGIN ... NOSUPERUSER NOBYPASSRLS`, granted `SELECT/INSERT/UPDATE/DELETE` on just the two tables) via the existing admin connection, then runs every assertion — including fixture creation — through a *second* `DataSource` connected as that role. Seven tests: no-context-no-bypass sees zero rows on both tables despite real rows existing; tenant A's context sees only A; tenant B's context sees only B (including B seeing none of A's deliveries); a direct id lookup across tenants returns null; a cross-tenant `UPDATE` affects zero rows and leaves the real row untouched; a spoofed `INSERT` (row claims tenant A while the session context says tenant B) is rejected by Postgres itself; bypass mode sees every tenant's rows on both tables as the one audited exception.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test ("reverts the webhook tenant isolation migration without touching other tables") inserted as the first revert test (this migration is now the most recently applied). Unlike every other revert test in this file, this migration adds no table, so the assertion checks `pg_class.relrowsecurity`/`relforcerowsecurity` and `pg_policies` directly, before and after the revert, rather than the `tableNames()` list.
+
+### Affected files
+
+- `src/database/tenant-context.ts` (new)
+- `src/database/migrations/1787069708184-WebhookTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/webhooks/webhook-endpoint.service.ts` (+`.spec.ts`), `webhook-delivery.service.ts`, `webhook-dispatch.service.ts` (+`.spec.ts`)
+- `src/webhooks/webhook-tenant-isolation.spec.ts` (new)
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Scope narrowed to `webhook_endpoints`/`webhook_deliveries` only, `loan_cases` and dependents explicitly deferred — a direct user decision, not a default.** When asked, the user chose the narrower option by name. Reason: `loan_cases` and its dependents are written by both the authenticated REST layer (reachable by a potentially malicious external caller, exactly the trust boundary RLS defends) *and* the Temporal worker's `case-conditions.activities.ts` (driven only by already-validated workflow inputs, never directly attacker-reachable — a fundamentally different trust boundary, and this codebase's most extensively built and verified business logic). Forcing RLS there today, with that worker setting neither session variable anywhere, would break the M2/M3 workflow outright rather than protect it.
+- **A dedicated non-superuser role inside the test file, not a project-wide `DATABASE_URL`/role convention change.** The real fix for "RLS should actually protect production traffic" is provisioning the application's actual runtime connection as a non-superuser role — but that's a materially larger, separately-scoped change (touching `docker-compose.yml`, `.env.example`, README, and re-verifying the entire test suite and every migration under restricted privileges, since several existing migrations/scripts may implicitly rely on superuser-level operations). Creating a role scoped to exactly this test proves the *policy logic* is correct without taking on that larger, unapproved-scope change — and is exactly what let the NULLIF bug below surface, which a superuser-only verification path would have hidden forever.
+- **`NULLIF(current_setting(...), '')::uuid`, not a bare cast.** See Errors and fixes — a bare cast throws once any transaction on a reused pooled connection has touched the GUC and ended, which is the normal case for every real request in this codebase, not an edge case.
+- **Fixture creation in the proof spec goes through the restricted role too (via `runInTenantContext`), not the admin superuser connection.** This means the spec also proves `INSERT` is enforced (a policy with no explicit `WITH CHECK` applies its `USING` expression to writes too), not only the `SELECT`-side isolation the majority of the tests exercise.
+
+### Errors and fixes
+
+- **All 7 proof-spec tests failed on the first run, appearing to show RLS wasn't enforced at all — root cause was that the connecting role (`mortgage`, this project's own `DATABASE_URL` role, created via `POSTGRES_USER=mortgage` on the stock `postgres:16-alpine` image) is a Postgres superuser.** Confirmed via `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'mortgage'` → `mortgage | t | t`, and `SET ROLE mortgage; SELECT current_setting('is_superuser')` → `on`. This is documented, non-overridable PostgreSQL behavior — superusers unconditionally bypass row-level security regardless of `FORCE ROW LEVEL SECURITY` — and is a distinct thing from the `rolbypassrls` attribute, which only has any effect for non-superuser roles. Fixed the *test's* methodology, not the policy: created a dedicated `rls_spec_restricted_role` (`NOSUPERUSER NOBYPASSRLS`) and ran every assertion through a connection authenticated as it. This does not fix the underlying real-world gap — see Known gaps.
+- **Once genuinely running under the restricted role, a second, independent, previously-invisible bug surfaced: `current_setting('app.current_tenant_id', true)::uuid` threw `invalid input syntax for type uuid: ""` instead of matching zero rows.** Root cause: for a custom (non-built-in) Postgres GUC, `current_setting(name, missing_ok=true)` returns `NULL` only if the setting has *never* been touched in that session; once any transaction on that connection has `SET LOCAL`'d it and ended, the placeholder reverts to `''` (empty string), not `NULL`, for the rest of that connection's life. TypeORM's connection pool reuses connections across unrelated `transaction()` calls, so this is the normal steady-state on any real pooled connection after its first tenant-scoped query, not a rare edge case — every one of this codebase's own real requests would eventually hit it. This bug was completely invisible while testing under the superuser role, because the policy expression was never evaluated at all in that configuration — direct evidence for why the superuser-masking issue above had to be fixed first, not worked around. Fixed with `NULLIF(current_setting(...), '')::uuid` (`NULLIF` turns `''` into `NULL` before the cast; `NULL::uuid` never errors). Verified by re-running the full proof spec (7/7 pass) and the cumulative migration spec (fresh-database apply, confirming the fix is in the migration file itself, not just live-patched onto the already-running scratch database it was first found against).
+- **`TypeORMError: Entity metadata for WebhookDelivery#outboxEvent was not found`** the first time the proof spec's second `DataSource` (the restricted-role one) was split out from the original single admin connection — `WebhookDelivery` has a real `@ManyToOne(() => OutboxEvent)` relation, so TypeORM needs `OutboxEvent` in that `DataSource`'s own `entities` array to resolve the relation target during metadata build, even though the restricted role is never granted any privilege on `outbox_events` and no query through that connection ever touches it. Fixed by adding `OutboxEvent` to the restricted `DataSource`'s entity list.
+- **`role "rls_spec_restricted_role" cannot be dropped because some objects depend on it`** on a re-run after an earlier interrupted attempt (the one that hit the entity-metadata error above) left the role behind still holding its `GRANT`s. A plain `DROP ROLE IF EXISTS` doesn't revoke a role's existing grants first. Fixed by checking `pg_roles` for the role's existence and, if found, `REVOKE ALL ... FROM role` then `DROP OWNED BY role` before `DROP ROLE` — both in the spec's `beforeAll` (defensive cleanup of a prior interrupted run) and its `afterAll` (normal cleanup), and hardened `afterAll` to skip the `outbox_events` cleanup delete if `beforeAll` never got far enough to create the fixture row (the direct cause of a second, cascading `Cannot read properties of undefined (reading 'id')` failure observed alongside the role-drop error).
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after `npm run lint` auto-fixed
+formatting in the new spec file)
+  both passed clean
+
+Migration (m5002-verify scratch stack, ports 5443/7234, still running
+at the time this entry was written):
+  migration:run applied WebhookTenantIsolation1787069708184 cleanly on
+  top of ApiClients1787065685817
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    20/20 passed (19 -> 20: +1 new revert test, asserting
+    pg_class/pg_policies state directly since this migration adds no
+    table)
+
+  DATABASE_URL=... npx jest webhook-tenant-isolation --runInBand
+    7/7 passed, against a dedicated non-superuser role — the actual
+    proof RLS enforces anything; failed 7/7 on the first attempt
+    against the superuser role, then failed 2/7 after switching roles
+    (the NULLIF bug), then 1/7 (leftover rows from earlier failed
+    dev-loop attempts, cleared with a manual TRUNCATE), then 7/7 clean
+
+  DATABASE_URL=... npx jest webhook-endpoint.service.spec.ts
+  webhook-dispatch.service.spec.ts --runInBand
+    7/7 passed against the refactored, tenant-context-wrapped services
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand
+  --no-cache --silent
+    59 suites passed, 385 tests passed
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 23 tests passed (unchanged from M5-001 — this
+    slice didn't touch the HTTP-layer contract, only what happens
+    underneath it)
+
+No separate manual live-curl verification this slice — see Known
+gaps for why running the real API against this project's own default
+DATABASE_URL role couldn't have demonstrated real enforcement anyway
+(that role bypasses RLS entirely), and the e2e suite already exercises
+the real Nest app + real Postgres at the HTTP layer with no regression.
+```
+
+### Security, privacy, cost, and compatibility
+
+- Genuine defense-in-depth **when the connecting role is correctly configured**: a future bug in `WebhookEndpointService`/`WebhookDispatchService` that forgot a `WHERE tenantId = ...` clause would, under a real non-superuser application role, still return zero rows rather than another tenant's data — the database enforces the boundary independent of the application code's own correctness.
+- **Under this project's own current default configuration (the `mortgage` role, superuser), that protection does not exist today** — see Known gaps. This is the central honesty point of this entry.
+- No performance concern worth noting: the policy is a single indexed-equality-or-flag check, evaluated per-row by Postgres's existing query planner, same order of cost as the `WHERE tenantId = ...` clauses the application code already issues.
+- No new secrets introduced in application configuration; the test-scoped restricted role's password is a hardcoded, throwaway, non-production string that only ever exists inside the disposable scratch database for the duration of one test run.
+
+### Known gaps
+
+- **This codebase's own default `DATABASE_URL` convention (`docker-compose.yml`, `.env.example`, and by extension any real deployment following this project's own documented setup) connects as a PostgreSQL superuser, and PostgreSQL superusers unconditionally bypass row-level security.** That means the RLS policies added this slice — while correctly written and proven to work under a genuinely restricted role — provide **zero actual protection today** against `webhook_endpoints`/`webhook_deliveries` cross-tenant access via this codebase's own real running application. This is not a hedge or a footnote: shipping "RLS support" that's silently inert in the default configuration would itself be the kind of overclaim this project's standing rule against fabricating coverage exists to prevent, so it's stated here at full prominence. The concrete fix — provisioning the application's actual runtime connection as a non-superuser, non-`BYPASSRLS` role with only the grants it needs — is real, scoped, separate follow-up work, not attempted this slice (see Next safe step).
+- `loan_cases` and its dependent tables have no RLS policy at all — explicitly, deliberately deferred per the user's own scope decision (see Decisions), not an oversight. M5's own exit evidence ("database layer") is therefore only partially met: true for two tables, not yet true for the case-conditions core.
+- `outbox_events` carries no RLS policy this slice, even though `webhook_deliveries` (which does) references it by foreign key — reading an outbox event's payload during dispatch is unrestricted by tenant at the database level (the application code still scopes it correctly, same as before this slice).
+- No live manual verification against a real running API + worker under a correctly non-superuser role — the scratch stack used throughout this slice still connects as the same superuser `mortgage` role every other slice has used, so a live check would only have reconfirmed "the app still works," not "RLS enforces anything," and would have been a wasted verification cycle rather than added evidence.
+- The restricted test role, and the fixture data it creates, live only inside disposable scratch databases created and destroyed by the spec's own `beforeAll`/`afterAll` — nothing persists outside a single test run.
+
+### Next safe step
+
+The concrete, scoped next step this entry's Known gaps point to directly: provision this project's actual application `DATABASE_URL` role as a real non-superuser, non-`BYPASSRLS` role with only the grants the application needs, so these policies (and any future ones) protect real traffic, not just a hand-built test role. That's a genuinely separate unit of work — it touches `docker-compose.yml`, `.env.example`, README, the migration CLI's own connection, and requires re-verifying every existing migration and script under restricted privileges, since some may currently rely on superuser-level operations without anyone having had a reason to notice. Absent a decision to take that on, extending RLS to `loan_cases` and dependents (which requires first threading tenant-context/bypass discipline through every `case-conditions.activities.ts` activity — its own separately-scoped, higher-regression-risk effort) or M5's other still-open items (RBAC roles, consent enforcement, OIDC) are the next honestly-buildable increments. Not started; awaiting direction.

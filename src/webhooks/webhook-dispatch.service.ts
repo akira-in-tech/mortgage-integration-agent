@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import {
   WebhookDelivery,
@@ -9,6 +9,10 @@ import {
 import { WebhookDeliveryStatus } from '../database/enums/webhook.enum';
 import { WebhookEndpointService } from './webhook-endpoint.service';
 import { signWebhookDelivery } from './webhook-signer';
+import {
+  runInTenantContext,
+  runWithRlsBypass,
+} from '../database/tenant-context';
 
 /** Bounds how much work one `dispatchPendingEvents()` call does — a real production safety property (Worker service, Section 12.1's "webhook delivery"), not an arbitrary test convenience. */
 const EVENT_BATCH_SIZE = 50;
@@ -43,6 +47,15 @@ export interface DispatchPendingEventsResult {
  * execution guarantees, since a `WebhookDelivery` row already *is* the
  * durable record of what's been attempted and what's still due; a crash
  * between attempts loses nothing, the next poll just picks it back up).
+ *
+ * `webhook_endpoints`/`webhook_deliveries` carry a real RLS policy
+ * (M5-002). Every query against them here uses `runInTenantContext` with
+ * a tenantId this method already knows (the outbox event's own, or the
+ * delivery's own) — `runWithRlsBypass` (an explicit, audited
+ * cross-tenant opt-out) is used exactly once, for the one query that
+ * is genuinely cross-tenant by design: scanning for *any* tenant's due
+ * deliveries. `outbox_events` itself carries no RLS policy this slice, so
+ * queries against it are unwrapped, same as before.
  */
 @Injectable()
 export class WebhookDispatchService {
@@ -51,8 +64,8 @@ export class WebhookDispatchService {
   constructor(
     @InjectRepository(OutboxEvent)
     private readonly outboxRepository: Repository<OutboxEvent>,
-    @InjectRepository(WebhookDelivery)
-    private readonly deliveryRepository: Repository<WebhookDelivery>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly endpointService: WebhookEndpointService,
   ) {}
 
@@ -73,45 +86,59 @@ export class WebhookDispatchService {
           event.tenantId,
           event.eventType,
         );
-      for (const endpoint of endpoints) {
-        const existing = await this.deliveryRepository.findOneBy({
-          outboxEventId: event.id,
-          webhookEndpointId: endpoint.id,
-        });
-        if (!existing) {
-          await this.deliveryRepository.save(
-            this.deliveryRepository.create({
-              tenantId: event.tenantId,
-              webhookEndpointId: endpoint.id,
+      // This event's own tenant is already known — scope the delivery
+      // rows to it directly rather than reaching for the bypass helper.
+      await runInTenantContext(
+        this.dataSource,
+        event.tenantId,
+        async (manager) => {
+          const deliveryRepo = manager.getRepository(WebhookDelivery);
+          for (const endpoint of endpoints) {
+            const existing = await deliveryRepo.findOneBy({
               outboxEventId: event.id,
-              eventType: event.eventType,
-              status: WebhookDeliveryStatus.PENDING,
-              attempts: [],
-              nextAttemptAt: null,
-            }),
-          );
-        }
-      }
+              webhookEndpointId: endpoint.id,
+            });
+            if (!existing) {
+              await deliveryRepo.save(
+                deliveryRepo.create({
+                  tenantId: event.tenantId,
+                  webhookEndpointId: endpoint.id,
+                  outboxEventId: event.id,
+                  eventType: event.eventType,
+                  status: WebhookDeliveryStatus.PENDING,
+                  attempts: [],
+                  nextAttemptAt: null,
+                }),
+              );
+            }
+          }
+        },
+      );
       // "Published" means handed off to the webhook subsystem (delivery
       // rows created for every currently-subscribed endpoint) — the same
       // meaning the transactional-outbox pattern always gives this field,
-      // not "successfully delivered to every subscriber."
+      // not "successfully delivered to every subscriber." outbox_events
+      // has no RLS policy this slice, so this stays a plain query.
       await this.outboxRepository.update(
         { id: event.id },
         { publishedAt: now },
       );
     }
 
-    const due = await this.deliveryRepository.find({
-      where: [
-        { status: WebhookDeliveryStatus.PENDING, nextAttemptAt: IsNull() },
-        {
-          status: WebhookDeliveryStatus.PENDING,
-          nextAttemptAt: LessThanOrEqual(now),
-        },
-      ],
-      take: DELIVERY_BATCH_SIZE,
-    });
+    // Genuinely cross-tenant by design — the one place this file needs
+    // the explicit bypass rather than a known tenantId.
+    const due = await runWithRlsBypass(this.dataSource, (manager) =>
+      manager.getRepository(WebhookDelivery).find({
+        where: [
+          { status: WebhookDeliveryStatus.PENDING, nextAttemptAt: IsNull() },
+          {
+            status: WebhookDeliveryStatus.PENDING,
+            nextAttemptAt: LessThanOrEqual(now),
+          },
+        ],
+        take: DELIVERY_BATCH_SIZE,
+      }),
+    );
 
     for (const delivery of due) {
       await this.attemptDelivery(delivery, now);
@@ -125,8 +152,10 @@ export class WebhookDispatchService {
     now: Date,
   ): Promise<void> {
     const endpoint = await this.endpointService.findByIdOrFail(
+      delivery.tenantId,
       delivery.webhookEndpointId,
     );
+    // outbox_events has no RLS policy this slice — plain query, unchanged.
     const event = await this.outboxRepository.findOneByOrFail({
       id: delivery.outboxEventId,
     });
@@ -146,6 +175,9 @@ export class WebhookDispatchService {
       endpoint.secret,
     );
 
+    // Deliberately no open transaction/connection held across this call —
+    // a slow or hanging receiver must not tie up a pooled DB connection
+    // for up to DELIVERY_TIMEOUT_MS.
     let httpStatusCode: number | null = null;
     let outcome: 'SUCCEEDED' | 'FAILED';
     let errorMessage: string | undefined;
@@ -200,9 +232,10 @@ export class WebhookDispatchService {
       nextAttemptAt = new Date(now.getTime() + backoffMs(attemptNumber));
     }
 
-    await this.deliveryRepository.update(
-      { id: delivery.id },
-      { attempts, status, nextAttemptAt },
+    await runInTenantContext(this.dataSource, delivery.tenantId, (manager) =>
+      manager
+        .getRepository(WebhookDelivery)
+        .update({ id: delivery.id }, { attempts, status, nextAttemptAt }),
     );
   }
 }

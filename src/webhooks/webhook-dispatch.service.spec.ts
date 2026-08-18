@@ -87,12 +87,10 @@ describeOrSkip('WebhookDispatchService', () => {
       entities: [OutboxEvent, WebhookEndpoint, WebhookDelivery],
     });
     await dataSource.initialize();
-    endpointService = new WebhookEndpointService(
-      dataSource.getRepository(WebhookEndpoint),
-    );
+    endpointService = new WebhookEndpointService(dataSource);
     dispatchService = new WebhookDispatchService(
       dataSource.getRepository(OutboxEvent),
-      dataSource.getRepository(WebhookDelivery),
+      dataSource,
       endpointService,
     );
   });

@@ -187,6 +187,103 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the webhook tenant isolation migration without touching other tables', async () => {
+    // This migration adds/removes no table — only RLS state and a policy
+    // on two existing tables — so the assertions here check pg_class/
+    // pg_policies directly rather than the tableNames() list.
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('webhook_endpoints', 'webhook_deliveries') AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'webhook_deliveries',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'webhook_endpoints',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('webhook_endpoints', 'webhook_deliveries')
+         ORDER BY tablename`,
+      );
+    expect(beforePolicies).toEqual([
+      { tablename: 'webhook_deliveries', policyname: 'tenant_isolation' },
+      { tablename: 'webhook_endpoints', policyname: 'tenant_isolation' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('webhook_endpoints', 'webhook_deliveries') AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'webhook_deliveries',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'webhook_endpoints',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies = await scratchDataSource.query(
+      `SELECT tablename, policyname FROM pg_policies
+       WHERE tablename IN ('webhook_endpoints', 'webhook_deliveries')`,
+    );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the api clients migration without touching other tables', async () => {
     await scratchDataSource.undoLastMigration();
 
