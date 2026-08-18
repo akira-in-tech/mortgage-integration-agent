@@ -240,6 +240,7 @@ describeOrSkip(
       overrides: Partial<{
         statedMonthlyIncome: number;
         jurisdictionCode: string;
+        loanType: LoanType;
       }> = {},
     ): Promise<string> {
       const caseRepo = dataSource.getRepository(LoanCase);
@@ -249,7 +250,7 @@ describeOrSkip(
           idempotencyKey: `lgr-spec-${Date.now()}-${Math.random()}`,
           borrowerId: 'lgr-spec-borrower',
           requestedAmount: 300_000,
-          loanType: LoanType.CONVENTIONAL,
+          loanType: overrides.loanType ?? LoanType.CONVENTIONAL,
           statedMonthlyIncome: overrides.statedMonthlyIncome ?? 9000,
           jurisdictionCode: overrides.jurisdictionCode ?? JURISDICTION_CODE,
           status: CaseStatus.COLLECTING_EVIDENCE,
@@ -353,6 +354,41 @@ describeOrSkip(
         .getRepository(LoanCondition)
         .find({ where: { caseId } });
       expect(conditions).toHaveLength(0);
+
+      // M3-022 (Section 20's exit evidence F): a completed DSL evaluation
+      // that finds nothing applicable still gets a real, evidence-backed
+      // manifest — not only evaluations that go on to open a condition.
+      const manifests = await dataSource
+        .getRepository(EvaluationInputManifest)
+        .find({ where: { caseId } });
+      expect(manifests).toHaveLength(1);
+      expect(manifests[0].policyBindingId).not.toBeNull();
+      expect(manifests[0].evidenceRefs).toHaveLength(1);
+    });
+
+    it('assembles a manifest with no evidence when no policy version is even applicable to the case (M3-022)', async () => {
+      // FHA_MORTGAGE has no seeded applicability row in this fixture set
+      // (only CONVENTIONAL_MORTGAGE does) — a real, resolved "nothing
+      // applies here" outcome, distinct from an unresolved ambiguity.
+      const caseId = await makeCase({ loanType: LoanType.FHA });
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+
+      const result = await runtime.run(makeInput(makeInitialState(caseId)));
+
+      expect(result.route).toBe('PROPOSED_ACTION');
+      const conditions = await dataSource
+        .getRepository(LoanCondition)
+        .find({ where: { caseId } });
+      expect(conditions).toHaveLength(0);
+
+      const manifests = await dataSource
+        .getRepository(EvaluationInputManifest)
+        .find({ where: { caseId } });
+      expect(manifests).toHaveLength(1);
+      expect(manifests[0].policyBindingId).not.toBeNull();
+      expect(manifests[0].evidenceRefs).toEqual([]);
     });
 
     it('proposes and executes create_condition when income diverges from evidence, populating policySnapshotId', async () => {

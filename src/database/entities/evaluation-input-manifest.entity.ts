@@ -22,11 +22,20 @@ export interface EvaluationManifestEvidenceRef {
  * Agent's own `consentStatus` is itself a hardcoded 'VALID' placeholder —
  * see `lending-operations-agent-runtime.ts` — so there is no real consent
  * *version* to reference). `calculationRefs` stays empty for the same
- * reason: no calculation subsystem exists. Persisted once per evaluation
- * that goes on to justify a condition write — `create-condition.tool.ts`'s
- * own compare-and-swap on `LoanCase.version` remains the actual
- * enforcement; this table is the durable, evidence-backed audit record of
- * exactly what that evaluation read, not a new gate.
+ * reason: no calculation subsystem exists. Persisted once per completed
+ * DSL evaluation (`resolveOutcomeNode`, `lending-operations-agent-runtime
+ * .ts`) — every one, not only evaluations that go on to open a condition
+ * (M3-022 broadened this from the original M3-014 scope, per Section
+ * 18.3's release gate: "evaluations without a valid immutable input
+ * manifest accepted: 0"). `create-condition.tool.ts`'s own
+ * compare-and-swap on `LoanCase.version` remains the actual write-time
+ * enforcement for the subset of evaluations that do open a condition;
+ * this table is the durable, evidence-backed audit record of exactly
+ * what every evaluation read, not a new gate. The one deliberate
+ * exception: an evaluation that resolves `REVIEW_REQUIRED` (policy-
+ * applicability ambiguity) never gets a manifest, because no binding
+ * exists yet to have read from — see `lending-operations-agent-runtime
+ * .ts`'s own comment on that branch.
  */
 @Entity('evaluation_input_manifests')
 @Index('IDX_evaluation_input_manifests_case', ['tenantId', 'caseId'])

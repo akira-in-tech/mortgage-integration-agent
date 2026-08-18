@@ -4291,3 +4291,84 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 Continuing the user-directed remaining M3 exit-evidence gaps: extending `EvaluationInputManifest` assembly to every evaluation outcome, not only ones that open a condition (exit evidence F, currently partial), is next.
+
+## M3-022: Manifest on every evaluation, not only condition-opening ones (Section 20 exit evidence F)
+
+### Status
+
+Implemented and verified. `EvaluationInputManifest` is now assembled for every completed DSL evaluation in `resolveOutcomeNode` — a case whose evidence matches expectations, or whose loan product has no applicable policy at all, now gets a real, evidence-backed manifest exactly like a case that opens a condition does. Only one outcome remains unmanifested, deliberately: an evaluation that resolves `REVIEW_REQUIRED` (policy-applicability ambiguity), because no binding exists yet for a manifest to reference.
+
+### Acceptance criterion
+
+Section 20's exit evidence F: "every evaluation reads one immutable input manifest," reinforced by Section 18.3's release gate: "evaluations without a valid immutable input manifest accepted: 0." Before this slice, `EvaluationInputManifest` (M3-014) was only assembled immediately before a `create_condition` call — an evaluation that checked evidence and correctly found nothing worth flagging left no audit-backed record of what it read, only the narrower `expectedCaseVersion` compare-and-swap check.
+
+### Implementation
+
+- `resolveOutcomeNode` (`lending-operations-agent-runtime.ts`) restructured so manifest assembly happens for every completed DSL evaluation outcome, not only the one that leads to `create_condition`:
+  - `evaluation.matchedVersions.length === 0` (a resolved, non-ambiguous "no policy applies to this product/jurisdiction/lifecycle" outcome — e.g. a loan product with no seeded rule) now assembles a manifest with empty `evidenceRefs` (nothing was read, since there was nothing to check) before returning `PROPOSED_ACTION` with no condition.
+  - The case where matched policy versions exist but none of their DSL conditions actually matched the case's real evidence (a genuine "checked and it's fine" outcome) now assembles a manifest referencing the evidence that *was* read, in the same place the manifest used to be built only for the matched case — moved earlier so it covers both outcomes uniformly.
+  - The already-existing condition-opening path is unchanged in effect (still references the same manifest via `evaluationManifestId`), just now shares the single assembly call site with the no-match path instead of duplicating it.
+- The one deliberate exception: `evaluatePolicyNode`'s `REVIEW_REQUIRED` branch still assembles no manifest, because `PolicyEvaluationService` never creates a binding for an ambiguous resolution — `policyBindingId` (a required manifest field) would have nothing real to reference. Documented in both the branch's own comment and the entity's class comment, not silently left inconsistent.
+
+### Affected files
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/database/entities/evaluation-input-manifest.entity.ts` (comment update only — no schema change)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **No schema change.** `EvaluationInputManifest`'s shape was already general enough (evidence-agnostic — `evidenceRefs` can legitimately be empty) to represent a "nothing applicable" or "checked, nothing matched" outcome; broadening *when* it's assembled needed no new columns.
+- **`REVIEW_REQUIRED` evaluations stay unmanifested, not force-fit with a placeholder `policyBindingId`.** Consistent with this session's standing rule against fabricating a field with no real value to reference — an ambiguous resolution genuinely has no binding, so a manifest claiming one would misrepresent what was actually read.
+- **The no-match manifest for `matchedVersions.length === 0` references zero evidence, not "every fact on the case."** Matches M3-014's own established scoping principle (`evidenceRefs` reflects exactly what the evaluation actually read) — since no rule needed checking, nothing was read, and the manifest says so honestly rather than padding it with unrelated facts.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean, no fixes needed
+
+No new migration — this slice adds no schema, only application code
+and doc-comment updates.
+
+Scratch stack (m3022-verify, ports 5443/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    44 suites passed, 299 tests passed (298 -> 299: +1 new test proving
+    a real manifest with empty evidenceRefs is assembled when no
+    policy version is applicable at all [a case with an unseeded loan
+    product], plus a strengthened assertion on the existing
+    "income matches evidence, no condition" test now also verifying a
+    real evidence-backed manifest was assembled there too)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    16/16 passed (unchanged — no migration this slice)
+
+Manual live verification (real REST API + real Temporal worker):
+  created a case whose stated income closely matches the real Plaid
+  simulator's verified income for its borrowerId (4.9% difference,
+  below the seeded rule's 10% threshold) — the case reached
+  READY_FOR_UNDERWRITING with zero conditions opened, and a direct SQL
+  query confirmed a real evaluation_input_manifests row exists for it,
+  referencing the real policyBindingId and the real INCOME
+  EvidenceFact actually read, with no LoanCondition owning it
+
+  synthetic tenant/case/evidence rows deleted afterward; scratch stack
+  torn down (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface — manifests remain internal audit records, not yet exposed via REST/GraphQL (unchanged from M3-014).
+- No new external dependency, no new provider call. Slightly more write volume per Agent run (one manifest row per evaluation instead of only per condition), acceptable at this codebase's synthetic data volumes.
+
+### Known gaps
+
+- `REVIEW_REQUIRED` evaluations remain unmanifested (see Decisions) — if a future policy-approval workflow needs an audit trail for ambiguous resolutions too, this would need a schema change (a nullable `policyBindingId`) that this slice deliberately didn't make.
+- Still no REST/GraphQL endpoint exposes a manifest directly — reachable only by direct database query, same gap M3-014 already had.
+
+### Next safe step
+
+With H, B, and F all closed this session, the user-directed M3 exit-evidence punch list is complete. What remains open across the broader M3-closure effort: a real token/cost/provider-call budget ledger (still deliberately deferred — no genuine consumer exists), and the ~9 remaining Section 9.4 tools needing real backing subsystems (provider adapters, a calculation engine, a webhook subsystem) — both M4-adjacent scope, not something to close incrementally the way this session's slices did.

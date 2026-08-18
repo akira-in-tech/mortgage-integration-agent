@@ -357,6 +357,11 @@ export function createLendingOperationsAgentRuntime(
         }
         const result = invocation.result as EvaluatePolicyResult;
         if (result.status === 'REVIEW_REQUIRED') {
+          // No `EvaluationInputManifest` here (M3-022's own scope
+          // boundary, see that entity's comment): REVIEW_REQUIRED means
+          // no binding was created for this ambiguous resolution — a
+          // manifest without a real `policyBindingId` to reference would
+          // have nothing genuine to read from.
           return routeMandatoryReview(
             nextState,
             classifyMandatoryReviewTrigger(
@@ -379,7 +384,26 @@ export function createLendingOperationsAgentRuntime(
 
         const stepped = consumeStep(state.agentState);
         const evaluation = state.policyEvaluation!;
+
+        // Section 20's exit evidence F / Section 18.3 ("evaluations
+        // without a valid immutable input manifest accepted: 0"): every
+        // completed DSL evaluation gets a manifest now, not only ones
+        // that go on to open a condition (M3-022) — this branch has no
+        // applicable rule to check evidence against, so the manifest
+        // simply references no evidence, but the evaluation itself (and
+        // the real policyBindingId/digest it read) is still real and
+        // worth an audit-backed record.
         if (evaluation.matchedVersions.length === 0) {
+          await deps.evaluationManifestService.assemble({
+            tenantId: toolContext.tenantId,
+            caseId: toolContext.caseId,
+            caseVersion: state.agentState.caseVersion,
+            policyBindingId: state.agentState.policyBindingId!,
+            observedPolicyDependencyDigest:
+              evaluation.observedPolicyDependencyDigest!,
+            evaluatorVersion: RESOLVER_VERSION,
+            evidence: [],
+          });
           return { agentState: stepped, route: 'PROPOSED_ACTION' };
         }
 
@@ -413,13 +437,12 @@ export function createLendingOperationsAgentRuntime(
           }))
           .find(({ result }) => result.matched);
 
-        if (!match) {
-          return { agentState: stepped, route: 'PROPOSED_ACTION' };
-        }
-
-        // Section 10.5: assembled right before the condition write it
-        // justifies, referencing exactly the evidence this evaluation
-        // actually read (`latestIncomeFact`), not every fact on the case.
+        // Section 10.5: assembled right after the DSL evaluation
+        // completes, referencing exactly the evidence this evaluation
+        // actually read (`latestIncomeFact`), not every fact on the
+        // case — whether or not a rule ended up matching, since a
+        // "checked and nothing applied" outcome is still a real,
+        // completed evaluation Section 18.3's gate covers.
         const manifest = await deps.evaluationManifestService.assemble({
           tenantId: toolContext.tenantId,
           caseId: toolContext.caseId,
@@ -430,6 +453,10 @@ export function createLendingOperationsAgentRuntime(
           evaluatorVersion: RESOLVER_VERSION,
           evidence: latestIncomeFact ? [latestIncomeFact] : [],
         });
+
+        if (!match) {
+          return { agentState: stepped, route: 'PROPOSED_ACTION' };
+        }
 
         const invocation = await invokeTool(
           registry,
