@@ -4,6 +4,7 @@ import {
   EvidenceType,
 } from '../../database/entities/evidence-fact.entity';
 import { AgentTool } from '../agent-tool.types';
+import { runInTenantContext } from '../../database/tenant-context';
 
 const REQUIRED_FACT_TYPES: EvidenceType[] = [
   EvidenceType.INCOME,
@@ -41,9 +42,14 @@ export function checkCaseCompletenessTool(
     sideEffect: 'NONE',
     approvalBoundary: 'No',
     async execute({ tenantId, caseId }) {
-      const facts = await deps.dataSource.getRepository(EvidenceFact).find({
-        where: { tenantId, caseId },
-      });
+      const facts = await runInTenantContext(
+        deps.dataSource,
+        tenantId,
+        (manager) =>
+          manager
+            .getRepository(EvidenceFact)
+            .find({ where: { tenantId, caseId } }),
+      );
       const present = new Set(facts.map((f) => f.factType));
       const missingFactTypes = REQUIRED_FACT_TYPES.filter(
         (type) => !present.has(type),

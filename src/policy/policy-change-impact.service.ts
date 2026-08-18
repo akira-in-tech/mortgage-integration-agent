@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
@@ -11,6 +11,10 @@ import { PolicyApplicabilityResolverService } from './policy-applicability-resol
 import { loanTypeToProductCode } from './product-code';
 import { UNDERWRITING_REVIEW_LIFECYCLE_EVENT } from './lifecycle-events';
 import { PolicyResolutionResult } from './policy-resolution.types';
+import {
+  runInTenantContext,
+  runWithRlsBypass,
+} from '../database/tenant-context';
 
 function classifyImpact(
   priorSnapshot: CasePolicySnapshot,
@@ -67,10 +71,10 @@ export class PolicyChangeImpactService {
     private readonly bindingRepository: Repository<CasePolicyBinding>,
     @InjectRepository(CasePolicySnapshot)
     private readonly snapshotRepository: Repository<CasePolicySnapshot>,
-    @InjectRepository(LoanCase)
-    private readonly caseRepository: Repository<LoanCase>,
     @InjectRepository(PolicyChangeImpactAssessment)
     private readonly assessmentRepository: Repository<PolicyChangeImpactAssessment>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly resolver: PolicyApplicabilityResolverService,
   ) {}
 
@@ -91,9 +95,17 @@ export class PolicyChangeImpactService {
       }
       seenTriples.add(tripleKey);
 
-      const candidateCases = await this.caseRepository.find({
-        where: { jurisdictionCode: applicability.jurisdictionCode },
-      });
+      // Genuinely cross-tenant by design (Section 10.6: "applicability
+      // index finds potentially affected open cases" across the whole
+      // catalog, not one tenant's own) — the same explicit, audited
+      // bypass WebhookDispatchService's due-delivery scan uses.
+      const candidateCases = await runWithRlsBypass(
+        this.dataSource,
+        (manager) =>
+          manager.getRepository(LoanCase).find({
+            where: { jurisdictionCode: applicability.jurisdictionCode },
+          }),
+      );
       const affectedCases = candidateCases.filter(
         (c) => loanTypeToProductCode(c.loanType) === applicability.productCode,
       );
@@ -132,10 +144,15 @@ export class PolicyChangeImpactService {
     caseId: string,
     policyVersionId: string,
   ): Promise<PolicyChangeImpactAssessment | null> {
-    const loanCase = await this.caseRepository.findOneByOrFail({
-      id: caseId,
+    const loanCase = await runInTenantContext(
+      this.dataSource,
       tenantId,
-    });
+      (manager) =>
+        manager.getRepository(LoanCase).findOneByOrFail({
+          id: caseId,
+          tenantId,
+        }),
+    );
     return this.assessOneCase(loanCase, {
       policyVersionId,
       jurisdictionCode: loanCase.jurisdictionCode,

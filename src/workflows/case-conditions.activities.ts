@@ -31,6 +31,7 @@ import { ProviderAuthorizationService } from '../provider-platform/provider-auth
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { dispatchProviderRequest } from '../provider-platform/dispatch-provider-request';
 import { ProviderCapability } from '../provider-platform/types';
+import { runInTenantContext } from '../database/tenant-context';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -134,10 +135,14 @@ async function callProviderWithRetryClassification<T>(
  * `evaluateLoan` path (`src/agent/agent.service.ts`) still calls
  * directly, unchanged.
  *
- * Every domain write below runs inside `dataSource.transaction()` alongside
- * the outbox event(s) it produces, so a committed state change and its
- * event can never diverge (Section 9.5: "COMMIT STATE AND OUTBOX EVENT";
- * M2 scope: "transactional outbox and signed status event foundation").
+ * Every domain write below runs inside `runInTenantContext()` (M5-004) —
+ * a `dataSource.transaction()` that also sets this activity's own
+ * tenantId as the session's RLS context, alongside the outbox event(s)
+ * it produces, so a committed state change and its event can never
+ * diverge (Section 9.5: "COMMIT STATE AND OUTBOX EVENT"; M2 scope:
+ * "transactional outbox and signed status event foundation") and can
+ * never touch a row RLS on `loan_cases`/`evidence_facts`/
+ * `outbox_events`/`condition_transitions` would reject.
  */
 export function createCaseConditionsActivities(
   deps: CaseConditionsActivitiesDeps,
@@ -228,7 +233,7 @@ export function createCaseConditionsActivities(
 
   return {
     async markCollectingEvidence({ tenantId, caseId }: CaseRef): Promise<void> {
-      await dataSource.transaction(async (manager) => {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
         await manager
           .getRepository(LoanCase)
           .update(
@@ -262,7 +267,7 @@ export function createCaseConditionsActivities(
           }),
         'plaid-simulator',
       );
-      await dataSource.transaction((manager) =>
+      await runInTenantContext(dataSource, tenantId, (manager) =>
         recordEvidence(manager, {
           tenantId,
           caseId,
@@ -292,7 +297,7 @@ export function createCaseConditionsActivities(
           }),
         'credit-bureau-simulator',
       );
-      await dataSource.transaction((manager) =>
+      await runInTenantContext(dataSource, tenantId, (manager) =>
         recordEvidence(manager, {
           tenantId,
           caseId,
@@ -325,7 +330,7 @@ export function createCaseConditionsActivities(
           ),
         'document-verification-simulator',
       );
-      await dataSource.transaction((manager) =>
+      await runInTenantContext(dataSource, tenantId, (manager) =>
         recordEvidence(manager, {
           tenantId,
           caseId,
@@ -355,9 +360,14 @@ export function createCaseConditionsActivities(
       caseId,
       workflowRunId,
     }: EvaluateConditionsInput): Promise<EvaluateConditionsResult> {
-      const loanCase = await dataSource
-        .getRepository(LoanCase)
-        .findOneByOrFail({ id: caseId, tenantId });
+      const loanCase = await runInTenantContext(
+        dataSource,
+        tenantId,
+        (manager) =>
+          manager
+            .getRepository(LoanCase)
+            .findOneByOrFail({ id: caseId, tenantId }),
+      );
 
       const now = new Date();
       const runDeadlineAt = new Date(
@@ -410,7 +420,7 @@ export function createCaseConditionsActivities(
           if (conditionId) {
             return { outcome: 'CONDITION_OPENED', conditionId };
           }
-          await dataSource.transaction((manager) =>
+          await runInTenantContext(dataSource, tenantId, (manager) =>
             finalizeReadyForUnderwriting(manager, {
               tenantId,
               caseId,
@@ -458,7 +468,7 @@ export function createCaseConditionsActivities(
           ? ConditionStatus.SATISFIED
           : ConditionStatus.WAIVED;
 
-      await dataSource.transaction(async (manager) => {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
         const conditionRepo = manager.getRepository(LoanCondition);
         const condition = await conditionRepo.findOneByOrFail({
           id: conditionId,
@@ -495,7 +505,7 @@ export function createCaseConditionsActivities(
       tenantId,
       caseId,
     }: CaseRef): Promise<void> {
-      await dataSource.transaction((manager) =>
+      await runInTenantContext(dataSource, tenantId, (manager) =>
         finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
       );
     },
@@ -512,7 +522,7 @@ export function createCaseConditionsActivities(
       caseId,
       reason,
     }: CaseRef & { reason: string }): Promise<void> {
-      await dataSource.transaction(async (manager) => {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
         await manager
           .getRepository(LoanCase)
           .update(
@@ -541,7 +551,7 @@ export function createCaseConditionsActivities(
       caseId,
       reason,
     }: CaseRef & { reason: string }): Promise<void> {
-      await dataSource.transaction(async (manager) => {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
         await manager
           .getRepository(LoanCase)
           .update(

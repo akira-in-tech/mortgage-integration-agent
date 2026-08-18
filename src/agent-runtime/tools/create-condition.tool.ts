@@ -7,6 +7,7 @@ import {
 import { writeOutboxEvent } from '../../database/outbox/outbox-writer';
 import { OutboxEventType } from '../../database/outbox/outbox-event-types';
 import { AgentTool } from '../agent-tool.types';
+import { runInTenantContext } from '../../database/tenant-context';
 
 export interface CreateConditionArgs {
   code: string;
@@ -92,7 +93,7 @@ export function createConditionTool(
     sideEffect: 'CASE_MUTATION',
     approvalBoundary: 'Validated binding and evaluation required',
     async execute({ tenantId, caseId }, args) {
-      return deps.dataSource.transaction(async (manager) => {
+      return runInTenantContext(deps.dataSource, tenantId, async (manager) => {
         const caseRepo = manager.getRepository(LoanCase);
         const currentCase = await caseRepo.findOneByOrFail({
           id: caseId,

@@ -92,8 +92,8 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(CasePolicyBinding),
       dataSource.getRepository(CasePolicySnapshot),
-      dataSource.getRepository(LoanCase),
       dataSource.getRepository(PolicyChangeImpactAssessment),
+      dataSource,
       resolver,
     );
     transitionApprovalService = new PolicyTransitionApprovalService(

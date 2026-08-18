@@ -21,10 +21,14 @@ const BASE_DTO: CreateCaseDto = {
 };
 
 describe('CasesService', () => {
-  let caseRepo: { findOneBy: jest.Mock; findOneByOrFail: jest.Mock };
+  let caseRepo: {
+    findOneBy: jest.Mock;
+    findOneByOrFail: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
   let tenantRepo: { findOneBy: jest.Mock };
   let jurisdictionRepo: { findOneBy: jest.Mock };
-  let txCaseRepo: { create: jest.Mock; save: jest.Mock };
   let txOutboxRepo: { create: jest.Mock; save: jest.Mock };
   let dataSource: { transaction: jest.Mock };
   let configService: { get: jest.Mock };
@@ -38,7 +42,6 @@ describe('CasesService', () => {
   let service: CasesService;
 
   beforeEach(() => {
-    caseRepo = { findOneBy: jest.fn(), findOneByOrFail: jest.fn() };
     tenantRepo = { findOneBy: jest.fn() };
     jurisdictionRepo = { findOneBy: jest.fn() };
     jurisdictionRepo.findOneBy.mockResolvedValue({
@@ -47,8 +50,16 @@ describe('CasesService', () => {
     // dataSource.transaction is mocked to actually invoke the callback
     // (not just record the call) so CasesService's real transaction body —
     // the case save, the outbox write, and the unique-violation catch —
-    // runs for real against these manager-scoped repo mocks.
-    txCaseRepo = {
+    // runs for real against these manager-scoped repo mocks. Every call
+    // now goes through runInTenantContext (M5-004), which itself always
+    // calls dataSource.transaction and, before the work callback, an
+    // (irrelevant to these mocks) manager.query — both mocked below.
+    // getCase()'s reads and createCase()'s writes both resolve
+    // manager.getRepository(LoanCase) to this same object, so one mock
+    // carries all four methods real CasesService code calls on it.
+    caseRepo = {
+      findOneBy: jest.fn(),
+      findOneByOrFail: jest.fn(),
       create: jest.fn((data: Partial<LoanCase>) => data as LoanCase),
       save: jest.fn().mockImplementation(async (loanCase) => ({
         id: CASE_ID,
@@ -63,8 +74,9 @@ describe('CasesService', () => {
       save: jest.fn(async (data) => data),
     };
     const manager = {
+      query: jest.fn().mockResolvedValue(undefined),
       getRepository: jest.fn((entity: unknown) => {
-        if (entity === LoanCase) return txCaseRepo;
+        if (entity === LoanCase) return caseRepo;
         if (entity === OutboxEvent) return txOutboxRepo;
         throw new Error(`Unexpected repository requested: ${String(entity)}`);
       }),
@@ -83,7 +95,6 @@ describe('CasesService', () => {
     };
     caseTimelineService = { getTimeline: jest.fn() };
     service = new CasesService(
-      caseRepo as never,
       tenantRepo as never,
       jurisdictionRepo as never,
       dataSource as never,
@@ -120,7 +131,7 @@ describe('CasesService', () => {
       const result = await service.createCase('key-1', TENANT_ID, BASE_DTO);
 
       expect(result.id).toBe(CASE_ID);
-      expect(txCaseRepo.create).toHaveBeenCalledWith(
+      expect(caseRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId: TENANT_ID,
           idempotencyKey: 'key-1',
@@ -147,13 +158,16 @@ describe('CasesService', () => {
       const result = await service.createCase('key-1', TENANT_ID, BASE_DTO);
 
       expect(result).toBe(existing);
-      expect(dataSource.transaction).not.toHaveBeenCalled();
+      // The idempotency check itself now goes through runInTenantContext
+      // (M5-004), so dataSource.transaction is called once for that read
+      // — what actually matters here is that no case was ever created.
+      expect(caseRepo.save).not.toHaveBeenCalled();
     });
 
     it('resolves to the winning row when a concurrent duplicate loses the unique-constraint race', async () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       caseRepo.findOneBy.mockResolvedValue(null);
-      txCaseRepo.save.mockRejectedValue({ code: '23505' });
+      caseRepo.save.mockRejectedValue({ code: '23505' });
       const winner = { id: CASE_ID, idempotencyKey: 'key-1' } as LoanCase;
       caseRepo.findOneByOrFail.mockResolvedValue(winner);
 
@@ -165,7 +179,7 @@ describe('CasesService', () => {
     it('propagates errors unrelated to a unique-constraint violation', async () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       caseRepo.findOneBy.mockResolvedValue(null);
-      txCaseRepo.save.mockRejectedValue(new Error('connection reset'));
+      caseRepo.save.mockRejectedValue(new Error('connection reset'));
 
       await expect(
         service.createCase('key-1', TENANT_ID, BASE_DTO),

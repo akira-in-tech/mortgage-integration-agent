@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
+import { runInTenantContext } from '../database/tenant-context';
 
 /** A class, not an interface — `CasesController.getTimeline()` returns this directly, and `@nestjs/swagger` needs a real runtime class to introspect into an OpenAPI schema. Object literals still satisfy it structurally. */
 export class TimelineEntry {
@@ -41,14 +42,14 @@ export class TimelineEntry {
 @Injectable()
 export class CaseTimelineService {
   constructor(
-    @InjectRepository(OutboxEvent)
-    private readonly outboxRepository: Repository<OutboxEvent>,
     @InjectRepository(AgentRun)
     private readonly agentRunRepository: Repository<AgentRun>,
     @InjectRepository(ToolAttempt)
     private readonly toolAttemptRepository: Repository<ToolAttempt>,
     @InjectRepository(LoanCondition)
     private readonly conditionRepository: Repository<LoanCondition>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async getTimeline(
@@ -56,10 +57,12 @@ export class CaseTimelineService {
     caseId: string,
   ): Promise<TimelineEntry[]> {
     const [events, agentRuns, conditions] = await Promise.all([
-      this.outboxRepository.find({
-        where: { tenantId, caseId },
-        order: { createdAt: 'ASC' },
-      }),
+      runInTenantContext(this.dataSource, tenantId, (manager) =>
+        manager.getRepository(OutboxEvent).find({
+          where: { tenantId, caseId },
+          order: { createdAt: 'ASC' },
+        }),
+      ),
       this.agentRunRepository.find({
         where: { tenantId, caseId },
         order: { startedAt: 'ASC' },

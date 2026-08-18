@@ -10,6 +10,7 @@ import {
 import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CommunicationDeliverySimulator } from './communication-delivery-simulator';
+import { runInTenantContext } from '../database/tenant-context';
 
 export type DeliverCommunicationResult =
   | { outcome: 'DELIVERED'; deliveryReference: string; sentAt: string }
@@ -66,28 +67,32 @@ export class CommunicationDeliveryService {
       'dev-outbox-signing-secret-change-me',
     );
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.getRepository(CommunicationMessage).update(
-        { id: communicationMessageId },
-        {
-          status: CommunicationMessageStatus.SENT,
-          deliveryReference,
-          sentAt,
-        },
-      );
-      await writeOutboxEvent(manager, outboxSigningSecret, {
-        tenantId: message.tenantId,
-        caseId: message.caseId,
-        eventType: OutboxEventType.CommunicationDelivered,
-        payload: {
+    await runInTenantContext(
+      this.dataSource,
+      message.tenantId,
+      async (manager) => {
+        await manager.getRepository(CommunicationMessage).update(
+          { id: communicationMessageId },
+          {
+            status: CommunicationMessageStatus.SENT,
+            deliveryReference,
+            sentAt,
+          },
+        );
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId: message.tenantId,
           caseId: message.caseId,
-          communicationMessageId,
-          classification: message.classification,
-          channel: message.channel,
-          deliveryReference,
-        },
-      });
-    });
+          eventType: OutboxEventType.CommunicationDelivered,
+          payload: {
+            caseId: message.caseId,
+            communicationMessageId,
+            classification: message.classification,
+            channel: message.channel,
+            deliveryReference,
+          },
+        });
+      },
+    );
 
     return {
       outcome: 'DELIVERED',

@@ -14,6 +14,7 @@ import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
 import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
 import { isUniqueViolation } from '../database/postgres-errors';
+import { runInTenantContext } from '../database/tenant-context';
 
 /** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. */
 export class StartWorkflowRunResult {
@@ -45,8 +46,6 @@ export class WorkflowRunStatus {
 @Injectable()
 export class CasesService {
   constructor(
-    @InjectRepository(LoanCase)
-    private readonly caseRepository: Repository<LoanCase>,
     @InjectRepository(Tenant)
     private readonly tenantRepository: Repository<Tenant>,
     @InjectRepository(Jurisdiction)
@@ -85,10 +84,12 @@ export class CasesService {
       );
     }
 
-    const existing = await this.caseRepository.findOneBy({
+    const existing = await runInTenantContext(
+      this.dataSource,
       tenantId,
-      idempotencyKey,
-    });
+      (manager) =>
+        manager.getRepository(LoanCase).findOneBy({ tenantId, idempotencyKey }),
+    );
     if (existing) {
       return existing;
     }
@@ -99,41 +100,46 @@ export class CasesService {
     );
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
-        const caseRepo = manager.getRepository(LoanCase);
-        const loanCase = await caseRepo.save(
-          caseRepo.create({
+      return await runInTenantContext(
+        this.dataSource,
+        tenantId,
+        async (manager) => {
+          const caseRepo = manager.getRepository(LoanCase);
+          const loanCase = await caseRepo.save(
+            caseRepo.create({
+              tenantId,
+              idempotencyKey,
+              borrowerId: dto.borrowerId,
+              requestedAmount: dto.requestedAmount,
+              loanType: dto.loanType,
+              statedMonthlyIncome: dto.statedMonthlyIncome,
+              jurisdictionCode: dto.jurisdictionCode,
+              status: CaseStatus.DRAFT,
+            }),
+          );
+          await writeOutboxEvent(manager, outboxSigningSecret, {
             tenantId,
-            idempotencyKey,
-            borrowerId: dto.borrowerId,
-            requestedAmount: dto.requestedAmount,
-            loanType: dto.loanType,
-            statedMonthlyIncome: dto.statedMonthlyIncome,
-            jurisdictionCode: dto.jurisdictionCode,
-            status: CaseStatus.DRAFT,
-          }),
-        );
-        await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId,
-          caseId: loanCase.id,
-          eventType: OutboxEventType.LoanCaseCreated,
-          payload: {
             caseId: loanCase.id,
-            borrowerId: dto.borrowerId,
-            requestedAmount: dto.requestedAmount,
-            loanType: dto.loanType,
-            statedMonthlyIncome: dto.statedMonthlyIncome,
-            jurisdictionCode: dto.jurisdictionCode,
-          },
-        });
-        return loanCase;
-      });
+            eventType: OutboxEventType.LoanCaseCreated,
+            payload: {
+              caseId: loanCase.id,
+              borrowerId: dto.borrowerId,
+              requestedAmount: dto.requestedAmount,
+              loanType: dto.loanType,
+              statedMonthlyIncome: dto.statedMonthlyIncome,
+              jurisdictionCode: dto.jurisdictionCode,
+            },
+          });
+          return loanCase;
+        },
+      );
     } catch (error) {
       if (isUniqueViolation(error)) {
-        return await this.caseRepository.findOneByOrFail({
-          tenantId,
-          idempotencyKey,
-        });
+        return await runInTenantContext(this.dataSource, tenantId, (manager) =>
+          manager
+            .getRepository(LoanCase)
+            .findOneByOrFail({ tenantId, idempotencyKey }),
+        );
       }
       throw error;
     }
@@ -149,10 +155,12 @@ export class CasesService {
    * cross-tenant information leak this design avoids by construction.
    */
   async getCase(tenantId: string, caseId: string): Promise<LoanCase> {
-    const loanCase = await this.caseRepository.findOneBy({
-      id: caseId,
+    const loanCase = await runInTenantContext(
+      this.dataSource,
       tenantId,
-    });
+      (manager) =>
+        manager.getRepository(LoanCase).findOneBy({ id: caseId, tenantId }),
+    );
     if (!loanCase) {
       throw new NotFoundException(`Case ${caseId} not found`);
     }

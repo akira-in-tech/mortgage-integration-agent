@@ -38,6 +38,7 @@ import { PolicyFactContext } from '../../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../../policy/product-code';
 import { UNDERWRITING_REVIEW_LIFECYCLE_EVENT } from '../../policy/lifecycle-events';
 import { LoanCase } from '../../database/entities/loan-case.entity';
+import { runInTenantContext } from '../../database/tenant-context';
 import {
   EvidenceFact,
   EvidenceType,
@@ -323,12 +324,15 @@ export function createLendingOperationsAgentRuntime(
         const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
         if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
 
-        const loanCase = await deps.dataSource
-          .getRepository(LoanCase)
-          .findOneByOrFail({
-            id: toolContext.caseId,
-            tenantId: toolContext.tenantId,
-          });
+        const loanCase = await runInTenantContext(
+          deps.dataSource,
+          toolContext.tenantId,
+          (manager) =>
+            manager.getRepository(LoanCase).findOneByOrFail({
+              id: toolContext.caseId,
+              tenantId: toolContext.tenantId,
+            }),
+        );
 
         const invocation = await invokeTool(
           registry,
@@ -407,20 +411,35 @@ export function createLendingOperationsAgentRuntime(
           return { agentState: stepped, route: 'PROPOSED_ACTION' };
         }
 
-        const [loanCase, latestIncomeFact] = await Promise.all([
-          deps.dataSource.getRepository(LoanCase).findOneByOrFail({
-            id: toolContext.caseId,
-            tenantId: toolContext.tenantId,
-          }),
-          deps.dataSource.getRepository(EvidenceFact).findOne({
-            where: {
-              tenantId: toolContext.tenantId,
-              caseId: toolContext.caseId,
-              factType: EvidenceType.INCOME,
-            },
-            order: { observedAt: 'DESC' },
-          }),
-        ]);
+        // Sequential, not Promise.all: both queries share the same
+        // transaction's single underlying connection, and node-postgres
+        // itself warns that overlapping queries on one client (rather
+        // than awaited one at a time) is deprecated — real risk of
+        // result-set confusion between the two queries, not just a style
+        // preference.
+        const { loanCase, latestIncomeFact } = await runInTenantContext(
+          deps.dataSource,
+          toolContext.tenantId,
+          async (manager) => {
+            const loanCase = await manager
+              .getRepository(LoanCase)
+              .findOneByOrFail({
+                id: toolContext.caseId,
+                tenantId: toolContext.tenantId,
+              });
+            const latestIncomeFact = await manager
+              .getRepository(EvidenceFact)
+              .findOne({
+                where: {
+                  tenantId: toolContext.tenantId,
+                  caseId: toolContext.caseId,
+                  factType: EvidenceType.INCOME,
+                },
+                order: { observedAt: 'DESC' },
+              });
+            return { loanCase, latestIncomeFact };
+          },
+        );
         const factContext: PolicyFactContext = {
           application: { monthly_income: Number(loanCase.statedMonthlyIncome) },
           evidence: {

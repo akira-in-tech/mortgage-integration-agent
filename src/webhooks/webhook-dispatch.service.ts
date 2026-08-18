@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, LessThanOrEqual, Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource, IsNull, LessThanOrEqual } from 'typeorm';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import {
   WebhookDelivery,
@@ -48,22 +48,20 @@ export interface DispatchPendingEventsResult {
  * durable record of what's been attempted and what's still due; a crash
  * between attempts loses nothing, the next poll just picks it back up).
  *
- * `webhook_endpoints`/`webhook_deliveries` carry a real RLS policy
- * (M5-002). Every query against them here uses `runInTenantContext` with
- * a tenantId this method already knows (the outbox event's own, or the
- * delivery's own) — `runWithRlsBypass` (an explicit, audited
- * cross-tenant opt-out) is used exactly once, for the one query that
- * is genuinely cross-tenant by design: scanning for *any* tenant's due
- * deliveries. `outbox_events` itself carries no RLS policy this slice, so
- * queries against it are unwrapped, same as before.
+ * `webhook_endpoints`/`webhook_deliveries` (M5-002) and `outbox_events`
+ * (M5-004) all carry a real RLS policy. Every query against them here
+ * uses `runInTenantContext` with a tenantId this method already knows
+ * (the outbox event's own, or the delivery's own) — `runWithRlsBypass`
+ * (an explicit, audited cross-tenant opt-out) is used exactly twice, for
+ * the two queries that are genuinely cross-tenant by design: scanning
+ * for *any* tenant's unpublished events, and *any* tenant's due
+ * deliveries.
  */
 @Injectable()
 export class WebhookDispatchService {
   private readonly logger = new Logger(WebhookDispatchService.name);
 
   constructor(
-    @InjectRepository(OutboxEvent)
-    private readonly outboxRepository: Repository<OutboxEvent>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly endpointService: WebhookEndpointService,
@@ -74,11 +72,15 @@ export class WebhookDispatchService {
   ): Promise<DispatchPendingEventsResult> {
     const now = options.now ?? new Date();
 
-    const events = await this.outboxRepository.find({
-      where: { publishedAt: IsNull() },
-      order: { createdAt: 'ASC' },
-      take: EVENT_BATCH_SIZE,
-    });
+    // Genuinely cross-tenant by design, same reasoning as the due-
+    // deliveries scan below — every tenant's unpublished events, not one.
+    const events = await runWithRlsBypass(this.dataSource, (manager) =>
+      manager.getRepository(OutboxEvent).find({
+        where: { publishedAt: IsNull() },
+        order: { createdAt: 'ASC' },
+        take: EVENT_BATCH_SIZE,
+      }),
+    );
 
     for (const event of events) {
       const endpoints =
@@ -118,10 +120,12 @@ export class WebhookDispatchService {
       // rows created for every currently-subscribed endpoint) — the same
       // meaning the transactional-outbox pattern always gives this field,
       // not "successfully delivered to every subscriber." outbox_events
-      // has no RLS policy this slice, so this stays a plain query.
-      await this.outboxRepository.update(
-        { id: event.id },
-        { publishedAt: now },
+      // carries a real RLS policy (M5-004) — this event's own tenant is
+      // already known, so this uses runInTenantContext rather than bypass.
+      await runInTenantContext(this.dataSource, event.tenantId, (manager) =>
+        manager
+          .getRepository(OutboxEvent)
+          .update({ id: event.id }, { publishedAt: now }),
       );
     }
 
@@ -155,10 +159,14 @@ export class WebhookDispatchService {
       delivery.tenantId,
       delivery.webhookEndpointId,
     );
-    // outbox_events has no RLS policy this slice — plain query, unchanged.
-    const event = await this.outboxRepository.findOneByOrFail({
-      id: delivery.outboxEventId,
-    });
+    const event = await runInTenantContext(
+      this.dataSource,
+      delivery.tenantId,
+      (manager) =>
+        manager
+          .getRepository(OutboxEvent)
+          .findOneByOrFail({ id: delivery.outboxEventId }),
+    );
 
     const attemptNumber = delivery.attempts.length + 1;
     const timestampIso = now.toISOString();

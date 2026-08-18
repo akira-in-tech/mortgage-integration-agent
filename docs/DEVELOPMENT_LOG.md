@@ -5249,3 +5249,132 @@ superuser DATABASE_URL role:
 ### Next safe step
 
 M5's own exit evidence is now genuinely true end-to-end for exactly `webhook_endpoints`/`webhook_deliveries`, under a real production configuration — not just a database-layer proof sitting on top of an inert default. The next honestly-buildable increments: extend RLS (and this same restricted-role discipline) to `loan_cases` and dependents, which first requires threading tenant-context/bypass calls through every `case-conditions.activities.ts` Temporal activity (separately-scoped, higher-regression-risk, previously deferred in M5-002 and still deferred here); or M5's other still-open items (RBAC roles, consent enforcement, OIDC). Not started; awaiting direction.
+
+## M5-004: PostgreSQL row-level security for the case-conditions core (`loan_cases`, `evidence_facts`, `outbox_events`, `condition_transitions`)
+
+### Status
+
+Implemented and verified, including a real live workflow run — a genuine case driven start to finish (creation, evidence collection, Agent policy evaluation, condition opening, reviewer resolution, completion) through a real Temporal worker, entirely under `NODE_ENV=production` and the restricted `mortgage_app` role from M5-003. This is exactly the "next safe step" M5-003's own entry named, deliberately scoped narrower than "every table `loan_cases` touches" per an explicit user choice between two offered options (see Decisions).
+
+### Acceptance criterion
+
+The same M5-002/M5-003 standard, extended to the case-conditions core: a cross-tenant query against `loan_cases`/`evidence_facts`/`outbox_events`/`condition_transitions` fails closed at the PostgreSQL level itself — proven both by a dedicated spec against the real `mortgage_app` role (mirroring `webhook-tenant-isolation.spec.ts`) and, this slice, by a real end-to-end workflow run whose real rows were then directly queried under a different tenant's session context and found invisible.
+
+### Implementation
+
+- `src/database/migrations/1787084811062-CaseCoreTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `NULLIF(current_setting(...), '')::uuid` policy pattern as M5-002, applied to `loan_cases`, `evidence_facts`, `outbox_events` directly. `condition_transitions` has no `tenantId` column of its own (Section 14.1's append-only history is keyed only by `conditionId`) — its policy is `EXISTS (SELECT 1 FROM loan_conditions lc WHERE lc.id = condition_transitions."conditionId" AND lc."tenantId" = <context>)`, reading `loan_conditions.tenantId` as a plain column (not through any policy on that table, since `loan_conditions` itself has none this slice).
+- An audit (delegated to an Explore agent, then independently verified file by file) of every production code path touching these four tables, not just `case-conditions.activities.ts`: that file's own already-manager-parameterized writes (all of them — `markCollectingEvidence`, all three `fetch*Evidence` activities, `evaluateConditions`, `resolveCondition`, `markReadyForUnderwriting`, `markWaitingForReview`, `markManualReview`), `CasesService.createCase()`/`getCase()` (REST layer), `create-condition.tool.ts`/`escalate-to-reviewer.tool.ts` (Agent-runtime tools that mutate `loan_cases` directly), `check-case-completeness.tool.ts` and `lending-operations-agent-runtime.ts`'s own two bare `LoanCase`/`EvidenceFact` reads (`evaluatePolicyNode`, `resolveOutcomeNode`), `PolicyChangeImpactService`'s two `LoanCase` queries (one genuinely cross-tenant — Section 10.6's catalog-wide impact scan on policy activation — one tenant-scoped), `CaseTimelineService`'s `outbox_events` read, `WebhookDispatchService`'s three remaining bare `outbox_events` call sites (webhooks' own webhook-facing tables already got this treatment in M5-002; `outbox_events` itself didn't, until now), and `CommunicationDeliveryService.deliver()`'s `writeOutboxEvent()` call. Every one now goes through `runInTenantContext`/`runWithRlsBypass`, matching whichever it genuinely is — a known tenantId, or an audited cross-tenant scan.
+- Two services (`PolicyChangeImpactService`, `CaseTimelineService`) needed a `DataSource` injected alongside their existing `@InjectRepository`s so their in-scope-table queries could route through the tenant-context helpers; their now-unused single-purpose repositories (`caseRepository`, `outboxRepository`) were removed rather than left dead, same cleanup already applied to `WebhookDispatchService`/`WebhookEndpointService` in M5-002/M5-003.
+- `src/workflows/case-core-tenant-isolation.spec.ts` (new) — the proof spec, mirroring `webhook-tenant-isolation.spec.ts`'s structure: connects as the real `mortgage_app` role (not a throwaway test-only one, same as M5-002's spec after its own M5-003 refactor), builds a real fixture case/evidence/outbox-event/condition/condition-transition pair for two tenants (via the admin connection only for `tenants`/`jurisdictions`/`loan_conditions`, none of which are RLS-protected this slice), and runs the same battery M5-002 established: no-context sees zero rows, each tenant's context sees only its own, a cross-tenant id lookup returns null, a cross-tenant `UPDATE` affects zero rows, a spoofed cross-tenant `INSERT` is rejected, `condition_transitions`' join-based policy isolates correctly despite having no `tenantId` column, and bypass mode sees everything.
+
+### Affected files
+
+- `src/database/migrations/1787084811062-CaseCoreTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/workflows/case-core-tenant-isolation.spec.ts` (new)
+- `src/workflows/case-conditions.activities.ts`
+- `src/cases/cases.service.ts` (+`.spec.ts`), `case-timeline.service.ts`
+- `src/agent-runtime/tools/create-condition.tool.ts`, `escalate-to-reviewer.tool.ts`, `check-case-completeness.tool.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`
+- `src/policy/policy-change-impact.service.ts`, `policy-activation.service.spec.ts`
+- `src/webhooks/webhook-dispatch.service.ts` (+`.spec.ts`)
+- `src/communications/communication-delivery.service.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Scope narrowed to exactly the tables reachable through code paths that already thread `tenantId` end to end without a structural refactor — a direct user decision between two offered options.** The wider option (also `loan_conditions` itself, `agent_runs`/`tool_attempts`, `case_policy_bindings`/`case_policy_snapshots`, `provider_operation_intents`/`provider_authorization_grants`) would have required refactoring several `@InjectRepository`-based services (`PolicyEvaluationService`, `EvaluationManifestService`, `ProviderAuthorizationService`, `ProviderOperationIntentService`) to accept an external `EntityManager`, a materially larger and riskier change touching this codebase's most extensively tested business logic. The user chose the narrower option.
+- **`loan_conditions` itself is explicitly excluded, even though `case-conditions.activities.ts`'s `resolveCondition` reads/updates it.** Its *initial* row is created by `create-condition.tool.ts` through a code path this slice does not touch — forcing RLS on `loan_conditions` without also fixing that path would make every real condition-creation call fail with a Postgres RLS violation the moment this migration shipped (an INSERT under no tenant context is rejected the same way M5-002 proved for `webhook_endpoints`). This was caught during the file-by-file audit, before writing the migration, specifically because of that audit — not discovered live.
+- **`outbox_events` *is* in scope this slice, reversing M5-002's own "no RLS policy this slice" decision for that table** — because every write site that touches it already sits inside a transaction this slice was wrapping anyway (the same transaction as a `loan_cases`/`evidence_facts` write), so covering it added only the read-side call sites (`CaseTimelineService`, `WebhookDispatchService`) rather than a whole new audit.
+- **`PolicyChangeImpactService.assessImpact()`'s catalog-wide scan uses `runWithRlsBypass`, matching `WebhookDispatchService`'s existing precedent for "the one query that's genuinely cross-tenant by design."** Section 10.6's own scope ("applicability index finds potentially affected open cases" across the whole catalog on a policy activation/withdrawal) is inherently cross-tenant — the alternative (looping per-tenant) would change real behavior, not just add a database-layer guarantee.
+
+### Errors and fixes
+
+- **A real, independent production-code concurrency bug, found only because this slice's own proof test happened to exercise it: `Promise.all([manager.getRepository(A).find(), manager.getRepository(B).find()])` — issuing multiple queries against the *same* `EntityManager`/connection without sequencing them — is exactly what node-postgres's own "Calling client.query() when the client is already executing a query is deprecated" warning describes, and in practice returned results that didn't correspond to the queries that requested them.** Symptom: the proof spec's bypass-mode test, comparing four `Promise.all`'d queries' results against known fixture ids, intermittently reported `loan_cases` results containing ids that turned out (traced through direct SQL lookups across every table) to actually belong to `outbox_events`. Found in both this slice's own new proof spec *and* already-existing production code (`lending-operations-agent-runtime.ts`'s `resolveOutcomeNode`, fetching `LoanCase` and `EvidenceFact` concurrently on one manager) — the same risky pattern this migration's own refactor had just introduced varations of. Fixed by making every such call sequential (`await` one query, then the next) instead of `Promise.all` wherever multiple queries share one manager; independent, unrelated queries on independent connections (e.g. `CaseTimelineService`'s mix of a wrapped and two unwrapped repository calls) are unaffected and were left as `Promise.all`, since those genuinely use separate connections.
+- **Separately, the same proof spec's "bypass mode sees every tenant's row" test failed again after the concurrency fix — this time correctly, exposing a real test-design flaw, not a product bug.** `outbox_events` (unlike `loan_cases`, confirmed empty via direct SQL) already held real, pre-existing rows in the shared scratch database from an earlier `npm run test:e2e` run in this same verification session — legitimate data bypass mode is *supposed* to see, since bypass mode ignores tenant scoping by design. The test's exact-equality assertion assumed the whole table started empty, which is not a safe assumption for a table this central in a shared, long-lived scratch database. Fixed by changing the bypass-mode assertions to inclusion checks (`expect.arrayContaining`) — proving bypass mode sees at least this spec's own cross-tenant rows, which is what the test is actually for; the tenant-scoped assertions elsewhere in the same file remain exact-equality, since RLS under a real tenant context correctly filters out any other tenant's rows regardless of how many exist.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after `npm run lint` auto-fixed
+formatting)
+  both passed clean
+
+Migration (m5004-verify scratch stack, ports 5443/7234):
+  a from-empty migration:run applied CaseCoreTenantIsolation1787084811062
+  cleanly on top of AppRuntimeRole1787082648663
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    22/22 passed (21 -> 22: +1 new revert test), run on a virgin
+    cluster first (this slice's migration adds no role, so it doesn't
+    hit M5-003's cross-database collision)
+
+  DATABASE_URL=... npx jest case-core-tenant-isolation --runInBand
+    8/8 passed against the real mortgage_app role, after the two fixes
+    above (concurrency bug, then the inclusion-vs-exact-equality test
+    design fix)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand
+  --no-cache --silent
+    61 suites passed, 403 tests passed (60/394 -> 61/403: +1 suite,
+    +9 tests — the new proof spec, plus cases.service.spec.ts's mock
+    updated to match CasesService's new constructor/runInTenantContext
+    call shape)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 23 tests passed (unchanged — this slice doesn't
+    touch the HTTP contract, only what happens underneath it)
+
+Manual live verification — the real case-conditions workflow, start to
+finish, through a real Temporal worker, entirely under NODE_ENV=production
+with APP_DATABASE_URL pointed at mortgage_app (M5-003's role):
+  seeded two real tenants + jurisdiction, minted real API-client bearer
+  credentials for each via `npm run create-api-client`, started the
+  actual compiled API and the actual compiled Temporal worker
+
+  tenant A's credential created a real case (201), started its
+  workflow (202) — the real worker fetched income/credit/document
+  evidence (3 real evidence_facts rows through 3 separate
+  provider-simulator dispatches), ran a real Agent evaluation
+  (check_case_completeness/evaluate_policy/create_condition all
+  SUCCESS), opened a real VERIFY_INCOME_DISCREPANCY condition,
+  transitioned the case through CONDITIONS_OPEN
+
+  submitted a real CONDITION_RESOLUTION review (202) — the workflow
+  resolved the condition, wrote a real condition_transitions row, and
+  completed the case to READY_FOR_UNDERWRITING (confirmed via a
+  fresh GET) — the full M2/M3 workflow, unmodified by this slice's
+  refactor, working end to end under the restricted role for the
+  first time
+
+  tenant B's real credential requested tenant A's real case and its
+  timeline: both 404'd, identical to a nonexistent case/no separate
+  403 (M5-001's own established behavior, unaffected)
+
+  connected directly to Postgres as mortgage_app (not the superuser)
+  and queried the real case/evidence/outbox rows this exact live
+  workflow run had just created: under tenant B's session context, 0
+  visible on all three tables; under tenant A's own context, 1 case, 3
+  evidence facts, 9 outbox events (the full lifecycle's worth) —
+  direct, end-to-end proof against a real production-mode workflow's
+  own real rows, not a spec fixture
+
+  synthetic tenant/case/api-client/evidence/outbox data removed with
+  the scratch stack teardown (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Extends M5-003's real production protection to the case-conditions core: under `NODE_ENV=production` with `APP_DATABASE_URL` set, `loan_cases`, `evidence_facts`, `outbox_events`, and `condition_transitions` are now genuinely protected against a future application-code bug that forgets a `WHERE tenantId = ...` clause, not merely convention.
+- The `Promise.all`-on-one-connection bug fixed this slice was a real, if narrow, correctness risk already present in shipped code (`resolveOutcomeNode`) before this slice ever touched it — this slice's own audit surfaced and fixed it as a byproduct, not the primary goal, but it's a genuine improvement independent of RLS.
+- No new secrets, no new external dependencies, no performance concern beyond M5-002's own (indexed equality/join checks, same order of cost as the `WHERE tenantId = ...`/`WHERE caseId = ...` clauses this codebase's queries already carry).
+
+### Known gaps
+
+- **`loan_conditions` itself still has no RLS policy** — its initial creation path (`create-condition.tool.ts`) isn't tenant-context-aware yet; adding a policy without fixing that path first would break condition creation outright (see Decisions). Real, scoped, separate follow-up.
+- **`agent_runs`/`tool_attempts`, `case_policy_bindings`/`case_policy_snapshots`, `provider_operation_intents`/`provider_authorization_grants` still have no RLS policy** — each requires refactoring an `@InjectRepository`-based service (`PolicyEvaluationService`, `EvaluationManifestService`, `ProviderAuthorizationService`, `ProviderOperationIntentService`, and the LangGraph runtime's own `persistAgentRun`) to accept an external `EntityManager`, explicitly declined as this slice's scope.
+- **`evaluation/runner.ts` (the offline evaluation-corpus harness) was deliberately not audited or updated this slice** — it calls `createCaseConditionsActivities` directly (so it inherits this slice's fixes for free) but also does its own direct fixture inserts/cleanup against `loan_cases`/`evidence_facts` outside any `runInTenantContext` wrapper. Not a live-request-path concern (it's a manual, offline dev tool, not part of the running application), but it would need the same treatment before it could be run against a restricted-role database.
+- Section 20 M5's own exit evidence ("database layer") is now true for `webhook_endpoints`/`webhook_deliveries`/`loan_cases`/`evidence_facts`/`outbox_events`/`condition_transitions` — six tables — but still not the full case-conditions-and-policy graph.
+
+### Next safe step
+
+The concurrency bug found this slice (`Promise.all` on a shared connection) is worth a deliberate, dedicated grep across the rest of the codebase outside this slice's own 4-table scope, since the same risky pattern could exist wherever a `dataSource.transaction`/`runInTenantContext` callback issues more than one query — not yet done as a full audit, only fixed where this slice's own work happened to touch it. Otherwise, the honestly-buildable increments remain: `loan_conditions` + the Agent-runtime/provider-platform tables (the deferred, larger-blast-radius RLS extension), or M5's other still-open items (RBAC roles, consent enforcement, OIDC). Not started; awaiting direction.

@@ -3,6 +3,7 @@ import { LoanCase, CaseStatus } from '../../database/entities/loan-case.entity';
 import { writeOutboxEvent } from '../../database/outbox/outbox-writer';
 import { OutboxEventType } from '../../database/outbox/outbox-event-types';
 import { AgentTool } from '../agent-tool.types';
+import { runInTenantContext } from '../../database/tenant-context';
 
 export interface EscalateToReviewerArgs {
   reason: string;
@@ -48,7 +49,7 @@ export function escalateToReviewerTool(
     sideEffect: 'WORKFLOW_TRANSITION',
     approvalBoundary: 'No',
     async execute({ tenantId, caseId }, args) {
-      return deps.dataSource.transaction(async (manager) => {
+      return runInTenantContext(deps.dataSource, tenantId, async (manager) => {
         const caseRepo = manager.getRepository(LoanCase);
         const updateResult = await caseRepo.update(
           { id: caseId, tenantId, version: args.expectedCaseVersion },

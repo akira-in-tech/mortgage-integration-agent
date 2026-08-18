@@ -187,6 +187,127 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the case core tenant isolation migration without touching other tables', async () => {
+    // No new table — only RLS state and a policy on four existing tables
+    // (three plain, plus condition_transitions' join-based policy) — same
+    // pattern as the webhook tenant isolation revert test below.
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('loan_cases', 'evidence_facts', 'outbox_events', 'condition_transitions')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'condition_transitions',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'evidence_facts',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'loan_cases',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'outbox_events',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('loan_cases', 'evidence_facts', 'outbox_events', 'condition_transitions')
+         ORDER BY tablename`,
+      );
+    expect(beforePolicies).toEqual([
+      { tablename: 'condition_transitions', policyname: 'tenant_isolation' },
+      { tablename: 'evidence_facts', policyname: 'tenant_isolation' },
+      { tablename: 'loan_cases', policyname: 'tenant_isolation' },
+      { tablename: 'outbox_events', policyname: 'tenant_isolation' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('loan_cases', 'evidence_facts', 'outbox_events', 'condition_transitions')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'condition_transitions',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'evidence_facts',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'loan_cases',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'outbox_events',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies = await scratchDataSource.query(
+      `SELECT tablename, policyname FROM pg_policies
+       WHERE tablename IN ('loan_cases', 'evidence_facts', 'outbox_events', 'condition_transitions')`,
+    );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the app runtime role migration without touching other tables', async () => {
     // This migration adds no table — only a role and its grants — so the
     // assertions here check pg_roles/information_schema.role_table_grants
