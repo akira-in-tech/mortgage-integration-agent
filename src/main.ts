@@ -2,10 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { NodeEnvironment } from './config/env.validation';
 import { resolveCorsOrigin } from './config/cors';
+import { buildOpenApiDocument } from './openapi.config';
 
 // Explicit, not Express's implicit default — the charter (16.1) requires
 // request-size limits to be a deliberate decision, not an accident of
@@ -64,6 +66,17 @@ async function bootstrap(): Promise<void> {
   // being killed mid-request with connections left open.
   app.enableShutdownHooks();
 
+  // Same reasoning as the GraphQL Playground/introspection gate above this
+  // block: interactive API documentation is convenient for local
+  // development but leaks the full REST surface to anyone who can reach
+  // the endpoint — disabled outside development (charter 16.1). The
+  // checked-in `openapi/openapi.json` artifact (Section 15.3: "checked and
+  // published OpenAPI artifact") is generated separately via
+  // `npm run generate:openapi`, not served live in every environment.
+  if (isDevelopment) {
+    SwaggerModule.setup('api-docs', app, buildOpenApiDocument(app));
+  }
+
   const port = configService.get<number>('PORT', 3000);
 
   await app.listen(port);
@@ -72,6 +85,7 @@ async function bootstrap(): Promise<void> {
   );
   if (isDevelopment) {
     console.log(`GraphQL Playground: http://localhost:${port}/graphql`);
+    console.log(`OpenAPI docs: http://localhost:${port}/api-docs`);
   }
 }
 

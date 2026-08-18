@@ -4,10 +4,16 @@ const prettierPlugin = require('eslint-plugin-prettier');
 
 module.exports = [
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'src/schema.gql'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'coverage/**',
+      'src/schema.gql',
+      'client/generated/**',
+    ],
   },
   {
-    files: ['{src,test}/**/*.ts'],
+    files: ['{src,test,client}/**/*.ts'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {

@@ -38,3 +38,12 @@ src/schema.gql
 # Generated evaluation reports (Section 18.2) — reproducible from
 # evaluation/cases/ + npm run evaluate, not durable source content.
 evaluation/reports/*.json
+
+# Stray compiled output if client/*.ts is ever accidentally run through
+# tsc directly instead of ts-node — client/generated/schema.d.ts (the
+# real generated artifact) is unaffected, it isn't a compiled sibling of
+# a .ts file.
+client/*.js
+client/*.js.map
+client/index.d.ts
+client/quickstart.d.ts

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { WorkflowNotFoundError } from '@temporalio/client';
+import { ApiProperty } from '@nestjs/swagger';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
@@ -14,10 +15,24 @@ import { ReviewDto } from './dto/review.dto';
 import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
 import { isUniqueViolation } from '../database/postgres-errors';
 
-export interface WorkflowRunStatus {
-  workflowId: string;
-  runId: string;
-  status: string;
+/** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. */
+export class StartWorkflowRunResult {
+  @ApiProperty()
+  workflowId!: string;
+
+  @ApiProperty()
+  runId!: string;
+}
+
+export class WorkflowRunStatus {
+  @ApiProperty()
+  workflowId!: string;
+
+  @ApiProperty()
+  runId!: string;
+
+  @ApiProperty()
+  status!: string;
 }
 
 /**
@@ -131,9 +146,7 @@ export class CasesService {
     return loanCase;
   }
 
-  async startWorkflow(
-    caseId: string,
-  ): Promise<{ workflowId: string; runId: string }> {
+  async startWorkflow(caseId: string): Promise<StartWorkflowRunResult> {
     const loanCase = await this.getCase(caseId);
     return this.temporalClient.startCaseConditionsWorkflow({
       tenantId: loanCase.tenantId,

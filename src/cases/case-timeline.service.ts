@@ -1,18 +1,27 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ApiProperty } from '@nestjs/swagger';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 
-export interface TimelineEntry {
-  timestamp: string;
-  kind: 'DOMAIN_EVENT' | 'AGENT_RUN';
+/** A class, not an interface — `CasesController.getTimeline()` returns this directly, and `@nestjs/swagger` needs a real runtime class to introspect into an OpenAPI schema. Object literals still satisfy it structurally. */
+export class TimelineEntry {
+  @ApiProperty()
+  timestamp!: string;
+
+  @ApiProperty({ enum: ['DOMAIN_EVENT', 'AGENT_RUN'] })
+  kind!: 'DOMAIN_EVENT' | 'AGENT_RUN';
+
   /** Evidence-backed: built from real, already-persisted data (a condition's own DSL-evaluator reason, a run's actual tool outcomes) — never a generated or inferred narrative. */
-  summary: string;
-  detail: Record<string, unknown>;
+  @ApiProperty()
+  summary!: string;
+
+  @ApiProperty({ type: 'object', additionalProperties: true })
+  detail!: Record<string, unknown>;
 }
 
 /**

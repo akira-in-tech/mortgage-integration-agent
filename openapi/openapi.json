@@ -1,0 +1,506 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/v1/loan-cases": {
+      "post": {
+        "operationId": "createCase",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A caller-generated key, unique per case creation attempt. A retried request with the same key returns the original case rather than creating a second one.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoanCase"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing Idempotency-Key header, or a request-body validation failure."
+          },
+          "404": {
+            "description": "tenantId or jurisdictionCode does not exist."
+          }
+        },
+        "summary": "Create a loan case (idempotent on Idempotency-Key)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}": {
+      "get": {
+        "operationId": "getCase",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoanCase"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No case with this id."
+          }
+        },
+        "summary": "Get a loan case by id",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/timeline": {
+      "get": {
+        "operationId": "getCaseTimeline",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TimelineEntry"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No case with this id."
+          }
+        },
+        "summary": "Get the chronological event/Agent-run timeline for a case",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs": {
+      "post": {
+        "operationId": "startWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowRunResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No case with this id."
+          }
+        },
+        "summary": "Start the case-conditions workflow for a case (idempotent per case)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}": {
+      "get": {
+        "operationId": "getWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunStatus"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No case with this id, or no such workflow run."
+          }
+        },
+        "summary": "Get the status of one workflow run",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/reviews": {
+      "post": {
+        "operationId": "submitReview",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Signal delivered; the workflow applies it asynchronously."
+          },
+          "404": {
+            "description": "No case with this id, or no running workflow for it."
+          }
+        },
+        "summary": "Submit a reviewer decision (condition resolution or evaluation resume)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Mortgage Integration Agent — Partner API",
+    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations, audit-export) is not yet built and is not represented here.",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "loan-cases",
+      "description": ""
+    }
+  ],
+  "servers": [],
+  "components": {
+    "schemas": {
+      "CreateCaseDto": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "borrowerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "requestedAmount": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "loanType": {
+            "type": "string",
+            "enum": [
+              "CONVENTIONAL",
+              "FHA",
+              "VA",
+              "JUMBO"
+            ]
+          },
+          "statedMonthlyIncome": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "jurisdictionCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "example": "US-CA"
+          }
+        },
+        "required": [
+          "tenantId",
+          "borrowerId",
+          "requestedAmount",
+          "loanType",
+          "statedMonthlyIncome",
+          "jurisdictionCode"
+        ]
+      },
+      "LoanCase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "borrowerId": {
+            "type": "string"
+          },
+          "requestedAmount": {
+            "type": "number"
+          },
+          "loanType": {
+            "type": "string",
+            "enum": [
+              "CONVENTIONAL",
+              "FHA",
+              "VA",
+              "JUMBO"
+            ]
+          },
+          "statedMonthlyIncome": {
+            "type": "number"
+          },
+          "jurisdictionCode": {
+            "type": "string",
+            "example": "US-CA"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "COLLECTING_EVIDENCE",
+              "CONDITIONS_OPEN",
+              "WAITING_FOR_INFORMATION",
+              "WAITING_FOR_REVIEW",
+              "READY_FOR_UNDERWRITING",
+              "MANUAL_REVIEW",
+              "CLOSED"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "idempotencyKey",
+          "borrowerId",
+          "requestedAmount",
+          "loanType",
+          "statedMonthlyIncome",
+          "jurisdictionCode",
+          "status",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "TimelineEntry": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "DOMAIN_EVENT",
+              "AGENT_RUN"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "timestamp",
+          "kind",
+          "summary",
+          "detail"
+        ]
+      },
+      "StartWorkflowRunResult": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId"
+        ]
+      },
+      "WorkflowRunStatus": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId",
+          "status"
+        ]
+      },
+      "ReviewDto": {
+        "type": "object",
+        "properties": {
+          "reviewType": {
+            "type": "string",
+            "enum": [
+              "CONDITION_RESOLUTION",
+              "RESUME_EVALUATION"
+            ]
+          },
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "SATISFIED",
+              "WAIVED"
+            ],
+            "description": "Required when reviewType is CONDITION_RESOLUTION."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "reviewType",
+          "actorId"
+        ]
+      }
+    }
+  }
+}

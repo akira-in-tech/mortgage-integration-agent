@@ -4576,3 +4576,105 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 With income, credit, and document all migrated, Section 20's M4 exit evidence's first bullet is now proven three times over in this codebase, not just asserted once. The remaining M4 exit-evidence bullets are all about a second real provider mode existing (authorized-sandbox parity, mode-change-through-configuration, promotion manifests) — none of them are buildable honestly without a real external provider relationship this codebase doesn't have, so M4's next honest increment is elsewhere in its scope list: REST/OpenAPI contract + generated TypeScript client + quickstart, or webhook subscriptions/delivery/retries on top of the existing signed outbox — both genuinely buildable today, unlike the promotion-manifest bullets.
+
+## M4-003: OpenAPI contract, generated TypeScript client, and a runnable quickstart (Section 15.3, 20 M4 scope)
+
+### Status
+
+Implemented and verified. `CasesController` (the real M2/M3 REST surface — 6 endpoints) is now fully `@nestjs/swagger`-decorated with explicit, stable `operationId`s; `npm run generate:openapi` boots the real app and writes the resulting document to a checked-in `openapi/openapi.json`; `npm run generate:client` runs `openapi-typescript` against that file to produce a genuinely generated `client/generated/schema.d.ts`; `client/index.ts` is a thin `openapi-fetch` wrapper making every call fully typed against it; `client/quickstart.ts` (`npm run quickstart`) drives a real case through creation, workflow start, condition-opening, reviewer resolution, and completion using only that generated client against a real running API + Temporal worker — the concrete realization of the exit evidence's own words, "generated client completes the published quickstart."
+
+### Acceptance criterion
+
+Section 15.3: "checked and published OpenAPI artifact," "stable operation identifiers for SDK generation." Section 20's M4 exit evidence: "generated client completes the published quickstart."
+
+### Implementation
+
+- `@nestjs/swagger`, `openapi-fetch` (runtime deps) and `openapi-typescript` (devDependency, code-generator only) added. Explicit `@ApiProperty()`/`@ApiOperation()`/`@ApiResponse()`-family decorators throughout — no CLI-plugin auto-decoration (`nest-cli.json`'s `@nestjs/swagger` plugin), because that plugin only runs through the Nest compiler (`nest build`/`nest start`), not the plain `ts-node` execution this codebase's other scripts (`evaluation-report.ts`, and now `generate-openapi-spec.ts`) already use; explicit decorators work identically under either runner.
+- `WorkflowRunStatus` (`cases.service.ts`) and `TimelineEntry` (`case-timeline.service.ts`) converted from `interface` to `class` — an interface has no runtime representation for `@nestjs/swagger` to introspect via `@ApiProperty()`. A new `StartWorkflowRunResult` class replaces `startWorkflow()`'s previously-inline `{ workflowId, runId }` return type for the same reason. All three are structurally unchanged — object literals still satisfy them, no constructor or `implements` clause added, no call site elsewhere needed updating.
+- `LoanCase` (the entity) gained `@ApiProperty()` on every field the REST layer actually returns; its two lazy relations (`tenant?`, `jurisdiction?`, never populated by this controller's queries) were deliberately left undecorated so the generated schema doesn't claim a field this endpoint never actually returns.
+- `CasesController`: every endpoint got an explicit `operationId` (`createCase`, `getCase`, `getCaseTimeline`, `startWorkflowRun`, `getWorkflowRun`, `submitReview`) rather than NestJS Swagger's route-derived default, which changes if a route path is ever refactored — Section 15.3's own "stable operation identifiers for SDK generation" requirement, taken literally.
+- `src/openapi.config.ts` — one `buildOpenApiDocument(app)` function shared by `main.ts` (the live, dev-only `/api-docs` UI — same gating this codebase already applies to the GraphQL Playground, and for the identical stated reason: interactive documentation leaks the full surface to anyone who can reach it) and `src/generate-openapi-spec.ts` (writes the checked-in artifact). One function, one source of truth — the live UI and the checked-in file can never quietly diverge from each other.
+- `client/index.ts` + `client/generated/schema.d.ts` (checked in, not gitignored — see Decisions) + `client/quickstart.ts`. The quickstart's poll loop doesn't gamble on whether the Plaid simulator's deterministic income for its borrowerId happens to trigger the seeded discrepancy rule: it watches the case's own status, and the moment it observes `CONDITIONS_OPEN`, submits a real `submitReview` call to resolve it — deterministic either way, and it exercises the review endpoint too, not just the happy path.
+- `docs/QUICKSTART.md` — the "published quickstart" the exit evidence names.
+
+### Affected files
+
+- `src/openapi.config.ts`, `src/generate-openapi-spec.ts`, `src/main.ts`
+- `src/cases/cases.controller.ts`, `cases.service.ts`, `case-timeline.service.ts`, `dto/create-case.dto.ts`, `dto/review.dto.ts`
+- `src/database/entities/loan-case.entity.ts`
+- `openapi/openapi.json` (generated, checked in), `client/index.ts`, `client/generated/schema.d.ts` (generated, checked in), `client/quickstart.ts`
+- `package.json` (`@nestjs/swagger`, `openapi-fetch`, `openapi-typescript`, `overrides.openapi-typescript.typescript`, three new scripts), `eslint.config.js`, `tsconfig.build.json`
+- `docs/QUICKSTART.md`, `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **`openapi/openapi.json` and `client/generated/schema.d.ts` are checked in, unlike `src/schema.gql` (gitignored).** `schema.gql` regenerates automatically on every app start (`autoSchemaFile` in `app.module.ts`) so it's never stale; these two artifacts only regenerate on an explicit `npm run generate:*` step, so leaving them out of git would mean a fresh clone can't typecheck `client/` or serve `/api-docs-json`'s checked-in counterpart until someone remembers to run codegen — bad for exactly the "quickstart" experience this slice is building. Section 15.3's own "checked... OpenAPI artifact" language settles the first one explicitly; the generated client types followed the same reasoning for consistency.
+- **No `@nestjs/swagger` CLI plugin, explicit decorators instead.** Considered and rejected: the plugin only transforms code through the Nest compiler, and this codebase's scripts (including the new `generate-openapi-spec.ts`) run via plain `ts-node` to match `evaluation-report.ts`'s existing convention — a plugin-dependent approach would silently produce a *different*, decorator-less schema depending on which runner generated it. Explicit decorators cost more lines but behave identically everywhere.
+- **`openapi-typescript` + `openapi-fetch` over a full codegen tool (e.g. `openapi-typescript-codegen`).** For a 6-endpoint REST surface, a full generated service/model file tree is more machinery than the surface needs — matches this codebase's standing "no premature abstraction" rule. `openapi-typescript`'s output actually is fully generated (never hand-edited); `client/index.ts` is the one small hand-written file, a thin wrapper, not a duplicate of anything the generator already produces.
+- **`npm install openapi-typescript --legacy-peer-deps` broke the app the first time (Errors and fixes below) — fixed via a targeted `package.json` `overrides` entry, not by leaving `--legacy-peer-deps` in place.** `--legacy-peer-deps` disables peer-dependency resolution for the *entire* install, not just the one package with the conflicting peer range; it silently pruned `@apollo/server` (an implicit, unlisted peer of `@nestjs/apollo`/`@apollo/server-plugin-landing-page-graphql-playground` that npm had been auto-installing) along with 27 other packages. The `overrides` entry (`openapi-typescript.typescript` pinned to `$typescript`, the root's own resolved version) satisfies just that one package's peer check without touching how npm resolves anything else.
+- **Health endpoints (`/health/live`, `/health/ready`) left with NestJS Swagger's default, undecorated operationIds.** They're infra liveness/readiness probes, not part of the Section 15.1 partner API surface this slice's own OpenAPI description explicitly scopes to — not worth the same explicit-`operationId` treatment as the partner-facing endpoints.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean after fixing the @apollo/server regression (below)
+  and a handful of prettier formatting diffs in the new controller/
+  client files
+
+No new migration — this slice adds no schema.
+
+Scratch stack (m4003-verify, ports 5443/7234, fresh):
+  DATABASE_URL=... npm run migration:run
+    applies cleanly from empty, same 16 migrations as M4-002, nothing new
+
+  DATABASE_URL=... npm run generate:openapi
+    writes openapi/openapi.json — 8 paths (6 loan-cases + 2 health),
+    6 named schemas (CreateCaseDto, LoanCase, TimelineEntry,
+    StartWorkflowRunResult, WorkflowRunStatus, ReviewDto)
+
+  npm run generate:client
+    writes client/generated/schema.d.ts (433 lines) from that file
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    50 suites passed, 330 tests passed (unchanged from M4-002 — this
+    slice added no new src/ tests, only client/ tooling)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    17/17 passed (unchanged)
+
+Manual live verification (real REST API + real Temporal worker):
+  confirmed GET /api-docs-json serves the same 8-path document in a
+  running dev-mode server
+
+  ran `npm run quickstart` against that real server end to end:
+  seeded a tenant, created a case, started its workflow, watched it
+  reach CONDITIONS_OPEN, submitted a real submitReview call, watched
+  the workflow reach Temporal status COMPLETED and the case reach
+  READY_FOR_UNDERWRITING, and printed a real 10-entry timeline —
+  "Quickstart completed successfully." with exit code 0
+```
+
+### Errors and fixes
+
+- **`npm install -D openapi-typescript --legacy-peer-deps` silently removed `@apollo/server` and 27 other packages, breaking `AppModule` (`Cannot find module '@apollo/server'`).** Caught immediately by running `npm run generate:openapi` right after the install — the app failed to boot. Root cause and fix are in Decisions above (`package.json` `overrides` instead of `--legacy-peer-deps`). Verified fixed: `rm -rf node_modules && npm install` restored `@apollo/server`, `npm run build` passed, and the full test suite (330 tests) passed clean afterward — this was caught and fixed before anything broken was ever committed.
+
+### Security, privacy, cost, and compatibility
+
+- The interactive `/api-docs` UI is gated to `NODE_ENV=development` only, identical reasoning and identical gate to the existing GraphQL Playground (charter 16.1). The checked-in `openapi/openapi.json` is a static file, not a live introspection endpoint — publishing it is the point (Section 15.3).
+- No new externally-visible *behavior* — every endpoint's actual logic is byte-for-byte unchanged; this slice only adds documentation/typing/tooling around the existing six routes.
+- `client/quickstart.ts` creates real (visibly synthetic) tenant/case/evidence/condition/agent-run/outbox rows against whatever database it's pointed at — intentional (a quickstart is meant to leave a browsable result behind), documented in `docs/QUICKSTART.md`, and only ever run by a developer against their own local/scratch environment.
+
+### Known gaps
+
+- Only `CasesController`'s 6 endpoints are documented — the rest of Section 15.1's target partner API (consents, documents, conditions/evidence listing, policy snapshots, provider operations, audit export, webhook endpoints) doesn't exist in this codebase yet, so it isn't represented in the OpenAPI artifact either. The artifact's own `description` field says this explicitly rather than silently looking complete.
+- No RFC 9457 problem-details error format, no request/trace identifiers on responses, no pagination, no rate-limit headers, no API version/deprecation policy, no contract tests for backward compatibility — all named in Section 15.3, none built yet.
+- No authentication on this REST surface at all (unchanged, long-standing gap since M2).
+- A Python generated client (Section 15.1: "may follow after the OpenAPI contract stabilizes") is explicitly out of scope — not attempted.
+
+### Next safe step
+
+M4-004: webhook subscriptions, delivery retries, history, and replay protection — the other genuinely-buildable-today M4 scope item, building on the existing signed `outbox_events` foundation (M2) the same way this slice built on the existing `CasesController`.
