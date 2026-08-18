@@ -1,12 +1,13 @@
-import { IsEnum, IsPositive, IsUUID, Length } from 'class-validator';
+import { IsEnum, IsPositive, Length } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { LoanType } from '../../database/enums/loan-type.enum';
 
+/**
+ * No `tenantId` field (Section 20 M5): the tenant is always the one
+ * `ApiKeyGuard` resolved from the caller's own bearer credential, never a
+ * value the request body could get right or wrong.
+ */
 export class CreateCaseDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
-  tenantId!: string;
-
   @ApiProperty({ minLength: 1, maxLength: 100 })
   @Length(1, 100)
   borrowerId!: string;

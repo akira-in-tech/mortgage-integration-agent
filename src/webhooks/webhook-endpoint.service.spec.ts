@@ -36,8 +36,7 @@ describeOrSkip('WebhookEndpointService', () => {
   const tenantId = '33333333-3333-3333-3333-333333333333';
 
   it('create() persists an ACTIVE endpoint with a real, unique secret', async () => {
-    const endpoint = await service.create({
-      tenantId,
+    const endpoint = await service.create(tenantId, {
       targetUrl: 'https://example.com/hook-1',
       eventTypes: ['loan_case.created'],
     });
@@ -51,8 +50,7 @@ describeOrSkip('WebhookEndpointService', () => {
     });
     expect(endpoint.secret).toMatch(/^[0-9a-f]{64}$/);
 
-    const second = await service.create({
-      tenantId,
+    const second = await service.create(tenantId, {
       targetUrl: 'https://example.com/hook-2',
       eventTypes: ['loan_case.created'],
     });
@@ -61,22 +59,19 @@ describeOrSkip('WebhookEndpointService', () => {
   });
 
   it('findActiveForTenantAndEventType() returns only ACTIVE endpoints subscribed to that event type', async () => {
-    const subscribed = await service.create({
-      tenantId,
+    const subscribed = await service.create(tenantId, {
       targetUrl: 'https://example.com/subscribed',
       eventTypes: ['condition.opened', 'condition.satisfied'],
     });
     endpointIds.push(subscribed.id);
 
-    const unsubscribed = await service.create({
-      tenantId,
+    const unsubscribed = await service.create(tenantId, {
       targetUrl: 'https://example.com/unsubscribed',
       eventTypes: ['evidence.updated'],
     });
     endpointIds.push(unsubscribed.id);
 
-    const disabled = await service.create({
-      tenantId,
+    const disabled = await service.create(tenantId, {
       targetUrl: 'https://example.com/disabled',
       eventTypes: ['condition.opened'],
     });

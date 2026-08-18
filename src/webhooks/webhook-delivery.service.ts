@@ -10,8 +10,17 @@ export class WebhookDeliveryService {
     private readonly deliveryRepository: Repository<WebhookDelivery>,
   ) {}
 
-  async findByIdOrFail(id: string): Promise<WebhookDelivery> {
-    const delivery = await this.deliveryRepository.findOneBy({ id });
+  /**
+   * Section 20 M5: cross-tenant fails closed the same way
+   * `CasesService.getCase()` does — a delivery owned by a different
+   * tenant returns the identical 404 a nonexistent id would, never a
+   * tenant-revealing 403.
+   */
+  async findByIdOrFail(tenantId: string, id: string): Promise<WebhookDelivery> {
+    const delivery = await this.deliveryRepository.findOneBy({
+      id,
+      tenantId,
+    });
     if (!delivery) {
       throw new NotFoundException(`Webhook delivery ${id} not found`);
     }

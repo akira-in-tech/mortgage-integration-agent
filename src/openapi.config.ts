@@ -25,6 +25,12 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setVersion('1.0.0')
     .addTag('loan-cases')
     .addTag('webhooks')
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      description:
+        'A Section 20 M5 scoped API-client credential, "{clientId}.{secret}" — minted via `npm run create-api-client` (no self-service REST endpoint exists yet). The tenant is always the one this credential belongs to; no request body or query parameter can specify a different one.',
+    })
     .build();
   return SwaggerModule.createDocument(app, config);
 }

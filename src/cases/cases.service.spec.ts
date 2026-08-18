@@ -13,7 +13,6 @@ const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const CASE_ID = '22222222-2222-2222-2222-222222222222';
 
 const BASE_DTO: CreateCaseDto = {
-  tenantId: TENANT_ID,
   borrowerId: 'borrower-1',
   requestedAmount: 300_000,
   loanType: LoanType.CONVENTIONAL,
@@ -98,9 +97,9 @@ describe('CasesService', () => {
     it('throws NotFoundException when the tenant does not exist', async () => {
       tenantRepo.findOneBy.mockResolvedValue(null);
 
-      await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.createCase('key-1', TENANT_ID, BASE_DTO),
+      ).rejects.toThrow(NotFoundException);
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
@@ -108,9 +107,9 @@ describe('CasesService', () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       jurisdictionRepo.findOneBy.mockResolvedValue(null);
 
-      await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.createCase('key-1', TENANT_ID, BASE_DTO),
+      ).rejects.toThrow(NotFoundException);
       expect(dataSource.transaction).not.toHaveBeenCalled();
     });
 
@@ -118,7 +117,7 @@ describe('CasesService', () => {
       tenantRepo.findOneBy.mockResolvedValue({ id: TENANT_ID } as Tenant);
       caseRepo.findOneBy.mockResolvedValue(null);
 
-      const result = await service.createCase('key-1', BASE_DTO);
+      const result = await service.createCase('key-1', TENANT_ID, BASE_DTO);
 
       expect(result.id).toBe(CASE_ID);
       expect(txCaseRepo.create).toHaveBeenCalledWith(
@@ -145,7 +144,7 @@ describe('CasesService', () => {
       const existing = { id: CASE_ID, idempotencyKey: 'key-1' } as LoanCase;
       caseRepo.findOneBy.mockResolvedValue(existing);
 
-      const result = await service.createCase('key-1', BASE_DTO);
+      const result = await service.createCase('key-1', TENANT_ID, BASE_DTO);
 
       expect(result).toBe(existing);
       expect(dataSource.transaction).not.toHaveBeenCalled();
@@ -158,7 +157,7 @@ describe('CasesService', () => {
       const winner = { id: CASE_ID, idempotencyKey: 'key-1' } as LoanCase;
       caseRepo.findOneByOrFail.mockResolvedValue(winner);
 
-      const result = await service.createCase('key-1', BASE_DTO);
+      const result = await service.createCase('key-1', TENANT_ID, BASE_DTO);
 
       expect(result).toBe(winner);
     });
@@ -168,22 +167,47 @@ describe('CasesService', () => {
       caseRepo.findOneBy.mockResolvedValue(null);
       txCaseRepo.save.mockRejectedValue(new Error('connection reset'));
 
-      await expect(service.createCase('key-1', BASE_DTO)).rejects.toThrow(
-        'connection reset',
-      );
+      await expect(
+        service.createCase('key-1', TENANT_ID, BASE_DTO),
+      ).rejects.toThrow('connection reset');
     });
   });
 
   describe('getCase', () => {
     it('throws NotFoundException for an unknown case id', async () => {
       caseRepo.findOneBy.mockResolvedValue(null);
-      await expect(service.getCase(CASE_ID)).rejects.toThrow(NotFoundException);
+      await expect(service.getCase(TENANT_ID, CASE_ID)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('returns the case row when found', async () => {
       const found = { id: CASE_ID } as LoanCase;
       caseRepo.findOneBy.mockResolvedValue(found);
-      await expect(service.getCase(CASE_ID)).resolves.toBe(found);
+      await expect(service.getCase(TENANT_ID, CASE_ID)).resolves.toBe(found);
+    });
+
+    it('queries scoped to the caller tenant, not the case id alone (Section 20 M5: cross-tenant fails closed)', async () => {
+      caseRepo.findOneBy.mockResolvedValue({ id: CASE_ID } as LoanCase);
+
+      await service.getCase(TENANT_ID, CASE_ID);
+
+      expect(caseRepo.findOneBy).toHaveBeenCalledWith({
+        id: CASE_ID,
+        tenantId: TENANT_ID,
+      });
+    });
+
+    it('404s for a case that belongs to a different tenant, the same response a nonexistent case gets — no separate 403 that would leak the case exists', async () => {
+      // The mock stands in for what Postgres itself returns: a query
+      // filtered on (id, tenantId) together finds nothing when the real
+      // row's tenantId differs from the caller's, exactly like an
+      // unknown id would.
+      caseRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.getCase('99999999-9999-9999-9999-999999999999', CASE_ID),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -199,7 +223,7 @@ describe('CasesService', () => {
         runId: 'run-1',
       });
 
-      const result = await service.startWorkflow(CASE_ID);
+      const result = await service.startWorkflow(TENANT_ID, CASE_ID);
 
       expect(temporalClient.startCaseConditionsWorkflow).toHaveBeenCalledWith({
         tenantId: TENANT_ID,
@@ -214,7 +238,7 @@ describe('CasesService', () => {
 
     it('throws NotFoundException without contacting Temporal for an unknown case', async () => {
       caseRepo.findOneBy.mockResolvedValue(null);
-      await expect(service.startWorkflow(CASE_ID)).rejects.toThrow(
+      await expect(service.startWorkflow(TENANT_ID, CASE_ID)).rejects.toThrow(
         NotFoundException,
       );
       expect(temporalClient.startCaseConditionsWorkflow).not.toHaveBeenCalled();
@@ -233,7 +257,7 @@ describe('CasesService', () => {
         status: 'RUNNING',
       });
 
-      const result = await service.getWorkflowRun(CASE_ID, 'run-1');
+      const result = await service.getWorkflowRun(TENANT_ID, CASE_ID, 'run-1');
 
       expect(temporalClient.getWorkflowStatus).toHaveBeenCalledWith(
         CASE_ID,
@@ -251,9 +275,9 @@ describe('CasesService', () => {
         ),
       );
 
-      await expect(service.getWorkflowRun(CASE_ID, 'run-1')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getWorkflowRun(TENANT_ID, CASE_ID, 'run-1'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -271,7 +295,7 @@ describe('CasesService', () => {
     it('delivers the resolveCondition signal for a CONDITION_RESOLUTION review', async () => {
       temporalClient.resolveCondition.mockResolvedValue(undefined);
 
-      await service.submitReview(CASE_ID, resolutionDto);
+      await service.submitReview(TENANT_ID, CASE_ID, resolutionDto);
 
       expect(temporalClient.resolveCondition).toHaveBeenCalledWith(CASE_ID, {
         actorId: 'reviewer-1',
@@ -291,7 +315,7 @@ describe('CasesService', () => {
       );
 
       await expect(
-        service.submitReview(CASE_ID, resolutionDto),
+        service.submitReview(TENANT_ID, CASE_ID, resolutionDto),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -303,7 +327,7 @@ describe('CasesService', () => {
         reason: 'coverage activated',
       };
 
-      await service.submitReview(CASE_ID, resumeDto);
+      await service.submitReview(TENANT_ID, CASE_ID, resumeDto);
 
       expect(temporalClient.resumeInterruptedEvaluation).toHaveBeenCalledWith(
         CASE_ID,
@@ -322,7 +346,7 @@ describe('CasesService', () => {
       );
 
       await expect(
-        service.submitReview(CASE_ID, {
+        service.submitReview(TENANT_ID, CASE_ID, {
           reviewType: 'RESUME_EVALUATION' as const,
           actorId: 'reviewer-2',
         }),
@@ -346,7 +370,7 @@ describe('CasesService', () => {
       ];
       caseTimelineService.getTimeline.mockResolvedValue(entries);
 
-      const result = await service.getTimeline(CASE_ID);
+      const result = await service.getTimeline(TENANT_ID, CASE_ID);
 
       expect(caseTimelineService.getTimeline).toHaveBeenCalledWith(
         TENANT_ID,
@@ -358,7 +382,7 @@ describe('CasesService', () => {
     it('throws 404 for a nonexistent case without calling CaseTimelineService', async () => {
       caseRepo.findOneBy.mockResolvedValue(null);
 
-      await expect(service.getTimeline(CASE_ID)).rejects.toThrow(
+      await expect(service.getTimeline(TENANT_ID, CASE_ID)).rejects.toThrow(
         NotFoundException,
       );
       expect(caseTimelineService.getTimeline).not.toHaveBeenCalled();

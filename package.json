@@ -37,6 +37,7 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/database/data-source.ts",
     "evaluate": "ts-node -r tsconfig-paths/register src/evaluation-report.ts",
     "generate:openapi": "ts-node -r tsconfig-paths/register src/generate-openapi-spec.ts",
+    "create-api-client": "ts-node -r tsconfig-paths/register src/create-api-client.ts",
     "generate:client": "openapi-typescript openapi/openapi.json -o client/generated/schema.d.ts",
     "quickstart": "ts-node -r tsconfig-paths/register client/quickstart.ts"
   },

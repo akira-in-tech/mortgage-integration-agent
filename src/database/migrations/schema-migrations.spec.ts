@@ -88,6 +88,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
 
     expect(await tableNames()).toEqual([
       'agent_runs',
+      'api_clients',
       'case_policy_bindings',
       'case_policy_snapshots',
       'communication_approvals',
@@ -184,6 +185,40 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the api clients migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
   });
 
   it('reverts the webhook platform migration without touching other tables', async () => {

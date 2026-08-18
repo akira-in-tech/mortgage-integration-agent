@@ -13,10 +13,13 @@ export class WebhookEndpointService {
     private readonly endpointRepository: Repository<WebhookEndpoint>,
   ) {}
 
-  async create(dto: CreateWebhookEndpointDto): Promise<WebhookEndpoint> {
+  async create(
+    tenantId: string,
+    dto: CreateWebhookEndpointDto,
+  ): Promise<WebhookEndpoint> {
     return this.endpointRepository.save(
       this.endpointRepository.create({
-        tenantId: dto.tenantId,
+        tenantId,
         targetUrl: dto.targetUrl,
         eventTypes: dto.eventTypes,
         secret: randomBytes(32).toString('hex'),

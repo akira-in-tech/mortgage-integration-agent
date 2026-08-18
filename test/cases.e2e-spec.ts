@@ -12,12 +12,14 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { Tenant } from '../src/database/entities/tenant.entity';
 import { LoanCase } from '../src/database/entities/loan-case.entity';
+import { ApiClient } from '../src/database/entities/api-client.entity';
+import { ApiClientService } from '../src/auth/api-client.service';
 
 // Same "skip instead of failing" convention as loan.e2e-spec.ts and the
 // Temporal workflow/activities suites — this exercises the real REST
 // surface (Section 15.1, M2 scope: "REST workflow-start and status
-// endpoints") against a real database and a real Temporal server, not
-// mocks of either.
+// endpoints"; Section 20 M5's API-client authentication) against a real
+// database and a real Temporal server, not mocks of either.
 const REQUIRED_VARS = ['DATABASE_URL', 'TEMPORAL_ADDRESS'];
 const missingVars = REQUIRED_VARS.filter((v) => !process.env[v]);
 
@@ -35,10 +37,16 @@ describeOrSkip(
     let app: INestApplication;
     let tenantRepo: Repository<Tenant>;
     let caseRepo: Repository<LoanCase>;
+    let apiClientRepo: Repository<ApiClient>;
+    let apiClientService: ApiClientService;
     let tenantId: string;
+    let authHeader: string;
+    let otherTenantId: string;
+    let otherAuthHeader: string;
     let temporalConnection: Connection;
     let temporalClient: Client;
     const startedWorkflowIds: string[] = [];
+    const apiClientIds: string[] = [];
 
     beforeAll(async () => {
       const moduleRef = await Test.createTestingModule({
@@ -57,11 +65,30 @@ describeOrSkip(
 
       tenantRepo = moduleRef.get(getRepositoryToken(Tenant));
       caseRepo = moduleRef.get(getRepositoryToken(LoanCase));
+      apiClientRepo = moduleRef.get(getRepositoryToken(ApiClient));
+      apiClientService = moduleRef.get(ApiClientService);
 
       const tenant = await tenantRepo.save(
         tenantRepo.create({ name: 'Cases E2E Tenant' }),
       );
       tenantId = tenant.id;
+      const { client, token } = await apiClientService.create({
+        tenantId,
+        name: 'cases-e2e-client',
+      });
+      apiClientIds.push(client.id);
+      authHeader = `Bearer ${token}`;
+
+      const otherTenant = await tenantRepo.save(
+        tenantRepo.create({ name: 'Cases E2E Other Tenant' }),
+      );
+      otherTenantId = otherTenant.id;
+      const otherCreated = await apiClientService.create({
+        tenantId: otherTenantId,
+        name: 'cases-e2e-other-client',
+      });
+      apiClientIds.push(otherCreated.client.id);
+      otherAuthHeader = `Bearer ${otherCreated.token}`;
 
       // Independent of TemporalClientService: used only to terminate
       // whatever workflows this suite starts, so a real (possibly shared)
@@ -89,16 +116,21 @@ describeOrSkip(
       }
       await temporalConnection?.close();
 
+      if (apiClientIds.length > 0) {
+        await apiClientRepo.delete(apiClientIds);
+      }
       if (tenantId) {
         await caseRepo.delete({ tenantId });
         await tenantRepo.delete({ id: tenantId });
+      }
+      if (otherTenantId) {
+        await tenantRepo.delete({ id: otherTenantId });
       }
       await app?.close();
     }, 30_000);
 
     function createCasePayload() {
       return {
-        tenantId,
         borrowerId: `e2e-borrower-${uuidv4()}`,
         requestedAmount: 350_000,
         loanType: 'CONVENTIONAL',
@@ -114,9 +146,29 @@ describeOrSkip(
     it('rejects case creation with no Idempotency-Key header', async () => {
       const res = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .send(createCasePayload());
 
       expect(res.status).toBe(400);
+    });
+
+    it('rejects every route with no Authorization header', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .send(createCasePayload());
+      expect(created.status).toBe(401);
+
+      const fetched = await request(app.getHttpServer()).get(
+        `/v1/loan-cases/${uuidv4()}`,
+      );
+      expect(fetched.status).toBe(401);
+    });
+
+    it('rejects a malformed or unknown bearer token', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${uuidv4()}`)
+        .set('Authorization', 'Bearer not-a-real-token');
+      expect(res.status).toBe(401);
     });
 
     it('creates a DRAFT case and returns it again for a repeated idempotency key', async () => {
@@ -125,15 +177,18 @@ describeOrSkip(
 
       const first = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', idempotencyKey)
         .send(payload);
 
       expect(first.status).toBe(201);
       expect(first.body.status).toBe('DRAFT');
+      expect(first.body.tenantId).toBe(tenantId);
       expect(first.body.borrowerId).toBe(payload.borrowerId);
 
       const second = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', idempotencyKey)
         .send(payload);
 
@@ -148,19 +203,10 @@ describeOrSkip(
       expect(rowCount).toBe(1);
     });
 
-    it('returns 404 for an unknown tenant', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/v1/loan-cases')
-        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
-        .send({ ...createCasePayload(), tenantId: uuidv4() });
-
-      expect(res.status).toBe(404);
-    });
-
     it('returns 404 for GET on an unknown case id', async () => {
-      const res = await request(app.getHttpServer()).get(
-        `/v1/loan-cases/${uuidv4()}`,
-      );
+      const res = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${uuidv4()}`)
+        .set('Authorization', authHeader);
       expect(res.status).toBe(404);
     });
 
@@ -168,28 +214,76 @@ describeOrSkip(
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
 
-      const fetched = await request(app.getHttpServer()).get(
-        `/v1/loan-cases/${created.body.id}`,
-      );
+      const fetched = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${created.body.id}`)
+        .set('Authorization', authHeader);
 
       expect(fetched.status).toBe(200);
       expect(fetched.body.id).toBe(created.body.id);
+    });
+
+    // Section 20 M5's own exit evidence: "cross-tenant tests fail closed
+    // at API... layers." A different tenant's own valid, active credential
+    // — not a missing/malformed one — gets the identical 404 an unknown
+    // case id gets, never a 403 that would confirm the case exists.
+    it("404s for another tenant's real, valid credential on someone else's case", async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      expect(created.status).toBe(201);
+
+      const crossTenantGet = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${created.body.id}`)
+        .set('Authorization', otherAuthHeader);
+      expect(crossTenantGet.status).toBe(404);
+
+      const crossTenantTimeline = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${created.body.id}/timeline`)
+        .set('Authorization', otherAuthHeader);
+      expect(crossTenantTimeline.status).toBe(404);
+
+      const crossTenantStart = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${created.body.id}/workflow-runs`)
+        .set('Authorization', otherAuthHeader);
+      expect(crossTenantStart.status).toBe(404);
+
+      const crossTenantReview = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${created.body.id}/reviews`)
+        .set('Authorization', otherAuthHeader)
+        .send({
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId: 'cross-tenant-reviewer',
+          resolution: 'SATISFIED',
+        });
+      expect(crossTenantReview.status).toBe(404);
+
+      // The owning tenant's own credential still works on the same case —
+      // proves the 404s above are real tenant scoping, not a broken route.
+      const ownTenantGet = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${created.body.id}`)
+        .set('Authorization', authHeader);
+      expect(ownTenantGet.status).toBe(200);
     });
 
     it('starts the workflow idempotently and exposes its status', async () => {
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
       const caseId = created.body.id;
 
-      const firstStart = await request(app.getHttpServer()).post(
-        `/v1/loan-cases/${caseId}/workflow-runs`,
-      );
+      const firstStart = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/workflow-runs`)
+        .set('Authorization', authHeader);
       expect(firstStart.status).toBe(202);
       expect(firstStart.body.workflowId).toBe(`case-conditions-${caseId}`);
       startedWorkflowIds.push(firstStart.body.workflowId);
@@ -197,15 +291,15 @@ describeOrSkip(
       // Duplicate start command — must resolve to the same execution, not a
       // second one (same M2 exit evidence as the idempotency-key test above,
       // exercised here at the workflow-start endpoint specifically).
-      const secondStart = await request(app.getHttpServer()).post(
-        `/v1/loan-cases/${caseId}/workflow-runs`,
-      );
+      const secondStart = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/workflow-runs`)
+        .set('Authorization', authHeader);
       expect(secondStart.status).toBe(202);
       expect(secondStart.body.runId).toBe(firstStart.body.runId);
 
-      const status = await request(app.getHttpServer()).get(
-        `/v1/loan-cases/${caseId}/workflow-runs/${firstStart.body.runId}`,
-      );
+      const status = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${caseId}/workflow-runs/${firstStart.body.runId}`)
+        .set('Authorization', authHeader);
       expect(status.status).toBe(200);
       expect(status.body.workflowId).toBe(`case-conditions-${caseId}`);
       expect(typeof status.body.status).toBe('string');
@@ -215,12 +309,13 @@ describeOrSkip(
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
 
-      const res = await request(app.getHttpServer()).get(
-        `/v1/loan-cases/${created.body.id}/workflow-runs/${uuidv4()}`,
-      );
+      const res = await request(app.getHttpServer())
+        .get(`/v1/loan-cases/${created.body.id}/workflow-runs/${uuidv4()}`)
+        .set('Authorization', authHeader);
       expect(res.status).toBe(404);
     });
 
@@ -228,13 +323,14 @@ describeOrSkip(
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
       const caseId = created.body.id;
 
-      const start = await request(app.getHttpServer()).post(
-        `/v1/loan-cases/${caseId}/workflow-runs`,
-      );
+      const start = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/workflow-runs`)
+        .set('Authorization', authHeader);
       startedWorkflowIds.push(start.body.workflowId);
 
       // No worker is running in this suite, so the workflow never actually
@@ -244,6 +340,7 @@ describeOrSkip(
       // on and already verifies end-to-end with a live worker.
       const res = await request(app.getHttpServer())
         .post(`/v1/loan-cases/${caseId}/reviews`)
+        .set('Authorization', authHeader)
         .send({
           reviewType: 'CONDITION_RESOLUTION',
           actorId: 'e2e-reviewer',
@@ -257,17 +354,19 @@ describeOrSkip(
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
       const caseId = created.body.id;
 
-      const start = await request(app.getHttpServer()).post(
-        `/v1/loan-cases/${caseId}/workflow-runs`,
-      );
+      const start = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/workflow-runs`)
+        .set('Authorization', authHeader);
       startedWorkflowIds.push(start.body.workflowId);
 
       const res = await request(app.getHttpServer())
         .post(`/v1/loan-cases/${caseId}/reviews`)
+        .set('Authorization', authHeader)
         .send({
           reviewType: 'RESUME_EVALUATION',
           actorId: 'e2e-reviewer',
@@ -281,11 +380,13 @@ describeOrSkip(
       const payload = createCasePayload();
       const created = await request(app.getHttpServer())
         .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
         .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
         .send(payload);
 
       const res = await request(app.getHttpServer())
         .post(`/v1/loan-cases/${created.body.id}/reviews`)
+        .set('Authorization', authHeader)
         .send({
           reviewType: 'CONDITION_RESOLUTION',
           actorId: 'e2e-reviewer',

@@ -3,7 +3,10 @@ loadEnv();
 
 import { randomUUID } from 'node:crypto';
 import { Client as PgClient } from 'pg';
+import { DataSource } from 'typeorm';
 import { createApiClient } from './index';
+import { ApiClient } from '../src/database/entities/api-client.entity';
+import { ApiClientService } from '../src/auth/api-client.service';
 
 /**
  * Section 20 M4 exit evidence: "generated client completes the published
@@ -17,7 +20,9 @@ import { createApiClient } from './index';
  * doesn't include one, and this codebase hasn't built one) — this script
  * inserts one directly via SQL, the same honest gap this codebase's other
  * scripts (evaluation-report.ts) already document rather than paper over
- * with a fabricated endpoint.
+ * with a fabricated endpoint. API-client creation (Section 20 M5) has the
+ * same honest gap — `ApiClientService` directly, matching
+ * `create-api-client.ts`'s own script, not a fabricated endpoint either.
  */
 
 const API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3000';
@@ -56,21 +61,48 @@ async function seedQuickstartTenant(): Promise<string> {
   }
 }
 
+async function createQuickstartApiClient(tenantId: string): Promise<string> {
+  if (!DATABASE_URL) {
+    throw new Error(
+      'DATABASE_URL is required to mint an API client for this quickstart.',
+    );
+  }
+  const dataSource = new DataSource({
+    type: 'postgres',
+    url: DATABASE_URL,
+    entities: [ApiClient],
+  });
+  await dataSource.initialize();
+  try {
+    const service = new ApiClientService(dataSource.getRepository(ApiClient));
+    const { token } = await service.create({
+      tenantId,
+      name: `quickstart-client-${new Date().toISOString()}`,
+    });
+    return token;
+  } finally {
+    await dataSource.destroy();
+  }
+}
+
 async function main(): Promise<void> {
   console.log(`Quickstart against ${API_BASE_URL}`);
   const tenantId = await seedQuickstartTenant();
   console.log(
     `Seeded tenant ${tenantId} (direct SQL — no REST endpoint exists yet)`,
   );
+  const token = await createQuickstartApiClient(tenantId);
+  console.log(
+    `Minted a scoped API-client credential for that tenant (ApiClientService directly — no REST endpoint exists yet)`,
+  );
 
-  const client = createApiClient(API_BASE_URL);
+  const client = createApiClient(API_BASE_URL, token);
 
   const { data: loanCase, error: createError } = await client.POST(
     '/v1/loan-cases',
     {
       params: { header: { 'Idempotency-Key': randomUUID() } },
       body: {
-        tenantId,
         borrowerId: 'quickstart-borrower',
         requestedAmount: 300000,
         loanType: 'CONVENTIONAL',

@@ -177,20 +177,24 @@ Durable, long-running case work (starting with the M2 conditions workflow — co
 
 `docker-compose up` starts a local Temporal server (`temporalio/auto-setup`, backed by the same Postgres instance under separate `temporal`/`temporal_visibility` databases) plus both the `app` and `worker` services. Outside Docker, run a Temporal dev server (`temporal server start-dev`, or `docker compose up temporal`) and then `npm run start:worker:dev` alongside `npm run start:dev`.
 
+### Authentication and tenant isolation (Section 20 M5)
+
+Every route under `/v1/loan-cases`, `/v1/webhook-endpoints`, and `/v1/webhook-deliveries` requires an `Authorization: Bearer {clientId}.{secret}` header — a Section 20 M5 "scoped API-client" credential (`ApiClient`, `src/auth/`), checked by `ApiKeyGuard` before the request ever reaches a controller. There is no self-service credential endpoint (the same honest gap tenant creation itself already has): `npm run create-api-client -- <tenantId> <name>` mints one and prints its bearer token exactly once. The tenant a client acts as is fixed by its own credential — `CreateCaseDto`/`CreateWebhookEndpointDto` have no `tenantId` field at all, so there is nothing left for a request body to get right or wrong. A case (or webhook endpoint, or delivery) owned by a different tenant 404s exactly like a nonexistent one would; there is no separate 403 that would leak whether the resource exists. Full OIDC/FAPI 2.0 (Section 20 M5's other named target), RBAC roles, and PostgreSQL row-level security are not attempted here — this is deliberately the smallest real slice that closes the actual gap this codebase had (zero authentication, a plain `tenantId` request field anyone could set to anyone's tenant), not the whole milestone. See `docs/DEVELOPMENT_LOG.md`'s M5-001 entry for the full scope decision and a real NestJS testing-injector quirk this slice found and worked around.
+
 ### Case REST API
 
-A narrower slice of the target `/v1/loan-cases` contract (see the project charter, Section 15.1) — enough to create a case and drive it through the M2 conditions workflow from outside the process:
+A narrower slice of the target `/v1/loan-cases` contract (see the project charter, Section 15.1) — enough to create a case and drive it through the M2 conditions workflow from outside the process. Every route below requires the bearer credential described above; `tenantId` in the table below is always the one that credential resolves to, never a request field.
 
 | Method & path | Purpose |
 | --- | --- |
-| `POST /v1/loan-cases` | Create a case (`{ tenantId, borrowerId, requestedAmount, loanType, statedMonthlyIncome, jurisdictionCode }`). Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. `jurisdictionCode` must reference a row in the jurisdiction catalog (404 otherwise). |
+| `POST /v1/loan-cases` | Create a case (`{ borrowerId, requestedAmount, loanType, statedMonthlyIncome, jurisdictionCode }`). Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. `jurisdictionCode` must reference a row in the jurisdiction catalog (404 otherwise). |
 | `GET /v1/loan-cases/{caseId}` | Fetch a case. |
 | `GET /v1/loan-cases/{caseId}/timeline` | The case's full chronological history — every domain event from `outbox_events` plus every persisted Agent run and its tool-by-tool outcomes, merged and sorted by timestamp (see Agent run timeline below). |
 | `POST /v1/loan-cases/{caseId}/workflow-runs` | Start the case-conditions workflow. `202 Accepted`; safe to retry — a case with a workflow already running returns that same run rather than starting a second one. |
 | `GET /v1/loan-cases/{caseId}/workflow-runs/{runId}` | Current Temporal status of that run. |
 | `POST /v1/loan-cases/{caseId}/reviews` | A reviewer action, discriminated by `reviewType`: `{ reviewType: "CONDITION_RESOLUTION", actorId, resolution: "SATISFIED" \| "WAIVED", reason? }` resolves the case's open condition (the `resolveCondition` signal); `{ reviewType: "RESUME_EVALUATION", actorId, reason? }` resumes an evaluation the Agent run interrupted for policy-applicability ambiguity (the `resumeInterruptedEvaluation` signal — see Agent runtime below). `202 Accepted`. |
 
-No authentication or tenant-scoped access control exists yet (`tenantId` is a plain request field) — full RBAC/RLS is M5 scope. There is also no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use.
+There is no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use, same as before.
 
 ### OpenAPI contract, generated client, and quickstart (Section 15.3, M4-003)
 

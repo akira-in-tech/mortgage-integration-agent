@@ -68,11 +68,12 @@ export class CasesService {
    */
   async createCase(
     idempotencyKey: string,
+    tenantId: string,
     dto: CreateCaseDto,
   ): Promise<LoanCase> {
-    const tenant = await this.tenantRepository.findOneBy({ id: dto.tenantId });
+    const tenant = await this.tenantRepository.findOneBy({ id: tenantId });
     if (!tenant) {
-      throw new NotFoundException(`Tenant ${dto.tenantId} not found`);
+      throw new NotFoundException(`Tenant ${tenantId} not found`);
     }
 
     const jurisdiction = await this.jurisdictionRepository.findOneBy({
@@ -85,7 +86,7 @@ export class CasesService {
     }
 
     const existing = await this.caseRepository.findOneBy({
-      tenantId: dto.tenantId,
+      tenantId,
       idempotencyKey,
     });
     if (existing) {
@@ -102,7 +103,7 @@ export class CasesService {
         const caseRepo = manager.getRepository(LoanCase);
         const loanCase = await caseRepo.save(
           caseRepo.create({
-            tenantId: dto.tenantId,
+            tenantId,
             idempotencyKey,
             borrowerId: dto.borrowerId,
             requestedAmount: dto.requestedAmount,
@@ -113,7 +114,7 @@ export class CasesService {
           }),
         );
         await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId: dto.tenantId,
+          tenantId,
           caseId: loanCase.id,
           eventType: OutboxEventType.LoanCaseCreated,
           payload: {
@@ -130,7 +131,7 @@ export class CasesService {
     } catch (error) {
       if (isUniqueViolation(error)) {
         return await this.caseRepository.findOneByOrFail({
-          tenantId: dto.tenantId,
+          tenantId,
           idempotencyKey,
         });
       }
@@ -138,16 +139,31 @@ export class CasesService {
     }
   }
 
-  async getCase(caseId: string): Promise<LoanCase> {
-    const loanCase = await this.caseRepository.findOneBy({ id: caseId });
+  /**
+   * Section 20 M5's own exit evidence: "cross-tenant tests fail closed at
+   * API... layers." `tenantId` is always the caller's own, resolved by
+   * `ApiKeyGuard` from its credentials — a case owned by a different
+   * tenant simply doesn't match this query and 404s, the same response a
+   * genuinely nonexistent case gets. No separate 403 branch: a 403 would
+   * confirm the case exists (just not yours), which is itself a
+   * cross-tenant information leak this design avoids by construction.
+   */
+  async getCase(tenantId: string, caseId: string): Promise<LoanCase> {
+    const loanCase = await this.caseRepository.findOneBy({
+      id: caseId,
+      tenantId,
+    });
     if (!loanCase) {
       throw new NotFoundException(`Case ${caseId} not found`);
     }
     return loanCase;
   }
 
-  async startWorkflow(caseId: string): Promise<StartWorkflowRunResult> {
-    const loanCase = await this.getCase(caseId);
+  async startWorkflow(
+    tenantId: string,
+    caseId: string,
+  ): Promise<StartWorkflowRunResult> {
+    const loanCase = await this.getCase(tenantId, caseId);
     return this.temporalClient.startCaseConditionsWorkflow({
       tenantId: loanCase.tenantId,
       caseId: loanCase.id,
@@ -156,10 +172,11 @@ export class CasesService {
   }
 
   async getWorkflowRun(
+    tenantId: string,
     caseId: string,
     runId: string,
   ): Promise<WorkflowRunStatus> {
-    await this.getCase(caseId);
+    await this.getCase(tenantId, caseId);
     try {
       return await this.temporalClient.getWorkflowStatus(caseId, runId);
     } catch (error) {
@@ -179,8 +196,12 @@ export class CasesService {
    * and it should re-run the evaluation (Section 9.5's "interrupt for
    * review", `case-conditions.workflow.ts`'s interrupt/resume loop).
    */
-  async submitReview(caseId: string, dto: ReviewDto): Promise<void> {
-    await this.getCase(caseId);
+  async submitReview(
+    tenantId: string,
+    caseId: string,
+    dto: ReviewDto,
+  ): Promise<void> {
+    await this.getCase(tenantId, caseId);
     try {
       if (dto.reviewType === 'RESUME_EVALUATION') {
         await this.temporalClient.resumeInterruptedEvaluation(caseId, {
@@ -209,8 +230,11 @@ export class CasesService {
    * standing in for target surfaces not yet built (no GraphQL case
    * resolvers exist at all yet).
    */
-  async getTimeline(caseId: string): Promise<TimelineEntry[]> {
-    const loanCase = await this.getCase(caseId);
+  async getTimeline(
+    tenantId: string,
+    caseId: string,
+  ): Promise<TimelineEntry[]> {
+    const loanCase = await this.getCase(tenantId, caseId);
     return this.caseTimelineService.getTimeline(loanCase.tenantId, caseId);
   }
 }

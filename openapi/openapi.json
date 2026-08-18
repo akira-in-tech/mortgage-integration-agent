@@ -67,10 +67,18 @@
           "400": {
             "description": "Missing Idempotency-Key header, or a request-body validation failure."
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "tenantId or jurisdictionCode does not exist."
+            "description": "jurisdictionCode does not exist."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Create a loan case (idempotent on Idempotency-Key)",
         "tags": [
           "loan-cases"
@@ -102,10 +110,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No case with this id."
+            "description": "No case with this id owned by the authenticated tenant."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get a loan case by id",
         "tags": [
           "loan-cases"
@@ -140,10 +156,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No case with this id."
+            "description": "No case with this id owned by the authenticated tenant."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get the chronological event/Agent-run timeline for a case",
         "tags": [
           "loan-cases"
@@ -175,10 +199,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No case with this id."
+            "description": "No case with this id owned by the authenticated tenant."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Start the case-conditions workflow for a case (idempotent per case)",
         "tags": [
           "loan-cases"
@@ -218,10 +250,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No case with this id, or no such workflow run."
+            "description": "No case with this id owned by the authenticated tenant, or no such workflow run."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get the status of one workflow run",
         "tags": [
           "loan-cases"
@@ -256,10 +296,18 @@
           "202": {
             "description": "Signal delivered; the workflow applies it asynchronously."
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No case with this id, or no running workflow for it."
+            "description": "No case with this id owned by the authenticated tenant, or no running workflow for it."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Submit a reviewer decision (condition resolution or evaluation resume)",
         "tags": [
           "loan-cases"
@@ -290,8 +338,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.",
         "tags": [
           "webhooks"
@@ -323,10 +379,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
           "404": {
-            "description": "No delivery with this id."
+            "description": "No delivery with this id owned by the authenticated tenant."
           }
         },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
         "summary": "Get one webhook delivery and its full attempt history",
         "tags": [
           "webhooks"
@@ -352,14 +416,18 @@
   ],
   "servers": [],
   "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "A Section 20 M5 scoped API-client credential, \"{clientId}.{secret}\" — minted via `npm run create-api-client` (no self-service REST endpoint exists yet). The tenant is always the one this credential belongs to; no request body or query parameter can specify a different one."
+      }
+    },
     "schemas": {
       "CreateCaseDto": {
         "type": "object",
         "properties": {
-          "tenantId": {
-            "type": "string",
-            "format": "uuid"
-          },
           "borrowerId": {
             "type": "string",
             "minLength": 1,
@@ -392,7 +460,6 @@
           }
         },
         "required": [
-          "tenantId",
           "borrowerId",
           "requestedAmount",
           "loanType",
@@ -575,10 +642,6 @@
       "CreateWebhookEndpointDto": {
         "type": "object",
         "properties": {
-          "tenantId": {
-            "type": "string",
-            "format": "uuid"
-          },
           "targetUrl": {
             "type": "string",
             "description": "Where signed delivery attempts are POSTed.",
@@ -606,7 +669,6 @@
           }
         },
         "required": [
-          "tenantId",
           "targetUrl",
           "eventTypes"
         ]

@@ -177,8 +177,6 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         CreateCaseDto: {
-            /** Format: uuid */
-            tenantId: string;
             borrowerId: string;
             requestedAmount: number;
             /** @enum {string} */
@@ -238,8 +236,6 @@ export interface components {
             reason?: string;
         };
         CreateWebhookEndpointDto: {
-            /** Format: uuid */
-            tenantId: string;
             /**
              * @description Where signed delivery attempts are POSTed.
              * @example https://partner.example.com/webhooks/mortgage-agent
@@ -361,7 +357,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description tenantId or jurisdictionCode does not exist. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description jurisdictionCode does not exist. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -389,7 +392,14 @@ export interface operations {
                     "application/json": components["schemas"]["LoanCase"];
                 };
             };
-            /** @description No case with this id. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -417,7 +427,14 @@ export interface operations {
                     "application/json": components["schemas"]["TimelineEntry"][];
                 };
             };
-            /** @description No case with this id. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -445,7 +462,14 @@ export interface operations {
                     "application/json": components["schemas"]["StartWorkflowRunResult"];
                 };
             };
-            /** @description No case with this id. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -474,7 +498,14 @@ export interface operations {
                     "application/json": components["schemas"]["WorkflowRunStatus"];
                 };
             };
-            /** @description No case with this id, or no such workflow run. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant, or no such workflow run. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -505,7 +536,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description No case with this id, or no running workflow for it. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant, or no running workflow for it. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -535,6 +573,13 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookEndpoint"];
                 };
             };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getWebhookDelivery: {
@@ -556,7 +601,14 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookDelivery"];
                 };
             };
-            /** @description No delivery with this id. */
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No delivery with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;

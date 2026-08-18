@@ -10,6 +10,7 @@ import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
+import { ApiClient } from '../database/entities/api-client.entity';
 import { TemporalModule } from '../workflows/temporal.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { TemporalModule } from '../workflows/temporal.module';
       AgentRun,
       ToolAttempt,
       LoanCondition,
+      ApiClient,
     ]),
     TemporalModule,
   ],

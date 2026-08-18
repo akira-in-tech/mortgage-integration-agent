@@ -1,20 +1,15 @@
-import {
-  ArrayMinSize,
-  ArrayUnique,
-  IsIn,
-  IsUUID,
-  IsUrl,
-} from 'class-validator';
+import { ArrayMinSize, ArrayUnique, IsIn, IsUrl } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { OutboxEventType } from '../../database/outbox/outbox-event-types';
 
 const KNOWN_EVENT_TYPES = Object.values(OutboxEventType);
 
+/**
+ * No `tenantId` field (Section 20 M5, same reasoning as `CreateCaseDto`):
+ * the tenant is always the one `ApiKeyGuard` resolved from the caller's
+ * own bearer credential.
+ */
 export class CreateWebhookEndpointDto {
-  @ApiProperty({ format: 'uuid' })
-  @IsUUID()
-  tenantId!: string;
-
   @ApiProperty({
     description: 'Where signed delivery attempts are POSTed.',
     example: 'https://partner.example.com/webhooks/mortgage-agent',

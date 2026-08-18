@@ -12,7 +12,9 @@ import { AppModule } from '../src/app.module';
 import { WebhookEndpoint } from '../src/database/entities/webhook-endpoint.entity';
 import { WebhookDelivery } from '../src/database/entities/webhook-delivery.entity';
 import { OutboxEvent } from '../src/database/entities/outbox-event.entity';
+import { ApiClient } from '../src/database/entities/api-client.entity';
 import { WebhookDeliveryStatus } from '../src/database/enums/webhook.enum';
+import { ApiClientService } from '../src/auth/api-client.service';
 
 // Same "skip instead of failing" convention as cases.e2e-spec.ts — this
 // exercises the real REST surface (Section 15.1's `POST
@@ -36,10 +38,16 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
   let endpointRepo: Repository<WebhookEndpoint>;
   let deliveryRepo: Repository<WebhookDelivery>;
   let outboxRepo: Repository<OutboxEvent>;
+  let apiClientRepo: Repository<ApiClient>;
+  let apiClientService: ApiClientService;
   const tenantId = randomUUID();
+  const otherTenantId = randomUUID();
+  let authHeader: string;
+  let otherAuthHeader: string;
   const createdEndpointIds: string[] = [];
   const createdDeliveryIds: string[] = [];
   const createdOutboxEventIds: string[] = [];
+  const apiClientIds: string[] = [];
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -59,6 +67,22 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
     endpointRepo = moduleRef.get(getRepositoryToken(WebhookEndpoint));
     deliveryRepo = moduleRef.get(getRepositoryToken(WebhookDelivery));
     outboxRepo = moduleRef.get(getRepositoryToken(OutboxEvent));
+    apiClientRepo = moduleRef.get(getRepositoryToken(ApiClient));
+    apiClientService = moduleRef.get(ApiClientService);
+
+    const { client, token } = await apiClientService.create({
+      tenantId,
+      name: 'webhooks-e2e-client',
+    });
+    apiClientIds.push(client.id);
+    authHeader = `Bearer ${token}`;
+
+    const other = await apiClientService.create({
+      tenantId: otherTenantId,
+      name: 'webhooks-e2e-other-client',
+    });
+    apiClientIds.push(other.client.id);
+    otherAuthHeader = `Bearer ${other.token}`;
   }, 30_000);
 
   afterAll(async () => {
@@ -71,14 +95,32 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
     if (createdOutboxEventIds.length > 0) {
       await outboxRepo.delete(createdOutboxEventIds);
     }
+    if (apiClientIds.length > 0) {
+      await apiClientRepo.delete(apiClientIds);
+    }
     await app?.close();
   });
 
-  it('creates a webhook endpoint and returns its secret exactly once', async () => {
-    const response = await request(app.getHttpServer())
+  it('rejects webhook-endpoint creation and delivery lookup with no Authorization header', async () => {
+    const created = await request(app.getHttpServer())
       .post('/v1/webhook-endpoints')
       .send({
-        tenantId,
+        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        eventTypes: ['loan_case.created'],
+      });
+    expect(created.status).toBe(401);
+
+    const fetched = await request(app.getHttpServer()).get(
+      `/v1/webhook-deliveries/${randomUUID()}`,
+    );
+    expect(fetched.status).toBe(401);
+  });
+
+  it('creates a webhook endpoint under the authenticated tenant and returns its secret exactly once', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/v1/webhook-endpoints')
+      .set('Authorization', authHeader)
+      .send({
         targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
         eventTypes: ['loan_case.created', 'condition.opened'],
       })
@@ -97,8 +139,8 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
   it('rejects an eventTypes value outside the known event catalog', async () => {
     await request(app.getHttpServer())
       .post('/v1/webhook-endpoints')
+      .set('Authorization', authHeader)
       .send({
-        tenantId,
         targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
         eventTypes: ['not_a_real_event_type'],
       })
@@ -108,8 +150,8 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
   it('rejects a non-URL targetUrl', async () => {
     await request(app.getHttpServer())
       .post('/v1/webhook-endpoints')
+      .set('Authorization', authHeader)
       .send({
-        tenantId,
         targetUrl: 'not-a-url',
         eventTypes: ['loan_case.created'],
       })
@@ -119,8 +161,8 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
   it('rejects an empty eventTypes array', async () => {
     await request(app.getHttpServer())
       .post('/v1/webhook-endpoints')
+      .set('Authorization', authHeader)
       .send({
-        tenantId,
         targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
         eventTypes: [],
       })
@@ -130,10 +172,11 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
   it('returns 404 for an unknown delivery id', async () => {
     await request(app.getHttpServer())
       .get(`/v1/webhook-deliveries/${randomUUID()}`)
+      .set('Authorization', authHeader)
       .expect(404);
   });
 
-  it('GET returns a real delivery with its attempt history', async () => {
+  it('GET returns a real delivery with its attempt history, and 404s for a different tenant', async () => {
     const endpoint = await endpointRepo.save(
       endpointRepo.create({
         tenantId,
@@ -178,6 +221,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
 
     const response = await request(app.getHttpServer())
       .get(`/v1/webhook-deliveries/${delivery.id}`)
+      .set('Authorization', authHeader)
       .expect(200);
 
     expect(response.body).toMatchObject({
@@ -193,5 +237,12 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
       httpStatusCode: 500,
       outcome: 'FAILED',
     });
+
+    // Section 20 M5's own exit evidence: a different tenant's real, valid
+    // credential gets the identical 404 an unknown delivery id gets.
+    await request(app.getHttpServer())
+      .get(`/v1/webhook-deliveries/${delivery.id}`)
+      .set('Authorization', otherAuthHeader)
+      .expect(404);
   });
 });

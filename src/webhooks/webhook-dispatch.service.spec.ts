@@ -152,13 +152,11 @@ describeOrSkip('WebhookDispatchService', () => {
     const tenantId = newTenantId();
     const receiver = await startTestReceiver();
     try {
-      const subscribed = await endpointService.create({
-        tenantId,
+      const subscribed = await endpointService.create(tenantId, {
         targetUrl: receiver.url,
         eventTypes: ['loan_case.created'],
       });
-      await endpointService.create({
-        tenantId,
+      await endpointService.create(tenantId, {
         targetUrl: receiver.url,
         eventTypes: ['evidence.updated'],
       });
@@ -223,8 +221,7 @@ describeOrSkip('WebhookDispatchService', () => {
     const tenantId = newTenantId();
     const receiver = await startTestReceiver();
     try {
-      const endpoint = await endpointService.create({
-        tenantId,
+      const endpoint = await endpointService.create(tenantId, {
         targetUrl: receiver.url,
         eventTypes: ['condition.opened'],
       });
@@ -284,8 +281,7 @@ describeOrSkip('WebhookDispatchService', () => {
     const tenantId = newTenantId();
     const receiver = await startTestReceiver();
     try {
-      const endpoint = await endpointService.create({
-        tenantId,
+      const endpoint = await endpointService.create(tenantId, {
         targetUrl: receiver.url,
         eventTypes: ['evaluation.interrupted'],
       });
@@ -324,8 +320,7 @@ describeOrSkip('WebhookDispatchService', () => {
     const tenantId = newTenantId();
     // Nothing listens here — an ECONNREFUSED, not an HTTP response.
     const unreachableUrl = 'http://127.0.0.1:1';
-    const endpoint = await endpointService.create({
-      tenantId,
+    const endpoint = await endpointService.create(tenantId, {
       targetUrl: unreachableUrl,
       eventTypes: ['case.escalated'],
     });

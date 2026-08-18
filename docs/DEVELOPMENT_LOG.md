@@ -4885,3 +4885,122 @@ Manual live verification (real API process boot):
 ### Next safe step
 
 All five Section 7.2 capabilities now have a real registered simulator adapter, closing that specific M4 scope bullet completely. The next M4-adjacent increment with a real consumer to justify it would be wiring `check_case_completeness`/a new policy rule to actually use asset or identity evidence — but that needs a product decision (what should an asset- or identity-driven condition even check?) this session hasn't been given. Absent that, the remaining open threads are M5 (authentication, tenant isolation/RLS — the biggest real gap this codebase currently has, since the REST API still has zero auth) or M4's separate sandbox/webhook-inspector/`publish_case_update` items. Not started; awaiting direction.
+
+## M5-001: API-client authentication and tenant isolation at the API/service layers (Section 20 M5)
+
+### Status
+
+Implemented and verified. `ApiClient` (Section 20 M5's "scoped API-client authentication") is a real bearer credential — `{clientId}.{secret}`, scrypt-hashed at rest, bound to exactly one tenant — checked by `ApiKeyGuard` on every route under `/v1/loan-cases`, `/v1/webhook-endpoints`, and `/v1/webhook-deliveries`. The tenant a request acts as is now always the one the credential resolves to: `CreateCaseDto`/`CreateWebhookEndpointDto` no longer have a `tenantId` field at all, and every case/delivery lookup is scoped to the caller's own tenant, 404ing on a cross-tenant match exactly like it would on a nonexistent id. Full OIDC/FAPI 2.0, RBAC roles, consent enforcement, and PostgreSQL row-level security (all also named in Section 20 M5) are deliberately not attempted — this slice closes the single most urgent, concretely-scoped gap (zero authentication on a REST surface that trusted a caller-supplied `tenantId` field) rather than the whole milestone.
+
+### Acceptance criterion
+
+Section 20's M5 exit evidence: "cross-tenant tests fail closed at API, service, and database layers." This slice proves the API and service layers with real tests against a real database; the database layer (PostgreSQL RLS) is a deliberately deferred, separately-scoped follow-up (see Decisions).
+
+### Implementation
+
+- `ApiClient` entity (`src/database/entities/api-client.entity.ts`), `ApiClientStatus` enum (ACTIVE/REVOKED), one migration (`1787065685817-ApiClients.ts`). `hashedSecret` is `{salt}:{scryptDigest}` (`src/auth/api-client-secret.ts` — `generateApiClientSecret`/`hashApiClientSecret`/`verifyApiClientSecret`, Node's built-in `crypto.scrypt`, no new dependency); the raw secret is never persisted anywhere, generated fresh and returned exactly once.
+- `ApiKeyGuard` (`src/auth/api-key.guard.ts`) — a `CanActivate` reading `Authorization: Bearer {clientId}.{secret}`, resolving and verifying the credential, and attaching `{tenantId, apiClientId}` to the request as `AuthContext`. Every failure path (missing header, malformed token, malformed clientId, unknown clientId, wrong secret, revoked client) throws the identical `UnauthorizedException` with the identical message — deliberately generic, the same "don't leak which part failed" reasoning `HealthController.ready()` already applies to database-unreachable responses.
+- `AuthTenantId()` (`src/auth/auth-tenant-id.decorator.ts`) — a param decorator reading `request.authContext.tenantId`, the *only* way a controller method ever learns the caller's tenant. Throws a plain `Error` (a programming-error signal, not a caller-triggerable state) if used on a route that forgot `@UseGuards(ApiKeyGuard)`.
+- `ApiClientService.create()` + `npm run create-api-client -- <tenantId> <name>` (`src/create-api-client.ts`) — no REST endpoint mints credentials (an endpoint that could would need its own "who's allowed to create API clients" authorization story first, which is exactly the administrative-duties/RBAC work this slice isn't attempting), matching this codebase's existing precedent for tenant creation itself (README: "seed one directly... for local use").
+- `CasesController`/`WebhooksController`s: `@UseGuards(ApiKeyGuard)` + `@ApiBearerAuth()` at the controller level; every method gained an `@AuthTenantId() tenantId: string` first parameter. `CasesService`/`WebhookEndpointService`/`WebhookDeliveryService` methods now take `tenantId` as a real parameter (not sourced from a DTO) and filter every tenant-scoped query on it — `CasesService.getCase()`'s query changed from `findOneBy({ id: caseId })` to `findOneBy({ id: caseId, tenantId })`, the concrete mechanism behind "cross-tenant fails closed at... the service... layer."
+- `CreateCaseDto`/`CreateWebhookEndpointDto` lost their `tenantId` field entirely — not just stopped trusting it, removed the field, so there is nothing left for a caller to get right or wrong (the exit evidence's "fails closed" read literally: failure isn't possible because the unsafe path no longer exists).
+- OpenAPI/client: `openapi.config.ts` gained `.addBearerAuth()`; regenerated `openapi/openapi.json`/`client/generated/schema.d.ts`. `client/index.ts`'s `createApiClient()` takes an optional `token`, sent as a default `Authorization` header on every call. `client/quickstart.ts` now also mints a real API client (`ApiClientService` directly, same script pattern as `create-api-client.ts`) alongside its existing tenant-seeding step, and no longer sends `tenantId` in the case-creation body.
+
+### Affected files
+
+- `src/database/entities/api-client.entity.ts`, `src/database/enums/api-client.enum.ts`
+- `src/database/migrations/1787065685817-ApiClients.ts`, `schema-migrations.spec.ts`
+- `src/auth/api-client-secret.ts` (+`.spec.ts`), `auth-context.ts`, `api-key.guard.ts` (+`.spec.ts`), `auth-tenant-id.decorator.ts`, `api-client.service.ts`, `auth.module.ts`
+- `src/create-api-client.ts`, `package.json` (new script)
+- `src/app.module.ts`, `src/cases/cases.module.ts`, `src/webhooks/webhooks.module.ts`
+- `src/cases/cases.controller.ts` (+`.spec.ts`), `cases.service.ts` (+`.spec.ts`), `dto/create-case.dto.ts`
+- `src/webhooks/webhook-endpoints.controller.ts`, `webhook-deliveries.controller.ts`, `webhook-endpoint.service.ts` (+`.spec.ts`), `webhook-delivery.service.ts`, `dto/create-webhook-endpoint.dto.ts`, `webhook-dispatch.service.spec.ts`
+- `src/openapi.config.ts`, `openapi/openapi.json`, `client/generated/schema.d.ts`, `client/index.ts`, `client/quickstart.ts`
+- `test/cases.e2e-spec.ts`, `test/webhooks.e2e-spec.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Scoped API-client bearer tokens, not OIDC.** Section 20 M5 names both ("OIDC and scoped API-client authentication") as one bullet. Building a compliant OIDC authorization server from scratch, or integrating a real external IdP this codebase has no relationship with, is its own, much larger, separately-scoped effort — the same reasoning already applied to deferring the provider platform's `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` modes (M4-001) until a real second target exists. A scoped bearer credential is a real, complete instance of the *other* half of that same bullet, not a shortcut standing in for the whole thing.
+- **PostgreSQL RLS (the exit evidence's "database layer") deliberately deferred, not attempted partially.** Doing it correctly requires either a connection-per-request architecture (so a `SET LOCAL app.current_tenant_id` reliably scopes to one request under connection pooling) or careful per-transaction session-variable discipline threaded through every repository call site — a meaningfully separate, larger unit of work. A half-correct RLS implementation would be actively worse than none: it would look like a real defense-in-depth layer while being silently bypassable under real connection-pool reuse, which is a worse outcome than an honestly-documented gap. Named explicitly in Known Gaps below, not silently skipped.
+- **`tenantId` removed from request DTOs entirely, not merely ignored if present.** An earlier design considered requiring the caller to redundantly supply `tenantId` and validating it matches the authenticated credential (403 on mismatch) — rejected because it leaves a whole class of "did the check actually run" bugs available to introduce later. Removing the field is the same "fails closed by construction, not by remembering to check" reasoning `ProviderRegistryService`/`dispatch-provider-request.ts` already apply to routing.
+- **A cross-tenant lookup 404s, never 403s.** A 403 would itself leak that the resource exists (just not yours) — this codebase already applies the identical reasoning to `HealthController.ready()`'s deliberately generic failure response; extended here to every tenant-scoped lookup.
+- **`AuthModule` is `@Global()`, and `ApiClient` is *also* independently registered via `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (see Errors and fixes).** The second part looks redundant next to `@Global()` — it's the actual empirical fix for a real NestJS testing-injector limitation, kept because it's proven to work, not removed for tidiness once the bug stopped reproducing.
+
+### Errors and fixes
+
+- **`Authorization: Bearer garbage.token` (a syntactically well-formed-enough but non-UUID clientId) crashed with an unhandled 500, not a clean 401.** Found during live manual verification against the real running API (not by a written test first) — Postgres rejected the malformed UUID literal (`22P02 invalid_text_representation`) before `ApiKeyGuard` ever got to say "unknown client." Fixed by validating the clientId against a UUID shape regex *before* any database query — a malformed credential now fails exactly like every other invalid-credential path, with no query ever reaching Postgres. Added a dedicated regression test (`api-key.guard.spec.ts`: "rejects a clientId that is not a well-formed UUID") and re-verified live against a freshly restarted API process with real curl requests (missing header, valid cross-tenant credential, malformed token, well-formed-but-unknown clientId, and the owning tenant's own credential) — all five now return the correct status, confirmed after the fix, not just in the unit test.
+- **`Test.createTestingModule({imports: [AppModule]}).compile()` failed with `Nest can't resolve dependencies of the ApiKeyGuard... "ApiClientRepository" ... available in the WebhooksModule module`, even though the identical production boot (`NestFactory.create`, `npm run start:dev`) started cleanly.** `AuthModule` exporting `ApiKeyGuard` (and being `@Global()`) was not sufficient for Nest's *testing* injector (`TestingInjector`/`TestingInstanceLoader` — a different code path than the production bootstrapper) to resolve the guard's own `@InjectRepository(ApiClient)` dependency when the guard is applied via `@UseGuards(ApiKeyGuard)` (a raw class reference) at the controller level in a *different* feature module. Fixing it for `WebhooksModule` alone caused the identical error to resurface for `CasesModule` next, confirming this is a general testing-injector limitation, not a one-off. Fixed by also registering `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (redundant with `AuthModule`'s own registration, but empirically necessary) — verified by both `npm run test:e2e` (all 3 suites, including the new cross-tenant tests) and a real production boot passing afterward.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean
+
+Migration (m5001-verify / m5001-final scratch stacks, ports 5443/7234):
+  migration:run applies ApiClients1787065685817 cleanly on top of
+  WebhookPlatform1787042560459; a from-empty run of all 19 migrations
+  on a completely fresh stack (m5001-final) also passed cleanly
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    19/19 passed (18 -> 19: +1 new revert test proving the api_clients
+    migration's one new table disappears cleanly and no other table
+    is touched)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    58 suites passed, 377 tests passed (376 -> 377: +1 test, the
+    malformed-clientId regression test added after the live-found bug
+    above; suite count unchanged — this slice added tests to existing
+    files [api-key.guard.spec.ts, api-client-secret.spec.ts] and
+    rewrote existing controller/service specs rather than only adding
+    new ones)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 23 tests passed (unchanged suite/test count from
+    M4-004, but cases.e2e-spec.ts and webhooks.e2e-spec.ts were both
+    substantially rewritten: every request now carries a real bearer
+    credential, and both suites gained genuine cross-tenant tests — a
+    second tenant's real, valid, active credential 404s on the first
+    tenant's case/delivery, proven at the full HTTP-through-Nest-guard
+    level, not mocked)
+
+Manual live verification (real REST API + real Temporal worker,
+restarted after the malformed-clientId fix):
+  ran the full quickstart end to end with real authentication —
+  seeded a tenant, minted a real API-client credential via
+  ApiClientService, created a case, started its workflow, resolved its
+  condition, watched it complete — identical outcome to M4-003's own
+  quickstart verification, confirming auth didn't change any real
+  behavior, only gated access to it
+
+  created two real tenants and a real API-client credential for each
+  via `npm run create-api-client`; tenant A created a case; direct
+  curl checks against the live server confirmed: tenant B's real,
+  valid, active credential on tenant A's case -> 404; tenant A's own
+  credential on its own case -> 200; no Authorization header -> 401;
+  the malformed-clientId token that previously 500'd -> 401; a
+  well-formed but unknown clientId -> 401
+
+  synthetic tenant/case/api-client data removed with the scratch
+  stack teardown (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- This is a genuine security hardening, not a cosmetic one: before this slice, any caller could read, mutate, or drive the workflow of any tenant's case by supplying that tenant's UUID in a request body/path — no credential of any kind was required. That gap is now closed for the API and service layers.
+- Bearer secrets are scrypt-hashed at rest with a random per-credential salt; the raw secret exists only transiently (generation → response → caller's own storage) and is never logged or persisted.
+- No rate limiting or lockout on repeated failed authentication attempts — `ThrottlerModule`'s existing general rate limit applies, but nothing auth-specific yet (Known gap).
+- No token expiry or rotation — an `ApiClient` is valid until explicitly `REVOKED` (no REST/CLI path revokes one yet either — Known gap).
+
+### Known gaps
+
+- **PostgreSQL row-level security (Section 20 M5's own "database layer" exit-evidence bullet) is not implemented** — see Decisions above for why this was deliberately deferred rather than half-built. The API and service layers close the same gap RLS would at the layers that matter for this codebase's actual current attack surface (nothing queries this database directly except this codebase's own, now tenant-scoped, service code).
+- No OIDC/FAPI 2.0, no RBAC roles (every credential is equally privileged within its own tenant), no consent enforcement, no encrypted field/object boundaries, no tenant-owned self-service configuration — all separately named in Section 20 M5, none attempted this slice.
+- No REST/CLI path lists, revokes, or rotates an existing `ApiClient` — only creation exists.
+- No token expiry, no rate limiting specific to authentication failures.
+- `WebhookDispatchService`'s own outbound delivery loop is intentionally *not* gated by this guard (it isn't an inbound HTTP route) — it already scopes every operation to the tenant of the outbox event/endpoint it's processing, unaffected by this slice.
+
+### Next safe step
+
+The single biggest remaining gap this codebase has is still open: PostgreSQL RLS as genuine defense-in-depth (Decisions above explains why it needs its own dedicated design pass, not a bolt-on). Absent a decision to take that on, M4's remaining separate items (sandbox scenario catalog, webhook inspector, `publish_case_update`'s Agent-tool wiring) or M5's other named pieces (RBAC roles, consent enforcement) are the next honestly-buildable increments. Not started; awaiting direction.
