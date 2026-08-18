@@ -13,9 +13,10 @@ import {
   runWithRlsBypass,
 } from '../database/tenant-context';
 
-// Requires a reachable Postgres with the WebhookTenantIsolation migration
-// applied (same convention as this codebase's other real-DB specs): skip
-// instead of failing when no DATABASE_URL is configured.
+// Requires a reachable Postgres with the WebhookTenantIsolation and
+// AppRuntimeRole migrations applied (same convention as this codebase's
+// other real-DB specs): skip instead of failing when no DATABASE_URL is
+// configured.
 //
 // This is the actual proof of Section 20 M5's "database layer" exit
 // evidence for webhook_endpoints/webhook_deliveries — every other test in
@@ -24,24 +25,25 @@ import {
 // caller's own tenant, independent of whether any application code
 // remembered to add a WHERE clause.
 //
-// Critically, it does this through a real, dedicated NON-superuser
-// Postgres role, not through DATABASE_URL's own connection. Postgres
-// superusers unconditionally bypass row-level security regardless of
-// FORCE ROW LEVEL SECURITY — this is not a bug, it's documented Postgres
-// behavior, but it means this codebase's own DATABASE_URL convention
-// (one role for migrations and the app, which the official postgres
-// Docker image bootstraps as a superuser — POSTGRES_USER) makes RLS
-// completely inert if the application actually connected as that role.
-// Confirmed empirically while building this migration: `SELECT
-// current_setting('is_superuser')` for this project's own scratch-stack
-// DATABASE_URL role returns 'on'. See docs/DEVELOPMENT_LOG.md's M5-002
-// entry ("Known gaps") for why this is flagged as a real, unresolved
-// deployment gap rather than silently worked around everywhere.
+// Critically, it does this by connecting as `mortgage_app` — the real,
+// restricted, non-superuser role the `AppRuntimeRole` migration (M5-003)
+// provisions for the application's own production runtime traffic, not
+// as DATABASE_URL's own role. Postgres superusers unconditionally bypass
+// row-level security regardless of FORCE ROW LEVEL SECURITY — this is not
+// a bug, it's documented Postgres behavior, but it means this codebase's
+// DATABASE_URL role (`mortgage`, bootstrapped as the cluster superuser by
+// the official postgres Docker image's POSTGRES_USER) would make RLS
+// completely inert if used here. See docs/DEVELOPMENT_LOG.md's M5-002/
+// M5-003 entries for the full story of that discovery and its fix.
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
 
-const RESTRICTED_ROLE = 'rls_spec_restricted_role';
-const RESTRICTED_ROLE_PASSWORD = 'rls-spec-not-a-real-secret';
+const APP_ROLE = 'mortgage_app';
+// Matches the AppRuntimeRole migration's own default (see that file) —
+// both read the same env var, so a real deployment that overrides it
+// stays consistent between provisioning and this proof test.
+const APP_ROLE_PASSWORD =
+  process.env.APP_DATABASE_ROLE_PASSWORD ?? 'mortgage_app_demo';
 
 function withCredentials(url: string, user: string, password: string): string {
   const parsed = new URL(url);
@@ -70,41 +72,20 @@ describeOrSkip(
       });
       await adminDataSource.initialize();
 
-      // A genuinely restricted role — LOGIN, no SUPERUSER, no BYPASSRLS —
-      // is the only way to actually exercise the policy PostgreSQL will
-      // enforce for a real, correctly-configured application role. Dropped
-      // and recreated defensively in case a prior interrupted run left it
-      // behind: a plain DROP ROLE fails with "cannot be dropped because
-      // some objects depend on it" once the role holds table grants, so any
-      // leftover grants must be revoked (DROP OWNED BY covers both that and
-      // ownership of any object the role might hold) before the role itself
-      // can be dropped.
-      const existingRole = await adminDataSource.query(
-        `SELECT 1 FROM pg_roles WHERE rolname = '${RESTRICTED_ROLE}'`,
-      );
-      if (existingRole.length > 0) {
-        await adminDataSource.query(
-          `REVOKE ALL ON "webhook_endpoints", "webhook_deliveries" FROM "${RESTRICTED_ROLE}"`,
-        );
-        await adminDataSource.query(`DROP OWNED BY "${RESTRICTED_ROLE}"`);
-        await adminDataSource.query(`DROP ROLE "${RESTRICTED_ROLE}"`);
-      }
-      await adminDataSource.query(
-        `CREATE ROLE "${RESTRICTED_ROLE}" LOGIN PASSWORD '${RESTRICTED_ROLE_PASSWORD}' NOSUPERUSER NOBYPASSRLS`,
-      );
-      await adminDataSource.query(
-        `GRANT SELECT, INSERT, UPDATE, DELETE ON "webhook_endpoints", "webhook_deliveries" TO "${RESTRICTED_ROLE}"`,
-      );
-
+      // Connects as the real `mortgage_app` role the AppRuntimeRole
+      // migration (M5-003) provisions — no CREATE ROLE/DROP ROLE dance
+      // needed here any more, since that role is now a persistent part of
+      // the schema itself, not a throwaway fixture this spec has to stand
+      // up and tear down on every run.
       restrictedDataSource = new DataSource({
         type: 'postgres',
         url: withCredentials(
           DATABASE_URL as string,
-          RESTRICTED_ROLE,
-          RESTRICTED_ROLE_PASSWORD,
+          APP_ROLE,
+          APP_ROLE_PASSWORD,
         ),
-        // OutboxEvent must be declared too even though the restricted role
-        // is never granted access to it: WebhookDelivery's ManyToOne
+        // OutboxEvent must be declared too even though mortgage_app is
+        // never granted access to it: WebhookDelivery's ManyToOne
         // relation target must resolve during metadata build, or
         // initialize() fails before any query runs.
         entities: [WebhookEndpoint, WebhookDelivery, OutboxEvent],
@@ -200,11 +181,6 @@ describeOrSkip(
             .getRepository(OutboxEvent)
             .delete({ id: outboxEventA.id });
         }
-        await adminDataSource.query(
-          `REVOKE ALL ON "webhook_endpoints", "webhook_deliveries" FROM "${RESTRICTED_ROLE}"`,
-        );
-        await adminDataSource.query(`DROP OWNED BY "${RESTRICTED_ROLE}"`);
-        await adminDataSource.query(`DROP ROLE IF EXISTS "${RESTRICTED_ROLE}"`);
         await adminDataSource.destroy();
       }
     });

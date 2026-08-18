@@ -5110,3 +5110,142 @@ the real Nest app + real Postgres at the HTTP layer with no regression.
 ### Next safe step
 
 The concrete, scoped next step this entry's Known gaps point to directly: provision this project's actual application `DATABASE_URL` role as a real non-superuser, non-`BYPASSRLS` role with only the grants the application needs, so these policies (and any future ones) protect real traffic, not just a hand-built test role. That's a genuinely separate unit of work — it touches `docker-compose.yml`, `.env.example`, README, the migration CLI's own connection, and requires re-verifying every existing migration and script under restricted privileges, since some may currently rely on superuser-level operations without anyone having had a reason to notice. Absent a decision to take that on, extending RLS to `loan_cases` and dependents (which requires first threading tenant-context/bypass discipline through every `case-conditions.activities.ts` activity — its own separately-scoped, higher-regression-risk effort) or M5's other still-open items (RBAC roles, consent enforcement, OIDC) are the next honestly-buildable increments. Not started; awaiting direction.
+
+## M5-003: Non-superuser application runtime role for production (M5-002's own headline Known gap)
+
+### Status
+
+Implemented and verified, including a real live boot of the actual API under `NODE_ENV=production` connected as the new restricted role — not just a spec-level proof this time. Directly closes M5-002's own most prominent Known gap: this codebase's default `DATABASE_URL` role is a PostgreSQL superuser, which unconditionally bypasses row-level security, so the `webhook_endpoints`/`webhook_deliveries` RLS policies from M5-002 provided no real protection against this codebase's own running application until this slice.
+
+Scoped to `NODE_ENV=production` only, by explicit user choice between two options offered: apply the restricted role everywhere including local dev (bigger blast radius, would have required removing `synchronize` and its zero-setup local dev experience entirely), or only where this codebase's own pre-existing `synchronize`-vs-migrations split already draws the line. The user chose the latter. Local `docker-compose up`/`npm run start:dev` are completely unaffected — they keep connecting as `DATABASE_URL`'s role exactly as before this slice.
+
+### Acceptance criterion
+
+A real, running instance of this application configured for production (`NODE_ENV=production`, `APP_DATABASE_URL` set) issues every one of its own queries as a role that cannot bypass row-level security — proven by starting the actual compiled API, confirming via `pg_stat_activity` which role it's really connected as, and directly demonstrating that a real row the live app just created through that connection is invisible to a different tenant's session context and visible to its own, at the database level, not just in a spec file.
+
+### Implementation
+
+- `src/database/migrations/1787082648663-AppRuntimeRole.ts` (new) — provisions `mortgage_app`: `LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, password from `APP_DATABASE_ROLE_PASSWORD` (demo-only default, same reasoning as `OUTBOX_SIGNING_SECRET`'s own default). Grants `CONNECT`/`USAGE`/`SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public`, plus a standing `ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER` grant so every table a *future* migration creates is automatically covered without anyone having to remember a matching grant statement on that migration too.
+- `src/database/typeorm-options.factory.ts` — `createTypeOrmOptions` now branches on `NODE_ENV`: outside production, completely unchanged (`DATABASE_URL`, `synchronize: true`). In production, prefers `APP_DATABASE_URL`; if unset, falls back to `DATABASE_URL` (still boots — a production deploy shouldn't crash-loop over one missing var) but logs a `Logger.warn` naming exactly what's at stake, matching this codebase's existing convention for consequential fallbacks (`AgentService`'s "RULES PROVIDER ACTIVE" warning).
+- `src/config/env.validation.ts` — `APP_DATABASE_URL` added as an optional, `postgres://`-validated field, same regex as `DATABASE_URL`.
+- `src/webhooks/webhook-tenant-isolation.spec.ts` (M5-002) — refactored to connect as the real, persistent `mortgage_app` role the migration now provisions, instead of the ad hoc `rls_spec_restricted_role` it created and dropped on every run. Removes the CREATE ROLE/DROP ROLE/GRANT/REVOKE dance from the spec entirely — it now proves the actual production role's policy enforcement, not a parallel stand-in.
+- `docs/DEVELOPMENT_LOG.md`'s M5-002 entry text is left untouched (append-only journal — it accurately described the state at the time it was written); this new entry supersedes its Known gap in spirit, not by editing history.
+- `README.md`, `.env.example` — document `APP_DATABASE_URL`, its production-only scope, and the fallback-with-warning behavior.
+
+### Affected files
+
+- `src/database/migrations/1787082648663-AppRuntimeRole.ts` (new), `schema-migrations.spec.ts`
+- `src/database/typeorm-options.factory.ts` (new), `typeorm-options.factory.spec.ts` (new)
+- `src/config/env.validation.ts`, `env.validation.spec.ts`
+- `src/webhooks/webhook-tenant-isolation.spec.ts`
+- `README.md`, `.env.example`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Production-only scope, not local dev too — a direct user decision between two explicitly offered options.** The larger option (restrict local dev as well) would have required removing `synchronize: true` entirely, since it needs DDL rights a restricted role by design doesn't have — a real, invasive change to this codebase's already-documented "just run it" local onboarding experience that the user declined to take on as part of this slice.
+- **`CREATE ROLE` wrapped in an `IF NOT EXISTS` guard, not a plain statement.** PostgreSQL roles are cluster-global, not scoped to one database, unlike everything else this codebase's migrations create. A plain `CREATE ROLE` fails the instant two databases in the same cluster both run this migration — which isn't a contrived scenario, it's exactly what happens every time `schema-migrations.spec.ts`'s own disposable scratch database shares a cluster with whatever `DATABASE_URL` already points to (see Errors and fixes). Idempotent creation, paired with `GRANT`'s own natural idempotency (re-granting an already-held privilege is a no-op), makes the migration safe under that real, recurring condition rather than merely lucky about run order.
+- **`down()`'s `DROP ROLE` is best-effort, not a hard requirement.** For the identical cluster-wide-role reason above, dropping the role can legitimately fail if a sibling database in the same cluster still holds grants to it — and destroying a role a sibling database is still actively using would be a worse outcome than leaving a harmless, now privilege-less-in-this-database role behind. `down()` unconditionally revokes everything *this* database granted; only the final `DROP ROLE` itself tolerates the one specific, identified Postgres error (`2BP01`/`dependent_objects_still_exist`) that means "something else still needs this," and only via a PL/pgSQL `EXCEPTION` block, not a JS-level `try`/`catch` (see Errors and fixes for why that distinction is load-bearing, not stylistic).
+- **`current_database()` resolved dynamically via a PL/pgSQL `DO` block for the `GRANT CONNECT ON DATABASE` statement, rather than hardcoding `"mortgage_agent"`.** `GRANT ... ON DATABASE` takes a literal identifier, not an expression, so a literal database name would have been simpler to read — but this migration, like every other one in this codebase, also has to run cleanly against `schema-migrations.spec.ts`'s differently-named scratch database.
+
+### Errors and fixes
+
+- **`role "mortgage_app" already exists` broke `schema-migrations.spec.ts`'s "applies every migration" test the first time this migration ran alongside an already-migrated primary scratch database in the same Postgres cluster.** Root cause: Postgres roles are cluster-global; a plain `CREATE ROLE` has no database-scoped notion of "already exists is fine here." Because that failure happened *before* the test's own `undoLastMigration()` call, that migration was never actually reverted — which then desynchronized every subsequent revert test's assumption about which migration was "most recently applied," cascading into roughly 19 unrelated-looking failures across the rest of the file from this one root cause. Fixed with the `IF NOT EXISTS` guard described in Decisions; confirmed by reproducing the exact real-world ordering (migrate the primary scratch database first, *then* run the full suite including `schema-migrations.spec.ts`) rather than only testing the accidentally-lucky order of running `schema-migrations.spec.ts` first on a virgin cluster.
+- **After adding a first-pass fix (a plain JS `try { DROP ROLE } catch`, treating Postgres error code `2BP01` as tolerable), the *next* migration revert in the same test file started failing with `current transaction is aborted, commands ignored until end of transaction block` — a different, subtler bug than the one just fixed.** Root cause: PostgreSQL aborts an entire transaction the moment any statement inside it errors, and this is *not* undone by catching the exception in application code — TypeORM runs each migration's `down()` inside one transaction, so the JS `catch` successfully handled the `DROP ROLE` failure at the Node level while the underlying Postgres transaction stayed aborted, and the very next statement in that same transaction (TypeORM's own bookkeeping delete from `typeorm_migrations`) failed too, for a completely different-looking reason. Fixed by moving the tolerance into PostgreSQL itself — a `DO $$ ... EXCEPTION WHEN dependent_objects_still_exist THEN ... END $$` block, which establishes its own implicit savepoint, so the specific, identified error is absorbed without ever aborting the outer transaction. Verified by re-running the full suite under the exact real-world ordering that first exposed both bugs (migrate the primary scratch database, then run everything else) until it passed clean.
+- **The new "reverts the app runtime role migration" test's own grant-count assertion (`expect(beforeGrants.length).toBe(28 * 4)`) was itself wrong on the first run (`Received: 116`, not `112`), which was actually the proximate trigger for the cascading failure above (the test threw before reaching its own `undoLastMigration()` call).** The migration's `GRANT ... ON ALL TABLES IN SCHEMA public` also covers `typeorm_migrations` itself (a real table in the same schema) — 29 tables, not the 28 every other assertion in this file already excludes it from. Fixed the query to exclude `typeorm_migrations` explicitly, matching `tableNames()`'s own established convention in the same file.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after `npm run lint` auto-fixed
+formatting)
+  both passed clean
+
+Migration (m5003-verify scratch stack, ports 5443/7234):
+  a from-empty migration:run applied AppRuntimeRole1787082648663
+  cleanly on top of WebhookTenantIsolation1787069708184
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    21/21 passed (20 -> 21: +1 new revert test) — run BOTH in isolation
+    on a virgin cluster AND, deliberately, with the primary scratch
+    database already migrated first (the real-world ordering that
+    exposed both bugs above) — passed clean both ways after the fixes
+
+  DATABASE_URL=... npx jest webhook-tenant-isolation
+  env.validation.spec.ts typeorm-options.factory.spec.ts --runInBand
+    35/35 passed — webhook-tenant-isolation's 7 tests now prove the real
+    mortgage_app role's enforcement directly, not a parallel test-only
+    role; typeorm-options.factory.spec.ts (new) covers all four
+    NODE_ENV/APP_DATABASE_URL branches including the warn-and-fall-back
+    path, confirmed via the actual WARN log appearing in that specific
+    case and no others
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand
+  --no-cache --silent
+    60 suites passed, 394 tests passed — run with the primary scratch
+    database already migrated first (matching the real ordering that
+    exposed the cross-database bugs), not just in isolation
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 23 tests passed (unchanged — this slice doesn't
+    touch the HTTP contract)
+
+Manual live verification — the first time in this codebase's history
+any real running process has connected as anything other than the
+superuser DATABASE_URL role:
+  seeded two real tenants directly (same convention as every other
+  slice), minted a real API-client bearer credential for each via
+  `npm run create-api-client`
+
+  started the actual compiled API with NODE_ENV=production,
+  APP_DATABASE_URL pointed at mortgage_app, DATABASE_URL left set (for
+  anything that might still read it) — booted cleanly, no crash, no
+  fallback warning in the log
+
+  SELECT usename, count(*) FROM pg_stat_activity WHERE datname =
+  'mortgage_agent' GROUP BY usename — showed only 'mortgage' (an idle
+  leftover from manual tooling) until the first real request, then
+  showed 'mortgage_app' with an active connection immediately after —
+  direct proof the running app's own query traffic uses the restricted
+  role, not an assumption
+
+  tenant A's real credential created a real webhook endpoint (201);
+  tenant B's real credential created its own (201, proving the
+  restricted role's INSERT grant genuinely works, not just SELECT);
+  a request with no Authorization header still 401'd in production
+  exactly as in M5-001
+
+  connected directly to Postgres as mortgage_app (not the superuser)
+  and set the session tenant context to tenant B: a SELECT for tenant
+  A's real row (the one the live app had just created moments earlier
+  through its own connection) returned zero rows; the identical SELECT
+  under tenant A's own context returned that exact row — the concrete,
+  end-to-end proof this whole slice exists for, against a real row a
+  real running process created, not a spec fixture
+
+  also created a real loan case through the same live, restricted-role
+  app (after fixing unrelated test-data mistakes — a wrong loanType
+  enum value and a missing jurisdictions.level column — neither related
+  to this slice) to confirm the restricted role's grants cover the
+  full schema, not only the two RLS-covered tables
+
+  synthetic tenant/case/api-client/webhook data removed with the
+  scratch stack teardown (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- This is the fix for M5-002's own headline caveat, not a cosmetic addition: a production deployment that sets `APP_DATABASE_URL` now has row-level security that genuinely protects `webhook_endpoints`/`webhook_deliveries`, proven end-to-end against a real live process rather than only a unit test's own hand-built role.
+- The demo password default (`mortgage_app_demo`, mirroring `docker-compose.yml`'s own `mortgage_demo`) is explicitly not appropriate for a real deployment — `APP_DATABASE_ROLE_PASSWORD` must be set to something real. Not enforced at migration time (no hard failure if unset) — consistent with `OUTBOX_SIGNING_SECRET`'s own existing precedent in this codebase of a documented, not mechanically enforced, "change this for real deployments" default.
+- The production fallback-to-`DATABASE_URL`-with-a-warning behavior is a deliberate availability/security tradeoff: an unset `APP_DATABASE_URL` in production degrades this codebase back to M5-002's own known gap (RLS inert) rather than refusing to boot. A stricter design (hard failure) was considered and rejected as disproportionate for a first pass — logged loudly enough that it shouldn't go unnoticed in practice, but not yet enforced as a startup precondition.
+
+### Known gaps
+
+- Still production-only, by direct user choice (see Decisions) — local `docker-compose up`/`npm run start:dev` never exercises the restricted role at all, so a regression in `mortgage_app`'s own grants (e.g., a future migration adding a table outside the `public` schema, which the `ALTER DEFAULT PRIVILEGES` grant doesn't cover) would only surface the first time someone actually runs with `NODE_ENV=production`, not during ordinary local development.
+- `APP_DATABASE_ROLE_PASSWORD`'s demo default is not mechanically prevented from reaching a real deployment — see Security above.
+- The production fallback logs a warning but still boots against `DATABASE_URL`'s role if `APP_DATABASE_URL` is unset — a stricter "refuse to boot" mode was considered and explicitly not built this slice.
+- `loan_cases` and dependents still have no RLS policy at all (M5-002's own deferred scope, unchanged by this slice) — this migration only makes the *existing* `webhook_endpoints`/`webhook_deliveries` policies actually matter; it doesn't add coverage anywhere new.
+- `mortgage_app`'s grants are schema-wide (`ALL TABLES IN SCHEMA public`) rather than table-by-table — simpler and self-maintaining via `ALTER DEFAULT PRIVILEGES`, but means the restricted role has DML access to every table, including ones RLS doesn't protect (identical blast radius to what `DATABASE_URL`'s role already has today, just without the superuser/DDL/BYPASSRLS escalation on top).
+
+### Next safe step
+
+M5's own exit evidence is now genuinely true end-to-end for exactly `webhook_endpoints`/`webhook_deliveries`, under a real production configuration — not just a database-layer proof sitting on top of an inert default. The next honestly-buildable increments: extend RLS (and this same restricted-role discipline) to `loan_cases` and dependents, which first requires threading tenant-context/bypass calls through every `case-conditions.activities.ts` Temporal activity (separately-scoped, higher-regression-risk, previously deferred in M5-002 and still deferred here); or M5's other still-open items (RBAC roles, consent enforcement, OIDC). Not started; awaiting direction.

@@ -187,6 +187,77 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the app runtime role migration without touching other tables', async () => {
+    // This migration adds no table — only a role and its grants — so the
+    // assertions here check pg_roles/information_schema.role_table_grants
+    // directly, same pattern as the webhook tenant isolation revert test
+    // below.
+    const beforeRole = await scratchDataSource.query(
+      `SELECT rolname FROM pg_roles WHERE rolname = 'mortgage_app'`,
+    );
+    expect(beforeRole).toEqual([{ rolname: 'mortgage_app' }]);
+    const beforeGrants: Array<{ table_name: string }> =
+      await scratchDataSource.query(
+        `SELECT table_name FROM information_schema.role_table_grants
+         WHERE grantee = 'mortgage_app' AND table_schema = 'public'
+           AND table_name != 'typeorm_migrations'
+         ORDER BY table_name`,
+      );
+    // 28 tables x 4 privileges (SELECT/INSERT/UPDATE/DELETE) each — the
+    // migration's `GRANT ... ON ALL TABLES IN SCHEMA public` also covers
+    // typeorm_migrations itself (harmlessly), excluded here the same way
+    // tableNames() below excludes it.
+    expect(beforeGrants.length).toBe(28 * 4);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    // Not "the role no longer exists in pg_roles": DROP ROLE is
+    // best-effort (see the migration's own down() comment) because roles
+    // are cluster-global — if some other database in this same cluster
+    // has also run this migration and still holds grants to the role,
+    // dropping it here would break that sibling database, so the
+    // migration tolerates that specific failure and leaves the role
+    // behind rather than destroying shared state out from under it. What
+    // down() unconditionally guarantees, and what's actually meaningful
+    // to assert here, is that *this* database's own grants are gone.
+    const afterGrants = await scratchDataSource.query(
+      `SELECT 1 FROM information_schema.role_table_grants
+       WHERE grantee = 'mortgage_app' AND table_schema = 'public'`,
+    );
+    expect(afterGrants).toEqual([]);
+  });
+
   it('reverts the webhook tenant isolation migration without touching other tables', async () => {
     // This migration adds/removes no table — only RLS state and a policy
     // on two existing tables — so the assertions here check pg_class/

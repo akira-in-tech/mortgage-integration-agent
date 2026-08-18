@@ -48,6 +48,17 @@ export class EnvironmentVariables {
   })
   DATABASE_URL!: string;
 
+  // The application's own runtime connection in production (M5-003) — a
+  // restricted, non-superuser role (see the AppRuntimeRole migration),
+  // distinct from DATABASE_URL's migration/admin role. Unused outside
+  // production; see createTypeOrmOptions for the fallback if unset there.
+  @IsOptional()
+  @Matches(/^postgres(ql)?:\/\/\S+/, {
+    message:
+      'APP_DATABASE_URL must be a postgres:// or postgresql:// connection string',
+  })
+  APP_DATABASE_URL?: string;
+
   @IsOptional()
   @IsInt()
   @Min(1)

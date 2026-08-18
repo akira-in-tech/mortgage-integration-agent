@@ -179,4 +179,31 @@ describe('validateEnvironment', () => {
       ).toThrow(/OUTBOX_SIGNING_SECRET/);
     });
   });
+
+  describe('App runtime database role (APP_DATABASE_URL, M5-003)', () => {
+    it('is undefined when unset — production falls back to DATABASE_URL with a warning, not a hard failure', () => {
+      const result = validateEnvironment(baseConfig());
+      expect(result.APP_DATABASE_URL).toBeUndefined();
+    });
+
+    it('accepts an explicit postgres:// APP_DATABASE_URL', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          APP_DATABASE_URL:
+            'postgresql://mortgage_app:secret@db.internal:5432/mortgage_agent',
+        }),
+      );
+      expect(result.APP_DATABASE_URL).toBe(
+        'postgresql://mortgage_app:secret@db.internal:5432/mortgage_agent',
+      );
+    });
+
+    it('rejects an APP_DATABASE_URL with a non-Postgres scheme', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ APP_DATABASE_URL: 'mysql://localhost:3306/db' }),
+        ),
+      ).toThrow(/APP_DATABASE_URL/);
+    });
+  });
 });
