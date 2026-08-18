@@ -4111,3 +4111,89 @@ A real bug was caught and fixed during this slice's own verification, not after:
 ### Next safe step
 
 This closes the last unstarted item from M3's own charter scope list. What remains open across the whole M3-closure punch list: a real token/cost/provider-call budget ledger (still deliberately deferred — no genuine consumer exists in an Agent graph that makes no model calls and incurs no real cost), and the ~9 remaining Section 9.4 tools that each need a real backing subsystem (provider adapters, a calculation engine, a webhook subsystem) not yet built. Both are M4-adjacent scope rather than something this session can honestly close incrementally the way the last several slices did.
+
+## M3-020: Policy evaluation concurrency safety (Section 20 exit evidence H)
+
+### Status
+
+Implemented and verified. `CasePolicyBinding`'s own long-standing comment claimed "one row per case at a time," but nothing actually enforced it — two concurrent `PolicyEvaluationService.evaluate()` calls for the same case could each independently decide no active binding existed yet and both insert one. A real partial unique index now makes that impossible, and `evaluate()` recovers gracefully instead of crashing when it loses that race.
+
+### Acceptance criterion
+
+Section 20's exit evidence H: "a catalog activation racing with evaluation produces one internally consistent, auditable result." Requested directly by the user after an M3-closure audit found this untested. The bar: a real concurrency bug, if one existed, needed to be found and fixed — not just a test added that happens to pass by not actually exercising the race.
+
+### Implementation
+
+- `case_policy_bindings` gains a **partial unique index**, `IDX_case_policy_bindings_one_active` on `(tenantId, caseId) WHERE "invalidatedAt" IS NULL` — Postgres itself now rejects a second concurrent INSERT of an active binding for the same case, turning a silent data-integrity violation into a catchable, well-understood error.
+- `PolicyEvaluationService.evaluate()`'s final "create a brand-new binding" branch (the only branch that ever inserts a *new* active-binding row — the fast path and the two reuse-in-place branches only ever read or update an existing row by id, which is inherently race-safe) now wraps its `.save()` in a try/catch: on a unique-violation, it re-reads the case's now-current active binding (the concurrent call that won the race) and returns a coherent `REUSED` result referencing it, rather than letting the error propagate. Both callers converge on the exact same winning snapshot/binding.
+- `isUniqueViolation()` extracted from `CasesService.createCase()` (which already used this exact pattern for its idempotency-key race) into a shared `src/database/postgres-errors.ts` — one detection function for both call sites instead of a second copy drifting from the first.
+- Two new real-database concurrency tests in `policy-evaluation.service.spec.ts`, added under a `describe('concurrency (exit evidence H)')` block:
+  1. Two concurrent `evaluate()` calls for the same brand-new case converge on exactly one active binding, one `REFRESHED` + one `REUSED` outcome, both agreeing on the same binding/snapshot id.
+  2. A concurrent catalog-generation bump (the exact atomic operation a real `PolicyActivationService.activate()` performs) racing with an in-flight evaluation still leaves exactly one active binding, and a follow-up evaluation stays consistent afterward.
+
+### Affected files
+
+- `src/database/entities/case-policy-binding.entity.ts` (new partial unique index)
+- `src/database/migrations/1787015495259-CasePolicyBindingOneActiveIndex.ts` (new), `schema-migrations.spec.ts`
+- `src/database/postgres-errors.ts` (new, extracted shared helper)
+- `src/policy/policy-evaluation.service.ts`, `.spec.ts`
+- `src/cases/cases.service.ts` (switched to the shared helper, no behavior change)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **A partial unique index, not a full transaction wrapping the whole `evaluate()` method.** The only step that can create a *second* active row is the final INSERT; every other step either only reads, or updates an *existing* row by id (idempotent under concurrent duplication — two concurrent updates to the same row with the same or equivalent values cause no corruption). Scoping the fix to exactly the one dangerous operation, backed by a real database constraint rather than an application-level lock, means the guarantee holds even against a caller this codebase doesn't control yet (a future second process, a retried Temporal activity attempt overlapping with itself, etc.) — a DB constraint is enforced regardless of which application code path attempts the write.
+- **The concurrency test needed instrumentation to be a real test, not a hope.** An early version of test 1 simply fired two `Promise.all`-started `evaluate()` calls and asserted on the result — it passed even with the unique index temporarily dropped (proven by deliberately dropping it and re-running), because a fast local Postgres round-trip let one call's entire pipeline finish before the other's first read, so the "race" never actually happened. Fixed by using `jest.spyOn` to add a deliberate delay to whichever call's `resolver.resolve()` invocation happens second, guaranteeing genuine overlap. Verified in both directions: the test fails without the recovery-path fix (index dropped, or the catch block removed) and passes reliably (3 consecutive runs) with it — the standard this session holds every real-infra test to, applied here to a concurrency test specifically because concurrency tests are exactly the kind most likely to silently pass without testing anything.
+- **Test 2 (activation race) needed no such instrumentation** — its assertions hold regardless of exact interleaving (both orderings of "generation bump" vs. "read current generation" are already safe per `PolicyCatalogGeneration`'s own "over-, never under-invalidating" design), so it's a real test of an already-safe design, not a race the fix needed to newly guard against.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting)
+  both passed clean
+
+migration:generate against a scratch DB with all prior migrations
+  applied — one new partial unique index, no hand-editing needed
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the new index),
+  re-applied cleanly
+
+Regression-detection verification (the concurrency test's own worth,
+proven before trusting it):
+  dropped IDX_case_policy_bindings_one_active manually, re-ran the new
+  concurrency test alone -> it failed (two active bindings existed,
+  the two calls' results disagreed) exactly as it should without the
+  fix in place; restored the index, re-ran -> passed; re-ran 3 more
+  times consecutively -> passed every time (not flaky)
+
+Scratch stack (m3020-verify, ports 5443/7234 — moved off 5433 this
+slice after a collision with an unrelated project's container on this
+machine):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    43 suites passed, 292 tests passed (289 -> 292: +3 — the two new
+    concurrency tests plus one new schema-migrations.spec.ts revert test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    15/15 passed (cumulative apply + 14 per-migration revert steps,
+    including the new first revert test for the unique index migration)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API surface.
+- No behavior change for the non-concurrent case (every existing sequential test still passes unmodified) — this only changes what happens under genuine concurrent access, which previously had no defined behavior at all.
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- The fast-path read (`getCurrentGeneration()` + `existingBinding` lookup) and the eventual write are still not wrapped in one database transaction — this slice fixes the one place that could corrupt data (a duplicate active binding), not every theoretical interleaving. A narrower remaining case: two concurrent calls could both take the slow path, both compute the *same* digest, and both attempt the "reuse in place" `UPDATE` on the same existing binding — harmless (idempotent), but not literally atomic. Not fixed here because it cannot produce an inconsistent result, only a redundant identical write.
+- This fixes evaluation-vs-evaluation and evaluation-vs-generation-bump races. A `PolicyActivationService.activate()` racing with *another* `activate()`/`withdraw()` call was not in scope for this slice (Section 20's exit evidence H names activation racing with *evaluation* specifically) and remains untested.
+
+### Next safe step
+
+Continuing the user-directed remaining M3 exit-evidence gaps: unifying mandatory-review-trigger routing (exit evidence B) is next, followed by extending `EvaluationInputManifest` assembly to every evaluation outcome, not only ones that open a condition (exit evidence F, currently partial).

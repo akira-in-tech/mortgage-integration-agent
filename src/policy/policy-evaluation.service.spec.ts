@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
 import { PolicySource } from '../database/entities/policy-source.entity';
 import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
@@ -390,5 +390,118 @@ describeOrSkip('PolicyEvaluationService', () => {
       .getRepository(CasePolicyBinding)
       .findOneByOrFail({ id: first.binding!.id });
     expect(priorBinding.invalidatedAt).not.toBeNull();
+  });
+
+  // Section 20's exit evidence H: "a catalog activation racing with
+  // evaluation produces one internally consistent, auditable result."
+  // `CasePolicyBinding`'s own comment always claimed "one row per case at
+  // a time," but nothing enforced it before the partial unique index
+  // added alongside this test — these two tests are what actually prove
+  // the invariant holds under real concurrent execution, not just
+  // sequential calls that happen to never overlap.
+  describe('concurrency (exit evidence H)', () => {
+    it('two concurrent evaluate() calls for the same brand-new case converge on exactly one active binding', async () => {
+      await seedReleasedVersion('pes-rule-concurrent-self');
+      const caseId = '10000000-0000-0000-0000-000000000090';
+
+      // Real wall-clock timing between two Promise.all-started calls is
+      // not guaranteed to actually overlap on a fast local database — to
+      // reliably exercise the race (not just hope for lucky timing),
+      // deliberately slow down whichever of the two calls reaches
+      // resolver.resolve() second, giving the other one time to fully
+      // commit its INSERT first. This guarantees the second call's own
+      // INSERT collides with the unique index and must take the
+      // catch-and-recover path this test exists to prove — verified by
+      // first confirming this same test fails without that recovery path
+      // (see this slice's dev-log entry for that verification).
+      let resolveCallCount = 0;
+      const resolveSpy = jest
+        .spyOn(resolver, 'resolve')
+        .mockImplementation(async (ctx) => {
+          const isSecondCaller = ++resolveCallCount === 2;
+          if (isSecondCaller) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          return PolicyApplicabilityResolverService.prototype.resolve.call(
+            resolver,
+            ctx,
+          );
+        });
+
+      const [resultA, resultB] = await Promise.all([
+        service.evaluate(TENANT_ID, caseId, baseContext),
+        service.evaluate(TENANT_ID, caseId, baseContext),
+      ]);
+      resolveSpy.mockRestore();
+
+      // Neither call crashed, and both agree on exactly one winning
+      // binding/snapshot — one of them was the real INSERT (REFRESHED),
+      // the other recovered from the unique-constraint race (REUSED).
+      expect(resultA.binding?.id).toBeDefined();
+      expect(resultA.binding?.id).toBe(resultB.binding?.id);
+      expect(resultA.snapshot.id).toBe(resultB.snapshot.id);
+      expect([resultA.outcome, resultB.outcome].sort()).toEqual([
+        'REFRESHED',
+        'REUSED',
+      ]);
+
+      const activeBindings = await dataSource
+        .getRepository(CasePolicyBinding)
+        .find({
+          where: { tenantId: TENANT_ID, caseId, invalidatedAt: IsNull() },
+        });
+      expect(activeBindings).toHaveLength(1);
+      expect(activeBindings[0].id).toBe(resultA.binding!.id);
+    });
+
+    it('a concurrent catalog generation bump (the atomic core of a real policy activation) racing with an in-flight evaluation still leaves exactly one consistent, auditable binding', async () => {
+      await seedReleasedVersion('pes-rule-concurrent-activation');
+      const caseId = '10000000-0000-0000-0000-000000000091';
+
+      // Establish an initial binding first, so the race below exercises
+      // the slow-path "unchanged digest" branch rather than the
+      // brand-new-case path the test above already covers.
+      const first = await service.evaluate(TENANT_ID, caseId, baseContext);
+      expect(first.outcome).toBe('REFRESHED');
+      // Force the next call past the fast path immediately, the same way
+      // the "takes the slow path" test above does.
+      await dataSource
+        .getRepository(CasePolicyBinding)
+        .update({ id: first.binding!.id }, { revalidateAfter: new Date(0) });
+
+      // Race a real generation bump — the exact atomic operation
+      // PolicyActivationService.activate() performs as part of a real
+      // activation (its own business-status transition is already
+      // covered by policy-activation.service.spec.ts) — against a second
+      // evaluate() call for the same case.
+      const [, second] = await Promise.all([
+        dataSource.query(
+          `UPDATE policy_catalog_generation SET generation = generation + 1 WHERE id = 1`,
+        ),
+        service.evaluate(TENANT_ID, caseId, baseContext),
+      ]);
+
+      expect(['REUSED', 'REFRESHED']).toContain(second.outcome);
+      const activeBindings = await dataSource
+        .getRepository(CasePolicyBinding)
+        .find({
+          where: { tenantId: TENANT_ID, caseId, invalidatedAt: IsNull() },
+        });
+      expect(activeBindings).toHaveLength(1);
+
+      // A follow-up evaluation, now that both concurrent operations have
+      // settled, must observe the current generation and find nothing
+      // actually changed — reusing the one active binding rather than
+      // ever producing a second one or looping into an inconsistent
+      // state.
+      const followUp = await service.evaluate(TENANT_ID, caseId, baseContext);
+      expect(followUp.binding?.id).toBe(activeBindings[0].id);
+      const stillOneBinding = await dataSource
+        .getRepository(CasePolicyBinding)
+        .find({
+          where: { tenantId: TENANT_ID, caseId, invalidatedAt: IsNull() },
+        });
+      expect(stillOneBinding).toHaveLength(1);
+    });
   });
 });

@@ -12,17 +12,7 @@ import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
 import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
-
-const POSTGRES_UNIQUE_VIOLATION = '23505';
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code: unknown }).code === POSTGRES_UNIQUE_VIOLATION
-  );
-}
+import { isUniqueViolation } from '../database/postgres-errors';
 
 export interface WorkflowRunStatus {
   workflowId: string;

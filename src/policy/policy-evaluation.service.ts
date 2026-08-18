@@ -7,6 +7,7 @@ import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-gen
 import { PolicyResolutionStatus } from '../database/enums/policy-resolution-status.enum';
 import { PolicyApplicabilityResolverService } from './policy-applicability-resolver.service';
 import { computeDigest } from './policy-digest';
+import { isUniqueViolation } from '../database/postgres-errors';
 import {
   PolicyResolutionContext,
   PolicyResolutionResult,
@@ -78,6 +79,14 @@ function reconstructResolution(
  * runtime's `evaluate_policy` tool) calls this, never the raw resolver
  * directly — mirroring Section 9.4's "the Agent cannot omit it, supply
  * its result, or choose an older snapshot."
+ *
+ * Section 20's exit evidence H ("a catalog activation racing with
+ * evaluation produces one internally consistent, auditable result"):
+ * `CasePolicyBinding` is documented as one active row per case, but
+ * nothing enforced that until a real partial unique index
+ * (`IDX_case_policy_bindings_one_active`) was added alongside the
+ * catch-and-recover logic in the final branch below — see
+ * `policy-evaluation.service.spec.ts`'s concurrency tests.
  */
 @Injectable()
 export class PolicyEvaluationService {
@@ -189,20 +198,49 @@ export class PolicyEvaluationService {
         { invalidatedAt: now },
       );
     }
-    const binding = await this.bindingRepository.save(
-      this.bindingRepository.create({
+
+    try {
+      const binding = await this.bindingRepository.save(
+        this.bindingRepository.create({
+          tenantId,
+          caseId,
+          dependencyDigest: digest,
+          contextKey: currentContextKey,
+          observedCatalogGeneration: currentGeneration,
+          policySnapshotId: snapshot.id,
+          revalidateAfter: new Date(now.getTime() + MAX_VALIDATION_INTERVAL_MS),
+          invalidatedAt: null,
+        }),
+      );
+      return { outcome: 'REFRESHED', resolution, snapshot, binding };
+    } catch (error) {
+      if (!isUniqueViolation(error)) {
+        throw error;
+      }
+      // Exit evidence H (Section 20): a concurrent evaluate() call for
+      // this same case already won the race and committed the case's
+      // one active binding first — `IDX_case_policy_bindings_one_active`
+      // (the AgentRunTimeline-era migration's partial unique index) is
+      // what makes that race detectable instead of silently producing
+      // two simultaneously-active bindings. Read back the winner and
+      // return a coherent result referencing it, rather than crash the
+      // loser's caller — both callers converge on the same single
+      // internally consistent outcome.
+      const winningBinding = await this.bindingRepository.findOneByOrFail({
         tenantId,
         caseId,
-        dependencyDigest: digest,
-        contextKey: currentContextKey,
-        observedCatalogGeneration: currentGeneration,
-        policySnapshotId: snapshot.id,
-        revalidateAfter: new Date(now.getTime() + MAX_VALIDATION_INTERVAL_MS),
-        invalidatedAt: null,
-      }),
-    );
-
-    return { outcome: 'REFRESHED', resolution, snapshot, binding };
+        invalidatedAt: IsNull(),
+      });
+      const winningSnapshot = await this.snapshotRepository.findOneByOrFail({
+        id: winningBinding.policySnapshotId,
+      });
+      return {
+        outcome: 'REUSED',
+        resolution: reconstructResolution(winningSnapshot),
+        snapshot: winningSnapshot,
+        binding: winningBinding,
+      };
+    }
   }
 
   private async getCurrentGeneration(): Promise<number> {

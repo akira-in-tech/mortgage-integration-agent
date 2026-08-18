@@ -36,6 +36,19 @@ import { CasePolicySnapshot } from './case-policy-snapshot.entity';
   'caseId',
   'invalidatedAt',
 ])
+/**
+ * Enforces the "one active binding per case" invariant this entity's own
+ * comment already documented but nothing previously guaranteed — two
+ * concurrent `PolicyEvaluationService.evaluate()` calls for the same case
+ * could otherwise both insert an active binding (Section 20's exit
+ * evidence H). A partial unique index, not a plain unique constraint,
+ * since multiple *invalidated* rows for the same case are the whole
+ * point of this table's audit trail.
+ */
+@Index('IDX_case_policy_bindings_one_active', ['tenantId', 'caseId'], {
+  unique: true,
+  where: '"invalidatedAt" IS NULL',
+})
 export class CasePolicyBinding {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
