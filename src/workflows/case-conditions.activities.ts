@@ -1,6 +1,5 @@
 import { DataSource, EntityManager } from 'typeorm';
 import { ApplicationFailure } from '@temporalio/activity';
-import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
@@ -29,14 +28,21 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
 import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
 import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.tool';
+import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
+import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
+import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { dispatchProviderRequest } from '../provider-platform/dispatch-provider-request';
+import { ProviderCapability } from '../provider-platform/types';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
-  plaidService: PlaidService;
   creditService: CreditService;
   documentService: DocumentService;
   policyEvaluationService: PolicyEvaluationService;
   evaluationManifestService: EvaluationManifestService;
+  providerRegistry: ProviderRegistryService;
+  providerAuthorizationService: ProviderAuthorizationService;
+  providerOperationIntentService: ProviderOperationIntentService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -125,8 +131,13 @@ async function callProviderWithRetryClassification<T>(
  * Activities run outside the deterministic workflow sandbox — this is
  * where all I/O (database writes, simulator calls) actually happens. The
  * factory closes over NestJS-resolved services/repositories so activities
- * can reuse the same PlaidService/CreditService/DocumentService the
- * evaluateLoan path already uses, rather than duplicating simulator logic.
+ * can reuse the same CreditService/DocumentService the evaluateLoan path
+ * already uses, rather than duplicating simulator logic. Income evidence
+ * (M4-001) instead dispatches through the real provider-platform registry
+ * (`dispatch-provider-request.ts`) — `fetchCreditEvidence`/
+ * `fetchDocumentEvidence` still call their services directly, migrating
+ * to the same real adapter pattern is a deliberate fast-follow (M4-002),
+ * not an inconsistency left unresolved.
  *
  * Every domain write below runs inside `dataSource.transaction()` alongside
  * the outbox event(s) it produces, so a committed state change and its
@@ -138,13 +149,20 @@ export function createCaseConditionsActivities(
 ) {
   const {
     dataSource,
-    plaidService,
     creditService,
     documentService,
     policyEvaluationService,
     evaluationManifestService,
+    providerRegistry,
+    providerAuthorizationService,
+    providerOperationIntentService,
     outboxSigningSecret,
   } = deps;
+  const providerDispatchDeps = {
+    registry: providerRegistry,
+    authorizationService: providerAuthorizationService,
+    intentService: providerOperationIntentService,
+  };
 
   const agentRuntime = createLendingOperationsAgentRuntime({
     dataSource,
@@ -239,7 +257,16 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<PlaidIncomeData> {
       const income = await callProviderWithRetryClassification(
-        () => plaidService.getIncomeData(borrowerId),
+        () =>
+          dispatchProviderRequest<PlaidIncomeData>(providerDispatchDeps, {
+            tenantId,
+            caseId,
+            borrowerSubjectId: borrowerId,
+            capability: ProviderCapability.INCOME,
+            request: { borrowerId },
+            purposeCode: 'UNDERWRITING_EVIDENCE',
+            permittedDataClasses: ['INCOME'],
+          }),
         'plaid-simulator',
       );
       await dataSource.transaction((manager) =>

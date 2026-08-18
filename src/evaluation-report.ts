@@ -23,9 +23,16 @@ import { PolicyCatalogGeneration } from './database/entities/policy-catalog-gene
 import { EvaluationInputManifest } from './database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from './database/entities/agent-run.entity';
 import { ToolAttempt } from './database/entities/tool-attempt.entity';
+import { ProviderAuthorizationGrant } from './database/entities/provider-authorization-grant.entity';
+import { ProviderOperationIntent } from './database/entities/provider-operation-intent.entity';
 import { PolicyApplicabilityResolverService } from './policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from './policy/policy-evaluation.service';
 import { EvaluationManifestService } from './policy/evaluation-manifest.service';
+import { ProviderRegistryService } from './provider-platform/provider-registry.service';
+import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
+import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
+import { PlaidService } from './integrations/plaid/plaid.service';
+import { PlaidIncomeAdapter } from './integrations/plaid/plaid-income.adapter';
 import { loadCorpus } from './evaluation/load-corpus';
 import { runCorpus, cleanupEvaluationRun } from './evaluation/runner';
 import { buildReport } from './evaluation/report';
@@ -76,6 +83,8 @@ async function main(): Promise<void> {
       EvaluationInputManifest,
       AgentRun,
       ToolAttempt,
+      ProviderAuthorizationGrant,
+      ProviderOperationIntent,
     ],
   });
   await dataSource.initialize();
@@ -93,6 +102,14 @@ async function main(): Promise<void> {
   );
   const evaluationManifestService = new EvaluationManifestService(
     dataSource.getRepository(EvaluationInputManifest),
+  );
+  const providerRegistry = new ProviderRegistryService();
+  providerRegistry.register(new PlaidIncomeAdapter(new PlaidService()));
+  const providerAuthorizationService = new ProviderAuthorizationService(
+    dataSource.getRepository(ProviderAuthorizationGrant),
+  );
+  const providerOperationIntentService = new ProviderOperationIntentService(
+    dataSource.getRepository(ProviderOperationIntent),
   );
 
   const tenantRepo = dataSource.getRepository(Tenant);
@@ -112,6 +129,9 @@ async function main(): Promise<void> {
         dataSource,
         policyEvaluationService,
         evaluationManifestService,
+        providerRegistry,
+        providerAuthorizationService,
+        providerOperationIntentService,
         outboxSigningSecret,
       },
       tenant.id,

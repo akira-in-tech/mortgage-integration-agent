@@ -4372,3 +4372,118 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 With H, B, and F all closed this session, the user-directed M3 exit-evidence punch list is complete. What remains open across the broader M3-closure effort: a real token/cost/provider-call budget ledger (still deliberately deferred — no genuine consumer exists), and the ~9 remaining Section 9.4 tools needing real backing subsystems (provider adapters, a calculation engine, a webhook subsystem) — both M4-adjacent scope, not something to close incrementally the way this session's slices did.
+
+## M4-001: Provider platform foundations — registry, authorization grants, operation intents, and the first real adapter (Section 20 M4)
+
+### Status
+
+Implemented and verified. Section 11's provider platform now exists as real, tested code: a capability-contract interface (`ProviderAdapter`), a registry adapters `register()`/`resolve()` against, a time-bound `ProviderAuthorizationService` that revalidates and fails closed, and a `ProviderOperationIntentService` that persists one row per real dispatch attempt through its full state machine. Exactly one capability — income — is migrated onto this pipeline (`PlaidIncomeAdapter`, wrapping the existing `PlaidService` simulator unchanged); credit and document still call their simulators directly, unchanged from M2/M3, and are deliberately left that way for M4-002 to prove the registry pattern generalizes rather than migrating everything in one slice.
+
+### Acceptance criterion
+
+Section 20's M4 exit evidence's first bullet: "a new simulator adapter is added without domain or Agent changes." Section 11.5's own requirements: authorization is "case-, borrower-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound," revalidated "immediately before every external request," failing closed on "a stale, mismatched, expired, or revoked reference"; and "the platform persists the operation intent before dispatch," with an ambiguous outcome becoming `OUTCOME_UNKNOWN` rather than silently retried as if nothing happened.
+
+### Implementation
+
+- `src/provider-platform/types.ts` — the full type layer: `ProviderCapability` (INCOME/ASSET/CREDIT/IDENTITY/DOCUMENT — only INCOME has a real adapter), `ProviderMode` (only `SIMULATOR` is ever implemented), `ProviderEffectClass`, `ProviderOperationIntentState`, and the `ProviderAdapter<TRequest,TReceipt,TFinding>` contract (`submit`/`normalize`/`healthCheck`, with `poll`/`cancel` declared optional for a future asynchronous adapter that doesn't exist yet).
+- `ProviderRegistryService` (`provider-registry.service.ts`) — `register()`/`resolve()`/`listRegistered()` keyed on capability+mode; `resolve()` throws on no match, `register()` throws on a duplicate. Deliberately dumb: Section 11.6's health/cost/fallback-order routing refinement has no real data to optimize over yet, since only one adapter is ever registered per capability today.
+- `ProviderAuthorizationService` (`provider-authorization.service.ts`) — `issue()` persists a `ProviderAuthorizationGrant` with a default 5-minute TTL; `revalidate()` re-reads the grant and checks tenant/case/provider/capability match, revocation, and expiry, returning a typed `{valid: false, reason}` rather than throwing, so the caller decides how to react; `revoke()` sets `revokedAt`.
+- `ProviderOperationIntentService` (`provider-operation-intent.service.ts`) — `prepare()` persists a `PREPARED` intent with a sha256 request fingerprint and a fresh UUID idempotency key *before* any external call; `markDispatched/Succeeded/FailedFinal/OutcomeUnknown()` record the real terminal (or ambiguous) outcome once known. A Temporal retry of the enclosing activity calls `prepare()` again rather than reusing the failed row, so the state history of every real attempt stays intact.
+- `dispatchProviderRequest()` (`dispatch-provider-request.ts`) — the generic dispatch pipeline every capability will eventually route through: resolve the adapter → issue a grant → persist the intent → revalidate the grant → dispatch → classify the outcome onto the intent (`SyntheticProviderRejectionError` → `FAILED_FINAL`, `SyntheticProviderTimeoutError` → `OUTCOME_UNKNOWN`) → normalize. Every current adapter is synchronous (`SynchronousProviderReceipt`), so this helper unwraps `receipt.payload` directly; a real asynchronous adapter would need a poll-until-terminal variant that doesn't exist yet.
+- `PlaidIncomeAdapter` (`integrations/plaid/plaid-income.adapter.ts`) — wraps `PlaidService.getIncomeData()` unchanged; `submit()` only takes the one parameter it actually uses (`request`), following the same pattern `normalize()` in `types.ts` already set for an interface parameter no simulator adapter needs yet.
+- `ProviderAdapterBootstrapService` (`integrations/provider-adapter-bootstrap.service.ts`) — an `OnModuleInit` hook that registers every real adapter this codebase has at process startup; the concrete proof of the exit-evidence bullet is that adding a capability means one adapter class plus one `register()` call here, never a change to the registry, the dispatch helper, or any workflow/Agent code that calls `resolve()`.
+- `case-conditions.activities.ts`'s `fetchIncomeEvidence` now calls `dispatchProviderRequest()` instead of `plaidService.getIncomeData()` directly, still wrapped in the existing `callProviderWithRetryClassification` — retry classification behavior for `SYNTHETIC-TRANSIENT-FAILURE-`/`SYNTHETIC-TERMINAL-FAILURE-` borrowerIds is unchanged, now backed by real grant/intent rows instead of a bare simulator call. `plaidService` dropped entirely from `CaseConditionsActivitiesDeps` (unused once income routes through the registry) and every construction call site (`worker.ts`, `evaluation/runner.ts`, both spec files) updated to build/pass the three new provider-platform services instead.
+- Two new tables via one migration (`1787031644483-ProviderPlatform.ts`): `provider_authorization_grants`, `provider_operation_intents`. Neither has a foreign key to the other or to `loan_cases` — same loose-coupling convention `EvaluationInputManifest` already established (a plain `uuid` reference, not a hard FK), so a grant or intent row outlives the case it referenced if the case is ever purged.
+
+### Affected files
+
+- `src/provider-platform/types.ts`, `provider-registry.service.ts` (+`.spec.ts`), `provider-authorization.service.ts` (+`.spec.ts`), `provider-operation-intent.service.ts` (+`.spec.ts`), `dispatch-provider-request.ts`, `provider-platform.module.ts`
+- `src/database/entities/provider-authorization-grant.entity.ts`, `provider-operation-intent.entity.ts`
+- `src/database/enums/provider-platform.enum.ts`
+- `src/database/migrations/1787031644483-ProviderPlatform.ts`, `schema-migrations.spec.ts`
+- `src/integrations/plaid/plaid-income.adapter.ts` (+`.spec.ts`), `provider-adapter-bootstrap.service.ts`, `integrations.module.ts`
+- `src/workflows/case-conditions.activities.ts`, `.spec.ts`
+- `src/worker.ts`, `src/evaluation/runner.ts`, `src/evaluation/runner.spec.ts`, `src/evaluation-report.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Only income migrated this slice, not credit and document too.** Migrating all three in one slice would have made it impossible to tell whether the registry pattern actually generalizes cleanly or whether the first adapter just happened to fit — M4-002 migrating credit/document with *no* change to the registry, dispatch helper, or authorization/intent services is the real proof of the exit-evidence bullet, not just three adapters existing.
+- **Promotion manifests, certification records, and two-person approval (Section 11.4/11.8) not built.** Every current adapter is `SIMULATOR`-mode; there is no second real provider mode to promote *to* yet, so a promotion-manifest schema would have no real transition to record — same reasoning already applied to the deliberately-deferred budget ledger. `ProviderMode` still names `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` as vocabulary (Section 11.1 names all three), never as a claim this codebase can talk to a real provider.
+- **`ProviderAuthorizationGrant.consentRecordIds` stays always-empty, `permissiblePurposeDecisionId` and `permittedFields` stay always-null.** No consent-record, permissible-purpose, or field-addressable-capability subsystem exists yet — the same honest-null pattern `EvaluationInputManifest` established (M3-014), not a fabricated value for a field this codebase can't back.
+- **No reconciliation worker.** `RECONCILING` is declared in the state enum (matching the charter's full vocabulary) but nothing transitions an intent into it — an `OUTCOME_UNKNOWN` intent stays `OUTCOME_UNKNOWN` until a future reconciliation mechanism exists. Documented as a known gap, not silently unreachable.
+- **An unrecognized (non-synthetic) error from `submit()` leaves its intent in `DISPATCHED` forever.** `dispatchProviderRequest()` only classifies the two synthetic failure types onto the intent before rethrowing; a genuinely unexpected error (a real bug, not a simulated provider failure) propagates unchanged so `callProviderWithRetryClassification`'s existing unclassified-error behavior is preserved exactly, at the cost of that one intent row never reaching a terminal state. Acceptable for a `SIMULATOR`-only codebase where "unrecognized error" today only ever means a real bug in the adapter code, not a real provider being weird.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean (two minor issues introduced during the slice —
+  three unused ProviderAdapter.submit() params in PlaidIncomeAdapter,
+  two prettier formatting diffs in new spec files — fixed before this
+  entry, not left for a future slice)
+
+Migration (scratch throwaway Postgres, then the m4001-verify stack):
+  migration:run applies ProviderPlatform1787031644483 cleanly from
+  the prior HEAD (AgentRunReviewCategory) on both a from-scratch
+  database and one already carrying every prior migration
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    17/17 passed (16 -> 17: +1 new revert test proving the provider
+    platform migration's two new tables disappear cleanly and no
+    other table is touched)
+
+Scratch stack (m4001-verify, ports 5443/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    47 suites passed (1 skipped, pre-existing/unrelated), 310 tests
+    passed (10 skipped, pre-existing/unrelated) — +4 new suites / +20
+    new tests this slice (provider-registry, plaid-income.adapter,
+    provider-authorization.service, provider-operation-intent.service)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged — full app bootstrap
+    including ProviderPlatformModule/ProviderAdapterBootstrapService
+    now exercised on every e2e run)
+
+Manual live verification (real REST API + real Temporal worker):
+  created a case (income discrepancy scenario, same as prior slices'
+  verification) and started its workflow — the worker log and a
+  direct SQL query both confirmed a real provider_authorization_grants
+  row (INCOME, plaid-simulator, purposeCode=UNDERWRITING_EVIDENCE,
+  permittedDataClasses=["INCOME"]) and a real provider_operation_intents
+  row that transitioned PREPARED -> DISPATCHED -> SUCCEEDED, correctly
+  linked via authorizationGrantId; the case reached the same
+  VERIFY_INCOME_DISCREPANCY outcome as before this slice, proving the
+  new pipeline didn't change evaluation behavior, only how the income
+  call is dispatched and audited
+
+  created a second case with a SYNTHETIC-TRANSIENT-FAILURE- borrowerId
+  and confirmed via direct SQL that each of the workflow's three retry
+  attempts persisted its own intent row, all correctly landing on
+  OUTCOME_UNKNOWN rather than a stale DISPATCHED or a fabricated
+  SUCCEEDED
+
+  synthetic tenant/case/grant/intent rows removed with the scratch
+  stack teardown (docker compose down -v); no synthetic data persists
+```
+
+### Security, privacy, cost, and compatibility
+
+- `revalidate()` fails closed by construction — a grant that doesn't exist, doesn't match, is expired, or is revoked returns `{valid: false}` and the caller (`dispatchProviderRequest`) marks the intent `FAILED_FINAL` and throws, never dispatching. No path silently proceeds without a matching grant.
+- Grants are short-lived (5-minute default TTL) and scoped to one case/provider/capability — not a standing credential a compromised process could replay against a different case.
+- No new externally-visible API surface — grants and intents are internal audit/enforcement records, not yet exposed via REST/GraphQL.
+- Slightly more write volume per income fetch (one grant insert, one intent insert, one-to-two intent updates, versus the prior bare simulator call) — acceptable at this codebase's synthetic data volumes, same tradeoff M3-014's manifest and M3-021's review-category persistence already made.
+- No new external dependency — `PlaidIncomeAdapter` wraps the existing in-process simulator, nothing crosses a real network boundary yet.
+
+### Known gaps
+
+- Credit and document capabilities still call their simulators directly, bypassing the registry entirely — M4-002 scope, tracked so the exit-evidence bullet ("a new simulator adapter is added without domain or Agent changes") gets proven against a second capability, not just asserted from one.
+- Promotion manifests, certification records, two-person production-activation approval (Section 11.4/11.8), and the `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` modes themselves remain unbuilt — no second real provider mode exists to promote to yet.
+- No reconciliation worker ever moves an intent into `RECONCILING`; an `OUTCOME_UNKNOWN` intent has no automatic resolution path today.
+- `ProviderAuthorizationGrant.permittedFields` (field-level authorization) and `consentRecordIds`/`permissiblePurposeDecisionId` stay structurally present but always null/empty — no consent-record or permissible-purpose subsystem exists to populate them.
+- No REST/GraphQL surface exposes grants or intents directly — reachable only by direct database query, the same gap `EvaluationInputManifest` and `AgentRun` had at their own introduction.
+- ASSET and IDENTITY capabilities are named in `ProviderCapability` but have no registered adapter of any kind.
+
+### Next safe step
+
+M4-002: migrate credit and document onto the same `ProviderAdapter`/registry/dispatch pipeline income now uses, with the explicit goal of touching only `integrations/` (new adapter classes) and the bootstrap service's `register()` calls — any change needed to `ProviderRegistryService`, `dispatch-provider-request.ts`, or `case-conditions.activities.ts` beyond swapping the dispatch call site would mean the pattern doesn't actually generalize yet.

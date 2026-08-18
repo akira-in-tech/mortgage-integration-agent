@@ -29,6 +29,8 @@ import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-gen
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
+import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
+import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -41,6 +43,10 @@ import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
 import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
+import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
+import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
+import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -65,11 +71,20 @@ const GOOD_INCOME: PlaidIncomeData = {
   incomeStability: 88,
 };
 
+/** Fresh per call site: `ProviderRegistryService.register` throws on a second registration for the same capability+mode, so each differently-mocked `plaidService` needs its own registry. */
+function registryFor(plaidService: PlaidService): ProviderRegistryService {
+  const registry = new ProviderRegistryService();
+  registry.register(new PlaidIncomeAdapter(plaidService));
+  return registry;
+}
+
 describeOrSkip('createCaseConditionsActivities', () => {
   let dataSource: DataSource;
   let policyResolver: PolicyApplicabilityResolverService;
   let policyEvaluationService: PolicyEvaluationService;
   let evaluationManifestService: EvaluationManifestService;
+  let providerAuthorizationService: ProviderAuthorizationService;
+  let providerOperationIntentService: ProviderOperationIntentService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -97,6 +112,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
         EvaluationInputManifest,
         AgentRun,
         ToolAttempt,
+        ProviderAuthorizationGrant,
+        ProviderOperationIntent,
       ],
     });
     await dataSource.initialize();
@@ -115,17 +132,25 @@ describeOrSkip('createCaseConditionsActivities', () => {
     evaluationManifestService = new EvaluationManifestService(
       dataSource.getRepository(EvaluationInputManifest),
     );
+    providerAuthorizationService = new ProviderAuthorizationService(
+      dataSource.getRepository(ProviderAuthorizationGrant),
+    );
+    providerOperationIntentService = new ProviderOperationIntentService(
+      dataSource.getRepository(ProviderOperationIntent),
+    );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
     const creditService = { getCreditData: jest.fn() } as any;
     const documentService = { verifyDocuments: jest.fn() } as any;
     activities = createCaseConditionsActivities({
       dataSource,
-      plaidService,
+      providerRegistry: registryFor(plaidService),
       creditService,
       documentService,
       policyEvaluationService,
       evaluationManifestService,
+      providerAuthorizationService,
+      providerOperationIntentService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -297,11 +322,13 @@ describeOrSkip('createCaseConditionsActivities', () => {
     } as any;
     const scoped = createCaseConditionsActivities({
       dataSource,
-      plaidService,
+      providerRegistry: registryFor(plaidService),
       creditService: { getCreditData: jest.fn() } as any,
       documentService: { verifyDocuments: jest.fn() } as any,
       policyEvaluationService,
       evaluationManifestService,
+      providerAuthorizationService,
+      providerOperationIntentService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -549,11 +576,13 @@ describeOrSkip('createCaseConditionsActivities', () => {
     beforeAll(() => {
       realActivities = createCaseConditionsActivities({
         dataSource,
-        plaidService: new PlaidService(),
+        providerRegistry: registryFor(new PlaidService()),
         creditService: new CreditService(),
         documentService: new DocumentService(),
         policyEvaluationService,
         evaluationManifestService,
+        providerAuthorizationService,
+        providerOperationIntentService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -601,11 +630,13 @@ describeOrSkip('createCaseConditionsActivities', () => {
       } as any;
       const scoped = createCaseConditionsActivities({
         dataSource,
-        plaidService: brokenPlaid,
+        providerRegistry: registryFor(brokenPlaid),
         creditService: new CreditService(),
         documentService: new DocumentService(),
         policyEvaluationService,
         evaluationManifestService,
+        providerAuthorizationService,
+        providerOperationIntentService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

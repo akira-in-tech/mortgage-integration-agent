@@ -20,11 +20,13 @@ import {
   JurisdictionCoverageStatus,
 } from '../database/enums/jurisdiction.enum';
 import { createCaseConditionsActivities } from '../workflows/case-conditions.activities';
-import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
+import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
+import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
+import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import {
   EvaluationCaseFixture,
   EvaluationCaseResult,
@@ -35,6 +37,9 @@ export interface EvaluationRunnerDeps {
   dataSource: DataSource;
   policyEvaluationService: PolicyEvaluationService;
   evaluationManifestService: EvaluationManifestService;
+  providerRegistry: ProviderRegistryService;
+  providerAuthorizationService: ProviderAuthorizationService;
+  providerOperationIntentService: ProviderOperationIntentService;
   outboxSigningSecret: string;
 }
 
@@ -330,11 +335,13 @@ export async function runCorpus(
   await ensureJurisdictions(deps.dataSource);
   const activities = createCaseConditionsActivities({
     dataSource: deps.dataSource,
-    plaidService: new PlaidService(),
     creditService: new CreditService(),
     documentService: new DocumentService(),
     policyEvaluationService: deps.policyEvaluationService,
     evaluationManifestService: deps.evaluationManifestService,
+    providerRegistry: deps.providerRegistry,
+    providerAuthorizationService: deps.providerAuthorizationService,
+    providerOperationIntentService: deps.providerOperationIntentService,
     outboxSigningSecret: deps.outboxSigningSecret,
   });
 

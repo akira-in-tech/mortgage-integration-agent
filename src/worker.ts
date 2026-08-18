@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { WorkerModule } from './worker.module';
-import { PlaidService } from './integrations/plaid/plaid.service';
 import { CreditService } from './integrations/credit/credit.service';
 import { DocumentService } from './integrations/document/document.service';
 import { PolicyEvaluationService } from './policy/policy-evaluation.service';
 import { EvaluationManifestService } from './policy/evaluation-manifest.service';
+import { ProviderRegistryService } from './provider-platform/provider-registry.service';
+import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
+import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 
@@ -20,11 +22,15 @@ async function bootstrap(): Promise<void> {
 
   const activities = createCaseConditionsActivities({
     dataSource: appContext.get(DataSource),
-    plaidService: appContext.get(PlaidService),
     creditService: appContext.get(CreditService),
     documentService: appContext.get(DocumentService),
     policyEvaluationService: appContext.get(PolicyEvaluationService),
     evaluationManifestService: appContext.get(EvaluationManifestService),
+    providerRegistry: appContext.get(ProviderRegistryService),
+    providerAuthorizationService: appContext.get(ProviderAuthorizationService),
+    providerOperationIntentService: appContext.get(
+      ProviderOperationIntentService,
+    ),
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',
