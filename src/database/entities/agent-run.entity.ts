@@ -5,7 +5,10 @@ import {
   CreateDateColumn,
   Index,
 } from 'typeorm';
-import { AgentRunRouteStatus } from '../enums/agent-run.enum';
+import {
+  AgentRunRouteStatus,
+  ReviewCategoryStatus,
+} from '../enums/agent-run.enum';
 
 /**
  * Section 14.1's `agent_runs`: "Runtime, model, prompt, budgets, tools,
@@ -50,6 +53,10 @@ export class AgentRun {
 
   @Column({ type: 'text', nullable: true })
   reviewReason!: string | null;
+
+  /** Section 9.6's mandatory-review category this run's review request belongs to (M3-021) — null for a run that never requested review. */
+  @Column({ type: 'enum', enum: ReviewCategoryStatus, nullable: true })
+  reviewCategory!: ReviewCategoryStatus | null;
 
   @Column({ type: 'timestamptz' })
   startedAt!: Date;

@@ -470,6 +470,15 @@ describeOrSkip(
       expect(result.finalState.reviewState?.reason).toContain(
         NOT_COVERED_JURISDICTION_CODE,
       );
+      // M3-021: the unified mandatory-review classification (Section 20's
+      // exit evidence B) tags this as POLICY_AMBIGUITY, and that's what
+      // real persisted AgentRun row carries too, not just the free-text
+      // reason.
+      expect(result.finalState.reviewState?.category).toBe('POLICY_AMBIGUITY');
+      const persistedRun = await dataSource
+        .getRepository(AgentRun)
+        .findOneByOrFail({ caseId });
+      expect(persistedRun.reviewCategory).toBe('POLICY_AMBIGUITY');
     });
 
     it('fails closed to ROUTED_TO_MANUAL_REVIEW when a required tool is not in allowedTools', async () => {
@@ -488,6 +497,9 @@ describeOrSkip(
       expect(result.finalState.reviewState?.reason).toContain(
         'check_case_completeness unavailable',
       );
+      expect(result.finalState.reviewState?.category).toBe(
+        'TOOL_EXECUTION_FAILURE',
+      );
     });
 
     it('fails closed to ROUTED_TO_MANUAL_REVIEW without calling any tool when consent is not VALID', async () => {
@@ -505,6 +517,11 @@ describeOrSkip(
       expect(result.finalState.reviewState?.reason).toContain(
         'consentStatus is "REVOKED"',
       );
+      expect(result.finalState.reviewState?.category).toBe('CONSENT_INVALID');
+      const persistedRun = await dataSource
+        .getRepository(AgentRun)
+        .findOneByOrFail({ caseId });
+      expect(persistedRun.reviewCategory).toBe('CONSENT_INVALID');
     });
 
     it('fails closed to ROUTED_TO_MANUAL_REVIEW without calling any tool when the step budget starts at zero', async () => {
@@ -519,6 +536,9 @@ describeOrSkip(
       expect(result.finalState.reviewState?.reason).toContain(
         'remainingStepBudget exhausted',
       );
+      expect(result.finalState.reviewState?.category).toBe(
+        'BUDGET_OR_DEADLINE_EXHAUSTED',
+      );
     });
 
     it('fails closed to ROUTED_TO_MANUAL_REVIEW when the run deadline has already passed', async () => {
@@ -532,6 +552,9 @@ describeOrSkip(
       expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
       expect(result.finalState.attemptedTools).toHaveLength(0);
       expect(result.finalState.reviewState?.reason).toContain('runDeadlineAt');
+      expect(result.finalState.reviewState?.category).toBe(
+        'BUDGET_OR_DEADLINE_EXHAUSTED',
+      );
     });
   },
 );

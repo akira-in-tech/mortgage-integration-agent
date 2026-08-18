@@ -11,3 +11,11 @@ export enum ToolAttemptOutcome {
   SUCCESS = 'SUCCESS',
   FAILURE = 'FAILURE',
 }
+
+/** Mirrors `MandatoryReviewCategory` (src/agent-runtime/mandatory-review-triggers.ts) as a persisted enum. */
+export enum ReviewCategoryStatus {
+  CONSENT_INVALID = 'CONSENT_INVALID',
+  BUDGET_OR_DEADLINE_EXHAUSTED = 'BUDGET_OR_DEADLINE_EXHAUSTED',
+  POLICY_AMBIGUITY = 'POLICY_AMBIGUITY',
+  TOOL_EXECUTION_FAILURE = 'TOOL_EXECUTION_FAILURE',
+}

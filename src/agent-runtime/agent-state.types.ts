@@ -1,3 +1,5 @@
+import { MandatoryReviewCategory } from './mandatory-review-triggers';
+
 /**
  * Section 9.3's `LendingOperationsAgentState`, as closely as this
  * codebase's actual data supports. Distinct from `src/agent/` (the
@@ -44,6 +46,8 @@ export interface AgentAction {
 export interface HumanReviewState {
   requested: boolean;
   reason?: string;
+  /** Section 9.6's mandatory-review category this trigger belongs to — see `mandatory-review-triggers.ts`. Absent only for a run that never requested review. */
+  category?: MandatoryReviewCategory;
 }
 
 export type ConsentStatus = 'VALID' | 'MISSING' | 'EXPIRED' | 'REVOKED';

@@ -181,6 +181,46 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the agent run review category migration without touching other tables', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    // No new table — this migration only adds a column and enum type to
+    // the existing agent_runs table.
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'tenants',
+      'tool_attempts',
+    ]);
+
+    const reviewCategoryColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'agent_runs'
+           AND column_name = 'reviewCategory'`,
+      );
+    expect(reviewCategoryColumns).toEqual([]);
+  });
+
   it('reverts the case policy binding one-active-per-case index migration without touching other tables', async () => {
     await scratchDataSource.undoLastMigration();
 

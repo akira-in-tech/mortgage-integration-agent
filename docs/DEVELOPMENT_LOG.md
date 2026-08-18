@@ -4197,3 +4197,97 @@ machine):
 ### Next safe step
 
 Continuing the user-directed remaining M3 exit-evidence gaps: unifying mandatory-review-trigger routing (exit evidence B) is next, followed by extending `EvaluationInputManifest` assembly to every evaluation outcome, not only ones that open a condition (exit evidence F, currently partial).
+
+## M3-021: Unified mandatory-review-trigger routing (Section 20 exit evidence B)
+
+### Status
+
+Implemented and verified. Every mandatory-review trigger this Agent runtime can detect now flows through one central classification table (`mandatory-review-triggers.ts`) instead of four independent inline decisions, and every persisted review record carries a queryable `reviewCategory` alongside its free-text reason.
+
+### Acceptance criterion
+
+Section 20's exit evidence B: "designated review cases always interrupt." Taken completely literally, this reads as contradicting Section 9.5's own Agent-loop text, which draws two deliberately different routes — "ambiguity or protected action: interrupt for review" (resumable) vs. "budget or runtime failure: route to manual review" (terminal). That charter tension is real and is documented here, not silently resolved one way. The acceptance bar this slice actually targets: make the classification that decides which route a trigger takes centralized, named, and auditable — not scattered across independent call sites with no shared vocabulary — which is the concrete, buildable problem underneath "unify... routing."
+
+### Implementation
+
+- `src/agent-runtime/mandatory-review-triggers.ts` (new): `MandatoryReviewCategory` (four values this codebase can currently detect — `POLICY_AMBIGUITY`, `CONSENT_INVALID`, `BUDGET_OR_DEADLINE_EXHAUSTED`, `TOOL_EXECUTION_FAILURE`), one `CATEGORY_ROUTES` table mapping each to Section 9.5's two routes, and `classifyMandatoryReviewTrigger(category, detail)` producing a `{category, route, reason}` triple — the reason string itself prefixed with the category (e.g. `[POLICY_AMBIGUITY] jurisdiction "US-ZZ" has no covered policy source`) so it's legible standalone, not only alongside a separate category field.
+- `lending-operations-agent-runtime.ts`: `manualReview()`/`interruptForReview()` (two separate functions, each hardcoding its own route) replaced by one `routeMandatoryReview(agentState, trigger)` that dispatches purely on `trigger.route`. `consentInvalid()`/`budgetExceeded()` now return a classified `MandatoryReviewTrigger | undefined` instead of a bare string; every tool-failure call site and the policy-ambiguity branch now calls `classifyMandatoryReviewTrigger()` explicitly. No routing *behavior* changed — every trigger still takes the exact route it always did — only the *mechanism* deciding that route changed, from four independent inline decisions to one shared table.
+- `HumanReviewState` gained `category?: MandatoryReviewCategory`; `AgentRun` gained a persisted `reviewCategory` column (mirrored as `ReviewCategoryStatus` in `database/enums/agent-run.enum.ts`, matching this codebase's established mirror-don't-import pattern for database entities referencing Agent-runtime types — see `AgentRunRouteStatus`/`ToolAttemptOutcome`'s own precedent). `CaseTimelineService` surfaces `reviewCategory` in its `AGENT_RUN` entries' `detail`, alongside the free-text `reviewReason` — confirmed end-to-end via a real, live case (see Verification).
+
+### Affected files
+
+- `src/agent-runtime/mandatory-review-triggers.ts`, `.spec.ts` (new)
+- `src/agent-runtime/agent-state.types.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`, `.spec.ts`
+- `src/database/entities/agent-run.entity.ts`, `src/database/enums/agent-run.enum.ts`
+- `src/database/migrations/1787016391021-AgentRunReviewCategory.ts` (new), `schema-migrations.spec.ts`
+- `src/cases/case-timeline.service.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Section 9.5's two-route distinction is preserved, not collapsed.** An earlier framing of this gap (this session's own M3-closure audit) described it as "only ambiguity interrupts; everything else routes to manual review" as if that were an inconsistency to fix toward more interrupting. Re-reading Section 9.5's own loop text closely, that two-route split is clearly the charter's intentional design (a substantive judgment call a reviewer resolves and retries, vs. a run-level failure that shouldn't just resume) — collapsing it would mean, for example, letting a budget-exhausted run "interrupt and resume" as if resuming were safe, which the charter never says. "Unifying routing" is implemented as unifying the *classification mechanism*, which is the real, concrete gap: no single place previously decided or recorded which category a trigger was, only which route it took.
+- **`TOOL_EXECUTION_FAILURE` is labeled honestly as not a literal Section 9.6 category.** Section 9.6 lists "malformed model or tool output" (a *content* problem with an otherwise-successful call) — this Agent's actual tool failures are genuine execution exceptions, not malformed-but-successful results, and this Agent makes no model calls at all. Rather than force-fit these into a Section-9.6-named bucket that doesn't quite match, the category is named for what it actually is, with a comment explaining the mismatch.
+- **Only the four currently-detectable triggers got real categories.** Section 9.6 lists twelve; the other eight (contradictory evidence, evidence-confidence thresholds, unsupported policy interpretation, manual waiver/override, protected-communication triggers, provider-result-outside-contract, prompt-injection signals, tenant-risk-policy categories) have no real detector anywhere in this codebase and were not given placeholder categories — consistent with this session's standing rule against fabricating coverage for a capability that doesn't exist yet.
+- **No behavior change for any existing test or real run** — every trigger takes the exact same route (interrupt vs. manual review) it always did; only the classification path and the new persisted `reviewCategory` field are new. Verified by the fact every pre-existing test in `lending-operations-agent-runtime.spec.ts` still passes with only additive `category` assertions, not changed route expectations.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after npm run lint --fix for the
+generated migration's prettier formatting)
+  both passed clean
+
+migration:generate against a scratch DB with all prior migrations
+  applied — one new nullable enum column on agent_runs, no
+  hand-editing needed
+
+migration:run / migration:revert / migration:run cycle
+  applied cleanly, reverted cleanly (dropping exactly the new column
+  and enum type), re-applied cleanly
+
+Scratch stack (m3021-verify, ports 5443/7234):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    44 suites passed, 298 tests passed (292 -> 298: +6 — 5 new
+    mandatory-review-triggers.spec.ts tests [pure, exhaustively
+    covering the classification table] and 1 new
+    schema-migrations.spec.ts revert test); every one of the five
+    existing manual-review/interrupt tests in
+    lending-operations-agent-runtime.spec.ts still passes, now with
+    additional category assertions
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npm test -t schema-migrations.spec.ts
+    16/16 passed (cumulative apply + 15 per-migration revert steps,
+    including the new first revert test for this migration)
+
+Manual live verification (real REST API + real Temporal worker):
+  created a case in a jurisdiction that exists but was never reviewed
+  for coverage, started the workflow — the real policy resolver
+  correctly flagged it REVIEW_REQUIRED, the real Agent run routed to
+  INTERRUPTED_FOR_REVIEW; GET .../timeline showed the real persisted
+  AgentRun entry with reviewCategory: "POLICY_AMBIGUITY" and
+  reviewReason: "[POLICY_AMBIGUITY] jurisdiction ... has no reviewed,
+  covered policy source" — confirmed by inspecting the actual JSON
+  response
+
+  synthetic tenant/case/evidence/agent-run/jurisdiction rows deleted
+  afterward; scratch stack torn down (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible API contract change beyond an additive field (`reviewCategory`) in an existing endpoint's response (`GET .../timeline`) — no existing consumer's parsing breaks.
+- `reviewCategory` is a closed enum (four values), not free text — no new injection or unbounded-content surface.
+- No new external dependency, no new provider call.
+
+### Known gaps
+
+- Only 4 of Section 9.6's 12 named triggers have real categories/detectors — the other 8 need real backing subsystems (contradiction detection, evidence-confidence scoring, a model-in-the-loop for "malformed model output" to even be possible, prompt-injection detection, etc.) that don't exist yet.
+- The literal tension between exit evidence B's "always interrupt" and Section 9.5's own two-route text is documented here, not resolved at the charter level — a charter clarification (making Section 20 explicitly say "interrupt or route to manual review, per Section 9.5's own distinction") would close this more permanently than any code change can.
+
+### Next safe step
+
+Continuing the user-directed remaining M3 exit-evidence gaps: extending `EvaluationInputManifest` assembly to every evaluation outcome, not only ones that open a condition (exit evidence F, currently partial), is next.

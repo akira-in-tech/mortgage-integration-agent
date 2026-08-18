@@ -46,8 +46,14 @@ import { AgentRun } from '../../database/entities/agent-run.entity';
 import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
 import {
   AgentRunRouteStatus,
+  ReviewCategoryStatus,
   ToolAttemptOutcome,
 } from '../../database/enums/agent-run.enum';
+import {
+  classifyMandatoryReviewTrigger,
+  MandatoryReviewCategory,
+  MandatoryReviewTrigger,
+} from '../mandatory-review-triggers';
 
 export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
@@ -83,6 +89,9 @@ async function persistAgentRun(
           result.finalState.proposedAction?.arguments ?? null,
         reviewRequested: result.finalState.reviewState?.requested ?? false,
         reviewReason: result.finalState.reviewState?.reason ?? null,
+        reviewCategory:
+          (result.finalState.reviewState
+            ?.category as unknown as ReviewCategoryStatus) ?? null,
         startedAt,
       }),
     );
@@ -137,12 +146,18 @@ function recordAttempt(
 function budgetExceeded(
   agentState: LendingOperationsAgentState,
   runDeadlineAt: string,
-): string | undefined {
+): MandatoryReviewTrigger | undefined {
   if (agentState.remainingStepBudget <= 0) {
-    return 'remainingStepBudget exhausted';
+    return classifyMandatoryReviewTrigger(
+      MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+      'remainingStepBudget exhausted',
+    );
   }
   if (Date.now() >= Date.parse(runDeadlineAt)) {
-    return `runDeadlineAt (${runDeadlineAt}) exceeded`;
+    return classifyMandatoryReviewTrigger(
+      MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+      `runDeadlineAt (${runDeadlineAt}) exceeded`,
+    );
   }
   return undefined;
 }
@@ -172,9 +187,12 @@ function consumeStep(
  */
 function consentInvalid(
   agentState: LendingOperationsAgentState,
-): string | undefined {
+): MandatoryReviewTrigger | undefined {
   if (agentState.consentStatus !== 'VALID') {
-    return `consentStatus is "${agentState.consentStatus}", not VALID`;
+    return classifyMandatoryReviewTrigger(
+      MandatoryReviewCategory.CONSENT_INVALID,
+      `consentStatus is "${agentState.consentStatus}", not VALID`,
+    );
   }
   return undefined;
 }
@@ -225,46 +243,43 @@ export function createLendingOperationsAgentRuntime(
         caseId: input.initialState.caseId,
       };
 
-      function manualReview(
-        agentState: LendingOperationsAgentState,
-        reason: string,
-      ): Partial<RuntimeState> {
-        return {
-          agentState: {
-            ...agentState,
-            reviewState: { requested: true, reason },
-          },
-          route: 'ROUTED_TO_MANUAL_REVIEW',
-        };
-      }
-
       /**
-       * Section 9.5: "ambiguity or protected action: interrupt for
-       * review" — distinct from `manualReview`'s "budget or runtime
-       * failure: route to manual review". Only policy-applicability
-       * ambiguity uses this today; everything else this graph can detect
-       * (consent invalid, budget/deadline exhausted, a tool's own
-       * failure) is a runtime failure, not an ambiguity, per that same
-       * loop text, and stays routed to manual review.
+       * The single place Section 9.5's two-tier "ambiguity/protected
+       * action: interrupt for review" vs. "budget or runtime failure:
+       * route to manual review" distinction is applied — every mandatory-
+       * review trigger this graph detects flows through here, dispatching
+       * on `MandatoryReviewTrigger.route` (`mandatory-review-triggers.ts`)
+       * rather than each call site independently deciding which of the
+       * two routes it means (Section 20's exit evidence B; M3-021). The
+       * persisted `reviewCategory` this produces is what makes a run's
+       * audit trail queryable by *which* Section 9.6 concern triggered
+       * it, not just a free-text reason string.
        */
-      function interruptForReview(
+      function routeMandatoryReview(
         agentState: LendingOperationsAgentState,
-        reason: string,
+        trigger: MandatoryReviewTrigger,
       ): Partial<RuntimeState> {
         return {
           agentState: {
             ...agentState,
-            reviewState: { requested: true, reason },
+            reviewState: {
+              requested: true,
+              reason: trigger.reason,
+              category: trigger.category,
+            },
           },
-          route: 'INTERRUPTED_FOR_REVIEW',
+          route:
+            trigger.route === 'INTERRUPT_FOR_REVIEW'
+              ? 'INTERRUPTED_FOR_REVIEW'
+              : 'ROUTED_TO_MANUAL_REVIEW',
         };
       }
 
       async function verifyConsentNode(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
-        const reason = consentInvalid(state.agentState);
-        if (reason) return manualReview(state.agentState, reason);
+        const trigger = consentInvalid(state.agentState);
+        if (trigger) return routeMandatoryReview(state.agentState, trigger);
         return {};
       }
 
@@ -272,7 +287,7 @@ export function createLendingOperationsAgentRuntime(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
         const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
-        if (exceeded) return manualReview(state.agentState, exceeded);
+        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
 
         const invocation = await invokeTool(
           registry,
@@ -287,9 +302,12 @@ export function createLendingOperationsAgentRuntime(
           invocation.error,
         );
         if (invocation.outcome === 'FAILURE') {
-          return manualReview(
+          return routeMandatoryReview(
             nextState,
-            `check_case_completeness unavailable: ${invocation.error}`,
+            classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+              `check_case_completeness unavailable: ${invocation.error}`,
+            ),
           );
         }
         const result = invocation.result as CheckCaseCompletenessResult;
@@ -303,7 +321,7 @@ export function createLendingOperationsAgentRuntime(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
         const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
-        if (exceeded) return manualReview(state.agentState, exceeded);
+        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
 
         const loanCase = await deps.dataSource
           .getRepository(LoanCase)
@@ -329,16 +347,22 @@ export function createLendingOperationsAgentRuntime(
           invocation.error,
         );
         if (invocation.outcome === 'FAILURE') {
-          return manualReview(
+          return routeMandatoryReview(
             nextState,
-            `evaluate_policy unavailable: ${invocation.error}`,
+            classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+              `evaluate_policy unavailable: ${invocation.error}`,
+            ),
           );
         }
         const result = invocation.result as EvaluatePolicyResult;
         if (result.status === 'REVIEW_REQUIRED') {
-          return interruptForReview(
+          return routeMandatoryReview(
             nextState,
-            result.unresolvedReasons.join('; ') || 'policy review required',
+            classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.POLICY_AMBIGUITY,
+              result.unresolvedReasons.join('; ') || 'policy review required',
+            ),
           );
         }
         return {
@@ -351,7 +375,7 @@ export function createLendingOperationsAgentRuntime(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
         const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
-        if (exceeded) return manualReview(state.agentState, exceeded);
+        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
 
         const stepped = consumeStep(state.agentState);
         const evaluation = state.policyEvaluation!;
@@ -428,9 +452,12 @@ export function createLendingOperationsAgentRuntime(
           invocation.error,
         );
         if (invocation.outcome === 'FAILURE') {
-          return manualReview(
+          return routeMandatoryReview(
             nextState,
-            `create_condition failed: ${invocation.error}`,
+            classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+              `create_condition failed: ${invocation.error}`,
+            ),
           );
         }
         const created = invocation.result as CreateConditionResult;

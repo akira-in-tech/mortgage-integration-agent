@@ -87,6 +87,7 @@ export class CaseTimelineService {
           proposedActionTool: run.proposedActionTool,
           reviewRequested: run.reviewRequested,
           reviewReason: run.reviewReason,
+          reviewCategory: run.reviewCategory,
           tools: attempts.map((a) => ({
             name: a.toolName,
             outcome: a.outcome,
