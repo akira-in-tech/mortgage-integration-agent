@@ -3,8 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { WorkerModule } from './worker.module';
-import { CreditService } from './integrations/credit/credit.service';
-import { DocumentService } from './integrations/document/document.service';
 import { PolicyEvaluationService } from './policy/policy-evaluation.service';
 import { EvaluationManifestService } from './policy/evaluation-manifest.service';
 import { ProviderRegistryService } from './provider-platform/provider-registry.service';
@@ -22,8 +20,6 @@ async function bootstrap(): Promise<void> {
 
   const activities = createCaseConditionsActivities({
     dataSource: appContext.get(DataSource),
-    creditService: appContext.get(CreditService),
-    documentService: appContext.get(DocumentService),
     policyEvaluationService: appContext.get(PolicyEvaluationService),
     evaluationManifestService: appContext.get(EvaluationManifestService),
     providerRegistry: appContext.get(ProviderRegistryService),

@@ -28,6 +28,10 @@ import { ProviderAuthorizationService } from '../provider-platform/provider-auth
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
+import { CreditService } from '../integrations/credit/credit.service';
+import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
+import { DocumentService } from '../integrations/document/document.service';
+import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
 import { EvaluationCaseFixture } from './types';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { runCorpus, cleanupEvaluationRun } from './runner';
@@ -106,6 +110,10 @@ describeOrSkip('runCorpus', () => {
     );
     const providerRegistry = new ProviderRegistryService();
     providerRegistry.register(new PlaidIncomeAdapter(new PlaidService()));
+    providerRegistry.register(new CreditReportAdapter(new CreditService()));
+    providerRegistry.register(
+      new DocumentVerificationAdapter(new DocumentService()),
+    );
     const providerAuthorizationService = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
     );

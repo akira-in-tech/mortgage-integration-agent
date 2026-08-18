@@ -1,7 +1,5 @@
 import { DataSource, EntityManager } from 'typeorm';
 import { ApplicationFailure } from '@temporalio/activity';
-import { CreditService } from '../integrations/credit/credit.service';
-import { DocumentService } from '../integrations/document/document.service';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
@@ -36,8 +34,6 @@ import { ProviderCapability } from '../provider-platform/types';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
-  creditService: CreditService;
-  documentService: DocumentService;
   policyEvaluationService: PolicyEvaluationService;
   evaluationManifestService: EvaluationManifestService;
   providerRegistry: ProviderRegistryService;
@@ -129,15 +125,14 @@ async function callProviderWithRetryClassification<T>(
 
 /**
  * Activities run outside the deterministic workflow sandbox — this is
- * where all I/O (database writes, simulator calls) actually happens. The
- * factory closes over NestJS-resolved services/repositories so activities
- * can reuse the same CreditService/DocumentService the evaluateLoan path
- * already uses, rather than duplicating simulator logic. Income evidence
- * (M4-001) instead dispatches through the real provider-platform registry
- * (`dispatch-provider-request.ts`) — `fetchCreditEvidence`/
- * `fetchDocumentEvidence` still call their services directly, migrating
- * to the same real adapter pattern is a deliberate fast-follow (M4-002),
- * not an inconsistency left unresolved.
+ * where all I/O (database writes, simulator calls) actually happens. All
+ * three evidence-fetch activities (income, credit, document — M4-002)
+ * dispatch through the real provider-platform registry
+ * (`dispatch-provider-request.ts`) rather than calling a simulator
+ * service directly: each capability's `ProviderAdapter` (in
+ * `src/integrations/`) wraps the same simulator logic the older
+ * `evaluateLoan` path (`src/agent/agent.service.ts`) still calls
+ * directly, unchanged.
  *
  * Every domain write below runs inside `dataSource.transaction()` alongside
  * the outbox event(s) it produces, so a committed state change and its
@@ -149,8 +144,6 @@ export function createCaseConditionsActivities(
 ) {
   const {
     dataSource,
-    creditService,
-    documentService,
     policyEvaluationService,
     evaluationManifestService,
     providerRegistry,
@@ -287,7 +280,16 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<CreditBureauData> {
       const credit = await callProviderWithRetryClassification(
-        () => creditService.getCreditData(borrowerId),
+        () =>
+          dispatchProviderRequest<CreditBureauData>(providerDispatchDeps, {
+            tenantId,
+            caseId,
+            borrowerSubjectId: borrowerId,
+            capability: ProviderCapability.CREDIT,
+            request: { borrowerId },
+            purposeCode: 'UNDERWRITING_EVIDENCE',
+            permittedDataClasses: ['CREDIT'],
+          }),
         'credit-bureau-simulator',
       );
       await dataSource.transaction((manager) =>
@@ -308,7 +310,19 @@ export function createCaseConditionsActivities(
       borrowerId,
     }: CaseRef & { borrowerId: string }): Promise<DocumentVerificationResult> {
       const documents = await callProviderWithRetryClassification(
-        () => documentService.verifyDocuments(borrowerId),
+        () =>
+          dispatchProviderRequest<DocumentVerificationResult>(
+            providerDispatchDeps,
+            {
+              tenantId,
+              caseId,
+              borrowerSubjectId: borrowerId,
+              capability: ProviderCapability.DOCUMENT,
+              request: { borrowerId },
+              purposeCode: 'UNDERWRITING_EVIDENCE',
+              permittedDataClasses: ['DOCUMENT'],
+            },
+          ),
         'document-verification-simulator',
       );
       await dataSource.transaction((manager) =>

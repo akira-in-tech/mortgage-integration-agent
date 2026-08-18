@@ -4487,3 +4487,92 @@ Manual live verification (real REST API + real Temporal worker):
 ### Next safe step
 
 M4-002: migrate credit and document onto the same `ProviderAdapter`/registry/dispatch pipeline income now uses, with the explicit goal of touching only `integrations/` (new adapter classes) and the bootstrap service's `register()` calls — any change needed to `ProviderRegistryService`, `dispatch-provider-request.ts`, or `case-conditions.activities.ts` beyond swapping the dispatch call site would mean the pattern doesn't actually generalize yet.
+
+## M4-002: Credit and document capabilities migrated onto the provider platform (Section 20 M4 exit evidence, first bullet)
+
+### Status
+
+Implemented and verified. All three evidence-fetch activities (`fetchIncomeEvidence`, `fetchCreditEvidence`, `fetchDocumentEvidence`) now dispatch through the same `dispatchProviderRequest()` pipeline M4-001 built for income alone. `CreditReportAdapter` and `DocumentVerificationAdapter` wrap the existing `CreditService`/`DocumentService` simulators unchanged, mirroring `PlaidIncomeAdapter` exactly. As predicted in M4-001's "Next safe step," this slice touched only `src/integrations/` (two new adapter classes) and `ProviderAdapterBootstrapService`'s `register()` calls — `ProviderRegistryService`, `dispatch-provider-request.ts`, `ProviderAuthorizationService`, and `ProviderOperationIntentService` are byte-for-byte unchanged from M4-001, which is the actual proof that the pattern generalizes rather than an assertion about it.
+
+### Acceptance criterion
+
+Section 20's M4 exit evidence, first bullet: "a new simulator adapter is added without domain or Agent changes." M4-001 proved this once, with one capability; this slice proves it a second and third time in the same commit, which is the real test — a pattern that only works for its first user isn't a pattern.
+
+### Implementation
+
+- `CreditReportAdapter` (`integrations/credit/credit-report.adapter.ts`) — wraps `CreditService.getCreditData()` unchanged; `providerId='credit-bureau-simulator'`, `capability=CREDIT`, same `REUSABLE_LOOKUP`/`PROHIBITED`-fallback operation profile as the income adapter (a credit pull is idempotently re-runnable, same as an income lookup, so the same profile applies honestly, not by default).
+- `DocumentVerificationAdapter` (`integrations/document/document-verification.adapter.ts`) — wraps `DocumentService.verifyDocuments()` unchanged; `providerId='document-verification-simulator'`, `capability=DOCUMENT`, same operation profile.
+- `ProviderAdapterBootstrapService` — two more constructor-injected adapters, two more `register()` calls in `onModuleInit()`. Nothing else in the file changed.
+- `case-conditions.activities.ts` — `fetchCreditEvidence`/`fetchDocumentEvidence` now call `dispatchProviderRequest()` with `ProviderCapability.CREDIT`/`DOCUMENT` respectively, exactly mirroring `fetchIncomeEvidence`'s M4-001 shape (`purposeCode: 'UNDERWRITING_EVIDENCE'`, `permittedDataClasses: ['CREDIT']`/`['DOCUMENT']`), still wrapped in the same `callProviderWithRetryClassification` — retry classification behavior for `SYNTHETIC-TRANSIENT-FAILURE-`/`SYNTHETIC-TERMINAL-FAILURE-` borrowerIds on credit/document is unchanged, now backed by real grant/intent rows the same way income's already was. `creditService`/`documentService` dropped from `CaseConditionsActivitiesDeps` (unused once both route through the registry) and every construction call site (`worker.ts`, `evaluation/runner.ts`, `evaluation-report.ts`, both spec files) updated the same way M4-001 already updated them for `plaidService`.
+- No schema change, no new migration — both new adapters reuse the exact `provider_authorization_grants`/`provider_operation_intents` tables M4-001 created; only their `capability` column value differs.
+
+### Affected files
+
+- `src/integrations/credit/credit-report.adapter.ts` (+`.spec.ts`), `src/integrations/document/document-verification.adapter.ts` (+`.spec.ts`)
+- `src/integrations/provider-adapter-bootstrap.service.ts`, `integrations.module.ts`
+- `src/workflows/case-conditions.activities.ts`, `.spec.ts`
+- `src/worker.ts`, `src/evaluation/runner.ts`, `src/evaluation/runner.spec.ts`, `src/evaluation-report.ts`
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Both capabilities migrated in one slice, not split into M4-002/M4-003.** Once the second migration (credit) came out identical in shape to the first, doing document in the same slice cost nothing extra and gave a stronger proof (three for three, not two for two) that no capability-specific wrinkle was hiding in the pattern.
+- **`registryFor()` in `case-conditions.activities.spec.ts` generalized to accept all three services with mock defaults, rather than three separate per-capability helpers.** Most existing tests only ever cared about income; requiring every call site to explicitly construct unused credit/document mocks (as M4-001 briefly did) would have been noise. A test that does care (the real-simulator `describe` block) still passes its own real services through the same helper.
+- **Same `REUSABLE_LOOKUP`/`PROHIBITED` operation profile for all three adapters.** Not copied by inattention — a credit pull and a document verification are, like an income lookup, read-only-in-effect and safely re-runnable (Temporal's own retry already assumes this), and none of the three has a real fallback provider to fall back to, so `PROHIBITED` is the honest answer for all three, not just income's.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean (two prettier formatting diffs in the two new
+  adapter spec files, fixed before this entry)
+
+No new migration — reuses M4-001's two tables unchanged; verified by
+running migration:run from empty on the m4002-verify scratch stack and
+seeing no new migration execute beyond ProviderPlatform1787031644483.
+
+Scratch stack (m4002-verify, ports 5443/7234, brought up fresh — not
+reused from M4-001's session):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    50 suites passed, 330 tests passed (47 -> 50 suites, 310 -> 330
+    tests: +2 new suites / +10 new tests, credit-report.adapter.spec.ts
+    and document-verification.adapter.spec.ts, mirroring
+    plaid-income.adapter.spec.ts exactly)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    2 suites passed, 14 tests passed (unchanged)
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    17/17 passed (unchanged — no migration this slice)
+
+Manual live verification (real REST API + real Temporal worker):
+  created a case and started its workflow — a direct SQL query
+  confirmed three real provider_authorization_grants rows (INCOME,
+  CREDIT, DOCUMENT, each with its own correct providerId and
+  permittedDataClasses) and three real provider_operation_intents
+  rows, all three reaching SUCCEEDED; the case's evidence_facts table
+  showed all three facts with the correct sourceIdentifier per
+  capability, and the case reached CONDITIONS_OPEN — the same outcome
+  this exact scenario reached in M4-001's own live verification,
+  confirming the migration changed only how credit/document are
+  dispatched and audited, not what they return or what the case
+  decides
+
+  synthetic tenant/case data removed with the scratch stack teardown
+  (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Same fail-closed `revalidate()` guarantee now covers credit and document dispatch, not only income — a mismatched, expired, or revoked grant blocks a credit pull or document verification exactly as it already blocked an income lookup.
+- No new externally-visible API surface, no new external dependency — both adapters wrap already-existing in-process simulators.
+- Modest additional write volume (two more grant/intent row pairs per case evaluation) — same acceptable tradeoff M4-001 already made for income.
+
+### Known gaps
+
+- Unchanged from M4-001: no reconciliation worker, no promotion manifest/certification/two-person-approval machinery, no field-level authorization, no REST/GraphQL surface for grants or intents, ASSET and IDENTITY capabilities still have no adapter.
+- The older one-shot `evaluateLoan` path (`src/agent/agent.service.ts`) still calls `PlaidService`/`CreditService`/`DocumentService` directly, bypassing the registry entirely — unchanged and out of scope, since that path predates Section 9's Agent-runtime rewrite and isn't part of the case-conditions workflow this milestone is built around.
+
+### Next safe step
+
+With income, credit, and document all migrated, Section 20's M4 exit evidence's first bullet is now proven three times over in this codebase, not just asserted once. The remaining M4 exit-evidence bullets are all about a second real provider mode existing (authorized-sandbox parity, mode-change-through-configuration, promotion manifests) — none of them are buildable honestly without a real external provider relationship this codebase doesn't have, so M4's next honest increment is elsewhere in its scope list: REST/OpenAPI contract + generated TypeScript client + quickstart, or webhook subscriptions/delivery/retries on top of the existing signed outbox — both genuinely buildable today, unlike the promotion-manifest bullets.

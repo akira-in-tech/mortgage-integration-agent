@@ -47,6 +47,8 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
+import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
+import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -71,10 +73,28 @@ const GOOD_INCOME: PlaidIncomeData = {
   incomeStability: 88,
 };
 
-/** Fresh per call site: `ProviderRegistryService.register` throws on a second registration for the same capability+mode, so each differently-mocked `plaidService` needs its own registry. */
-function registryFor(plaidService: PlaidService): ProviderRegistryService {
+/** Fresh per call site: `ProviderRegistryService.register` throws on a second registration for the same capability+mode, so each differently-mocked service needs its own registry. Credit/document default to an unused mock — most call sites only exercise income, and `ProviderRegistryService.resolve()` still requires every capability to be registered. */
+function registryFor(overrides: {
+  plaidService?: PlaidService;
+  creditService?: CreditService;
+  documentService?: DocumentService;
+}): ProviderRegistryService {
   const registry = new ProviderRegistryService();
-  registry.register(new PlaidIncomeAdapter(plaidService));
+  registry.register(
+    new PlaidIncomeAdapter(
+      overrides.plaidService ?? ({ getIncomeData: jest.fn() } as any),
+    ),
+  );
+  registry.register(
+    new CreditReportAdapter(
+      overrides.creditService ?? ({ getCreditData: jest.fn() } as any),
+    ),
+  );
+  registry.register(
+    new DocumentVerificationAdapter(
+      overrides.documentService ?? ({ verifyDocuments: jest.fn() } as any),
+    ),
+  );
   return registry;
 }
 
@@ -140,13 +160,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
     );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
-    const creditService = { getCreditData: jest.fn() } as any;
-    const documentService = { verifyDocuments: jest.fn() } as any;
     activities = createCaseConditionsActivities({
       dataSource,
-      providerRegistry: registryFor(plaidService),
-      creditService,
-      documentService,
+      providerRegistry: registryFor({ plaidService }),
       policyEvaluationService,
       evaluationManifestService,
       providerAuthorizationService,
@@ -322,9 +338,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     } as any;
     const scoped = createCaseConditionsActivities({
       dataSource,
-      providerRegistry: registryFor(plaidService),
-      creditService: { getCreditData: jest.fn() } as any,
-      documentService: { verifyDocuments: jest.fn() } as any,
+      providerRegistry: registryFor({ plaidService }),
       policyEvaluationService,
       evaluationManifestService,
       providerAuthorizationService,
@@ -576,9 +590,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
     beforeAll(() => {
       realActivities = createCaseConditionsActivities({
         dataSource,
-        providerRegistry: registryFor(new PlaidService()),
-        creditService: new CreditService(),
-        documentService: new DocumentService(),
+        providerRegistry: registryFor({
+          plaidService: new PlaidService(),
+          creditService: new CreditService(),
+          documentService: new DocumentService(),
+        }),
         policyEvaluationService,
         evaluationManifestService,
         providerAuthorizationService,
@@ -630,9 +646,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
       } as any;
       const scoped = createCaseConditionsActivities({
         dataSource,
-        providerRegistry: registryFor(brokenPlaid),
-        creditService: new CreditService(),
-        documentService: new DocumentService(),
+        providerRegistry: registryFor({
+          plaidService: brokenPlaid,
+          creditService: new CreditService(),
+          documentService: new DocumentService(),
+        }),
         policyEvaluationService,
         evaluationManifestService,
         providerAuthorizationService,

@@ -20,8 +20,6 @@ import {
   JurisdictionCoverageStatus,
 } from '../database/enums/jurisdiction.enum';
 import { createCaseConditionsActivities } from '../workflows/case-conditions.activities';
-import { CreditService } from '../integrations/credit/credit.service';
-import { DocumentService } from '../integrations/document/document.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
@@ -335,8 +333,6 @@ export async function runCorpus(
   await ensureJurisdictions(deps.dataSource);
   const activities = createCaseConditionsActivities({
     dataSource: deps.dataSource,
-    creditService: new CreditService(),
-    documentService: new DocumentService(),
     policyEvaluationService: deps.policyEvaluationService,
     evaluationManifestService: deps.evaluationManifestService,
     providerRegistry: deps.providerRegistry,
