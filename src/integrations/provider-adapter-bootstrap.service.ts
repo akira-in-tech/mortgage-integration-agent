@@ -3,6 +3,8 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { PlaidIncomeAdapter } from './plaid/plaid-income.adapter';
 import { CreditReportAdapter } from './credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from './document/document-verification.adapter';
+import { AssetVerificationAdapter } from './asset/asset-verification.adapter';
+import { IdentityVerificationAdapter } from './identity/identity-verification.adapter';
 
 /**
  * Registers every real adapter this codebase has with
@@ -12,7 +14,10 @@ import { DocumentVerificationAdapter } from './document/document-verification.ad
  * one `register()` call here, never touching `ProviderRegistryService`,
  * `dispatch-provider-request.ts`, or any workflow/Agent code that calls
  * `registry.resolve()`. M4-002 proved this by adding credit and document
- * with no change outside this file and the two new adapter classes.
+ * with no change outside this file and the two new adapter classes;
+ * M4-005 proved it again with asset and identity — the fourth and fifth
+ * capabilities Section 7.2 names, and the first two that had no prior
+ * direct-call integration to migrate from at all.
  */
 @Injectable()
 export class ProviderAdapterBootstrapService implements OnModuleInit {
@@ -21,11 +26,15 @@ export class ProviderAdapterBootstrapService implements OnModuleInit {
     private readonly plaidIncomeAdapter: PlaidIncomeAdapter,
     private readonly creditReportAdapter: CreditReportAdapter,
     private readonly documentVerificationAdapter: DocumentVerificationAdapter,
+    private readonly assetVerificationAdapter: AssetVerificationAdapter,
+    private readonly identityVerificationAdapter: IdentityVerificationAdapter,
   ) {}
 
   onModuleInit(): void {
     this.registry.register(this.plaidIncomeAdapter);
     this.registry.register(this.creditReportAdapter);
     this.registry.register(this.documentVerificationAdapter);
+    this.registry.register(this.assetVerificationAdapter);
+    this.registry.register(this.identityVerificationAdapter);
   }
 }

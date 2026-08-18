@@ -4795,3 +4795,93 @@ real standalone Node HTTP receiver script — not a test harness):
 ### Next safe step
 
 Both of M4's genuinely-buildable-today scope items (REST/OpenAPI/client/quickstart, and webhooks) are now done. What remains in M4's scope list either needs a second real provider mode (promotion manifests, authorized-sandbox parity — not buildable honestly yet) or is its own separate vertical (webhook inspector/sandbox scenario catalog, `publish_case_update`'s Agent-tool wiring). The user has not yet directed which M5 or remaining-M4 increment to take next.
+
+## M4-005: Asset and identity capability simulators (Section 7.2, Section 20 M4 scope: "income, asset, credit, identity, and document simulators")
+
+### Status
+
+Implemented and verified. `AssetService`/`IdentityService` (`src/integrations/asset/`, `src/integrations/identity/`) are two new deterministic simulators, matching the existing Plaid/Credit/Document simulators' shape exactly (opt-in synthetic-failure injection, a distinct deterministic hash-based seed per service, simulated latency). `AssetVerificationAdapter`/`IdentityVerificationAdapter` wrap them and are registered into `ProviderRegistryService` alongside the other three — all five capabilities Section 7.2 names now have a real `SIMULATOR` adapter. Deliberately *not* wired into `case-conditions.workflow.ts`'s evidence-fetch step or `check_case_completeness`'s required-fact-type list (see Decisions) — this slice closes the provider-platform-layer gap, not a workflow-integration gap that doesn't exist yet.
+
+### Acceptance criterion
+
+Section 20's M4 scope: "income, asset, credit, identity, and document simulators." Section 7.2 names five capabilities; before this slice only three had a real adapter.
+
+### Implementation
+
+- `AssetService.getAssetData(borrowerId)` — `liquidAssets`, `investmentAssets`, `accountCount`, `reserveMonths`, all borrowerId-seeded and deterministic, same shape as `CreditService`. A fifth distinct hash algorithm (rotate-and-xor) keeps its seed independent of the other four simulators' for the same borrowerId — each simulator already used a different one (additive-shift, djb2-variant, FNV-1a), so asset gets a fifth and identity a sixth.
+- `IdentityService.verifyIdentity(borrowerId)` — `nameMatch`/`dateOfBirthMatch`/`ssnValid`/`addressMatch`/`fraudAlertPresent`/`identityVerified`, same boolean-checklist shape as `DocumentService`.
+- `AssetVerificationAdapter`/`IdentityVerificationAdapter` — byte-for-byte the same structure as `CreditReportAdapter`/`DocumentVerificationAdapter` (M4-002): `REUSABLE_LOOKUP`/`PROHIBITED`-fallback operation profile, `submit()` delegates to the simulator and wraps as `COMPLETE`, `normalize()` is identity, `healthCheck()` always healthy.
+- `ProviderAdapterBootstrapService` — two more constructor-injected adapters, two more `register()` calls. Nothing else in that file changed, same as M4-002's own proof.
+- `dispatch-provider-request.spec.ts` (new) — this helper had no dedicated test since M4-001; its orchestration was only ever exercised indirectly through `case-conditions.activities.spec.ts`'s income/credit/document coverage, which doesn't apply to asset/identity since neither has a workflow call site. Tests the full grant-issue → intent-persist → revalidate → dispatch → classify cycle directly against real `AssetService`/`IdentityService` (including both synthetic failure prefixes), closing a real, pre-existing test-coverage gap for the dispatch helper itself, not just adding coverage for the two new capabilities.
+
+### Affected files
+
+- `src/integrations/asset/asset.types.ts`, `asset.service.ts`, `asset-verification.adapter.ts` (+`.spec.ts`)
+- `src/integrations/identity/identity.types.ts`, `identity.service.ts`, `identity-verification.adapter.ts` (+`.spec.ts`)
+- `src/integrations/provider-adapter-bootstrap.service.ts`, `integrations.module.ts`
+- `src/provider-platform/dispatch-provider-request.spec.ts` (new)
+- `docs/DEVELOPMENT_LOG.md`, `README.md`
+
+### Decisions and alternatives
+
+- **Not wired into `case-conditions.workflow.ts` or `check_case_completeness`'s `REQUIRED_FACT_TYPES`.** `EvidenceType.ASSET`/`IDENTITY` already existed in the schema (Section 7.2's target vocabulary, present since before this session), but `check_case_completeness`'s own class comment already scopes `REQUIRED_FACT_TYPES` explicitly to "each type the M2 case-conditions workflow's evidence-fetch activities produce" — not to everything `EvidenceType` could hold. The one seeded policy rule only ever reads income evidence; there is no real policy or Agent-tool consumer for asset/identity evidence yet. Fetching it into every case regardless (new activities, new outbox writes, new grant/intent rows nobody's downstream logic depends on) would be inert scaffolding, not a real integration — the same "don't build ahead of a real consumer" discipline this codebase has applied consistently (e.g. M3-022's evaluation-manifest scoping, the deferred budget ledger). This slice closes the provider-platform registry's own gap; workflow integration is a separate, not-yet-justified next step.
+- **A fifth and sixth distinct deterministic hash algorithm, not reuse of an existing one.** Every existing simulator already deliberately uses a different hash so the same borrowerId doesn't happen to produce correlated results across capabilities (each service's own comment says so) — matching that established pattern rather than quietly breaking it for convenience.
+- **`dispatch-provider-request.spec.ts` uses real `AssetService`/`IdentityService`, not mocks, including for the synthetic-failure paths.** Same "prefer real infra" discipline as `case-conditions.activities.spec.ts`'s own real-provider-simulator `describe` block (M2) — the synthetic failure injection is itself already a real, deterministic code path in the real simulator, not something that needs mocking to exercise.
+
+### Verification
+
+```text
+npm run build / npm run lint:check
+  both passed clean after a handful of prettier formatting diffs in
+  the new adapter/service files
+
+No new migration — this slice adds no schema (no new EvidenceType
+usage, no new tables).
+
+Scratch stack (m4005-verify, ports 5443/7234, fresh):
+  DATABASE_URL=... npm run migration:run
+    applies cleanly from empty, same 17 migrations as M4-004, nothing
+    new
+
+  DATABASE_URL=... npx jest asset-verification identity-verification dispatch-provider-request --runInBand
+    3 suites passed, 15 tests passed (2 new adapter spec files x 5
+    tests each, +1 new dispatch-provider-request spec x 5 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache --silent
+    56 suites passed, 361 tests passed (53 -> 56 suites, 346 -> 361
+    tests: +3 new suites / +15 new tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites passed, 20 tests passed (unchanged)
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    18/18 passed (unchanged — no migration this slice)
+
+Manual live verification (real API process boot):
+  started the real API server against the scratch database and
+  confirmed "Nest application successfully started" with no DI-
+  resolution or duplicate-registration error — `ProviderAdapterBootstrapService`
+  now constructor-injects and registers five real adapters, not three;
+  a duplicate-capability registration would have thrown synchronously
+  in onModuleInit() and crashed the boot, so a clean start is a real
+  assertion, not just an absence of a compile error. No further live
+  check was meaningful for this slice: since asset/identity are
+  deliberately not wired into the workflow, there is no REST or
+  Temporal entry point yet that would exercise them end to end (that
+  is exactly the "Known gap" this slice's own Decisions section names,
+  not an oversight in this verification).
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new externally-visible behavior — nothing outside `src/integrations/` and `src/provider-platform/`'s own test coverage calls either new adapter yet.
+- No new external dependency — both are in-process simulators, same as the three they're modeled on.
+
+### Known gaps
+
+- Asset/identity evidence is not fetched by any real case, workflow, or Agent tool — the adapters exist and are registered, but nothing calls `dispatchProviderRequest()` for these two capabilities outside this slice's own tests. Wiring them in would need a real policy rule or Agent-tool consumer to justify it (Decisions above); none exists yet.
+- Same known gaps M4-001/M4-002 already carry for every SIMULATOR-mode capability: no promotion manifest, no authorized-sandbox parity, no field-level authorization.
+
+### Next safe step
+
+All five Section 7.2 capabilities now have a real registered simulator adapter, closing that specific M4 scope bullet completely. The next M4-adjacent increment with a real consumer to justify it would be wiring `check_case_completeness`/a new policy rule to actually use asset or identity evidence — but that needs a product decision (what should an asset- or identity-driven condition even check?) this session hasn't been given. Absent that, the remaining open threads are M5 (authentication, tenant isolation/RLS — the biggest real gap this codebase currently has, since the REST API still has zero auth) or M4's separate sandbox/webhook-inspector/`publish_case_update` items. Not started; awaiting direction.
