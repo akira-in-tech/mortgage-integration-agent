@@ -35,6 +35,8 @@ import { ProviderRegistryService } from './provider-platform/provider-registry.s
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { ConsentService } from './consent/consent.service';
+import { DataDispositionService } from './data-disposition/data-disposition.service';
+import { DataDispositionTask } from './database/entities/data-disposition-task.entity';
 import { CommunicationMessageService } from './communications/communication-message.service';
 import { PlaidService } from './integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from './integrations/plaid/plaid-income.adapter';
@@ -97,6 +99,7 @@ async function main(): Promise<void> {
       ConsentRecord,
       CommunicationMessage,
       CommunicationTemplate,
+      DataDispositionTask,
     ],
   });
   await dataSource.initialize();
@@ -118,7 +121,8 @@ async function main(): Promise<void> {
   providerRegistry.register(
     new DocumentVerificationAdapter(new DocumentService()),
   );
-  const consentService = new ConsentService(dataSource);
+  const dataDispositionService = new DataDispositionService(dataSource);
+  const consentService = new ConsentService(dataSource, dataDispositionService);
   const providerAuthorizationService = new ProviderAuthorizationService(
     dataSource,
     consentService,

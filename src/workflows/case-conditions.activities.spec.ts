@@ -50,6 +50,8 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
+import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
@@ -144,6 +146,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ConsentRecord,
         CommunicationMessage,
         CommunicationTemplate,
+        DataDispositionTask,
       ],
     });
     await dataSource.initialize();
@@ -159,7 +162,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(PolicyCatalogGeneration),
     );
     evaluationManifestService = new EvaluationManifestService(dataSource);
-    consentService = new ConsentService(dataSource);
+    consentService = new ConsentService(
+      dataSource,
+      new DataDispositionService(dataSource),
+    );
     providerAuthorizationService = new ProviderAuthorizationService(
       dataSource,
       consentService,
@@ -219,6 +225,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
           .delete({ tenantId });
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
+        await dataSource
+          .getRepository(DataDispositionTask)
+          .delete({ tenantId });
         await dataSource.getRepository(ConsentRecord).delete({ tenantId });
         await dataSource
           .getRepository(CommunicationMessage)

@@ -2,8 +2,14 @@ import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { EvidenceFact } from '../database/entities/evidence-fact.entity';
+import { LoanCase } from '../database/entities/loan-case.entity';
+import { Tenant } from '../database/entities/tenant.entity';
+import { Jurisdiction } from '../database/entities/jurisdiction.entity';
+import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ConsentService } from '../consent/consent.service';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { ProviderCapability } from './types';
 
 // Requires a reachable Postgres (same convention as the other real-DB
@@ -32,10 +38,21 @@ describeOrSkip('ProviderAuthorizationService', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [ProviderAuthorizationGrant, ConsentRecord],
+      entities: [
+        ProviderAuthorizationGrant,
+        ConsentRecord,
+        EvidenceFact,
+        LoanCase,
+        Tenant,
+        Jurisdiction,
+        DataDispositionTask,
+      ],
     });
     await dataSource.initialize();
-    consentService = new ConsentService(dataSource);
+    consentService = new ConsentService(
+      dataSource,
+      new DataDispositionService(dataSource),
+    );
     service = new ProviderAuthorizationService(dataSource, consentService);
   });
 
@@ -49,6 +66,9 @@ describeOrSkip('ProviderAuthorizationService', () => {
       if (consentRecordIds.length > 0) {
         await dataSource.getRepository(ConsentRecord).delete(consentRecordIds);
       }
+      await dataSource
+        .getRepository(DataDispositionTask)
+        .delete({ tenantId: baseInput.tenantId });
       await dataSource.destroy();
     }
   });

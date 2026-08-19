@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { ConsentService } from './consent.service';
+import { DataDispositionModule } from '../data-disposition/data-disposition.module';
 
 /**
  * `@Global()`, same reasoning as `AuthModule`: `ConsentService` is
@@ -14,10 +15,13 @@ import { ConsentService } from './consent.service';
  * necessary redundancy M5-001's own dev log entry found for `AuthModule`/
  * `ApiClient` (the testing injector, not the production bootstrapper,
  * fails to resolve it through `@Global()` alone).
+ *
+ * Imports `DataDispositionModule` (M5-015): `revoke()` now opens a
+ * retention-review task in the same transaction, per Section 14.2.
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([ConsentRecord])],
+  imports: [TypeOrmModule.forFeature([ConsentRecord]), DataDispositionModule],
   providers: [ConsentService],
   exports: [ConsentService],
 })

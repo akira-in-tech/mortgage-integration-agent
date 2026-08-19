@@ -10,7 +10,14 @@ import {
 } from '../database/enums/jurisdiction.enum';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import {
+  EvidenceFact,
+  EvidenceType,
+  EvidenceSourceKind,
+} from '../database/entities/evidence-fact.entity';
+import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { ConsentService } from './consent.service';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -29,10 +36,20 @@ describeOrSkip('ConsentService', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [Tenant, LoanCase, Jurisdiction, ConsentRecord],
+      entities: [
+        Tenant,
+        LoanCase,
+        Jurisdiction,
+        ConsentRecord,
+        EvidenceFact,
+        DataDispositionTask,
+      ],
     });
     await dataSource.initialize();
-    service = new ConsentService(dataSource);
+    service = new ConsentService(
+      dataSource,
+      new DataDispositionService(dataSource),
+    );
 
     const tenantRepo = dataSource.getRepository(Tenant);
     const tenant = await tenantRepo.save(
@@ -67,6 +84,8 @@ describeOrSkip('ConsentService', () => {
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
+      await dataSource.getRepository(DataDispositionTask).delete({ tenantId });
+      await dataSource.getRepository(EvidenceFact).delete({ tenantId });
       await dataSource.getRepository(ConsentRecord).delete({ tenantId });
       await dataSource.getRepository(LoanCase).delete({ tenantId });
       await dataSource
@@ -96,7 +115,20 @@ describeOrSkip('ConsentService', () => {
     expect(await service.activeRecordId(tenantId, caseId)).toBe(record.id);
   });
 
-  it('revoke() marks the active record revoked and getStatus() reports REVOKED', async () => {
+  it("revoke() marks the active record revoked, getStatus() reports REVOKED, and it opens a real data-disposition retention review referencing the case's evidence (Section 14.2, M5-015)", async () => {
+    const evidenceRepo = dataSource.getRepository(EvidenceFact);
+    const evidence = await evidenceRepo.save(
+      evidenceRepo.create({
+        tenantId,
+        caseId,
+        factType: EvidenceType.INCOME,
+        sourceKind: EvidenceSourceKind.SIMULATOR,
+        sourceIdentifier: 'plaid-simulator',
+        value: { monthlyIncome: 9000 },
+        observedAt: new Date(),
+      }),
+    );
+
     const revoked = await service.revoke(
       tenantId,
       caseId,
@@ -106,6 +138,19 @@ describeOrSkip('ConsentService', () => {
     expect(revoked.revokedAt).not.toBeNull();
     expect(revoked.revocationReason).toBe('consent spec revocation');
     expect(await service.getStatus(tenantId, caseId)).toBe('REVOKED');
+
+    const tasks = await dataSource
+      .getRepository(DataDispositionTask)
+      .find({ where: { tenantId, caseId } });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      taskType: 'RETENTION_REVIEW',
+      status: 'PENDING',
+      triggeringConsentRecordId: revoked.id,
+      affectedEvidenceFactIds: [evidence.id],
+      resolvedAt: null,
+    });
+    expect(tasks[0].reason).toContain(revoked.id);
   });
 
   it('revoke() throws NotFoundException when there is no active record to revoke', async () => {

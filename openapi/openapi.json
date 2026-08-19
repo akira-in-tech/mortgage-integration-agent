@@ -314,6 +314,59 @@
         ]
       }
     },
+    "/v1/loan-cases/{caseId}/consents": {
+      "post": {
+        "operationId": "submitConsentAction",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Grant or revoke consent for a case",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
     "/v1/webhook-endpoints": {
       "post": {
         "operationId": "createWebhookEndpoint",
@@ -338,6 +391,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4)."
           },
           "401": {
             "description": "Missing or invalid API credentials."
@@ -637,6 +693,76 @@
         "required": [
           "reviewType",
           "actorId"
+        ]
+      },
+      "ConsentActionDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "GRANT",
+              "REVOKE"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Only meaningful for REVOKE — the revocation reason."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "ConsentRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "grantedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "object"
+          },
+          "revokedAt": {
+            "type": "object"
+          },
+          "revocationReason": {
+            "type": "object"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "caseId",
+          "purpose",
+          "scope",
+          "grantedAt",
+          "createdAt"
         ]
       },
       "CreateWebhookEndpointDto": {

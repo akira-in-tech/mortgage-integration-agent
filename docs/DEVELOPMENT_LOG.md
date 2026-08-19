@@ -6419,3 +6419,117 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 `communication_approvals` RLS, together with building the approval-gated `send_information_request` path that would finally give `CommunicationApprovalService.approve()` a real caller to define a `tenantId`-threaded signature for. RBAC and OIDC/FAPI 2.0 remain the largest untouched items in M5's own charter scope. Not started; awaiting direction.
+
+## M5-015: Data-disposition review on consent revocation (Section 14.1/14.2)
+
+### Status
+
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role. Chosen autonomously (per the user's "繼續挑下一項," continuing from M5-014's own "you decide") — closes Section 14.2's own explicit, previously-Known-gap rule: "Consent revocation... opens a data-disposition review for evidence already collected under that consent." `data_disposition_tasks` (Section 14.1) did not exist in this codebase at all before this slice.
+
+### Acceptance criterion
+
+Revoking a case's consent (`POST /v1/loan-cases/{caseId}/consents` with `{action: "REVOKE"}`) opens a real, persisted `DataDispositionTask` row — `taskType=RETENTION_REVIEW`, `status=PENDING` — in the exact same database transaction as the revocation itself, referencing every `evidence_facts` row that existed for the case at that moment (a lineage snapshot, not a live query) and the id of the consent record that triggered it. The table is RLS-protected from the migration that creates it, matching every genuinely-new table in this series. Proven with a direct unit test on `DataDispositionService` (real evidence snapshot, zero-evidence case, `listForCase()`), a real-Postgres integration test on `ConsentService.revoke()` itself asserting the resulting task's exact shape, a dedicated tenant-isolation spec (`mortgage_app` role, same pattern as `consent-tenant-isolation.spec.ts`), and a real live run: a real case driven through `npm run quickstart` under `NODE_ENV=production`, its consent revoked through the real REST API, and the resulting task queried directly from Postgres, referencing all 3 real evidence records collected for that case.
+
+### Implementation
+
+- `src/database/enums/data-disposition.enum.ts` (new) — `DataDispositionTaskType` (`RETENTION_REVIEW`, `DELETION`, `ANONYMIZATION`, `LEGAL_HOLD` — only the first is ever created) and `DataDispositionTaskStatus` (`PENDING`, `IN_PROGRESS`, `COMPLETED`, `VERIFIED` — only `PENDING` is ever reached), matching the charter's full vocabulary with the undriven states honestly declared, same shape as `ProviderOperationIntentStatus`'s own `RECONCILING`/`CANCELLED`.
+- `src/database/entities/data-disposition-task.entity.ts` (new) — `tenantId`, `caseId`, `taskType`, `status`, `reason`, `triggeringConsentRecordId` (nullable — this slice's only trigger, no FK constraint declared), `affectedEvidenceFactIds` (jsonb array, the lineage snapshot), `createdAt`, `resolvedAt` (always null — no resolution workflow exists yet).
+- `src/data-disposition/data-disposition.service.ts` (new) — `DataDispositionService` (`@InjectDataSource()`, same shape as `ConsentService`): `openRetentionReviewForRevokedConsent(manager, params)` takes an already-tenant-scoped `EntityManager` (not its own `runInTenantContext` call) so it can run inside `ConsentService.revoke()`'s own transaction — a revocation can never commit without also opening its required review, even across a process crash between the two writes. `listForCase(tenantId, caseId)` is an independent read, its own `runInTenantContext`.
+- `src/data-disposition/data-disposition.module.ts` (new) — `@Global()`, same reasoning as `ConsentModule`.
+- `src/consent/consent.module.ts` — imports `DataDispositionModule`.
+- `src/consent/consent.service.ts` — `revoke()` now calls `dataDispositionService.openRetentionReviewForRevokedConsent(manager, {...})` right after marking the record revoked, before returning, inside the same `runInTenantContext` transaction.
+- `src/database/migrations/1787162906507-DataDispositionTasks.ts` (new) — same shape as `ConsentRecords` (M5-005): table + enums + RLS, all in the migration that creates the table.
+- `src/evaluation/runner.ts`'s `cleanupEvaluationRun` now also deletes `data_disposition_tasks` — the evaluation corpus harness's own fixture cases can revoke consent too, so it now produces real task rows needing the same cleanup every other side effect already gets.
+- Incidentally discovered and fixed: `openapi/openapi.json`/`client/generated/schema.d.ts` had been stale since M5-005 shipped `POST .../consents` — the checked-in OpenAPI artifact's own description still claimed consents "is not yet built." Regenerated both (`npm run generate:openapi && npm run generate:client`) so the generated client can actually call the endpoint this slice's own live verification needed to drive.
+
+### Affected files
+
+- `src/database/enums/data-disposition.enum.ts` (new), `src/database/entities/data-disposition-task.entity.ts` (new)
+- `src/data-disposition/data-disposition.service.ts` (+`.spec.ts`, new), `data-disposition.module.ts` (new), `data-disposition-tenant-isolation.spec.ts` (new)
+- `src/consent/consent.module.ts`, `consent.service.ts` (+`.spec.ts`)
+- `src/database/migrations/1787162906507-DataDispositionTasks.ts` (new), `schema-migrations.spec.ts`
+- `src/evaluation/runner.ts` (+`.spec.ts`), `src/evaluation-report.ts`
+- `src/provider-platform/provider-authorization.service.spec.ts`, `dispatch-provider-request.spec.ts`
+- `src/workflows/case-conditions.activities.spec.ts`
+- `openapi/openapi.json`, `client/generated/schema.d.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Opens a review, does not act on it.** The charter's own phrasing is "opens a data-disposition review," not "deletes" — matching Section 6.3's human-in-the-loop posture, a task is created and left `PENDING`; no automated deletion, anonymization, or verification runs against it. Building an actual resolution workflow (and the document/normalized-finding/cache/search-index/backup lineage traversal Section 14.2 separately names) is real, much larger, separately-scoped work — this codebase has none of those subsystems to traverse yet.
+- **Runs inside `ConsentService.revoke()`'s own transaction, not a separate call afterward.** The charter frames the review as a direct, non-optional consequence of revocation, not an eventually-consistent side effect — a separate `runInTenantContext` call could succeed at revoking consent while failing (or never running) to open the review, silently violating the rule. One transaction makes that impossible.
+- **`openRetentionReviewForRevokedConsent` takes a passed-in `EntityManager`, not its own `DataSource`+`runInTenantContext` call.** The only way to guarantee atomicity with `revoke()`'s own write. `listForCase()`, with no atomicity requirement of its own, uses the normal per-call `runInTenantContext` pattern instead — the same "manager for atomicity, DataSource+runInTenantContext for independent reads" split `recordEvidence`/`writeOutboxEvent` already use in `case-conditions.activities.ts`.
+- **No FK constraint on `triggeringConsentRecordId`.** Every other honest-null/undriven field in this series (`ProviderAuthorizationGrant.consentRecordIds`, `EvaluationInputManifest`) stays a plain column, not a relation, when the referenced subsystem doesn't have a matching read need yet — no code today ever joins from a task back to its consent record, so a declared `@ManyToOne` would be unused ceremony, not a real guarantee (Postgres would still enforce referential integrity via a plain FK if I'd added one without the ORM relation, but nothing reads it that way either).
+- **The stale-OpenAPI-artifact fix was done, not just noted.** It directly blocked this slice's own live verification (the generated client couldn't call `/consents` at all) and was a one-command regeneration with no manual editing — fixing it cost nothing extra and left the artifact honestly in sync with real endpoints again, matching Section 15.3's own "checked and published OpenAPI artifact" requirement. A larger, riskier fix would have been declined in favor of just noting the gap; this one was cheap and directly in the way.
+
+### Errors and fixes
+
+- **`provider-authorization.service.spec.ts` and `dispatch-provider-request.spec.ts` both failed to initialize** after adding `ConsentService`'s new `DataDispositionService` dependency, with `TypeORMError: Entity metadata for EvidenceFact#case was not found`, then (after adding `EvidenceFact`) `Entity metadata for LoanCase#tenant was not found` — the same relation-metadata gap found repeatedly throughout this whole M5 series, this time three levels deep (`EvidenceFact` → `LoanCase` → `Tenant`/`Jurisdiction`). Fixed by adding the full chain to `provider-authorization.service.spec.ts` (which genuinely calls `revoke()` in a real test). For `dispatch-provider-request.spec.ts`, which never calls `revoke()` at all, reverted the speculative `EvidenceFact`/`DataDispositionTask` additions entirely rather than chasing the relation chain for a path that's never exercised — the minimal-diff choice over blanket defensive registration.
+- **The generated OpenAPI client couldn't call `/v1/loan-cases/{caseId}/consents` at all** — a TypeScript compile error (`Argument of type '"/v1/loan-cases/{caseId}/consents"' is not assignable to parameter of type 'PathsWithMethod<paths, "post">'`) while writing this slice's own live-verification script. Traced to the checked-in `openapi/openapi.json` predating M5-005's consents endpoint entirely (confirmed by reading the artifact's own stale description text, not just guessing) — fixed by regenerating both artifacts (see Decisions).
+- **`schema-migrations.spec.ts`'s cumulative revert chain needed one new first step**, the same maintenance cost M5-014 already hit and documented — inserted before the existing chain, following the "DROP TABLE takes RLS with it" simpler style the file's own `ConsentRecords`-revert test already established for a genuinely-new-table migration.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5015verify, ports 5443/7234), fully migrated:
+  npx jest schema-migrations.spec.ts --runInBand
+    30/30 passed (29 -> 30: +1 new first revert-chain step)
+
+  npx jest data-disposition --runInBand
+    2 suites / 10 tests passed (data-disposition.service.spec.ts,
+    data-disposition-tenant-isolation.spec.ts)
+
+  npx jest consent provider-authorization dispatch-provider-request
+  case-conditions.activities runner.spec data-disposition --runInBand
+    8 suites / 58 tests passed (after fixing the relation-metadata gap)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    71 suites / 520 tests passed (509 -> 520: +2 new suites, +11 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real npm run quickstart — a real case with 3 real evidence
+  facts (income/credit/document) collected
+
+  revoked that case's consent through the real REST API (a one-off
+  script using the now-regenerated typed client, since the stale
+  artifact couldn't call the endpoint before this slice's own fix) —
+  REVOKE succeeded, real revokedAt/revocationReason returned
+
+  queried data_disposition_tasks directly against Postgres as
+  mortgage_app: a real row existed — RETENTION_REVIEW, PENDING,
+  triggeringConsentRecordId matching the real revoked consent record's
+  id, affectedEvidenceFactIds listing all 3 real evidence record ids,
+  reason text naming both — the real tenant's own session saw it; a
+  fabricated other-tenant session saw zero rows despite the data
+  existing; no tenant context at all also saw zero rows (fail closed);
+  a superuser connection confirmed the real row actually exists
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a rule the charter states as a direct, non-optional consequence of consent revocation — not previously enforced at all (revocation only ever stopped new processing before this slice; evidence already collected had no review trail).
+- Atomic with the revocation itself (same transaction) — the review can never be silently skipped by a crash between two separate writes.
+- No new secrets, no new external dependencies, one extra `evidence_facts` read plus one insert per revocation — negligible, and revocation is not a hot path.
+- The OpenAPI-artifact regeneration is a documentation/tooling fix with no runtime behavior change — the real endpoint worked identically before and after; only the generated client's ability to call it changed.
+
+### Known gaps
+
+- **No resolution workflow** — a task opens `PENDING` and stays there; nothing in this codebase advances it to `IN_PROGRESS`/`COMPLETED`/`VERIFIED`, and `DELETION`/`ANONYMIZATION`/`LEGAL_HOLD` task types are declared but never created.
+- **No document/normalized-finding/cache/search-index/backup lineage** — Section 14.2's fuller "retention... traverses document, evidence, normalized finding, cache, search index, prompt, evaluation artifact, object, and backup lineage" is far larger than this slice; this codebase has none of those subsystems to traverse yet, so only `evidence_facts` is snapshotted.
+- **No GraphQL/REST read surface** — `listForCase()` exists and is tested but has no controller/resolver calling it yet; Section 15.2's "data-disposition work" GraphQL surface and Section 20 M6's disposition queues remain unbuilt (that's explicitly M6 UI-milestone scope, not M5).
+- Every other M5 Known gap (`communication_approvals` RLS, RBAC, OIDC/FAPI 2.0, encrypted field/object boundaries) is unchanged by this slice.
+
+### Next safe step
+
+`communication_approvals` RLS remains the last named M5-series table gap. RBAC and OIDC/FAPI 2.0 remain the largest untouched items in M5's own charter scope; a resolution workflow for `data_disposition_tasks` (closing a task, and the read surface to see open ones) is the natural next increment specifically in this area. Not started; awaiting direction.

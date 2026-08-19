@@ -7,6 +7,7 @@ import {
   runInTenantContext,
   runWithRlsBypass,
 } from '../database/tenant-context';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
 
 const DEFAULT_PURPOSE = 'CASE_PROCESSING';
 const DEFAULT_SCOPE = 'CASE_PROCESSING';
@@ -22,19 +23,18 @@ const DEFAULT_SCOPE = 'CASE_PROCESSING';
  * genuinely wired as the graph's first step, but permanently inert until
  * now) finally has something real to check.
  *
- * Deliberately NOT implemented this slice (Known gap, tracked in
- * docs/DEVELOPMENT_LOG.md's M5-005 entry): Section 14.2's third
- * consequence of revocation, "opens a data-disposition review for
- * evidence already collected" — this service stops *new* processing
- * (the actual Section 6.3 authority-order requirement: "Consent...
- * may stop processing") but does not yet trigger any review or
- * disposition workflow for evidence collected before revocation.
+ * Section 14.2's third consequence of revocation, "opens a data-
+ * disposition review for evidence already collected," was a Known gap
+ * through M5-005 — `revoke()` now opens that review too (M5-015,
+ * `DataDispositionService`), in the same transaction so a revocation can
+ * never commit without it.
  */
 @Injectable()
 export class ConsentService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly dataDispositionService: DataDispositionService,
   ) {}
 
   /**
@@ -99,6 +99,14 @@ export class ConsentService {
       await repo.update(
         { id: active.id },
         { revokedAt: new Date(), revocationReason: reason ?? null },
+      );
+      // Section 14.2: revocation "opens a data-disposition review for
+      // evidence already collected under that consent" — same
+      // transaction, so this can never be skipped by a crash between the
+      // two writes.
+      await this.dataDispositionService.openRetentionReviewForRevokedConsent(
+        manager,
+        { tenantId, caseId, consentRecordId: active.id },
       );
       return repo.findOneByOrFail({ id: active.id });
     });

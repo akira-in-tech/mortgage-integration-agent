@@ -138,6 +138,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/loan-cases/{caseId}/consents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Grant or revoke consent for a case */
+        post: operations["submitConsentAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/webhook-endpoints": {
         parameters: {
             query?: never;
@@ -234,6 +251,29 @@ export interface components {
              */
             resolution?: "SATISFIED" | "WAIVED";
             reason?: string;
+        };
+        ConsentActionDto: {
+            /** @enum {string} */
+            action: "GRANT" | "REVOKE";
+            /** @description Only meaningful for REVOKE — the revocation reason. */
+            reason?: string;
+        };
+        ConsentRecord: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /** Format: uuid */
+            caseId: string;
+            purpose: string;
+            scope: string;
+            /** Format: date-time */
+            grantedAt: string;
+            expiresAt?: Record<string, never>;
+            revokedAt?: Record<string, never>;
+            revocationReason?: Record<string, never>;
+            /** Format: date-time */
+            createdAt: string;
         };
         CreateWebhookEndpointDto: {
             /**
@@ -552,6 +592,45 @@ export interface operations {
             };
         };
     };
+    submitConsentAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentActionDto"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentRecord"];
+                };
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     createWebhookEndpoint: {
         parameters: {
             query?: never;
@@ -572,6 +651,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["WebhookEndpoint"];
                 };
+            };
+            /** @description targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Missing or invalid API credentials. */
             401: {

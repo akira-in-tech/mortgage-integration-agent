@@ -8,6 +8,7 @@ import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { dispatchProviderRequest } from './dispatch-provider-request';
 import { ProviderCapability } from './types';
 import { AssetService } from '../integrations/asset/asset.service';
@@ -54,7 +55,10 @@ describeOrSkip('dispatchProviderRequest', () => {
     registry = new ProviderRegistryService();
     registry.register(new AssetVerificationAdapter(new AssetService()));
     registry.register(new IdentityVerificationAdapter(new IdentityService()));
-    consentService = new ConsentService(dataSource);
+    consentService = new ConsentService(
+      dataSource,
+      new DataDispositionService(dataSource),
+    );
     authorizationService = new ProviderAuthorizationService(
       dataSource,
       consentService,

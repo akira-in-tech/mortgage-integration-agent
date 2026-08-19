@@ -16,6 +16,7 @@ import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import {
   JurisdictionLevel,
@@ -333,6 +334,7 @@ export async function cleanupEvaluationRun(
       .delete(conditions.map((c) => ({ id: c.id })));
   }
 
+  await dataSource.getRepository(DataDispositionTask).delete({ tenantId });
   await dataSource.getRepository(ConsentRecord).delete({ tenantId });
   await dataSource.getRepository(CommunicationMessage).delete({ tenantId });
   await dataSource.getRepository(LoanCase).delete({ tenantId });

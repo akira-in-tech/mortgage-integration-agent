@@ -30,6 +30,8 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { DataDispositionService } from '../data-disposition/data-disposition.service';
+import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
@@ -76,6 +78,7 @@ describeOrSkip('runCorpus', () => {
         ConsentRecord,
         CommunicationMessage,
         CommunicationTemplate,
+        DataDispositionTask,
       ],
     });
     await dataSource.initialize();
@@ -119,7 +122,10 @@ describeOrSkip('runCorpus', () => {
     providerRegistry.register(
       new DocumentVerificationAdapter(new DocumentService()),
     );
-    const consentService = new ConsentService(dataSource);
+    const consentService = new ConsentService(
+      dataSource,
+      new DataDispositionService(dataSource),
+    );
     const providerAuthorizationService = new ProviderAuthorizationService(
       dataSource,
       consentService,

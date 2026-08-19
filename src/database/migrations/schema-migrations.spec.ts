@@ -96,6 +96,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'communication_templates',
       'condition_transitions',
       'consent_records',
+      'data_disposition_tasks',
       'evaluation_input_manifests',
       'evidence_facts',
       'jurisdictions',
@@ -186,6 +187,45 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the data disposition tasks migration without touching other tables', async () => {
+    // Adds a real table (like "reverts the consent records migration"
+    // below) — DROP TABLE trivially takes its policy/RLS state with it,
+    // so no separate pg_policies/pg_class check is needed here.
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
   });
 
   it('reverts the provider platform tenant isolation migration without touching other tables', async () => {
