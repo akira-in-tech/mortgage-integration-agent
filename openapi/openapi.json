@@ -299,6 +299,9 @@
           "401": {
             "description": "Missing or invalid API credentials."
           },
+          "403": {
+            "description": "The authenticated API client does not have the REVIEWER role (Section 6.3, M5-017)."
+          },
           "404": {
             "description": "No case with this id owned by the authenticated tenant, or no running workflow for it."
           }

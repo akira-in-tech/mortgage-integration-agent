@@ -3,7 +3,10 @@ import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { ApiClient } from '../database/entities/api-client.entity';
-import { ApiClientStatus } from '../database/enums/api-client.enum';
+import {
+  ApiClientRole,
+  ApiClientStatus,
+} from '../database/enums/api-client.enum';
 import { ApiClientService } from './api-client.service';
 import { ApiKeyGuard } from './api-key.guard';
 import { AuthContext } from './auth-context';
@@ -61,7 +64,7 @@ describeOrSkip('ApiKeyGuard', () => {
     }
   });
 
-  it('accepts a valid bearer token and attaches the resolved tenant/client to the request', async () => {
+  it('accepts a valid bearer token and attaches the resolved tenant/client/role (default PARTNER) to the request', async () => {
     const tenantId = randomUUID();
     const { client, token } = await apiClientService.create({
       tenantId,
@@ -74,7 +77,22 @@ describeOrSkip('ApiKeyGuard', () => {
     expect(request.authContext).toEqual({
       tenantId,
       apiClientId: client.id,
+      role: 'PARTNER',
     });
+  });
+
+  it('attaches a REVIEWER role (M5-017) when the client was minted with one', async () => {
+    const tenantId = randomUUID();
+    const { client, token } = await apiClientService.create({
+      tenantId,
+      name: 'guard-spec-reviewer-client',
+      role: ApiClientRole.REVIEWER,
+    });
+    clientIds.push(client.id);
+
+    const { context, request } = contextFor(`Bearer ${token}`);
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(request.authContext?.role).toBe('REVIEWER');
   });
 
   it('rejects a request with no Authorization header', async () => {

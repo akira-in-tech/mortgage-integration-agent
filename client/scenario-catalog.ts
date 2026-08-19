@@ -6,6 +6,7 @@ import { Client as PgClient } from 'pg';
 import { DataSource } from 'typeorm';
 import { createApiClient } from './index';
 import { ApiClient } from '../src/database/entities/api-client.entity';
+import { ApiClientRole } from '../src/database/enums/api-client.enum';
 import { ApiClientService } from '../src/auth/api-client.service';
 
 /**
@@ -70,7 +71,10 @@ async function seedTenant(): Promise<string> {
   });
 }
 
-async function createApiClientCredential(tenantId: string): Promise<string> {
+async function createApiClientCredential(
+  tenantId: string,
+  role: ApiClientRole,
+): Promise<string> {
   if (!DATABASE_URL) {
     throw new Error('DATABASE_URL is required to mint an API client.');
   }
@@ -84,7 +88,8 @@ async function createApiClientCredential(tenantId: string): Promise<string> {
     const service = new ApiClientService(dataSource.getRepository(ApiClient));
     const { token } = await service.create({
       tenantId,
-      name: `scenario-catalog-client-${new Date().toISOString()}`,
+      name: `scenario-catalog-${role.toLowerCase()}-client-${new Date().toISOString()}`,
+      role,
     });
     return token;
   } finally {
@@ -233,6 +238,8 @@ function assertEqual(actual: string, expected: string, what: string): void {
 
 interface ScenarioContext {
   client: ApiClientInstance;
+  /** A REVIEWER-role credential (M5-017) — `POST .../reviews` requires it; the shared `client` above is PARTNER-role. */
+  reviewerClient: ApiClientInstance;
 }
 
 interface Scenario {
@@ -272,7 +279,7 @@ const SCENARIOS: Scenario[] = [
     name: 'income-discrepancy-condition',
     description:
       'Jurisdiction "US-CA" + CONVENTIONAL matches the seeded synthetic-income-discrepancy-review rule. statedMonthlyIncome=1 guarantees a >10% mismatch against Plaid\'s $4,000-$25,000 simulated range, opening a VERIFY_INCOME_DISCREPANCY condition — resolved here via a real reviewer decision.',
-    async run({ client }) {
+    async run({ client, reviewerClient }) {
       const { caseId } = await createCase(client, {
         borrowerId: `scenario-income-discrepancy-${randomUUID()}`,
         jurisdictionCode: 'US-CA',
@@ -291,7 +298,7 @@ const SCENARIOS: Scenario[] = [
           if (reviewSubmitted) return;
           const status = await getCaseStatus(client, caseId);
           if (status === 'CONDITIONS_OPEN') {
-            const { error } = await client.POST(
+            const { error } = await reviewerClient.POST(
               '/v1/loan-cases/{caseId}/reviews',
               {
                 params: { path: { caseId } },
@@ -420,7 +427,7 @@ const SCENARIOS: Scenario[] = [
     name: 'policy-ambiguity-unresolved-jurisdiction',
     description:
       "A case filed against a jurisdiction whose coverageStatus is not COVERED cannot resolve policy applicability — the Agent run interrupts for review (Section 9.5/9.6's POLICY_AMBIGUITY), the case durably waits at WAITING_FOR_REVIEW. Resolved here by an out-of-band jurisdiction-coverage fix (no REST surface exists for that — the same honest direct-SQL gap this script already documents for tenant seeding) followed by a real RESUME_EVALUATION signal.",
-    async run({ client }) {
+    async run({ client, reviewerClient }) {
       const jurisdictionCode = await seedNotCoveredJurisdiction();
       const { caseId } = await createCase(client, {
         borrowerId: `scenario-policy-ambiguity-${randomUUID()}`,
@@ -438,7 +445,7 @@ const SCENARIOS: Scenario[] = [
       );
 
       await markJurisdictionCovered(jurisdictionCode);
-      const { error: resumeError } = await client.POST(
+      const { error: resumeError } = await reviewerClient.POST(
         '/v1/loan-cases/{caseId}/reviews',
         {
           params: { path: { caseId } },
@@ -487,9 +494,19 @@ async function main(): Promise<void> {
   console.log(
     `Seeded tenant ${tenantId} (direct SQL — no REST endpoint exists yet)`,
   );
-  const token = await createApiClientCredential(tenantId);
-  console.log('Minted a scoped API-client credential for that tenant');
+  const token = await createApiClientCredential(
+    tenantId,
+    ApiClientRole.PARTNER,
+  );
+  const reviewerToken = await createApiClientCredential(
+    tenantId,
+    ApiClientRole.REVIEWER,
+  );
+  console.log(
+    'Minted a PARTNER-role and a REVIEWER-role API-client credential (M5-017) for that tenant',
+  );
   const client = createApiClient(API_BASE_URL, token);
+  const reviewerClient = createApiClient(API_BASE_URL, reviewerToken);
 
   let failures = 0;
   for (const scenario of scenarios) {
@@ -498,7 +515,7 @@ async function main(): Promise<void> {
     console.log(`   ${scenario.description}`);
     const startedAt = Date.now();
     try {
-      await scenario.run({ client });
+      await scenario.run({ client, reviewerClient });
       console.log(`   PASS (${Date.now() - startedAt}ms)`);
     } catch (error) {
       failures += 1;

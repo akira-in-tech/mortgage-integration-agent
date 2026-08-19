@@ -6616,3 +6616,113 @@ Live processes terminated and both scratch stacks torn down
 ### Next safe step
 
 `communication_approvals` RLS, RBAC, and OIDC/FAPI 2.0 remain M5's largest open items — RBAC specifically needs the `users`/`tenant_memberships` human-identity foundation this codebase doesn't have yet, a genuinely separate, larger effort. The ten entirely-unbuilt Section 9.4 tools remain a large cross-milestone item, several of which (the calculation tools) need real domain-methodology decisions before they can be built honestly rather than guessed at. Not started; awaiting direction.
+
+## M5-017: Scoped RBAC on `api_clients` (Section 20 M5's own scope line)
+
+### Status
+
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role and a direct `curl` proof against the running server. Follows a full evidence-based audit of everything left in M5's charter scope (RBAC, OIDC/FAPI 2.0, field/object encryption, `audit_events`, `legal_holds`, tenant-owned configuration, provider-promotion governance, a consolidated negative-authorization suite) presented to the user, who chose to push through the full remaining scope including a self-scoped RBAC — explicitly excluding OIDC/FAPI 2.0 and provider-promotion governance as genuinely separate, larger efforts this codebase's own `ApiClient` entity comment already named as out of reach.
+
+### Acceptance criterion
+
+A machine credential (`api_clients`) now carries a real `role` (`PARTNER` default, `REVIEWER`) enforced at the API layer. `POST /v1/loan-cases/{caseId}/reviews` — Section 6.3's own explicitly named human-reviewer authority ("Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides") — requires `REVIEWER`; every other endpoint is unaffected, so a routine partner integration loses no capability it had before this slice. A PARTNER-role token gets a clean `403` naming the missing role; a REVIEWER-role token succeeds identically to before. Proven with a dedicated `RoleGuard` unit spec, two new `ApiKeyGuard` assertions (role attached correctly for both roles), a new e2e negative-authorization test (PARTNER 403s, the same case's REVIEWER-role client 202s immediately after, proving the 403 is genuinely role-gated and not an unrelated failure), and a live run: the real `quickstart`/`scenario-catalog` sandbox tools now mint and use two distinct role credentials, and a direct `curl` against the real running server (production `NODE_ENV`, restricted DB role) confirmed a fresh PARTNER token gets 403 on `/reviews` while still succeeding on case creation.
+
+### Implementation
+
+- `src/database/enums/api-client.enum.ts` — new `ApiClientRole` enum (`PARTNER`, `REVIEWER`) — exactly two roles, both grounded directly in charter language (`REVIEWER` = Section 6.3's own named authority; `PARTNER` = everything else), deliberately not a third invented "admin" tier.
+- `src/database/entities/api-client.entity.ts` — new `role` column, `default: ApiClientRole.PARTNER`.
+- `src/database/migrations/1787170970745-ApiClientRole.ts` (new) — adds the column `NOT NULL DEFAULT 'PARTNER'`, so every credential minted before this migration keeps working exactly as before.
+- `src/auth/auth-context.ts` — `AuthContext` gains `role`. `src/auth/api-key.guard.ts` — populates it from the already-loaded `ApiClient` row (no new query).
+- `src/auth/require-role.decorator.ts` (new) — `@RequireRole(...roles)`, a thin `SetMetadata` wrapper.
+- `src/auth/role.guard.ts` (new) — `RoleGuard`: reads the handler's required-roles metadata via `Reflector`, allows every role through on a route with none, throws `ForbiddenException` naming the required role(s) otherwise. Runs as a method-level guard alongside `ApiKeyGuard`'s existing class-level one — `ApiKeyGuard` always resolves `authContext` first.
+- `src/auth/api-client.service.ts` — `CreateApiClientInput` gains an optional `role`, defaulting to `PARTNER`.
+- `src/cases/cases.controller.ts` — `submitReview` gains `@UseGuards(RoleGuard)` + `@RequireRole(ApiClientRole.REVIEWER)` + an `@ApiForbiddenResponse` doc annotation.
+- `src/create-api-client.ts` — `npm run create-api-client -- <tenantId> <name> [PARTNER|REVIEWER]`, validates the role argument.
+- `client/quickstart.ts`/`client/scenario-catalog.ts` — each now mints a PARTNER credential (case creation, workflow start, etc.) and a separate REVIEWER credential used specifically for review-decision calls — a more realistic reflection of how a real deployment would actually be structured, and a live demonstration of the new RBAC feature in this codebase's own flagship sandbox tooling.
+- `openapi/openapi.json`/`client/generated/schema.d.ts` — regenerated to capture the new `403` response on `submitReview`.
+
+### Affected files
+
+- `src/database/enums/api-client.enum.ts`, `src/database/entities/api-client.entity.ts`
+- `src/database/migrations/1787170970745-ApiClientRole.ts` (new), `schema-migrations.spec.ts`
+- `src/auth/auth-context.ts`, `api-key.guard.ts` (+`.spec.ts`), `api-client.service.ts`, `require-role.decorator.ts` (new), `role.guard.ts` (new, +`.spec.ts`), `auth.module.ts`
+- `src/cases/cases.controller.ts`
+- `src/create-api-client.ts`
+- `client/quickstart.ts`, `client/scenario-catalog.ts`
+- `test/cases.e2e-spec.ts`
+- `openapi/openapi.json`, `client/generated/schema.d.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Exactly two roles, not a speculative third "admin" tier.** Every role invented needs its own justification; the charter itself only ever distinguishes one authority level anywhere in this API surface (Section 6.3's human reviewer). Consent grant/revoke, webhook registration, and case creation all stayed open to `PARTNER` — reconsidered gating consent `REVOKE` behind a stricter role, but concluded a partner integration's own backend legitimately needs to signal "our user revoked consent" as routine, expected traffic; gating it would misrepresent how a real integration works, not add real security.
+- **Guard-ordering finding, not a fabricated test fix**: adding `RoleGuard` to `/reviews` meant a cross-tenant `PARTNER`-role caller now gets `403` (role check) before ever reaching the tenant-ownership check that used to produce `404`. Investigated whether this leaks resource existence (Section 20 M5's own "never reveal via a differentiated status code" concern) — it does not: the `403` fires identically for every case id, real or fake, existing or not, for a fixed caller role, so no caller can distinguish "exists in another tenant" from "doesn't exist at all." Fixed by giving `cases.e2e-spec.ts`'s cross-tenant test client `REVIEWER` role too, preserving that test's own original intent (pure tenant isolation, unclouded by the new role dimension) — not by weakening the new guard or quietly changing what the test asserts without understanding why.
+- **RBAC scoped to the machine-credential model that already exists, not OIDC.** The charter's own data model (`users`/`tenant_memberships`, Section 14.1) ties real RBAC to OIDC-linked human identity — building that is a genuinely separate, much larger effort (`ApiClient`'s own class comment already said so before this slice). This RBAC is honestly scoped to what `api_clients` can support: which *credential* gets to call which route, not "which human is logged in."
+
+### Errors and fixes
+
+- **`test/cases.e2e-spec.ts`'s pre-existing cross-tenant test failed**: `"404s for another tenant's real, valid credential on someone else's case"` started getting `403` instead of `404` on its `/reviews` sub-check. Traced to the guard-ordering effect described above (a real, understood consequence of this slice, not a bug) — fixed by giving that test's own "other tenant" client `REVIEWER` role, restoring the test's original tenant-isolation-only intent; the new, separate RBAC-specific negative test (added in this same file) covers the role dimension explicitly instead.
+- **`schema-migrations.spec.ts`'s cumulative revert chain needed one new first step**, the same maintenance cost every migration-adding slice in this series has hit — this one column-only (no new table), so the new test checks `information_schema.columns` before/after `undoLastMigration()` rather than the table-list diff the RLS-adding migrations use.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5017verify, ports 5443/7234), fully migrated:
+  npx jest schema-migrations.spec.ts --runInBand
+    31/31 passed (after inserting the missing revert-chain step)
+
+  npx jest api-key.guard role.guard --runInBand
+    2 suites / 14 tests passed
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    72 suites / 527 tests passed (520 -> 527: +1 new suite
+    (role.guard.spec.ts, 5 tests), +2 new api-key.guard.spec.ts tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    first run: 1 failure (the cross-tenant guard-ordering finding above)
+    — after the fix: 3 suites / 28 tests passed (27 -> 28: +1 new RBAC
+    negative-authorization test)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real npm run quickstart — minted a PARTNER and a REVIEWER
+  credential, case creation/workflow start via PARTNER, the review
+  decision via REVIEWER, completed successfully end to end
+
+  ran the real npm run scenario-catalog — 6/6 scenarios passed using
+  the same two-credential pattern, including both scenarios that submit
+  review decisions
+
+  direct curl against the real running server with a freshly-minted
+  PARTNER token: POST .../reviews -> 403 "This action requires one of
+  these roles: REVIEWER"; POST /v1/loan-cases (case creation) -> 201,
+  same token, proving PARTNER lost no capability it had before this
+  slice
+
+  real api_clients rows confirmed via Postgres: both PARTNER and
+  REVIEWER roles persisted correctly across the quickstart/scenario-
+  catalog runs
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Every credential minted before this migration keeps working identically — the `NOT NULL DEFAULT 'PARTNER'` backfill plus the fact that only one route (`submitReview`) is newly gated means no existing integration loses access it already had, only gains a real boundary on the one action the charter itself reserves to a human reviewer.
+- No new secrets, no new external dependencies — `RoleGuard`/`Reflector` are both stock NestJS primitives.
+- Closes a real, live gap: before this slice, any valid API-client token — meant for routine case/evidence submission — could submit binding reviewer decisions (condition resolutions, evaluation resumes) with zero differentiation from a genuine human-reviewer credential.
+
+### Known gaps
+
+- **Not real OIDC/FAPI 2.0** — this RBAC governs machine credentials only; there is still no human-identity system (`users`/`tenant_memberships`) at all, and this slice doesn't attempt to build one. Explicitly, deliberately out of scope per the user's own direction.
+- **No credential-management REST surface** — `create-api-client` remains a script, matching `ApiClientService`'s own pre-existing comment ("who's allowed to create API clients?" is exactly the RBAC question this slice answers for *using* a credential, not for *minting* one).
+- Every other M5 Known gap (`communication_approvals` RLS, encrypted field/object boundaries, `audit_events`, `legal_holds`, tenant-owned configuration, provider-promotion governance, consolidated negative-authorization suite) is unchanged by this slice — next up per the user's "push through the rest" direction.
+
+### Next safe step
+
+Continuing the user's "全力推進" direction: `communication_approvals` RLS (a real, closable gap — add a `tenantId` column derived from the message relation, matching the pattern every other retrofitted table in this series already used), then a lightweight but real `audit_events` table wired into the security-relevant mutation points this slice and its predecessors created (RBAC rejections, consent revocation, review decisions), then a consolidated negative-authorization/threat-model suite covering Section 16.4's scenarios that are honestly testable without a subsystem this codebase doesn't have. OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.

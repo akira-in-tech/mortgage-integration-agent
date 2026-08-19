@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApiClient } from '../database/entities/api-client.entity';
 import { ApiClientService } from './api-client.service';
 import { ApiKeyGuard } from './api-key.guard';
+import { RoleGuard } from './role.guard';
 
 /**
  * `@Global()`: `ApiKeyGuard` is applied via `@UseGuards(ApiKeyGuard)` (a
@@ -17,7 +18,7 @@ import { ApiKeyGuard } from './api-key.guard';
 @Global()
 @Module({
   imports: [TypeOrmModule.forFeature([ApiClient])],
-  providers: [ApiClientService, ApiKeyGuard],
-  exports: [ApiClientService, ApiKeyGuard],
+  providers: [ApiClientService, ApiKeyGuard, RoleGuard],
+  exports: [ApiClientService, ApiKeyGuard, RoleGuard],
 })
 export class AuthModule {}

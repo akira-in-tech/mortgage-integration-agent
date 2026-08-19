@@ -15,6 +15,7 @@ import { LoanCase } from '../src/database/entities/loan-case.entity';
 import { ApiClient } from '../src/database/entities/api-client.entity';
 import { ConsentRecord } from '../src/database/entities/consent-record.entity';
 import { ApiClientService } from '../src/auth/api-client.service';
+import { ApiClientRole } from '../src/database/enums/api-client.enum';
 
 // Same "skip instead of failing" convention as loan.e2e-spec.ts and the
 // Temporal workflow/activities suites — this exercises the real REST
@@ -78,6 +79,10 @@ describeOrSkip(
       const { client, token } = await apiClientService.create({
         tenantId,
         name: 'cases-e2e-client',
+        // This suite submits reviews via the same shared client used for
+        // everything else — REVIEWER role (M5-017), not the PARTNER
+        // default, or every submitReview call below would now 403.
+        role: ApiClientRole.REVIEWER,
       });
       apiClientIds.push(client.id);
       authHeader = `Bearer ${token}`;
@@ -89,6 +94,13 @@ describeOrSkip(
       const otherCreated = await apiClientService.create({
         tenantId: otherTenantId,
         name: 'cases-e2e-other-client',
+        // REVIEWER (M5-017), same as the primary client above: this
+        // credential's whole purpose is proving cross-*tenant* isolation
+        // on every endpoint including /reviews — giving it anything less
+        // than REVIEWER would make that specific check 403 on role
+        // grounds before ever reaching the tenant-ownership check the
+        // test is actually about.
+        role: ApiClientRole.REVIEWER,
       });
       apiClientIds.push(otherCreated.client.id);
       otherAuthHeader = `Bearer ${otherCreated.token}`;
@@ -400,6 +412,55 @@ describeOrSkip(
 
       expect(res.status).toBe(404);
     });
+
+    it('rejects a review submitted by a PARTNER-role client with 403 (M5-017 RBAC)', async () => {
+      const { client: partnerClient, token: partnerToken } =
+        await apiClientService.create({
+          tenantId,
+          name: 'cases-e2e-partner-client',
+          role: ApiClientRole.PARTNER,
+        });
+      apiClientIds.push(partnerClient.id);
+      const partnerAuthHeader = `Bearer ${partnerToken}`;
+
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', partnerAuthHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      const caseId = created.body.id;
+
+      const start = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/workflow-runs`)
+        .set('Authorization', partnerAuthHeader);
+      startedWorkflowIds.push(start.body.workflowId);
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/reviews`)
+        .set('Authorization', partnerAuthHeader)
+        .send({
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId: 'e2e-partner-attempting-review',
+          resolution: 'SATISFIED',
+        });
+
+      expect(res.status).toBe(403);
+
+      // The same case, same review, through the REVIEWER-role client this
+      // whole suite otherwise uses — proves the 403 above was genuinely
+      // role-gated, not an unrelated failure the PARTNER client happened
+      // to hit for some other reason.
+      const reviewerRes = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/reviews`)
+        .set('Authorization', authHeader)
+        .send({
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId: 'e2e-reviewer',
+          resolution: 'SATISFIED',
+        });
+      expect(reviewerRes.status).toBe(202);
+    }, 30_000);
 
     // Section 15.1's POST .../consents (M5-005).
     it('a new case gets an implicit GRANTED consent record automatically', async () => {

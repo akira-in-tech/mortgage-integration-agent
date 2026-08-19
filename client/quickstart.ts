@@ -6,6 +6,7 @@ import { Client as PgClient } from 'pg';
 import { DataSource } from 'typeorm';
 import { createApiClient } from './index';
 import { ApiClient } from '../src/database/entities/api-client.entity';
+import { ApiClientRole } from '../src/database/enums/api-client.enum';
 import { ApiClientService } from '../src/auth/api-client.service';
 
 /**
@@ -61,7 +62,10 @@ async function seedQuickstartTenant(): Promise<string> {
   }
 }
 
-async function createQuickstartApiClient(tenantId: string): Promise<string> {
+async function createQuickstartApiClient(
+  tenantId: string,
+  role: ApiClientRole,
+): Promise<string> {
   if (!DATABASE_URL) {
     throw new Error(
       'DATABASE_URL is required to mint an API client for this quickstart.',
@@ -77,7 +81,8 @@ async function createQuickstartApiClient(tenantId: string): Promise<string> {
     const service = new ApiClientService(dataSource.getRepository(ApiClient));
     const { token } = await service.create({
       tenantId,
-      name: `quickstart-client-${new Date().toISOString()}`,
+      name: `quickstart-${role.toLowerCase()}-client-${new Date().toISOString()}`,
+      role,
     });
     return token;
   } finally {
@@ -91,12 +96,23 @@ async function main(): Promise<void> {
   console.log(
     `Seeded tenant ${tenantId} (direct SQL — no REST endpoint exists yet)`,
   );
-  const token = await createQuickstartApiClient(tenantId);
+  const token = await createQuickstartApiClient(
+    tenantId,
+    ApiClientRole.PARTNER,
+  );
   console.log(
-    `Minted a scoped API-client credential for that tenant (ApiClientService directly — no REST endpoint exists yet)`,
+    `Minted a scoped PARTNER-role API-client credential for that tenant (ApiClientService directly — no REST endpoint exists yet)`,
+  );
+  const reviewerToken = await createQuickstartApiClient(
+    tenantId,
+    ApiClientRole.REVIEWER,
+  );
+  console.log(
+    `Minted a second REVIEWER-role credential (M5-017) for the review decision below`,
   );
 
   const client = createApiClient(API_BASE_URL, token);
+  const reviewerClient = createApiClient(API_BASE_URL, reviewerToken);
 
   const { data: loanCase, error: createError } = await client.POST(
     '/v1/loan-cases',
@@ -160,9 +176,9 @@ async function main(): Promise<void> {
       }
       if (caseNow.status === 'CONDITIONS_OPEN') {
         console.log(
-          'Case has an open condition (income discrepancy) — submitting a reviewer decision via submitReview',
+          'Case has an open condition (income discrepancy) — submitting a reviewer decision via submitReview (using the REVIEWER-role credential)',
         );
-        const { error: reviewError } = await client.POST(
+        const { error: reviewError } = await reviewerClient.POST(
           '/v1/loan-cases/{caseId}/reviews',
           {
             params: { path: { caseId: loanCase.id } },

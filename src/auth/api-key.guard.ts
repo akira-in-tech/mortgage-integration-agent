@@ -61,7 +61,11 @@ export class ApiKeyGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }
 
-    request.authContext = { tenantId: client.tenantId, apiClientId: client.id };
+    request.authContext = {
+      tenantId: client.tenantId,
+      apiClientId: client.id,
+      role: client.role,
+    };
     return true;
   }
 }

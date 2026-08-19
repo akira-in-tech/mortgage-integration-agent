@@ -583,6 +583,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The authenticated API client does not have the REVIEWER role (Section 6.3, M5-017). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description No case with this id owned by the authenticated tenant, or no running workflow for it. */
             404: {
                 headers: {

@@ -16,6 +16,7 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -36,7 +37,10 @@ import { LoanCase } from '../database/entities/loan-case.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { TimelineEntry } from './case-timeline.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
+import { RoleGuard } from '../auth/role.guard';
+import { RequireRole } from '../auth/require-role.decorator';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
+import { ApiClientRole } from '../database/enums/api-client.enum';
 
 /**
  * M2 exit-evidence surface (Section 15.1, M2 scope: "REST workflow-start
@@ -204,8 +208,14 @@ export class CasesController {
     description:
       'No case with this id owned by the authenticated tenant, or no running workflow for it.',
   })
+  @ApiForbiddenResponse({
+    description:
+      'The authenticated API client does not have the REVIEWER role (Section 6.3, M5-017).',
+  })
   @Post(':caseId/reviews')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
   async submitReview(
     @AuthTenantId() tenantId: string,
     @Param('caseId', ParseUUIDPipe) caseId: string,

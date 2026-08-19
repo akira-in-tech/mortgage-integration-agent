@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApiClient } from '../database/entities/api-client.entity';
-import { ApiClientStatus } from '../database/enums/api-client.enum';
+import {
+  ApiClientRole,
+  ApiClientStatus,
+} from '../database/enums/api-client.enum';
 import {
   generateApiClientSecret,
   hashApiClientSecret,
@@ -11,6 +14,8 @@ import {
 export interface CreateApiClientInput {
   tenantId: string;
   name: string;
+  /** Defaults to `PARTNER` — the routine-integration role. Pass `REVIEWER` for a credential meant to submit review decisions (Section 6.3). */
+  role?: ApiClientRole;
 }
 
 export interface CreateApiClientResult {
@@ -45,6 +50,7 @@ export class ApiClientService {
         name: input.name,
         hashedSecret: hashApiClientSecret(secret),
         status: ApiClientStatus.ACTIVE,
+        role: input.role ?? ApiClientRole.PARTNER,
       }),
     );
     return { client, token: `${client.id}.${secret}` };

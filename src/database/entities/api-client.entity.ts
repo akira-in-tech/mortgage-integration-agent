@@ -5,7 +5,7 @@ import {
   CreateDateColumn,
   Index,
 } from 'typeorm';
-import { ApiClientStatus } from '../enums/api-client.enum';
+import { ApiClientRole, ApiClientStatus } from '../enums/api-client.enum';
 
 /**
  * Section 20 M5's "scoped API-client authentication" — the first, honest
@@ -40,6 +40,14 @@ export class ApiClient {
     default: ApiClientStatus.ACTIVE,
   })
   status!: ApiClientStatus;
+
+  /** M5-017's scoped RBAC — see `ApiClientRole`'s own comment for the two-role rationale. */
+  @Column({
+    type: 'enum',
+    enum: ApiClientRole,
+    default: ApiClientRole.PARTNER,
+  })
+  role!: ApiClientRole;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
