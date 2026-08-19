@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { randomBytes } from 'node:crypto';
@@ -6,6 +10,10 @@ import { WebhookEndpoint } from '../database/entities/webhook-endpoint.entity';
 import { WebhookEndpointStatus } from '../database/enums/webhook.enum';
 import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { runInTenantContext } from '../database/tenant-context';
+import {
+  assertPublicWebhookTarget,
+  WebhookTargetBlockedError,
+} from './webhook-url-guard';
 
 @Injectable()
 export class WebhookEndpointService {
@@ -18,6 +26,17 @@ export class WebhookEndpointService {
     tenantId: string,
     dto: CreateWebhookEndpointDto,
   ): Promise<WebhookEndpoint> {
+    // SSRF guard (Section 16.4): rejects a target that's a literal or
+    // resolves to a private/reserved address before it's ever persisted.
+    try {
+      await assertPublicWebhookTarget(dto.targetUrl);
+    } catch (error) {
+      if (error instanceof WebhookTargetBlockedError) {
+        throw new BadRequestException(error.message);
+      }
+      throw error;
+    }
+
     return runInTenantContext(this.dataSource, tenantId, (manager) => {
       const repo = manager.getRepository(WebhookEndpoint);
       return repo.save(

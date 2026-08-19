@@ -9,6 +9,7 @@ import {
 import { WebhookDeliveryStatus } from '../database/enums/webhook.enum';
 import { WebhookEndpointService } from './webhook-endpoint.service';
 import { signWebhookDelivery } from './webhook-signer';
+import { assertPublicWebhookTarget } from './webhook-url-guard';
 import {
   runInTenantContext,
   runWithRlsBypass,
@@ -192,6 +193,10 @@ export class WebhookDispatchService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
     try {
+      // Re-checked here, not just once at registration (webhook-url-guard.ts's
+      // own comment on why): DNS answers can legitimately change between
+      // registration and a retried delivery firing hours or days later.
+      await assertPublicWebhookTarget(endpoint.targetUrl);
       const response = await fetch(endpoint.targetUrl, {
         method: 'POST',
         headers: {

@@ -1,5 +1,6 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiOperation,
@@ -34,6 +35,10 @@ export class WebhookEndpointsController {
       'Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.',
   })
   @ApiCreatedResponse({ type: WebhookEndpoint })
+  @ApiBadRequestResponse({
+    description:
+      'targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4).',
+  })
   @ApiUnauthorizedResponse({
     description: 'Missing or invalid API credentials.',
   })

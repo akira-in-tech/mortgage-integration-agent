@@ -92,6 +92,25 @@ describeOrSkip('WebhookEndpointService', () => {
     expect(results.map((e) => e.id)).toEqual([subscribed.id]);
   });
 
+  it('create() rejects a targetUrl that resolves to a private address, and persists nothing', async () => {
+    await expect(
+      service.create(tenantId, {
+        targetUrl: 'http://169.254.169.254/hook',
+        eventTypes: ['loan_case.created'],
+      }),
+    ).rejects.toThrow('private or reserved address');
+
+    const persisted = await runInTenantContext(
+      dataSource,
+      tenantId,
+      (manager) =>
+        manager.getRepository(WebhookEndpoint).find({
+          where: { tenantId, targetUrl: 'http://169.254.169.254/hook' },
+        }),
+    );
+    expect(persisted).toHaveLength(0);
+  });
+
   it('findByIdOrFail() throws NotFoundException for an unknown id', async () => {
     await expect(
       service.findByIdOrFail(tenantId, '99999999-9999-9999-9999-999999999999'),

@@ -10,6 +10,17 @@ import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { WebhookEndpointService } from './webhook-endpoint.service';
 import { WebhookDispatchService } from './webhook-dispatch.service';
 import { verifyWebhookSignature } from './webhook-signer';
+import * as webhookUrlGuard from './webhook-url-guard';
+
+// This spec's own fixtures deliberately point at a real local receiver
+// (127.0.0.1) — exactly the shape webhook-url-guard.ts (added alongside
+// this test file's own SSRF-guard test below) now correctly rejects.
+// Stubbed here to keep testing this file's actual subject (delivery
+// mechanics: signing, retry/backoff, final-failure, network errors),
+// not SSRF blocking, which webhook-url-guard.spec.ts and the dedicated
+// test below already cover directly. Real implementation restored for
+// the one test that needs it.
+jest.spyOn(webhookUrlGuard, 'assertPublicWebhookTarget').mockResolvedValue();
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -333,4 +344,49 @@ describeOrSkip('WebhookDispatchService', () => {
     });
     expect(delivery.attempts[0].errorMessage).toBeTruthy();
   }, 15_000);
+
+  it('records a FAILED attempt, not a crash, when the SSRF guard blocks the target at dispatch time', async () => {
+    const tenantId = newTenantId();
+    const receiver = await startTestReceiver();
+    try {
+      const endpoint = await endpointService.create(tenantId, {
+        targetUrl: receiver.url,
+        eventTypes: ['case.escalated'],
+      });
+      await makeOutboxEvent(tenantId, 'case.escalated', { caseId: 'case-4' });
+
+      // Overrides this file's own top-level "always allow" stub for
+      // exactly the next call — proving attemptDelivery's own try/catch
+      // (webhook-dispatch.service.ts) correctly records a normal FAILED
+      // attempt, not an unhandled rejection, when the real guard would
+      // have blocked this target (e.g. DNS having rebound to a private
+      // address since registration — webhook-url-guard.ts's own comment
+      // on why this is re-checked at dispatch time, not only once at
+      // registration).
+      jest
+        .spyOn(webhookUrlGuard, 'assertPublicWebhookTarget')
+        .mockRejectedValueOnce(
+          new webhookUrlGuard.WebhookTargetBlockedError(
+            'blocked for this test',
+          ),
+        );
+
+      await dispatchService.dispatchPendingEvents();
+
+      const delivery = await dataSource
+        .getRepository(WebhookDelivery)
+        .findOneByOrFail({ webhookEndpointId: endpoint.id });
+      expect(delivery.attempts).toHaveLength(1);
+      expect(delivery.attempts[0]).toMatchObject({
+        httpStatusCode: null,
+        outcome: 'FAILED',
+        errorMessage: 'blocked for this test',
+      });
+      // The receiver never actually saw a request — the guard blocked
+      // the attempt before fetch() was ever called.
+      expect(receiver.requests).toHaveLength(0);
+    } finally {
+      await receiver.close();
+    }
+  });
 });

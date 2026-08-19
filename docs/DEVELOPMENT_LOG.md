@@ -6034,3 +6034,98 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 `provider_operation_intents`/`provider_authorization_grants` are now the last remaining table group from the original M5-004/M5-006 "expensive" deferral, and need the same kind of careful per-method audit this slice and M5-009 gave their own services before scoping — several methods are already known to lack `tenantId`, but exactly which ones, and whether any share the same transactional-granularity subtlety `PolicyEvaluationService` turned out to have, isn't yet mapped in detail. `communication_approvals` remains scoped but deliberately deferred (no real caller to define a threaded-through signature). RBAC roles and the data-disposition workflow remain the other honestly-buildable options, both still without charter-provided scaffolding. Not started; awaiting direction.
+
+## M5-011: Webhook SSRF guard (Section 16.4)
+
+### Status
+
+Implemented and verified, including a real live run against the running API. Closes Section 16.4's own named threat-model item — a webhook `targetUrl` (Section 14.1) is caller-supplied and this codebase's own worker process later makes a real outbound HTTP request to it (`webhook-dispatch.service.ts`, M4-004); an unrestricted target lets a caller aim the platform's own network position at an internal address (a database, a cloud metadata endpoint, another tenant's simulator) that isn't reachable from outside.
+
+Chosen from the user's own follow-up list after a "項目還差什麼沒做" (what's left in the project) survey — the most self-contained of the three items named (the other two, wiring the four dormant Agent tools and building the ten entirely-missing ones plus M4's sandbox/webhook-inspector, are separately scoped next).
+
+### Acceptance criterion
+
+A `targetUrl` that is a literal private/reserved-range IP, or a hostname that resolves (via a real DNS lookup, every returned address checked) to one, is rejected with a clean `400` at registration (`POST /v1/webhook-endpoints`) and never reaches a live delivery attempt; a target whose DNS answer changes to a private address *after* registration is still caught immediately before the next dispatch attempt, not just once at registration time. A real public target is unaffected. Proven with 34 unit tests covering the full IANA special-purpose IPv4 registry and the security-relevant IPv6 ranges, a real-Postgres integration test proving `WebhookEndpointService.create()` persists nothing when blocked, a real-HTTP-receiver test proving `attemptDelivery` records a normal `FAILED` attempt (not a crash) when the guard fires at dispatch time, and a live run against the real running API confirming all of this end-to-end.
+
+### Implementation
+
+- `src/webhooks/webhook-url-guard.ts` (new) — `assertPublicWebhookTarget(targetUrl)`: parses the URL, rejects a non-`http`/`https` scheme, resolves the hostname (or accepts a literal IP directly) and checks *every* returned address against the full blocked-range list — a literal IPv4 CIDR-mask check against the IANA special-purpose registry (loopback, RFC1918 private ranges, link-local/cloud-metadata `169.254.0.0/16`, carrier-grade NAT, documentation ranges, multicast, reserved), and an IPv6 check (loopback, unique-local `fc00::/7`, link-local `fe80::/10`, multicast, with IPv4-mapped `::ffff:0:0/96` addresses unwrapped and re-checked against the IPv4 rules). A hostname that fails to resolve at all is rejected with a clean error rather than letting a raw Node `ENOTFOUND` propagate.
+- `src/webhooks/webhook-endpoint.service.ts` — `create()` calls the guard before persisting; a `WebhookTargetBlockedError` becomes a `BadRequestException`.
+- `src/webhooks/webhook-dispatch.service.ts` — `attemptDelivery()` re-calls the guard immediately before every `fetch()`, inside the same `try` block that already records a `FAILED` attempt on any other delivery error — no new failure-handling path needed, the guard's rejection flows through the existing one.
+- `src/webhooks/webhook-endpoints.controller.ts` — added `@ApiBadRequestResponse` documenting the new rejection, matching `cases.controller.ts`'s existing pattern.
+- `src/webhooks/webhook-url-guard.spec.ts` (new) — 34 tests: every blocked IPv4/IPv6 range, a boundary case one address outside a blocked range (proving a real CIDR mask check, not a naive prefix match), real-hostname resolution (`localhost` blocked, `example.com` allowed), scheme rejection, malformed-URL rejection, and the unresolvable-hostname fail-closed path.
+
+### Affected files
+
+- `src/webhooks/webhook-url-guard.ts` (new), `webhook-url-guard.spec.ts` (new)
+- `src/webhooks/webhook-endpoint.service.ts` (+`.spec.ts`), `webhook-dispatch.service.ts` (+`.spec.ts`), `webhook-endpoints.controller.ts`
+- `test/webhooks.e2e-spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **No environment-variable or config-driven bypass for private targets.** The obvious way to unbreak the existing dispatch spec's own local-HTTP-receiver fixtures (`127.0.0.1`, exactly what the guard now correctly blocks) would be a `WEBHOOK_ALLOW_LOOPBACK_TARGETS`-style flag read at runtime — rejected because it would be a real, shippable escape hatch that could be set (accidentally or not) in a real deployment, weakening the guard for everyone, not just tests. Used `jest.spyOn` to stub the guard for the pre-existing tests whose actual subject is delivery mechanics (signing, retry/backoff, final-failure) and is orthogonal to SSRF, restoring the real implementation for one new dedicated test proving the guard's dispatch-time integration point actually works. No bypass exists in shipped code at all.
+- **Re-checked at dispatch time, not only once at registration.** A target validated safe at registration can have its DNS answer change by the time a retried delivery actually fires — deliveries retry with backoff over minutes to hours (`MAX_ATTEMPTS`/`backoffMs`), a real window for a DNS answer to legitimately change (or be adversarially rebound). A single point-in-time check would miss that entirely.
+- **Every resolved address checked, not just the first.** `dns.lookup(..., { all: true })` can return multiple addresses for one hostname; checking only the first would let an attacker publish a hostname with one public and one private A/AAAA record and rely on whichever check happened to run first.
+- **Redirect-following left as a named, not attempted, residual gap.** The guard validates the registered/dispatched URL string itself; the actual `fetch()` call still follows redirects with Node's platform default, so a receiver that returns a redirect to a private address after passing the initial check is not covered. Documented in the guard's own class comment rather than silently out of scope — a real fix would mean either disabling redirect-following entirely (a `fetch()` behavior change with its own compatibility question) or re-validating each redirect target, and wasn't attempted this slice.
+- **`test/webhooks.e2e-spec.ts`'s fixture URL changed from `partner.example.com` to `example.com`.** The subdomain never resolved (confirmed directly — a real `ENOTFOUND`), which cost nothing before this slice (nothing validated it) but would now make every endpoint-creation test in that file fail closed. Changed to the bare, genuinely resolvable domain rather than inventing a bypass for the e2e suite specifically.
+
+### Errors and fixes
+
+- **The guard's own first test run failed 2 of 34 tests**: an IPv6 literal target like `http://[2606:4700:4700::1111]/hook` was being treated as an unresolvable hostname instead of a literal IP address. Root cause: `URL#hostname` keeps the surrounding `[...]` brackets for an IPv6 literal (confirmed directly — `new URL('http://[::1]/x').hostname === '[::1]'`), but `net.isIPv6()` and `dns.lookup()` both expect the bare form; the bracketed string matched neither `isIPv4`/`isIPv6`, so it silently fell through to the hostname-resolution branch and failed with `ENOTFOUND`. Fixed by stripping the brackets before the literal-IP check. Found by the test suite itself, not live traffic — exactly the value of writing the boundary/edge-case tests before considering the guard done.
+- **`test/webhooks.e2e-spec.ts`'s fixture domain (`partner.example.com`) doesn't resolve** — found while reasoning through which existing tests the new registration-time guard would affect, confirmed with a direct DNS lookup before touching any test code (not discovered by a failing test) — fixed by switching to the bare `example.com`, which does.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean (after fixing the IPv6-bracket bug)
+
+npx jest webhook-url-guard.spec.ts (no DB needed, pure + real-DNS tests)
+  34/34 passed
+
+Fresh scratch stack (ssrfverify, ports 5443/7234), fully migrated:
+  npx jest webhook-url-guard.spec.ts webhook-endpoint.service.spec.ts
+  webhook-dispatch.service.spec.ts webhook-tenant-isolation.spec.ts --runInBand
+    50/50 passed (was 15 before this slice: +1 registration-rejection
+    test, +1 dispatch-time-rejection test, +34 new guard-spec tests
+    minus the 1 file overlap already counted)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    68 suites / 490 tests passed (67/454 -> 68/490: +1 new suite,
+    +36 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed (confirms the webhooks.e2e-spec.ts
+    fixture-URL fix works)
+
+Manual live verification — real API under NODE_ENV=production with
+APP_DATABASE_URL (the mortgage_app role):
+  seeded a real tenant + API-client credential, then four real
+  POST /v1/webhook-endpoints calls:
+    cloud-metadata address (169.254.169.254) -> 400, exact blocked-range
+      message
+    RFC1918 private address (10.0.0.5) -> 400
+    "localhost" (resolves to ::1 and 127.0.0.1 on this machine) -> 400,
+      both resolved addresses named in the error
+    a real public target (example.com) -> 201, endpoint created normally
+
+  scratch stack torn down (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes Section 16.4's own named threat-model item — a real, working SSRF guard where none existed before, at both the point of least cost to check (registration, before anything is ever persisted) and the point that actually matters (immediately before each real outbound request).
+- No new secrets, no new external dependencies (the range-checking logic is hand-written against Node's built-in `net`/`dns` modules, not a new package) — a live DNS lookup already happens implicitly for any hostname target (the `fetch()` call itself resolves it), so this doesn't introduce network I/O that wasn't already happening, only moves and duplicates a small part of it earlier for validation.
+- Registration and each dispatch attempt now cost one extra DNS round trip; negligible against the existing `DELIVERY_TIMEOUT_MS` (10s) budget.
+
+### Known gaps
+
+- **Redirect-following is not covered** — see Decisions. A receiver could still redirect a validated request to a private address post-hoc.
+- **IPv6 range coverage is the common, security-relevant subset, not exhaustive** — documented directly in the guard's own class comment (loopback, link-local, unique-local, multicast, IPv4-mapped covered; some rarer reserved ranges like NAT64's `64:ff9b::/96` are not).
+- Every other M5 Known gap (`communication_approvals`, `provider_operation_intents`/`provider_authorization_grants` RLS, RBAC, data-disposition workflow) is unchanged by this slice.
+
+### Next safe step
+
+The other two items from the same "什麼沒做" follow-up: wiring the four dormant-but-built Agent tools (`draft_information_request`, `send_information_request`, `escalate_to_reviewer`, `check_policy_change_impact`) into `AGENT_ALLOWED_TOOLS`/the graph's actual node topology, and — separately, much larger — the ten entirely-unbuilt Section 9.4 tools plus M4's sandbox scenario library and webhook inspector. Not started; awaiting direction on scope and ordering.

@@ -105,7 +105,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/v1/webhook-endpoints')
       .send({
-        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        targetUrl: 'https://example.com/hooks/mortgage-agent',
         eventTypes: ['loan_case.created'],
       });
     expect(created.status).toBe(401);
@@ -121,7 +121,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
       .post('/v1/webhook-endpoints')
       .set('Authorization', authHeader)
       .send({
-        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        targetUrl: 'https://example.com/hooks/mortgage-agent',
         eventTypes: ['loan_case.created', 'condition.opened'],
       })
       .expect(201);
@@ -129,7 +129,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
     createdEndpointIds.push(response.body.id);
     expect(response.body).toMatchObject({
       tenantId,
-      targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+      targetUrl: 'https://example.com/hooks/mortgage-agent',
       eventTypes: ['loan_case.created', 'condition.opened'],
       status: 'ACTIVE',
     });
@@ -141,7 +141,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
       .post('/v1/webhook-endpoints')
       .set('Authorization', authHeader)
       .send({
-        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        targetUrl: 'https://example.com/hooks/mortgage-agent',
         eventTypes: ['not_a_real_event_type'],
       })
       .expect(400);
@@ -163,7 +163,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
       .post('/v1/webhook-endpoints')
       .set('Authorization', authHeader)
       .send({
-        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        targetUrl: 'https://example.com/hooks/mortgage-agent',
         eventTypes: [],
       })
       .expect(400);
@@ -180,7 +180,7 @@ describeOrSkip('Webhooks — REST endpoints and deliveries (e2e)', () => {
     const endpoint = await endpointRepo.save(
       endpointRepo.create({
         tenantId,
-        targetUrl: 'https://partner.example.com/hooks/mortgage-agent',
+        targetUrl: 'https://example.com/hooks/mortgage-agent',
         secret: 'e2e-fixture-secret',
         eventTypes: ['loan_case.created'],
       }),
