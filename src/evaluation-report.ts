@@ -103,8 +103,7 @@ async function main(): Promise<void> {
   );
   const policyEvaluationService = new PolicyEvaluationService(
     resolver,
-    dataSource.getRepository(CasePolicySnapshot),
-    dataSource.getRepository(CasePolicyBinding),
+    dataSource,
     dataSource.getRepository(PolicyCatalogGeneration),
   );
   const evaluationManifestService = new EvaluationManifestService(dataSource);

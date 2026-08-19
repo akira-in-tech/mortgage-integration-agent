@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, IsNull, Repository } from 'typeorm';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
@@ -12,6 +12,7 @@ import {
   PolicyResolutionContext,
   PolicyResolutionResult,
 } from './policy-resolution.types';
+import { runInTenantContext } from '../database/tenant-context';
 
 export const RESOLVER_VERSION = '1.0.0';
 // Section 10.4: "configured maximum validation interval" — the ceiling on
@@ -87,15 +88,25 @@ function reconstructResolution(
  * (`IDX_case_policy_bindings_one_active`) was added alongside the
  * catch-and-recover logic in the final branch below — see
  * `policy-evaluation.service.spec.ts`'s concurrency tests.
+ *
+ * `case_policy_snapshots`/`case_policy_bindings` carry a real RLS policy
+ * (M5-010) — deliberately wrapped as many small `runInTenantContext`
+ * calls, one per logical step, rather than one transaction spanning the
+ * whole method: the concurrency-recovery `catch` block below reads back
+ * a winning row after a real unique-constraint violation, and doing that
+ * read inside the SAME transaction as the failed INSERT would hit
+ * Postgres's "current transaction is aborted" state (M5-002/M5-003's own
+ * `DROP ROLE` savepoint lesson — a JS `try/catch` cannot rescue an
+ * aborted Postgres transaction, only ending it can). This preserves the
+ * exact transactional granularity the original bare-repository-call code
+ * already had.
  */
 @Injectable()
 export class PolicyEvaluationService {
   constructor(
     private readonly resolver: PolicyApplicabilityResolverService,
-    @InjectRepository(CasePolicySnapshot)
-    private readonly snapshotRepository: Repository<CasePolicySnapshot>,
-    @InjectRepository(CasePolicyBinding)
-    private readonly bindingRepository: Repository<CasePolicyBinding>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     @InjectRepository(PolicyCatalogGeneration)
     private readonly generationRepository: Repository<PolicyCatalogGeneration>,
   ) {}
@@ -107,10 +118,15 @@ export class PolicyEvaluationService {
   ): Promise<PolicyEvaluationResult> {
     const currentGeneration = await this.getCurrentGeneration();
     const currentContextKey = contextKey(context);
-    const existingBinding = await this.bindingRepository.findOne({
-      where: { tenantId, caseId, invalidatedAt: IsNull() },
-      order: { boundAt: 'DESC' },
-    });
+    const existingBinding = await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      (manager) =>
+        manager.getRepository(CasePolicyBinding).findOne({
+          where: { tenantId, caseId, invalidatedAt: IsNull() },
+          order: { boundAt: 'DESC' },
+        }),
+    );
     const now = new Date();
 
     if (
@@ -123,9 +139,14 @@ export class PolicyEvaluationService {
       // catalog generation since this binding was created, and the
       // periodic revalidation deadline hasn't passed — reuse without
       // calling the resolver at all.
-      const snapshot = await this.snapshotRepository.findOneByOrFail({
-        id: existingBinding.policySnapshotId,
-      });
+      const snapshot = await runInTenantContext(
+        this.dataSource,
+        tenantId,
+        (manager) =>
+          manager
+            .getRepository(CasePolicySnapshot)
+            .findOneByOrFail({ id: existingBinding.policySnapshotId }),
+      );
       return {
         outcome: 'REUSED',
         resolution: reconstructResolution(snapshot),
@@ -167,13 +188,22 @@ export class PolicyEvaluationService {
       const revalidateAfter = new Date(
         now.getTime() + MAX_VALIDATION_INTERVAL_MS,
       );
-      await this.bindingRepository.update(
-        { id: existingBinding.id },
-        { observedCatalogGeneration: currentGeneration, revalidateAfter },
+      await runInTenantContext(this.dataSource, tenantId, (manager) =>
+        manager
+          .getRepository(CasePolicyBinding)
+          .update(
+            { id: existingBinding.id },
+            { observedCatalogGeneration: currentGeneration, revalidateAfter },
+          ),
       );
-      const snapshot = await this.snapshotRepository.findOneByOrFail({
-        id: existingBinding.policySnapshotId,
-      });
+      const snapshot = await runInTenantContext(
+        this.dataSource,
+        tenantId,
+        (manager) =>
+          manager
+            .getRepository(CasePolicySnapshot)
+            .findOneByOrFail({ id: existingBinding.policySnapshotId }),
+      );
       return {
         outcome: 'REUSED',
         resolution,
@@ -193,24 +223,34 @@ export class PolicyEvaluationService {
       digest,
     );
     if (existingBinding) {
-      await this.bindingRepository.update(
-        { id: existingBinding.id },
-        { invalidatedAt: now },
+      await runInTenantContext(this.dataSource, tenantId, (manager) =>
+        manager
+          .getRepository(CasePolicyBinding)
+          .update({ id: existingBinding.id }, { invalidatedAt: now }),
       );
     }
 
     try {
-      const binding = await this.bindingRepository.save(
-        this.bindingRepository.create({
-          tenantId,
-          caseId,
-          dependencyDigest: digest,
-          contextKey: currentContextKey,
-          observedCatalogGeneration: currentGeneration,
-          policySnapshotId: snapshot.id,
-          revalidateAfter: new Date(now.getTime() + MAX_VALIDATION_INTERVAL_MS),
-          invalidatedAt: null,
-        }),
+      const binding = await runInTenantContext(
+        this.dataSource,
+        tenantId,
+        (manager) => {
+          const repo = manager.getRepository(CasePolicyBinding);
+          return repo.save(
+            repo.create({
+              tenantId,
+              caseId,
+              dependencyDigest: digest,
+              contextKey: currentContextKey,
+              observedCatalogGeneration: currentGeneration,
+              policySnapshotId: snapshot.id,
+              revalidateAfter: new Date(
+                now.getTime() + MAX_VALIDATION_INTERVAL_MS,
+              ),
+              invalidatedAt: null,
+            }),
+          );
+        },
       );
       return { outcome: 'REFRESHED', resolution, snapshot, binding };
     } catch (error) {
@@ -225,15 +265,28 @@ export class PolicyEvaluationService {
       // two simultaneously-active bindings. Read back the winner and
       // return a coherent result referencing it, rather than crash the
       // loser's caller — both callers converge on the same single
-      // internally consistent outcome.
-      const winningBinding = await this.bindingRepository.findOneByOrFail({
+      // internally consistent outcome. Each read below is its own fresh
+      // `runInTenantContext` call/transaction, not a continuation of the
+      // one that just failed above — see this method's own class-level
+      // comment for why that matters.
+      const winningBinding = await runInTenantContext(
+        this.dataSource,
         tenantId,
-        caseId,
-        invalidatedAt: IsNull(),
-      });
-      const winningSnapshot = await this.snapshotRepository.findOneByOrFail({
-        id: winningBinding.policySnapshotId,
-      });
+        (manager) =>
+          manager.getRepository(CasePolicyBinding).findOneByOrFail({
+            tenantId,
+            caseId,
+            invalidatedAt: IsNull(),
+          }),
+      );
+      const winningSnapshot = await runInTenantContext(
+        this.dataSource,
+        tenantId,
+        (manager) =>
+          manager
+            .getRepository(CasePolicySnapshot)
+            .findOneByOrFail({ id: winningBinding.policySnapshotId }),
+      );
       return {
         outcome: 'REUSED',
         resolution: reconstructResolution(winningSnapshot),
@@ -254,29 +307,36 @@ export class PolicyEvaluationService {
     resolution: PolicyResolutionResult,
     digest: string,
   ): Promise<CasePolicySnapshot> {
-    return this.snapshotRepository.save(
-      this.snapshotRepository.create({
-        tenantId,
-        caseId,
-        contextHash: digest,
-        resolverVersion: RESOLVER_VERSION,
-        resolutionStatus:
-          resolution.status === 'RESOLVED'
-            ? PolicyResolutionStatus.RESOLVED
-            : PolicyResolutionStatus.REVIEW_REQUIRED,
-        versions: snapshotVersions(resolution),
-        unresolvedReasons: resolution.unresolvedReasons,
-      }),
-    );
+    return runInTenantContext(this.dataSource, tenantId, (manager) => {
+      const repo = manager.getRepository(CasePolicySnapshot);
+      return repo.save(
+        repo.create({
+          tenantId,
+          caseId,
+          contextHash: digest,
+          resolverVersion: RESOLVER_VERSION,
+          resolutionStatus:
+            resolution.status === 'RESOLVED'
+              ? PolicyResolutionStatus.RESOLVED
+              : PolicyResolutionStatus.REVIEW_REQUIRED,
+          versions: snapshotVersions(resolution),
+          unresolvedReasons: resolution.unresolvedReasons,
+        }),
+      );
+    });
   }
 
   private async invalidateActiveBinding(
     tenantId: string,
     caseId: string,
   ): Promise<void> {
-    await this.bindingRepository.update(
-      { tenantId, caseId, invalidatedAt: IsNull() },
-      { invalidatedAt: new Date() },
+    await runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager
+        .getRepository(CasePolicyBinding)
+        .update(
+          { tenantId, caseId, invalidatedAt: IsNull() },
+          { invalidatedAt: new Date() },
+        ),
     );
   }
 }

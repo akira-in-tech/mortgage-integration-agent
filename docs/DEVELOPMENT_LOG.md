@@ -5929,3 +5929,108 @@ connection):
 ### Next safe step
 
 `case_policy_bindings`/`case_policy_snapshots` (via `PolicyEvaluationService`, mechanical per M5-007's corrected understanding — swap three injected repositories for one `DataSource`, wrap `evaluate()`) is now the best-understood remaining table group. `provider_operation_intents`/`provider_authorization_grants` need their own audit of exactly which methods lack `tenantId` (not yet done in the same detail this slice gave `communication_approvals`). `communication_approvals` itself is now scoped but deliberately not attempted (see Known gaps). Not started; awaiting direction.
+
+## M5-010: PostgreSQL row-level security for `case_policy_snapshots`/`case_policy_bindings`
+
+### Status
+
+Implemented and verified, including a real live workflow run — this table group's writer (`evaluate_policy`) is, unlike M5-008/M5-009's tools, genuinely registered in `AGENT_ALLOWED_TOOLS` and reachable through the live API, so this slice could use the same real-HTTP-driven live verification M5-005/M5-006/M5-007 used, not a standalone script. Completes RLS for `PolicyEvaluationService`'s own tables, the piece M5-004/M5-006 originally deferred as part of an undifferentiated "expensive" group and M5-007/M5-008 progressively corrected the understanding of.
+
+Chosen as M5-009's own named "best-understood remaining table group," continuing the "继续" delegation. Before writing any code, re-read `PolicyEvaluationService.evaluate()` in full and found something the prior "mechanical conversion" framing had missed: its concurrency-recovery `catch` block (Section 20's exit evidence H) reads back a winning row after a real unique-constraint violation on a partial unique index. Wrapping the *entire* method in one shared transaction — the pattern used for every other service in this series — would abort that transaction the moment the constraint violation fires, and every subsequent statement in the same transaction (including the catch block's own recovery reads) would fail with "current transaction is aborted, commands ignored until end of transaction block" — the identical class of bug M5-002/M5-003 already found and fixed for `DROP ROLE`'s dependent-objects error (a JS `try/catch` cannot rescue an aborted Postgres transaction; only ending that transaction can).
+
+### Acceptance criterion
+
+A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a different tenant's context, sees zero rows on `case_policy_snapshots`/`case_policy_bindings` — even against real rows the actual production code path produced — while the owning tenant's context sees exactly its own rows. Proven at the database layer (a 6-test RLS proof spec covering both tables, including the FK from `CasePolicyBinding.policySnapshotId` to `CasePolicySnapshot`) and at the real-service layer: `policy-evaluation.service.spec.ts`'s full suite — including its two dedicated concurrency tests exercising the real unique-constraint race — passed unchanged after the refactor, and a real case driven through the real LangGraph agent runtime under `NODE_ENV=production`/`APP_DATABASE_URL` produced real snapshot and binding rows, confirmed invisible under a fabricated other-tenant session and fully visible under its own, directly against Postgres.
+
+### Implementation
+
+- `src/database/migrations/1787151654923-CasePolicyTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration, applied to both tables (each has its own direct `tenantId` column, no join needed). `policy_catalog_generation` — the third table `PolicyEvaluationService` reads — is deliberately untouched: a single global row with no `tenantId` column at all, genuinely not tenant-scoped data.
+- `src/policy/policy-evaluation.service.ts` — constructor's `CasePolicySnapshot`/`CasePolicyBinding` repositories replaced with `@InjectDataSource()`; `PolicyCatalogGeneration`'s own repository stays injected as-is (that table will never need RLS). Every `CasePolicySnapshot`/`CasePolicyBinding` touch point in `evaluate()`, `persistSnapshot()`, and `invalidateActiveBinding()` now goes through its own separate `runInTenantContext` call — deliberately many small transactions, not one large one, preserving the exact transactional granularity the original bare-repository-call code already had (see Decisions for why that granularity is load-bearing, not incidental).
+- Six direct-construction call sites updated for the new 3-argument constructor (`resolver, dataSource, generationRepository`): `evaluation-report.ts`, `case-conditions.activities.spec.ts`, `runner.spec.ts`, `lending-operations-agent-runtime.spec.ts`, `policy-activation.service.spec.ts`, `policy-evaluation.service.spec.ts`.
+- `src/policy/case-policy-tenant-isolation.spec.ts` (new) — the RLS proof, covering both tables in one spec, 6 tests mirroring the established pattern; needed a real `CasePolicySnapshot` fixture row before each `CasePolicyBinding` fixture (the real FK between them), the same class of setup `policy-change-impact-assessment-tenant-isolation.spec.ts` (M5-008) needed for its own FK.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test, same shape as every prior one. No new table, so the "applies every migration" test's table list needed no change.
+
+### Affected files
+
+- `src/database/migrations/1787151654923-CasePolicyTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/policy/policy-evaluation.service.ts`, `case-policy-tenant-isolation.spec.ts` (new)
+- `src/evaluation-report.ts`, `src/workflows/case-conditions.activities.spec.ts`, `src/evaluation/runner.spec.ts`, `src/agent-runtime/langgraph/lending-operations-agent-runtime.spec.ts`, `src/policy/policy-activation.service.spec.ts`, `src/policy/policy-evaluation.service.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Many small `runInTenantContext` calls per `evaluate()` invocation, not one large transaction wrapping the whole method.** The obvious, simpler-looking choice (matching every other service converted in this series) would silently break the concurrency-recovery `catch` block the moment a real race occurred — see Status. Verified this reasoning empirically, not just by inspection: ran `policy-evaluation.service.spec.ts`'s full suite, including both concurrency tests, against the refactored code before considering the slice done; all 15 tests passed on the first attempt, including the two that deliberately race `Promise.all([evaluate(), evaluate()])` against the same case. This also means `evaluate()`'s operations are no less atomic than they were before this slice (each step already committed independently in the original bare-repository code) — RLS-wrapping didn't change the atomicity properties, only added the required session-context setting to each already-separate step.
+- **`policy_catalog_generation` deliberately left with its bare, unconverted `@InjectRepository`.** It's a single global counter row with no `tenantId` column and no tenant-scoping need — wrapping its read in `runInTenantContext` would be harmless (per that helper's own documented behavior on unprotected tables) but adds nothing, so it was left as the simplest correct form rather than converted for uniformity's own sake.
+
+### Errors and fixes
+
+None encountered — every test run (migration revert, RLS proof spec, the full `policy-evaluation.service.spec.ts` suite including concurrency tests, every other spec touching `PolicyEvaluationService`, full suite, e2e) passed on its first attempt, and the live workflow run succeeded without needing any fixes. The careful upfront analysis of the concurrency-recovery path (see Status/Decisions) is what made this possible — the risk was identified and designed around before writing the refactor, not discovered by a failing test afterward.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5010verify, ports 5443/7234):
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    28/28 passed (27 -> 28: +1 new revert test), run on a virgin
+    cluster first
+
+  migration:run applied CasePolicyTenantIsolation1787151654923 cleanly
+  on top of CommunicationTenantIsolation1787148432002
+
+  DATABASE_URL=... npx jest case-policy-tenant-isolation.spec.ts
+  policy-evaluation.service.spec.ts --runInBand
+    15/15 passed against the real mortgage_app role (for the RLS proof
+    spec) and DATABASE_URL (for the concurrency-sensitive unit spec —
+    both concurrency tests passed on the first attempt after the
+    refactor), first attempt overall
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npx jest policy-activation
+  .service.spec.ts case-conditions.activities.spec.ts lending-operations
+  -agent-runtime.spec.ts runner.spec.ts --runInBand
+    40/40 passed, every other spec touching PolicyEvaluationService
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    67 suites / 454 tests passed (66/447 -> 67/454: +1 new suite,
+    +7 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged from M5-009
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  seeded a real tenant + API-client credential, created a real case,
+  started its real workflow — evaluate_policy genuinely ran (it IS
+  wired into AGENT_ALLOWED_TOOLS, unlike M5-008/M5-009's tools), the
+  case landed in CONDITIONS_OPEN with a real income-discrepancy
+  condition opened
+
+  queried case_policy_snapshots/case_policy_bindings directly against
+  Postgres as mortgage_app: a real row existed on each table
+  referencing the real caseId; a fabricated other-tenant session
+  (inside an explicit transaction, SET LOCAL) saw zero rows on both
+  tables despite the rows existing; the real tenant's own session saw
+  exactly its own 1 row on each
+
+  scratch stack torn down (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes the `PolicyEvaluationService` table group specifically named as deferred since M5-004, completing RLS for the entire policy-evaluation subsystem (resolved versions, context hash, resolution reasons, and the case-to-snapshot binding Section 10.3/10.4/14.1 all describe).
+- The careful concurrency analysis is also an independent correctness confirmation, not just a security one: it re-verified (by actually running the tests, not just reading the code) that Section 20's exit evidence H — "a catalog activation racing with evaluation produces one internally consistent, auditable result" — still holds after this refactor.
+- No new secrets, no new external dependencies, no performance concern beyond the established pattern's own; if anything, more separate transactions per `evaluate()` call than before is a minor connection-count cost, traded for correctness under the concurrency-recovery constraint.
+
+### Known gaps
+
+- **`communication_approvals` still has no RLS** — unchanged from M5-009's own Known gap.
+- **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — unchanged; several methods don't have `tenantId` in scope today.
+- **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated since M5-004.
+- **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — unchanged.
+
+### Next safe step
+
+`provider_operation_intents`/`provider_authorization_grants` are now the last remaining table group from the original M5-004/M5-006 "expensive" deferral, and need the same kind of careful per-method audit this slice and M5-009 gave their own services before scoping — several methods are already known to lack `tenantId`, but exactly which ones, and whether any share the same transactional-granularity subtlety `PolicyEvaluationService` turned out to have, isn't yet mapped in detail. `communication_approvals` remains scoped but deliberately deferred (no real caller to define a threaded-through signature). RBAC roles and the data-disposition workflow remain the other honestly-buildable options, both still without charter-provided scaffolding. Not started; awaiting direction.

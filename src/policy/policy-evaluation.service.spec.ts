@@ -68,8 +68,7 @@ describeOrSkip('PolicyEvaluationService', () => {
     );
     service = new PolicyEvaluationService(
       resolver,
-      dataSource.getRepository(CasePolicySnapshot),
-      dataSource.getRepository(CasePolicyBinding),
+      dataSource,
       dataSource.getRepository(PolicyCatalogGeneration),
     );
 

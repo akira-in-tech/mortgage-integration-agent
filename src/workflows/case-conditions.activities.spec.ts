@@ -149,8 +149,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     );
     policyEvaluationService = new PolicyEvaluationService(
       policyResolver,
-      dataSource.getRepository(CasePolicySnapshot),
-      dataSource.getRepository(CasePolicyBinding),
+      dataSource,
       dataSource.getRepository(PolicyCatalogGeneration),
     );
     evaluationManifestService = new EvaluationManifestService(dataSource);
