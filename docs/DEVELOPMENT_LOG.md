@@ -6940,3 +6940,80 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Continuing "全力推進": a consolidated negative-authorization/threat-model suite next, covering Section 16.4's scenarios that are honestly testable without inventing a subsystem this codebase doesn't have (several already have scattered coverage across this whole series' own tenant-isolation specs — this slice would consolidate and name them, then add real coverage for the gaps that are actually closable now, including the RBAC/audit-event mechanisms this and M5-017 just built). OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.
+
+## M5-020: Negative authorization suite and Section 16.4 threat-scenario coverage index
+
+### Status
+
+Implemented and verified, including a real live curl proof under `NODE_ENV=production`. Closes Section 20 M5's own scope line ("threat-model tests and negative authorization suite") — completing the last item from the "全力推進" plan laid out after M5-017. Consolidates what M5-017's own from-scratch audit found scattered across ~15 spec files built over this whole M5 series into one real, honest index, and closes the one named Section 16.4 threat scenario ("forged tenant or role context") that had never been directly tested.
+
+### Acceptance criterion
+
+`test/negative-authorization.e2e-spec.ts` proves, against a real running app with the real global `ValidationPipe`, that a request body cannot smuggle a `tenantId` or `role`/`apiClientId` override — the DTO whitelist (`forbidNonWhitelisted: true`) rejects it outright with a `400` naming the offending field, not a silent ignore — and that a query-string `tenantId` parameter is never consulted by anything (only the bearer credential's own tenant is). The same file's own top-of-file comment is a real, honest coverage index for every Section 16.4 threat scenario: COVERED (with the specific file), PARTIAL, NOT APPLICABLE (with why — e.g. no model calls exist yet, so prompt injection has no real attack surface), or KNOWN GAP — recorded as comments, not fake always-passing `it()` stubs, so a stale reference is a visible documentation-maintenance risk rather than fabricated coverage. Proven with 3 new e2e tests (one exposing a real ordering fact about this codebase's own request lifecycle along the way) and a live `curl` proof against a real running server under `NODE_ENV=production`.
+
+### Implementation
+
+- `test/negative-authorization.e2e-spec.ts` (new) — three tests: a forged `tenantId` in a case-creation body (`400`, verified nothing persisted under the forged id), a forged `role`/`apiClientId` in a review-submission body (`400`), and a forged `tenantId` query-string parameter that's silently never read (the real credential's own tenant still resolves correctly). Preceded by a long, structured comment indexing every Section 16.4 threat scenario's real current coverage status.
+- No production code changed — this slice is entirely new test/documentation surface.
+
+### Affected files
+
+- `test/negative-authorization.e2e-spec.ts` (new)
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **A real coverage index as comments, not fake test stubs.** A file full of `it.todo(...)` or always-passing placeholder tests for "covered elsewhere" scenarios would itself be a form of fabricated coverage — implying a test suite verifies something it doesn't actually re-check. A structured comment makes the same information available without that risk, at the honest cost that nothing forces it to stay in sync with the specs it references (named explicitly in the file's own comment, not hidden).
+- **Documented three scenarios as genuinely NOT APPLICABLE rather than gaps**, backed by direct verification, not assumption: prompt injection (this Agent makes no model/LLM calls anywhere — Section 9.2's own "LangGraph is an Agent runtime adapter," every node deterministic code), malicious file content (no file-upload subsystem exists), and the five provider-promotion-governance-specific scenarios (self-approval, stale activation race, artifact mismatch, cross-provider fallback reuse, duplicate callbacks after cancellation — no provider-promotion subsystem exists at all, confirmed by the same fresh audit that preceded M5-017).
+- **PII-in-logs redaction left as a named Known gap, not stretched into "covered."** Structurally reduced (evidence facts store computed/typed values, not raw documents; `ApiKeyGuard`'s error messages are deliberately generic) but no dedicated log-scanning test exists — an honest gap, not claimed as closed by adjacent design choices that happen to help.
+
+### Errors and fixes
+
+- **Inverted ternary bug in this slice's own first draft**: `const describeOrSkip = missingVars.length > 0 ? describe : describe.skip;` — backwards from the established convention (`missingVars.length > 0 ? describe.skip : describe`) used everywhere else in this codebase's real-DB/e2e specs. The whole suite silently reported "1 skipped" with no failing assertions, which could easily have been mistaken for "nothing wrong" rather than "nothing ran" — caught by noticing the suite-level skip in the test summary, not from a failing assertion, a reminder that a skipped suite deserves the same scrutiny as a failing one.
+- **A genuine finding about NestJS's own request lifecycle**, not a code bug: the first attempt at "rejects a review-submission body that tries to smuggle a role/apiClientId override" used a PARTNER-role client and got `403` (RoleGuard) instead of the expected `400` (ValidationPipe) — because NestJS runs guards *before* pipes, so a role-insufficient caller never reaches DTO validation at all. Fixed by minting a REVIEWER-role credential specifically for that test, so the request actually reaches the layer being tested — and documented the ordering fact in the test's own comment rather than silently working around it.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5020verify, ports 5443/7234), fully migrated:
+  npx jest --config ./test/jest-e2e.json negative-authorization
+    first run: whole suite silently skipped (inverted ternary) — after
+    the fix: 1 failed, 2 passed (the guards-before-pipes finding) —
+    after minting a REVIEWER credential for that one test: 3/3 passed
+
+  npm run test:e2e (full suite)
+    4 suites / 31 tests passed (28 -> 31: +1 new suite, +3 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    75 suites / 548 tests passed, unchanged (no production code
+    touched by this slice)
+
+Manual live verification — real API under NODE_ENV=production with
+APP_DATABASE_URL (the mortgage_app role):
+  direct curl with a fresh PARTNER token, a real request body
+  containing a forged "tenantId" field: 400,
+  {"message":["property tenantId should not exist"],...} — the real
+  running server, not just the e2e-test harness, rejects it
+
+  live process terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes the last named item from Section 20 M5's own scope line — a real, honest index of this codebase's actual threat-model coverage exists in one place for the first time, and the one previously-untested named scenario ("forged tenant or role context") is now directly proven, not just structurally assumed.
+- No new production code, no new dependencies, no runtime cost — pure test/documentation surface.
+
+### Known gaps
+
+- **PII-in-logs/traces redaction** has no dedicated test (see Decisions).
+- **The coverage index can go stale** — nothing forces the comment to track the specs it references; a future refactor that removes or weakens a referenced test would not automatically update this file. An accepted, named risk, not a solved problem.
+- Every other M5 Known gap (OIDC/FAPI 2.0, encrypted field/object boundaries, `legal_holds`, tenant-owned configuration, provider-promotion governance) is unchanged by this slice, and remains explicitly out of scope per the user's own direction.
+
+### Next safe step
+
+This closes the "全力推進" plan laid out after M5-017 (RBAC → `communication_approvals` RLS → `audit_events` → negative-authorization suite). What remains of M5's charter scope — OIDC/FAPI 2.0, real field/object encryption, `legal_holds`, tenant-owned provider/policy/webhook/communication-template/budget configuration, and provider-promotion governance — are each genuinely separate, larger subsystems the user's own direction already scoped out of this push. Not started; awaiting direction on whether/when to take any of them on.
