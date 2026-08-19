@@ -6533,3 +6533,86 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 `communication_approvals` RLS remains the last named M5-series table gap. RBAC and OIDC/FAPI 2.0 remain the largest untouched items in M5's own charter scope; a resolution workflow for `data_disposition_tasks` (closing a task, and the read surface to see open ones) is the natural next increment specifically in this area. Not started; awaiting direction.
+
+## M5-016: Scenario catalog (Section 8.8/15.5's developer sandbox, the other named half)
+
+### Status
+
+Implemented and verified with a real live run. Closes the "scenario catalog"/"deterministic scenarios" item Section 8.8/15.5 names alongside webhook inspection (M5-013) and API fixtures/quickstart (M4-003) — the last of the three explicitly-named Developer Sandbox deliverables. Chosen autonomously (per the user's third consecutive "繼續挑下一項"), after concluding that the two other candidates surveyed — RBAC and the ten unbuilt Section 9.4 tools — aren't well-scoped right now: real RBAC per the charter's own data model (`users`/`tenant_memberships`, Section 14.1) is structurally tied to OIDC, which `ApiClient`'s own class comment already calls "its own, much larger, separately-scoped effort"; `calculate_dti`/`calculate_ltv`/`calculate_qualified_income` would require inventing financial-calculation methodology this codebase has no backing data model for (no appraised-value concept exists anywhere, for instance) — the same fabrication risk this project's own standing conventions warn against.
+
+### Acceptance criterion
+
+`npm run scenario-catalog` (or `-- <name>` for one scenario) drives six named, reproducible scenarios through the real REST API + Temporal worker, each asserting an *expected* outcome rather than just narrating one — covering every deterministic case/workflow outcome shape this codebase currently produces: straight-through approval, a policy-opened condition resolved by a real reviewer decision, a transient provider failure exhausting Temporal's retry policy, a terminal provider failure short-circuiting it, consent revoked before dispatch failing every evidence fetch closed, and a policy-applicability ambiguity that interrupts the case for review and is later resumed. A deliberately-broken assertion was verified to actually FAIL and exit non-zero (not silently pass) before being reverted, proving the catalog is real regression coverage, not narration. All six scenarios passed against a real API + Temporal worker on the first live run with no code changes needed, and again after the deliberate-failure round-trip.
+
+### Implementation
+
+- `client/scenario-catalog.ts` (new) — following `quickstart.ts`/`webhook-inspector.ts`'s established skeleton exactly (dotenv, direct-SQL tenant seed, `ApiClientService` directly for the credential, everything else through the real generated client). A `Scenario[]` registry, each with a `name`, a `description` printed before it runs, and a `run()` that throws on any expectation mismatch. `main()` runs every scenario (or one, via `process.argv[2]`) against one shared tenant/credential, prints PASS/FAIL with timing per scenario, and exits non-zero if any failed.
+- Two shared polling helpers: `pollWorkflowToTerminal()` (Temporal's own execution status — `RUNNING` until `COMPLETED`/`FAILED`/etc., with an optional `onTick` callback so a scenario can react to a case-level status change mid-poll, e.g. submitting a review the moment a condition opens) and `pollCaseStatusUntil()` (the *case's* own application-level status — `CONDITIONS_OPEN`, `WAITING_FOR_REVIEW` — independent of workflow terminality, since the workflow stays `RUNNING` in Temporal's own terms while durably paused waiting for a signal).
+- The `policy-ambiguity-unresolved-jurisdiction` scenario uses one more direct-SQL escape hatch (inserting a `NOT_COVERED` jurisdiction row, then updating it to `COVERED` after observing the interrupt) — no jurisdiction-management REST endpoint exists at all (confirmed by grepping `src/policy/` for `@Controller`, finding none), the same honest gap `quickstart.ts` already documents for tenant/API-client seeding, not a fabricated endpoint.
+- `package.json` — added the `scenario-catalog` script alongside `quickstart`/`webhook-inspector`.
+
+### Affected files
+
+- `client/scenario-catalog.ts` (new)
+- `package.json`, `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Real assertions, not narration.** `quickstart.ts` demonstrates a golden path and logs what happened; this catalog's entire value proposition is "these outcomes are guaranteed deterministic," so each scenario throws (via a small `assertEqual` helper) on any mismatch between expected and actual case/workflow status, rather than just printing what occurred. Verified this actually catches a real regression by deliberately breaking one scenario's expectation, confirming it failed loudly with a clear message and non-zero exit, then reverting — not assumed from reading the code.
+- **Only six scenarios — asset/identity provider failures and the `BUDGET_OR_DEADLINE_EXHAUSTED`/`TOOL_EXECUTION_FAILURE` mandatory-review categories left out.** Asset/identity adapters are registered but never dispatched by the real M2 workflow (`case-conditions.workflow.ts` only calls income/credit/document) — not reachable end-to-end via the real REST + Temporal path today, a pre-existing gap this slice didn't invent and won't paper over with a scenario that can't actually run through it. Budget exhaustion and tool-execution failure have no clean, deterministic REST-reachable trigger today (budget exhaustion would need an artificially tiny budget config with no real knob to set it through the API; tool failure would need an actual implementation bug to reproduce on demand) — six honest, real scenarios beat inventing a seventh that doesn't reflect real reachable behavior.
+- **`consent-revoked-before-dispatch` demonstrates the fail-closed provider-revalidation path, not `AgentRun.reviewCategory = CONSENT_INVALID`.** Investigated both — the `CONSENT_INVALID` mandatory-review category only fires when `evaluateConditions` re-runs with invalid consent, which in the current M2 workflow only happens inside the `POLICY_AMBIGUITY` interrupt/resume loop; there's no reliable way to hit it from a straight-line happy-path case via pure REST timing. Documented the distinction in the scenario's own description rather than silently picking the less-precise mechanism without saying so.
+- **The policy-ambiguity scenario resolves fully (fixes the jurisdiction, resumes, reaches `READY_FOR_UNDERWRITING`) rather than stopping at `WAITING_FOR_REVIEW`.** Every other scenario in the catalog reaches a clean terminal outcome; stopping short would have been the one exception with no strong reason for it, and the extra direct-SQL update plus `RESUME_EVALUATION` call cost little.
+
+### Errors and fixes
+
+- None — all six scenarios passed against a real running API + Temporal worker on the very first live run, with every design assumption (jurisdiction/product-code mapping, Plaid's simulated income range, Temporal's retry backoff timing, the consent-revalidation fail-closed path, and the policy-ambiguity interrupt/resume mechanism) confirmed correct empirically rather than merely reasoned about.
+- `nest build` excludes `client/` entirely (`tsconfig.build.json`'s own `exclude` list) — `npm run build` passing does not type-check this file. Relied on `npm run lint`'s type-aware ESLint rules plus the real `ts-node` execution (which would fail to even start on a real type/shape error) as this file's actual verification, matching how `quickstart.ts`/`webhook-inspector.ts` were verified before it — not a gap introduced by this slice.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (scenarioverify, ports 5443/7234), fully migrated,
+real API (development mode) + real Temporal worker running:
+  npm run scenario-catalog
+    6/6 scenarios passed on the first run, no code changes needed
+
+  npx ts-node ... client/scenario-catalog.ts income-discrepancy-condition
+    single-scenario selection: 1/1 passed
+
+  npx ts-node ... client/scenario-catalog.ts nonexistent-scenario
+    unknown-name path: prints the known-scenario list, exits 1
+
+  Deliberately replaced one scenario's expected case-status string with
+  a wrong value, reran: FAIL reported with the exact expected/actual
+  mismatch, exit code 1 — reverted the change, reran the full catalog:
+  6/6 passed again
+
+Fresh scratch stack (scenariofinal, ports 5443/7234), fully migrated:
+  npm run build / npm run lint:check — clean
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent — 71 suites / 520 tests passed, unchanged (pure client
+  tooling, no source/entity changes)
+  npm run test:e2e — 3 suites / 27 tests passed, unchanged
+
+Live processes terminated and both scratch stacks torn down
+(docker compose down -v) after verification.
+```
+
+### Security, privacy, cost, and compatibility
+
+- Pure developer/DX tooling — no production runtime code touched, no new entities, no new migrations, no new dependencies. Zero blast radius on any already-shipped capability.
+- Uses only synthetic borrower ids and a throwaway sandbox tenant, matching every other script in `client/` — no real or realistic PII anywhere.
+- The direct-SQL jurisdiction escape hatch writes only to a disposable scratch database in normal use (the same assumption `quickstart.ts` already makes about `DATABASE_URL`) — not intended to run against a real production database, and nothing in this slice changes that expectation.
+
+### Known gaps
+
+- Asset/identity provider-failure scenarios aren't included, since the real M2 workflow never dispatches those capabilities today (Known gap from M4-005, unchanged by this slice).
+- `BUDGET_OR_DEADLINE_EXHAUSTED`/`TOOL_EXECUTION_FAILURE` mandatory-review categories have no scenario — no clean deterministic REST-reachable trigger exists for either yet.
+- No cleanup logic — matching `quickstart.ts`'s own convention, the script assumes a disposable scratch environment and leaves its tenants/cases/jurisdiction rows behind.
+
+### Next safe step
+
+`communication_approvals` RLS, RBAC, and OIDC/FAPI 2.0 remain M5's largest open items — RBAC specifically needs the `users`/`tenant_memberships` human-identity foundation this codebase doesn't have yet, a genuinely separate, larger effort. The ten entirely-unbuilt Section 9.4 tools remain a large cross-milestone item, several of which (the calculation tools) need real domain-methodology decisions before they can be built honestly rather than guessed at. Not started; awaiting direction.
