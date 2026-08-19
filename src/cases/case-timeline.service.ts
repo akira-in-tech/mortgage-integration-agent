@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
@@ -42,12 +42,6 @@ export class TimelineEntry {
 @Injectable()
 export class CaseTimelineService {
   constructor(
-    @InjectRepository(AgentRun)
-    private readonly agentRunRepository: Repository<AgentRun>,
-    @InjectRepository(ToolAttempt)
-    private readonly toolAttemptRepository: Repository<ToolAttempt>,
-    @InjectRepository(LoanCondition)
-    private readonly conditionRepository: Repository<LoanCondition>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
@@ -56,27 +50,34 @@ export class CaseTimelineService {
     tenantId: string,
     caseId: string,
   ): Promise<TimelineEntry[]> {
-    const [events, agentRuns, conditions] = await Promise.all([
-      runInTenantContext(this.dataSource, tenantId, (manager) =>
-        manager.getRepository(OutboxEvent).find({
+    // Sequential, not Promise.all: these four queries share one
+    // transaction's single connection (M5-006) — node-postgres itself
+    // warns that overlapping queries on one client is deprecated and
+    // risks result-set confusion between them (the exact bug M5-004
+    // found and fixed elsewhere in this codebase).
+    const { events, agentRuns, conditions, toolAttempts } =
+      await runInTenantContext(this.dataSource, tenantId, async (manager) => {
+        const events = await manager.getRepository(OutboxEvent).find({
           where: { tenantId, caseId },
           order: { createdAt: 'ASC' },
-        }),
-      ),
-      this.agentRunRepository.find({
-        where: { tenantId, caseId },
-        order: { startedAt: 'ASC' },
-      }),
-      this.conditionRepository.find({ where: { tenantId, caseId } }),
-    ]);
+        });
+        const agentRuns = await manager.getRepository(AgentRun).find({
+          where: { tenantId, caseId },
+          order: { startedAt: 'ASC' },
+        });
+        const conditions = await manager
+          .getRepository(LoanCondition)
+          .find({ where: { tenantId, caseId } });
+        const toolAttempts = agentRuns.length
+          ? await manager.getRepository(ToolAttempt).find({
+              where: agentRuns.map((run) => ({ agentRunId: run.id })),
+              order: { attemptedAt: 'ASC' },
+            })
+          : [];
+        return { events, agentRuns, conditions, toolAttempts };
+      });
     const conditionById = new Map(conditions.map((c) => [c.id, c]));
 
-    const toolAttempts = agentRuns.length
-      ? await this.toolAttemptRepository.find({
-          where: agentRuns.map((run) => ({ agentRunId: run.id })),
-          order: { attemptedAt: 'ASC' },
-        })
-      : [];
     const attemptsByRunId = new Map<string, ToolAttempt[]>();
     for (const attempt of toolAttempts) {
       const list = attemptsByRunId.get(attempt.agentRunId) ?? [];

@@ -78,38 +78,45 @@ async function persistAgentRun(
   startedAt: Date,
   result: AgentRunResult,
 ): Promise<void> {
-  await dataSource.transaction(async (manager) => {
-    const agentRun = await manager.getRepository(AgentRun).save(
-      manager.getRepository(AgentRun).create({
-        tenantId: result.finalState.tenantId,
-        caseId: result.finalState.caseId,
-        workflowRunId: result.finalState.workflowRunId,
-        route: result.route as unknown as AgentRunRouteStatus,
-        proposedActionTool: result.finalState.proposedAction?.tool ?? null,
-        proposedActionArguments:
-          result.finalState.proposedAction?.arguments ?? null,
-        reviewRequested: result.finalState.reviewState?.requested ?? false,
-        reviewReason: result.finalState.reviewState?.reason ?? null,
-        reviewCategory:
-          (result.finalState.reviewState
-            ?.category as unknown as ReviewCategoryStatus) ?? null,
-        startedAt,
-      }),
-    );
-    if (result.finalState.attemptedTools.length > 0) {
-      await manager.getRepository(ToolAttempt).save(
-        result.finalState.attemptedTools.map((attempt) =>
-          manager.getRepository(ToolAttempt).create({
-            agentRunId: agentRun.id,
-            toolName: attempt.toolName,
-            outcome: attempt.outcome as unknown as ToolAttemptOutcome,
-            detail: attempt.detail ?? null,
-            attemptedAt: new Date(attempt.attemptedAt),
-          }),
-        ),
+  // M5-006: agent_runs/tool_attempts now carry a real RLS policy —
+  // runInTenantContext, not a bare transaction, so this write can't
+  // touch a row RLS would reject.
+  await runInTenantContext(
+    dataSource,
+    result.finalState.tenantId,
+    async (manager) => {
+      const agentRun = await manager.getRepository(AgentRun).save(
+        manager.getRepository(AgentRun).create({
+          tenantId: result.finalState.tenantId,
+          caseId: result.finalState.caseId,
+          workflowRunId: result.finalState.workflowRunId,
+          route: result.route as unknown as AgentRunRouteStatus,
+          proposedActionTool: result.finalState.proposedAction?.tool ?? null,
+          proposedActionArguments:
+            result.finalState.proposedAction?.arguments ?? null,
+          reviewRequested: result.finalState.reviewState?.requested ?? false,
+          reviewReason: result.finalState.reviewState?.reason ?? null,
+          reviewCategory:
+            (result.finalState.reviewState
+              ?.category as unknown as ReviewCategoryStatus) ?? null,
+          startedAt,
+        }),
       );
-    }
-  });
+      if (result.finalState.attemptedTools.length > 0) {
+        await manager.getRepository(ToolAttempt).save(
+          result.finalState.attemptedTools.map((attempt) =>
+            manager.getRepository(ToolAttempt).create({
+              agentRunId: agentRun.id,
+              toolName: attempt.toolName,
+              outcome: attempt.outcome as unknown as ToolAttemptOutcome,
+              detail: attempt.detail ?? null,
+              attemptedAt: new Date(attempt.attemptedAt),
+            }),
+          ),
+        );
+      }
+    },
+  );
 }
 
 const RuntimeAnnotation = Annotation.Root({

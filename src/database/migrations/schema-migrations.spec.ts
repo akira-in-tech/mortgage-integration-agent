@@ -188,6 +188,118 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the case conditions agent tenant isolation migration without touching other tables', async () => {
+    // No new table — only RLS state and a policy on three existing
+    // tables (two plain, plus tool_attempts' join-based policy) — same
+    // pattern as the webhook/case-core tenant isolation revert tests
+    // below.
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('loan_conditions', 'agent_runs', 'tool_attempts')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'agent_runs',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'loan_conditions',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'tool_attempts',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('loan_conditions', 'agent_runs', 'tool_attempts')
+         ORDER BY tablename`,
+      );
+    expect(beforePolicies).toEqual([
+      { tablename: 'agent_runs', policyname: 'tenant_isolation' },
+      { tablename: 'loan_conditions', policyname: 'tenant_isolation' },
+      { tablename: 'tool_attempts', policyname: 'tenant_isolation' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('loan_conditions', 'agent_runs', 'tool_attempts')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'agent_runs',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'loan_conditions',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'tool_attempts',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies = await scratchDataSource.query(
+      `SELECT tablename, policyname FROM pg_policies
+       WHERE tablename IN ('loan_conditions', 'agent_runs', 'tool_attempts')`,
+    );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the consent records migration without touching other tables', async () => {
     // Unlike the RLS-only migrations below, this one adds a real table —
     // same pattern as "reverts the api clients migration" above it in

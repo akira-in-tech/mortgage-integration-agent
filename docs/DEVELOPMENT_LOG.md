@@ -5512,3 +5512,109 @@ NODE_ENV=production with APP_DATABASE_URL (M5-003's restricted role):
 ### Next safe step
 
 The honestly-buildable increments remaining in M5: RBAC roles (still no charter-provided scaffolding to build against — would need its own design pass, not a mechanical extension of an existing pattern), the data-disposition review workflow this slice's own Known gaps names, extending RLS to `loan_conditions` and the Agent-runtime/provider-platform tables (M5-004's own deferred scope), or OIDC. Not started; awaiting direction.
+
+## M5-006: PostgreSQL row-level security for `loan_conditions`, `agent_runs`, `tool_attempts` — completing the case-conditions core
+
+### Status
+
+Implemented and verified, including a real live workflow run. Extends M5-002/M5-004/M5-005's row-level security pattern to the three case-conditions-core tables M5-004 explicitly deferred, completing database-layer tenant isolation for the entire case-conditions core (`loan_cases`, `evidence_facts`, `outbox_events`, `condition_transitions`, and now `loan_conditions`, `agent_runs`, `tool_attempts`).
+
+Chosen autonomously as the next M5 slice (the user delegated the choice again — "下一步做什麼 你開始") over consent-adjacent RBAC work: a prior audit (delegated to a research agent, then independently verified file by file) found this group cheap — the two heaviest write paths on `loan_conditions` were already running inside an M5-004 `runInTenantContext` transaction incidentally, and the remaining bare touch points (`case-timeline.service.ts`'s reads, `persistAgentRun`'s bare `dataSource.transaction()`) were trivial, mechanically-proven wraps with three successful RLS precedents already in the codebase — versus `case_policy_bindings`/`case_policy_snapshots`/`provider_operation_intents`/`provider_authorization_grants`, which the same audit found expensive (real service refactors: `PolicyEvaluationService` has no `DataSource`/`EntityManager` at all today, and several `ProviderAuthorizationService`/`ProviderOperationIntentService` methods don't have `tenantId` in scope).
+
+### Acceptance criterion
+
+A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a different tenant's context, sees zero rows on `loan_conditions`, `agent_runs`, and `tool_attempts` — even against real rows that genuinely exist — while the owning tenant's context sees exactly its own rows. Proven at the database layer (an 8-test RLS proof spec covering all 7 case-conditions-core tables together) and at the live-application layer (a real case driven through the real LangGraph agent runtime under `NODE_ENV=production`/`APP_DATABASE_URL`, whose resulting `agent_runs`/`tool_attempts`/`loan_conditions` rows were then queried directly against Postgres under a fabricated other-tenant session and found invisible, then under the real tenant's session and found fully visible).
+
+### Implementation
+
+- `src/database/migrations/1787129406858-CaseConditionsAgentTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration for `loan_conditions` and `agent_runs` (direct `tenantId` column). `tool_attempts` has no `tenantId` column of its own (Section 14.1's record is keyed only by `agentRunId`), so its policy resolves ownership through an `EXISTS` join to `agent_runs` — the same join-based pattern `condition_transitions`' M5-004 policy already established against `loan_conditions`.
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`'s `persistAgentRun` — changed from a bare `dataSource.transaction(...)` to `runInTenantContext(dataSource, result.finalState.tenantId, ...)`; body unchanged. Confirmed via grep this is the only production write site for `agent_runs`/`tool_attempts` other than `case-timeline.service.ts`'s reads.
+- `src/cases/case-timeline.service.ts` — rewritten. Previously injected `AgentRun`/`ToolAttempt`/`LoanCondition` repositories and a bare `DataSource` directly (4 constructor params), issuing one wrapped `outbox_events` query alongside three *bare* queries against the other tables — meaning `GET .../timeline` was reading agent-run/condition data outside any tenant context before this slice, relying entirely on the caller having already checked `tenantId` in its `WHERE` clause with no database-layer backstop. Now takes only `DataSource` and runs all four reads (`outbox_events`, `agent_runs`, `loan_conditions`, `tool_attempts`) sequentially inside one `runInTenantContext` callback — sequential, not `Promise.all`, per the M5-004-established rule that overlapping queries on one connection risk result-set confusion (node-postgres's own deprecation warning is the concrete signal). No spec-file fixes were needed — grep confirmed no direct `new CaseTimelineService(...)` call sites exist anywhere.
+- `src/workflows/case-core-tenant-isolation.spec.ts` — extended (not a new file) to cover all 7 case-conditions-core tables in one spec, since they're one coherent unit now. Added `AgentRun`/`ToolAttempt` fixtures and entity registrations to both the admin and restricted `DataSource`s; moved `loan_conditions` fixture creation from the admin (bypass) connection to the restricted connection via `runInTenantContext`, since it now has a real policy to exercise; added a dedicated assertion for `tool_attempts`' join-based policy mirroring the existing `condition_transitions` one.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test (`'reverts the case conditions agent tenant isolation migration without touching other tables'`), same shape as the M5-004/M5-005 revert tests: checks `pg_class.relrowsecurity`/`relforcerowsecurity` and `pg_policies` before revert, confirms the full table list and RLS state afterward. This migration adds no new table, so the "applies every migration" test's table-count assertion needed no change.
+
+### Affected files
+
+- `src/database/migrations/1787129406858-CaseConditionsAgentTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`
+- `src/cases/case-timeline.service.ts`
+- `src/workflows/case-core-tenant-isolation.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Extended the existing M5-004 RLS proof spec rather than writing a new one for these 3 tables.** All 7 tables are one coherent unit (the entire case-conditions core) and the fixture setup (tenants, jurisdiction, cases) is identical — a separate spec would have duplicated that setup wholesale rather than adding to it. The file's own title and header comment were updated to describe all 7 tables, not silently left describing only 4.
+- **Scoped this slice to exactly the "cheap" group the prior audit identified, deferring `case_policy_bindings`/`case_policy_snapshots`/`provider_operation_intents`/`provider_authorization_grants` explicitly rather than attempting a partial pass at them.** Those tables' owning services would need real constructor/method-signature changes (a `DataSource` added to `PolicyEvaluationService`, `tenantId` threaded through several `ProviderAuthorizationService`/`ProviderOperationIntentService` methods that don't have it today) before RLS could even be exercised correctly — different, larger scope than a migration-plus-mechanical-wrap slice, and not attempted here.
+- **`case-timeline.service.ts`'s pre-existing bare reads of `agent_runs`/`loan_conditions`/`tool_attempts` were a real, if narrow, latent gap** (the endpoint relied solely on its own `WHERE tenantId = ...` clause, no RLS backstop) rather than a hypothetical one this slice is inventing a fix for — worth naming plainly since this file wasn't touched at all in M5-004 despite reading from tables that migration did protect (`outbox_events`).
+
+### Errors and fixes
+
+None encountered this slice — `npm run build` passed clean on the first attempt after the `case-timeline.service.ts` rewrite and `persistAgentRun` wrap, and every test run (migration revert, RLS proof, full suite, e2e) passed on its first attempt. The `client.query() when the client is already executing a query is deprecated` warning observed during the e2e run was confirmed pre-existing on the unmodified `f3081d7` baseline (checked via `git stash`), not something this slice introduced.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5006verify, ports 5443/7234):
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    24/24 passed (23 -> 24: +1 new revert test), run on a virgin
+    cluster first
+
+  migration:run applied CaseConditionsAgentTenantIsolation1787129406858
+    cleanly on top of ConsentRecords1787126773274
+
+  DATABASE_URL=... npx jest case-core-tenant-isolation.spec.ts --runInBand
+    8/8 passed against the real mortgage_app role — no-context and
+    wrong-tenant-context zero-visibility across all 7 tables, exact-match
+    own-tenant visibility, cross-tenant UPDATE/spoofed-INSERT rejection,
+    both join-based policies (condition_transitions, tool_attempts),
+    bypass-mode inclusion check
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    63 suites / 426 tests passed (63/425 -> 63/426: +1 test, this
+    slice's own spec extension — no new spec *file*)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged from M5-005 (no e2e-visible
+    behavior change — the timeline endpoint's output shape is identical,
+    only its internal query path changed)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  seeded a real tenant + API-client credential, created a real case,
+  started its real workflow — it landed in CONDITIONS_OPEN with a real
+  income-discrepancy condition opened and a real Agent run recorded
+
+  GET .../timeline returned a correctly assembled AGENT_RUN entry built
+  from the real agent_runs/tool_attempts rows the live run produced,
+  confirming case-timeline.service.ts's rewrite works end-to-end in
+  production, not just in isolation
+
+  queried agent_runs/tool_attempts/loan_conditions directly against
+  Postgres as mortgage_app: a fabricated other-tenant session (inside an
+  explicit transaction, SET LOCAL) saw zero rows on all three tables
+  despite the real rows existing; the real tenant's own session saw
+  exactly its own 1 agent run, 3 tool attempts, 1 condition
+
+  scratch stack torn down (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes the specific latent gap named in Decisions: `GET .../timeline` (Section 7.1's launch-scenario "display the full timeline" step) now has a real database-layer backstop on every table it reads, not just the one (`outbox_events`) M5-004 happened to already cover.
+- Completes RLS for the entire case-conditions core: every table on the primary case-processing path (case creation → evidence → conditions → agent runs → tool attempts → transitions → consent) now fails closed under `mortgage_app`, leaving only the two explicitly-deferred groups named in Decisions.
+- No new secrets, no new external dependencies, no performance concern beyond the established pattern's own (indexed equality checks; `tool_attempts`' `EXISTS` join is against `agent_runs.id`, its primary key).
+
+### Known gaps
+
+- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — `PolicyEvaluationService` has no `DataSource`/`EntityManager` at all today; adding one is a real refactor, not attempted this slice.
+- **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — several methods on `ProviderOperationIntentService`/`ProviderAuthorizationService` (`markDispatched`, `markSucceeded`, `markFailedFinal`, `markOutcomeUnknown`, `revoke`) don't have `tenantId` in scope today; threading it through is real, separately-scoped work.
+- **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated from M5-004/M5-005; this slice didn't touch that file at all.
+- **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — both still lack charter-provided scaffolding a mechanical extension of an existing pattern could build against, unchanged from M5-005's own Next safe step.
+
+### Next safe step
+
+The two explicitly-deferred "expensive" table groups (policy bindings/snapshots, provider operation intents/authorization grants) are the natural next RLS increment, but both require a real service-layer refactor first (giving `PolicyEvaluationService` a `DataSource`, threading `tenantId` through the provider-platform methods that lack it) rather than a mechanical migration-plus-wrap — a genuine design decision, not made unilaterally here. RBAC roles and the data-disposition workflow remain the other honestly-buildable options, both still without charter-provided scaffolding. Not started; awaiting direction.

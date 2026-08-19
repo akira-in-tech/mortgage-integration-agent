@@ -20,26 +20,36 @@ import {
   ConditionStatus,
 } from '../database/entities/loan-condition.entity';
 import { ConditionTransition } from '../database/entities/condition-transition.entity';
+import { AgentRun } from '../database/entities/agent-run.entity';
+import { ToolAttempt } from '../database/entities/tool-attempt.entity';
+import {
+  AgentRunRouteStatus,
+  ToolAttemptOutcome,
+} from '../database/enums/agent-run.enum';
 import {
   runInTenantContext,
   runWithRlsBypass,
 } from '../database/tenant-context';
 
-// Requires a reachable Postgres with the CaseCoreTenantIsolation and
-// AppRuntimeRole migrations applied: skip instead of failing when no
-// DATABASE_URL is configured — same convention as this codebase's other
-// real-DB specs.
+// Requires a reachable Postgres with the CaseCoreTenantIsolation,
+// CaseConditionsAgentTenantIsolation, and AppRuntimeRole migrations
+// applied: skip instead of failing when no DATABASE_URL is configured —
+// same convention as this codebase's other real-DB specs.
 //
-// M5-004's proof, mirroring webhook-tenant-isolation.spec.ts (M5-002):
-// connects as the real `mortgage_app` role, not DATABASE_URL's own, for
-// the exact same reason — a superuser connection would pass every one of
-// these assertions trivially by bypassing RLS entirely, proving nothing.
+// M5-004/M5-006's proof, mirroring webhook-tenant-isolation.spec.ts
+// (M5-002): connects as the real `mortgage_app` role, not DATABASE_URL's
+// own, for the exact same reason — a superuser connection would pass
+// every one of these assertions trivially by bypassing RLS entirely,
+// proving nothing.
 //
-// Covers `loan_cases`, `evidence_facts`, `outbox_events`, and
-// `condition_transitions` — the case-conditions core tables in scope for
-// M5-004 (see that migration's own class comment for what's deliberately
-// out of scope: `loan_conditions` itself, `agent_runs`/`tool_attempts`,
-// the policy-engine and provider-platform tables).
+// Covers the entire case-conditions core: `loan_cases`, `evidence_facts`,
+// `outbox_events`, `condition_transitions` (M5-004), plus
+// `loan_conditions`, `agent_runs`, `tool_attempts` (M5-006). Deliberately
+// still out of scope: `case_policy_bindings`/`case_policy_snapshots`
+// (`PolicyEvaluationService` has no `DataSource`/`EntityManager` at all
+// today) and `provider_operation_intents`/`provider_authorization_grants`
+// (several methods don't have `tenantId` in scope yet) — see the M5-006
+// migration's own class comment.
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
 
@@ -55,7 +65,7 @@ function withCredentials(url: string, user: string, password: string): string {
 }
 
 describeOrSkip(
-  'loan_cases/evidence_facts/outbox_events/condition_transitions row-level security',
+  'loan_cases/evidence_facts/outbox_events/condition_transitions/loan_conditions/agent_runs/tool_attempts row-level security',
   () => {
     let adminDataSource: DataSource;
     let restrictedDataSource: DataSource;
@@ -70,6 +80,10 @@ describeOrSkip(
     let loanConditionB: LoanCondition;
     let conditionTransitionA: ConditionTransition;
     let conditionTransitionB: ConditionTransition;
+    let agentRunA: AgentRun;
+    let agentRunB: AgentRun;
+    let toolAttemptA: ToolAttempt;
+    let toolAttemptB: ToolAttempt;
 
     beforeAll(async () => {
       adminDataSource = new DataSource({
@@ -83,14 +97,15 @@ describeOrSkip(
           OutboxEvent,
           LoanCondition,
           ConditionTransition,
+          AgentRun,
+          ToolAttempt,
         ],
       });
       await adminDataSource.initialize();
 
       // Fixture setup for the *unprotected* tables this slice's tables
-      // reference (tenants/jurisdictions have no RLS at all; loan_conditions
-      // deliberately has none this slice — see the migration's own
-      // comment) goes through the admin connection, same reasoning as
+      // reference (tenants/jurisdictions have no RLS at all) goes through
+      // the admin connection, same reasoning as
       // webhook-tenant-isolation.spec.ts's outbox_events fixture setup in
       // M5-002: we don't care *why* these inserts succeed, only that the
       // rows exist for the real, in-scope tables to reference.
@@ -115,21 +130,22 @@ describeOrSkip(
           APP_ROLE,
           APP_ROLE_PASSWORD,
         ),
-        // Tenant/Jurisdiction/LoanCondition must be declared too, even
-        // though mortgage_app is never queried against Tenant/
-        // Jurisdiction directly here and loan_conditions has no RLS
-        // policy this slice — LoanCase's/ConditionTransition's own
-        // ManyToOne relation targets must resolve during metadata build,
-        // same reason webhook-tenant-isolation.spec.ts (M5-002) had to
-        // declare OutboxEvent for WebhookDelivery's relation.
+        // Tenant/Jurisdiction must be declared too, even though
+        // mortgage_app is never queried against them directly here —
+        // LoanCase's own ManyToOne relation targets must resolve during
+        // metadata build, same reason webhook-tenant-isolation.spec.ts
+        // (M5-002) had to declare OutboxEvent for WebhookDelivery's
+        // relation.
         entities: [
           LoanCase,
           EvidenceFact,
           OutboxEvent,
           ConditionTransition,
+          LoanCondition,
+          AgentRun,
+          ToolAttempt,
           Tenant,
           Jurisdiction,
-          LoanCondition,
         ],
       });
       await restrictedDataSource.initialize();
@@ -195,25 +211,34 @@ describeOrSkip(
         },
       );
 
-      // loan_conditions has no RLS policy this slice — admin connection,
-      // real tenantId data, same "don't care why it succeeds" reasoning.
-      const conditionRepo = adminDataSource.getRepository(LoanCondition);
-      [loanConditionA, loanConditionB] = await conditionRepo.save([
-        conditionRepo.create({
-          tenantId: tenantA,
-          caseId: caseA.id,
+      // loan_conditions now carries a real RLS policy (M5-006) — through
+      // the restricted role, same as everything else above.
+      function makeCondition(tenantId: string, caseId: string) {
+        const repo = restrictedDataSource.getRepository(LoanCondition);
+        return repo.create({
+          tenantId,
+          caseId,
           code: 'RLS_SPEC_CONDITION',
-          description: 'rls spec condition A',
+          description: `rls spec condition for ${tenantId}`,
           status: ConditionStatus.OPEN,
-        }),
-        conditionRepo.create({
-          tenantId: tenantB,
-          caseId: caseB.id,
-          code: 'RLS_SPEC_CONDITION',
-          description: 'rls spec condition B',
-          status: ConditionStatus.OPEN,
-        }),
-      ]);
+        });
+      }
+      loanConditionA = await runInTenantContext(
+        restrictedDataSource,
+        tenantA,
+        (manager) =>
+          manager
+            .getRepository(LoanCondition)
+            .save(makeCondition(tenantA, caseA.id)),
+      );
+      loanConditionB = await runInTenantContext(
+        restrictedDataSource,
+        tenantB,
+        (manager) =>
+          manager
+            .getRepository(LoanCondition)
+            .save(makeCondition(tenantB, caseB.id)),
+      );
 
       conditionTransitionA = await runInTenantContext(
         restrictedDataSource,
@@ -247,14 +272,80 @@ describeOrSkip(
           );
         },
       );
+
+      // agent_runs/tool_attempts (M5-006) — tool_attempts has no
+      // tenantId column of its own, same join-based-policy situation as
+      // condition_transitions.
+      function makeAgentRun(tenantId: string, caseId: string) {
+        const repo = restrictedDataSource.getRepository(AgentRun);
+        return repo.create({
+          tenantId,
+          caseId,
+          workflowRunId: `rls-spec-run-${tenantId}`,
+          route: AgentRunRouteStatus.PROPOSED_ACTION,
+          startedAt: new Date(),
+        });
+      }
+      agentRunA = await runInTenantContext(
+        restrictedDataSource,
+        tenantA,
+        (manager) =>
+          manager.getRepository(AgentRun).save(makeAgentRun(tenantA, caseA.id)),
+      );
+      agentRunB = await runInTenantContext(
+        restrictedDataSource,
+        tenantB,
+        (manager) =>
+          manager.getRepository(AgentRun).save(makeAgentRun(tenantB, caseB.id)),
+      );
+
+      toolAttemptA = await runInTenantContext(
+        restrictedDataSource,
+        tenantA,
+        (manager) => {
+          const repo = manager.getRepository(ToolAttempt);
+          return repo.save(
+            repo.create({
+              agentRunId: agentRunA.id,
+              toolName: 'check_case_completeness',
+              outcome: ToolAttemptOutcome.SUCCESS,
+              attemptedAt: new Date(),
+            }),
+          );
+        },
+      );
+      toolAttemptB = await runInTenantContext(
+        restrictedDataSource,
+        tenantB,
+        (manager) => {
+          const repo = manager.getRepository(ToolAttempt);
+          return repo.save(
+            repo.create({
+              agentRunId: agentRunB.id,
+              toolName: 'check_case_completeness',
+              outcome: ToolAttemptOutcome.SUCCESS,
+              attemptedAt: new Date(),
+            }),
+          );
+        },
+      );
     });
 
     afterAll(async () => {
       if (restrictedDataSource?.isInitialized) {
         await runWithRlsBypass(restrictedDataSource, async (manager) => {
           await manager
+            .getRepository(ToolAttempt)
+            .delete([toolAttemptA.id, toolAttemptB.id]);
+          await manager
+            .getRepository(AgentRun)
+            .delete([agentRunA.id, agentRunB.id]);
+          await manager
             .getRepository(ConditionTransition)
             .delete([conditionTransitionA.id, conditionTransitionB.id]);
+          await manager
+            .getRepository(LoanCondition)
+            .delete([loanConditionA.id, loanConditionB.id]);
           await manager
             .getRepository(OutboxEvent)
             .delete({ id: outboxEventA.id });
@@ -267,9 +358,6 @@ describeOrSkip(
       }
       if (adminDataSource?.isInitialized) {
         await adminDataSource
-          .getRepository(LoanCondition)
-          .delete([loanConditionA.id, loanConditionB.id]);
-        await adminDataSource
           .getRepository(Jurisdiction)
           .delete({ code: jurisdictionCode });
         await adminDataSource.getRepository(Tenant).delete([tenantA, tenantB]);
@@ -277,7 +365,7 @@ describeOrSkip(
       }
     });
 
-    it('a query with no tenant context and no bypass sees zero rows on all four tables, even though real rows exist', async () => {
+    it('a query with no tenant context and no bypass sees zero rows on any table, even though real rows exist', async () => {
       const cases = await restrictedDataSource.getRepository(LoanCase).find();
       const evidence = await restrictedDataSource
         .getRepository(EvidenceFact)
@@ -288,58 +376,87 @@ describeOrSkip(
       const transitions = await restrictedDataSource
         .getRepository(ConditionTransition)
         .find();
+      const conditions = await restrictedDataSource
+        .getRepository(LoanCondition)
+        .find();
+      const agentRuns = await restrictedDataSource
+        .getRepository(AgentRun)
+        .find();
+      const toolAttempts = await restrictedDataSource
+        .getRepository(ToolAttempt)
+        .find();
 
       expect(cases).toHaveLength(0);
       expect(evidence).toHaveLength(0);
       expect(outbox).toHaveLength(0);
       expect(transitions).toHaveLength(0);
+      expect(conditions).toHaveLength(0);
+      expect(agentRuns).toHaveLength(0);
+      expect(toolAttempts).toHaveLength(0);
     });
 
-    it("tenant A's context sees only tenant A's rows on loan_cases/evidence_facts/outbox_events", async () => {
-      // Sequential, not Promise.all: these three queries share one
+    it("tenant A's context sees only tenant A's rows everywhere", async () => {
+      // Sequential, not Promise.all: these queries share one
       // transaction's single connection, and node-postgres itself warns
       // that overlapping (non-awaited-in-order) queries on one client is
       // deprecated and risks result-set confusion between them.
-      const { cases, evidence, outbox } = await runInTenantContext(
+      const result = await runInTenantContext(
         restrictedDataSource,
         tenantA,
         async (manager) => ({
           cases: await manager.getRepository(LoanCase).find(),
           evidence: await manager.getRepository(EvidenceFact).find(),
           outbox: await manager.getRepository(OutboxEvent).find(),
+          conditions: await manager.getRepository(LoanCondition).find(),
+          agentRuns: await manager.getRepository(AgentRun).find(),
         }),
       );
 
-      expect(cases.map((c) => c.id)).toEqual([caseA.id]);
-      expect(evidence.map((e) => e.id)).toEqual([evidenceFactA.id]);
-      expect(outbox.map((e) => e.id)).toEqual([outboxEventA.id]);
+      expect(result.cases.map((c) => c.id)).toEqual([caseA.id]);
+      expect(result.evidence.map((e) => e.id)).toEqual([evidenceFactA.id]);
+      expect(result.outbox.map((e) => e.id)).toEqual([outboxEventA.id]);
+      expect(result.conditions.map((c) => c.id)).toEqual([loanConditionA.id]);
+      expect(result.agentRuns.map((r) => r.id)).toEqual([agentRunA.id]);
     });
 
-    it("tenant B's context sees only tenant B's case, never tenant A's — including tenant A's evidence/outbox rows", async () => {
-      const { cases, evidence, outbox } = await runInTenantContext(
+    it("tenant B's context sees only tenant B's rows, never tenant A's", async () => {
+      const result = await runInTenantContext(
         restrictedDataSource,
         tenantB,
         async (manager) => ({
           cases: await manager.getRepository(LoanCase).find(),
           evidence: await manager.getRepository(EvidenceFact).find(),
           outbox: await manager.getRepository(OutboxEvent).find(),
+          conditions: await manager.getRepository(LoanCondition).find(),
+          agentRuns: await manager.getRepository(AgentRun).find(),
         }),
       );
 
-      expect(cases.map((c) => c.id)).toEqual([caseB.id]);
-      expect(evidence).toHaveLength(0);
-      expect(outbox).toHaveLength(0);
+      expect(result.cases.map((c) => c.id)).toEqual([caseB.id]);
+      expect(result.evidence).toHaveLength(0);
+      expect(result.outbox).toHaveLength(0);
+      expect(result.conditions.map((c) => c.id)).toEqual([loanConditionB.id]);
+      expect(result.agentRuns.map((r) => r.id)).toEqual([agentRunB.id]);
     });
 
-    it("a direct lookup by id for a different tenant's case returns nothing, even though the row exists", async () => {
-      const found = await runInTenantContext(
+    it("a direct lookup by id for a different tenant's case or condition returns nothing, even though the row exists", async () => {
+      const foundCase = await runInTenantContext(
         restrictedDataSource,
         tenantB,
         (manager) =>
           manager.getRepository(LoanCase).findOneBy({ id: caseA.id }),
       );
+      const foundCondition = await runInTenantContext(
+        restrictedDataSource,
+        tenantB,
+        (manager) =>
+          manager
+            .getRepository(LoanCondition)
+            .findOneBy({ id: loanConditionA.id }),
+      );
 
-      expect(found).toBeNull();
+      expect(foundCase).toBeNull();
+      expect(foundCondition).toBeNull();
     });
 
     it("an UPDATE against a different tenant's case affects zero rows rather than erroring or succeeding silently", async () => {
@@ -383,54 +500,84 @@ describeOrSkip(
       ).rejects.toThrow();
     });
 
-    it("condition_transitions' join-based policy isolates by tenant even though the table has no tenantId column of its own", async () => {
+    it("condition_transitions' and tool_attempts' join-based policies both isolate by tenant, even though neither table has a tenantId column of its own", async () => {
       const asTenantA = await runInTenantContext(
         restrictedDataSource,
         tenantA,
-        (manager) => manager.getRepository(ConditionTransition).find(),
+        async (manager) => ({
+          transitions: await manager.getRepository(ConditionTransition).find(),
+          toolAttempts: await manager.getRepository(ToolAttempt).find(),
+        }),
       );
       const asTenantB = await runInTenantContext(
         restrictedDataSource,
         tenantB,
-        (manager) => manager.getRepository(ConditionTransition).find(),
+        async (manager) => ({
+          transitions: await manager.getRepository(ConditionTransition).find(),
+          toolAttempts: await manager.getRepository(ToolAttempt).find(),
+        }),
       );
 
-      expect(asTenantA.map((t) => t.id)).toEqual([conditionTransitionA.id]);
-      expect(asTenantB.map((t) => t.id)).toEqual([conditionTransitionB.id]);
+      expect(asTenantA.transitions.map((t) => t.id)).toEqual([
+        conditionTransitionA.id,
+      ]);
+      expect(asTenantB.transitions.map((t) => t.id)).toEqual([
+        conditionTransitionB.id,
+      ]);
+      expect(asTenantA.toolAttempts.map((t) => t.id)).toEqual([
+        toolAttemptA.id,
+      ]);
+      expect(asTenantB.toolAttempts.map((t) => t.id)).toEqual([
+        toolAttemptB.id,
+      ]);
     });
 
-    it("bypass mode sees every tenant's rows on all four tables at once — the one explicit, audited exception", async () => {
-      const { cases, evidence, outbox, transitions } = await runWithRlsBypass(
+    it("bypass mode sees every tenant's rows on every table at once — the one explicit, audited exception", async () => {
+      const result = await runWithRlsBypass(
         restrictedDataSource,
         async (manager) => ({
           cases: await manager.getRepository(LoanCase).find(),
           evidence: await manager.getRepository(EvidenceFact).find(),
           outbox: await manager.getRepository(OutboxEvent).find(),
           transitions: await manager.getRepository(ConditionTransition).find(),
+          conditions: await manager.getRepository(LoanCondition).find(),
+          agentRuns: await manager.getRepository(AgentRun).find(),
+          toolAttempts: await manager.getRepository(ToolAttempt).find(),
         }),
       );
 
       // Inclusion, not exact equality: bypass mode genuinely sees every
       // tenant's rows, so in a real shared scratch database (this same
-      // one may already hold real outbox_events rows from an earlier
-      // e2e-test run, for example) it can legitimately return more than
-      // just this spec's own fixtures. What actually matters is that
-      // bypass mode sees *at least* this spec's own rows across every
-      // tenant at once — the exact-equality checks above (tenant A's/
-      // tenant B's own context) are what prove isolation; this proves
-      // the one audited exception can still see across it.
-      const caseIds = cases.map((c) => c.id);
-      const evidenceIds = evidence.map((e) => e.id);
-      const outboxIds = outbox.map((e) => e.id);
-      const transitionIds = transitions.map((t) => t.id);
-      expect(caseIds).toEqual(expect.arrayContaining([caseA.id, caseB.id]));
-      expect(evidenceIds).toEqual(expect.arrayContaining([evidenceFactA.id]));
-      expect(outboxIds).toEqual(expect.arrayContaining([outboxEventA.id]));
-      expect(transitionIds).toEqual(
+      // one may already hold real rows from an earlier e2e-test run, for
+      // example) it can legitimately return more than just this spec's
+      // own fixtures. What actually matters is that bypass mode sees *at
+      // least* this spec's own rows across every tenant at once — the
+      // exact-equality checks above (tenant A's/tenant B's own context)
+      // are what prove isolation; this proves the one audited exception
+      // can still see across it.
+      expect(result.cases.map((c) => c.id)).toEqual(
+        expect.arrayContaining([caseA.id, caseB.id]),
+      );
+      expect(result.evidence.map((e) => e.id)).toEqual(
+        expect.arrayContaining([evidenceFactA.id]),
+      );
+      expect(result.outbox.map((e) => e.id)).toEqual(
+        expect.arrayContaining([outboxEventA.id]),
+      );
+      expect(result.transitions.map((t) => t.id)).toEqual(
         expect.arrayContaining([
           conditionTransitionA.id,
           conditionTransitionB.id,
         ]),
+      );
+      expect(result.conditions.map((c) => c.id)).toEqual(
+        expect.arrayContaining([loanConditionA.id, loanConditionB.id]),
+      );
+      expect(result.agentRuns.map((r) => r.id)).toEqual(
+        expect.arrayContaining([agentRunA.id, agentRunB.id]),
+      );
+      expect(result.toolAttempts.map((t) => t.id)).toEqual(
+        expect.arrayContaining([toolAttemptA.id, toolAttemptB.id]),
       );
     });
   },
