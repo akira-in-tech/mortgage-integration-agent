@@ -463,6 +463,34 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(conditions).toHaveLength(0);
   });
 
+  it("evaluateConditions routes to REVIEW_REQUIRED when the tenant's own agentRunStepBudgetOverride (M5-021) is exhausted before the run can finish — proving the override is genuinely read, not just stored", async () => {
+    // Shared tenant across this whole file — set, then always reset,
+    // even on assertion failure, so this test can never leak a budget
+    // override into any test that runs after it.
+    await dataSource
+      .getRepository(Tenant)
+      .update({ id: tenantId }, { agentRunStepBudgetOverride: 1 });
+    try {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await seedEvidence(caseId, 9000);
+
+      const result = await activities.evaluateConditions({
+        tenantId,
+        caseId,
+        workflowRunId: 'activities-spec-run-budget-exhausted',
+      });
+
+      expect(result).toEqual({
+        outcome: 'REVIEW_REQUIRED',
+        reviewReason: expect.stringContaining('StepBudget'),
+      });
+    } finally {
+      await dataSource
+        .getRepository(Tenant)
+        .update({ id: tenantId }, { agentRunStepBudgetOverride: null });
+    }
+  });
+
   it('evaluateConditions with an income discrepancy opens a condition from the resolved rule and writes condition.opened + workflow_run.waiting_for_review atomically', async () => {
     // statedMonthlyIncome=12000 vs verified 9000 -> 25% difference, over
     // the seeded rule's 10% threshold.

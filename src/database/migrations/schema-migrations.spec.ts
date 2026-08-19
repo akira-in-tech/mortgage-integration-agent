@@ -190,6 +190,65 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the tenant agent budget override migration without touching other tables', async () => {
+    // No new table — only two columns on tenants.
+    const beforeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'tenants'
+           AND column_name IN ('agentRunStepBudgetOverride', 'agentRunDurationBudgetMsOverride')
+         ORDER BY column_name`,
+      );
+    expect(beforeColumns).toEqual([
+      { column_name: 'agentRunDurationBudgetMsOverride' },
+      { column_name: 'agentRunStepBudgetOverride' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'audit_events',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'data_disposition_tasks',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'tenants'
+           AND column_name IN ('agentRunStepBudgetOverride', 'agentRunDurationBudgetMsOverride')`,
+      );
+    expect(afterColumns).toEqual([]);
+  });
+
   it('reverts the audit events migration without touching other tables', async () => {
     // Adds a real table plus a trigger/function pair (append-only
     // enforcement) — DROP TABLE trivially takes its policy/RLS state

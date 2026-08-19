@@ -8,6 +8,7 @@ import {
   SyntheticProviderRejectionError,
 } from '../integrations/synthetic-provider-failures';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
+import { Tenant } from '../database/entities/tenant.entity';
 import {
   EvidenceFact,
   EvidenceType,
@@ -80,8 +81,25 @@ interface EvaluateConditionsResult {
 // startToCloseTimeout, so the Agent run's own trusted deadline can never
 // legitimately outlive Temporal's activity timeout — the two budgets
 // don't compete, the inner one is strictly the tighter constraint.
-const AGENT_RUN_STEP_BUDGET = 10;
-const AGENT_RUN_DURATION_BUDGET_MS = 20_000;
+// Platform defaults — a tenant's own Tenant.agentRunStepBudgetOverride/
+// agentRunDurationBudgetMsOverride (M5-021) take precedence when set;
+// see resolveAgentRunBudget() below.
+const DEFAULT_AGENT_RUN_STEP_BUDGET = 10;
+const DEFAULT_AGENT_RUN_DURATION_BUDGET_MS = 20_000;
+
+/** M5-021: Section 20 M5's "tenant-owned... budget configuration" — see `Tenant`'s own class comment for the full scope reasoning. A tenant with no override (the common case) behaves identically to every tenant before this migration. */
+function resolveAgentRunBudget(tenant: Tenant): {
+  stepBudget: number;
+  durationBudgetMs: number;
+} {
+  return {
+    stepBudget:
+      tenant.agentRunStepBudgetOverride ?? DEFAULT_AGENT_RUN_STEP_BUDGET,
+    durationBudgetMs:
+      tenant.agentRunDurationBudgetMsOverride ??
+      DEFAULT_AGENT_RUN_DURATION_BUDGET_MS,
+  };
+}
 const AGENT_ALLOWED_TOOLS = [
   'check_case_completeness',
   'evaluate_policy',
@@ -399,9 +417,18 @@ export function createCaseConditionsActivities(
       // fail.
       const consentStatus = await consentService.getStatus(tenantId, caseId);
 
+      // M5-021: tenants isn't RLS-protected (it's the tenant boundary
+      // other tables' policies reference, not data scoped to one) — a
+      // plain read, no runInTenantContext needed, matching every other
+      // reference to this table in this codebase.
+      const tenant = await dataSource
+        .getRepository(Tenant)
+        .findOneByOrFail({ id: tenantId });
+      const { stepBudget, durationBudgetMs } = resolveAgentRunBudget(tenant);
+
       const now = new Date();
       const runDeadlineAt = new Date(
-        now.getTime() + AGENT_RUN_DURATION_BUDGET_MS,
+        now.getTime() + durationBudgetMs,
       ).toISOString();
       const initialState: LendingOperationsAgentState = {
         tenantId,
@@ -414,8 +441,8 @@ export function createCaseConditionsActivities(
         openConditions: [],
         providerHealth: [],
         attemptedTools: [],
-        remainingStepBudget: AGENT_RUN_STEP_BUDGET,
-        remainingDurationBudgetMs: AGENT_RUN_DURATION_BUDGET_MS,
+        remainingStepBudget: stepBudget,
+        remainingDurationBudgetMs: durationBudgetMs,
         remainingTokenBudget: 0, // this graph makes no model calls
         remainingProviderCallBudget: 0, // its tools make no outbound provider calls; evidence was already fetched by earlier workflow activities
         budgetCurrency: 'USD',
@@ -429,8 +456,8 @@ export function createCaseConditionsActivities(
         initialState,
         allowedTools: AGENT_ALLOWED_TOOLS,
         budget: {
-          stepBudget: AGENT_RUN_STEP_BUDGET,
-          durationBudgetMs: AGENT_RUN_DURATION_BUDGET_MS,
+          stepBudget,
+          durationBudgetMs,
           tokenBudget: 0,
           providerCallBudget: 0,
           costBudgetMinorUnits: 0,

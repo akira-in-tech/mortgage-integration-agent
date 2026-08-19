@@ -7017,3 +7017,96 @@ APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 This closes the "全力推進" plan laid out after M5-017 (RBAC → `communication_approvals` RLS → `audit_events` → negative-authorization suite). What remains of M5's charter scope — OIDC/FAPI 2.0, real field/object encryption, `legal_holds`, tenant-owned provider/policy/webhook/communication-template/budget configuration, and provider-promotion governance — are each genuinely separate, larger subsystems the user's own direction already scoped out of this push. Not started; awaiting direction on whether/when to take any of them on.
+
+## M5-021: Tenant-owned Agent run budget configuration (Section 20 M5)
+
+### Status
+
+Implemented and verified, including a real live proof under `NODE_ENV=production` that the same scenario produces a genuinely different outcome depending on a tenant's own configuration. Closes the one concrete, currently-real gap among Section 20 M5's "tenant-owned provider, policy, webhook, communication-template, and budget configuration" scope line — chosen after checking all five domains directly rather than guessing: `communication_templates`/`webhook_endpoints` are already genuinely tenant-owned (their own `tenantId` column); the policy catalog is deliberately shared infrastructure with no `tenantId` at all (Section 10's own jurisdiction-scoped model, not a gap); the provider registry has nothing to differentiate per tenant since only `SIMULATOR` mode exists anywhere. Budget was the one domain with a real, currently-hardcoded-global value (`AGENT_RUN_STEP_BUDGET = 10`, `AGENT_RUN_DURATION_BUDGET_MS = 20_000`) to actually override.
+
+### Acceptance criterion
+
+`Tenant` gains two nullable override columns; null means "use the platform default," so every tenant's Agent runs behave identically to before this migration until an operator explicitly sets one. `case-conditions.activities.ts`'s `evaluateConditions` now resolves the real budget from the tenant's own row on every run, not a fixed constant. Proven with a real unit test setting a tenant's `agentRunStepBudgetOverride` to `1` and confirming a real Agent run — which needs several real tool calls to complete normally — genuinely exhausts budget and routes to `REVIEW_REQUIRED` instead, and a live run: the *same* tenant, the *same* income-discrepancy scenario, completed normally under the platform default and then, after setting the override via the new `npm run set-tenant-agent-budget` script, routed to real `MANUAL_REVIEW` with the exact real reason `[BUDGET_OR_DEADLINE_EXHAUSTED] remainingStepBudget exhausted` in the case's own timeline.
+
+### Implementation
+
+- `src/database/entities/tenant.entity.ts` — `agentRunStepBudgetOverride`/`agentRunDurationBudgetMsOverride` (nullable `integer`), with a class comment recording the full "why budget, not the other four domains" investigation so it isn't silently re-litigated later.
+- `src/database/migrations/1787176668622-TenantAgentBudgetOverride.ts` (new) — two nullable columns, no backfill needed (null already means "default").
+- `src/workflows/case-conditions.activities.ts` — `AGENT_RUN_STEP_BUDGET`/`AGENT_RUN_DURATION_BUDGET_MS` renamed to `DEFAULT_...` (still the fallback); a new `resolveAgentRunBudget(tenant)` reads the two override columns with `??` fallback to those defaults. `evaluateConditions` fetches the tenant row (a plain, unwrapped read — `tenants` itself is never RLS-protected, it's the boundary other tables' policies reference, not data scoped to one) and uses the resolved values everywhere the old constants were used directly (`initialState`'s own `remainingStepBudget`/`remainingDurationBudgetMs`, `runDeadlineAt`'s computation, and the `budget` object passed to `agentRuntime.run()`).
+- `src/set-tenant-agent-budget.ts` (new) — `npm run set-tenant-agent-budget -- <tenantId> <stepBudget|clear> <durationBudgetMs|clear>`, matching `create-api-client.ts`'s own established script-not-endpoint convention (an endpoint that could change a tenant's own operational limits needs its own authorization story M5-017's two-role RBAC doesn't cover).
+
+### Affected files
+
+- `src/database/entities/tenant.entity.ts`, `src/database/migrations/1787176668622-TenantAgentBudgetOverride.ts` (new), `schema-migrations.spec.ts`
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`)
+- `src/set-tenant-agent-budget.ts` (new), `package.json`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Investigated all five named configuration domains before picking one, rather than assuming budget was the obvious choice.** `communication_templates`/`webhook_endpoints` turned out to already be genuinely tenant-owned; the policy catalog and provider registry turned out to have no real per-tenant value to differentiate yet given this codebase's current real capabilities (a shared jurisdiction-scoped policy library by design; only `SIMULATOR` provider mode exists anywhere). Recorded directly in `Tenant`'s own class comment so a future reader doesn't have to redo this investigation from scratch, the same courtesy M5-017's own from-scratch M5 audit wished a prior slice had left behind.
+- **Two plain nullable columns on `Tenant`, not a new `TenantConfiguration` table.** Only one configuration dimension (two related fields) is real and closable today; a dedicated table would be premature abstraction for two nullable integers with a clear, simple owner already available. Revisit if/when a second real per-tenant configuration dimension emerges.
+- **A script, not a REST endpoint, to set the override** — matching `create-api-client.ts`'s own precedent exactly: an endpoint that could change a tenant's own operational limits is an administrative action, and this codebase's own RBAC (M5-017) deliberately has only `PARTNER`/`REVIEWER`, no admin tier with charter grounding to justify one yet.
+- **Resolved via a plain unwrapped read of `tenants`, not `runInTenantContext`.** `tenants` has never been RLS-protected in this codebase (it's the boundary other tables' own policies reference via a foreign `tenantId`, not itself scoped to a tenant) — wrapping this specific read would add ceremony with no real effect, and would be inconsistent with every other place in this codebase that already reads `Tenant` directly (`evaluation-report.ts`, this same file's own tenant lookups elsewhere).
+
+### Errors and fixes
+
+- **None functionally** — the new unit test (setting `agentRunStepBudgetOverride: 1` and confirming `REVIEW_REQUIRED` with a reason containing `StepBudget`) passed on the first run, and the live proof matched the predicted exact reason string (`[BUDGET_OR_DEADLINE_EXHAUSTED] remainingStepBudget exhausted`) without needing any adjustment.
+- **`schema-migrations.spec.ts`'s cumulative revert chain needed its now-routine new first step** — column-only shape (matching `ApiClientRole`'s own precedent), checking `information_schema.columns` on `tenants` before/after `undoLastMigration()`.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5021verify, ports 5443/7234), fully migrated:
+  npx jest case-conditions.activities --runInBand
+    15/15 passed (including the new budget-exhaustion test, first try)
+
+  npx jest schema-migrations.spec.ts --runInBand
+    34/34 passed (after inserting the missing revert-chain step)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    75 suites / 550 tests passed (548 -> 550: +1 new unit test, +1 new
+    schema-migrations.spec.ts revert-chain test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 31 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real npm run quickstart against a fresh tenant with the
+  platform default budget — completed normally end to end
+  (READY_FOR_UNDERWRITING), the same income-discrepancy scenario this
+  whole session has used as its own baseline throughout
+
+  ran npm run set-tenant-agent-budget against that SAME tenant
+  (stepBudget=1) — then drove a new case through the identical
+  scenario via real curl calls: case status became MANUAL_REVIEW, and
+  the real case timeline showed the exact real reason
+  "[BUDGET_OR_DEADLINE_EXHAUSTED] remainingStepBudget exhausted" after
+  only one real tool call (check_case_completeness) — proving the
+  override is genuinely read and genuinely changes real system
+  behavior, not just stored inertly
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real gap in Section 9.7's own "trusted Agent deadlines plus versioned, atomic budget usage" safety-control language: before this slice, every tenant shared the identical, hardcoded budget with no way for an operator to tighten it for a specific tenant (e.g. a new or lower-trust integration) without a code change and redeploy.
+- No new secrets, no new external dependencies, no behavioral change for any tenant that never sets an override — the platform default stays byte-identical to what every tenant already had.
+
+### Known gaps
+
+- **Only step/duration budgets are tenant-configurable** — token/provider-call/cost budgets stay hardcoded at `0` (this graph makes no model calls and its tools make no outbound provider calls of their own), matching the same honest-null pattern already established for those dimensions elsewhere in this codebase.
+- **No REST surface to read or set the override** — script-only, matching `create-api-client.ts`'s own precedent (see Decisions).
+- The other four Section 20 M5 configuration domains (provider/policy/webhook/communication-template) remain as investigated: two already genuinely tenant-owned, two architecturally not tenant-specific given this codebase's current real capabilities.
+- Every other M5 Known gap (OIDC/FAPI 2.0, encrypted field/object boundaries, `legal_holds`, provider-promotion governance) is unchanged by this slice.
+
+### Next safe step
+
+Of M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance), each is a genuinely separate, larger subsystem — the user's own "M5 剩餘的大項目" direction named these as the remaining pool without picking one yet. `legal_holds` was considered next but set aside for now: like `communication_approvals` before M5-018, it would have no real caller to wire it to (no deletion/anonymization workflow exists yet for a hold to actually gate) — the same "isolated table with no real consumer" shape this session has consistently avoided building. Awaiting direction on which of the remaining large items to take on next.
