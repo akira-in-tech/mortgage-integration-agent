@@ -11,7 +11,9 @@ import { WebhookEndpointService } from './webhook-endpoint.service';
 import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { WebhookEndpoint } from '../database/entities/webhook-endpoint.entity';
 import { ApiKeyGuard } from '../auth/api-key.guard';
-import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
+import { CurrentAuth } from '../auth/current-auth.decorator';
+import { AuthContext } from '../auth/auth-context';
+import { AuditEventService } from '../audit/audit-event.service';
 
 /**
  * Section 15.1's `POST /v1/webhook-endpoints`. `ApiKeyGuard` (Section 20
@@ -27,7 +29,10 @@ import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
 @UseGuards(ApiKeyGuard)
 @Controller('v1/webhook-endpoints')
 export class WebhookEndpointsController {
-  constructor(private readonly endpointService: WebhookEndpointService) {}
+  constructor(
+    private readonly endpointService: WebhookEndpointService,
+    private readonly auditEventService: AuditEventService,
+  ) {}
 
   @ApiOperation({
     operationId: 'createWebhookEndpoint',
@@ -44,9 +49,19 @@ export class WebhookEndpointsController {
   })
   @Post()
   async create(
-    @AuthTenantId() tenantId: string,
+    @CurrentAuth() auth: AuthContext,
     @Body() dto: CreateWebhookEndpointDto,
   ): Promise<WebhookEndpoint> {
-    return this.endpointService.create(tenantId, dto);
+    const endpoint = await this.endpointService.create(auth.tenantId, dto);
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: auth.apiClientId,
+      action: 'WEBHOOK_ENDPOINT_CREATED',
+      resourceType: 'webhook_endpoint',
+      resourceId: endpoint.id,
+      correlationId: auth.correlationId,
+      metadata: { targetUrl: dto.targetUrl, eventTypes: dto.eventTypes },
+    });
+    return endpoint;
   }
 }

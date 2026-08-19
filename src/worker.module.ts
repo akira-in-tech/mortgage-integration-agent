@@ -9,6 +9,7 @@ import { validateEnvironment } from './config/env.validation';
 import { createTypeOrmOptions } from './database/typeorm-options.factory';
 import { ConsentModule } from './consent/consent.module';
 import { CommunicationsModule } from './communications/communications.module';
+import { AuditModule } from './audit/audit.module';
 
 /**
  * Deliberately not AppModule: the worker process never serves HTTP or
@@ -35,6 +36,7 @@ import { CommunicationsModule } from './communications/communications.module';
     PolicyModule,
     WebhooksModule,
     ConsentModule,
+    AuditModule,
     CommunicationsModule,
   ],
 })

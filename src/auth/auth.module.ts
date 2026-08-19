@@ -4,6 +4,7 @@ import { ApiClient } from '../database/entities/api-client.entity';
 import { ApiClientService } from './api-client.service';
 import { ApiKeyGuard } from './api-key.guard';
 import { RoleGuard } from './role.guard';
+import { AuditModule } from '../audit/audit.module';
 
 /**
  * `@Global()`: `ApiKeyGuard` is applied via `@UseGuards(ApiKeyGuard)` (a
@@ -17,7 +18,7 @@ import { RoleGuard } from './role.guard';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([ApiClient])],
+  imports: [TypeOrmModule.forFeature([ApiClient]), AuditModule],
   providers: [ApiClientService, ApiKeyGuard, RoleGuard],
   exports: [ApiClientService, ApiKeyGuard, RoleGuard],
 })

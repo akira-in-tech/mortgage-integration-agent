@@ -6820,3 +6820,123 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Continuing "全力推進": a lightweight but real `audit_events` table next, wired into the security-relevant mutation points this whole M5 series has built (RBAC rejections, consent revocation, review decisions, webhook registration) — then a consolidated negative-authorization/threat-model suite covering Section 16.4's scenarios that are honestly testable without inventing a subsystem this codebase doesn't have. OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.
+
+## M5-019: `audit_events` — a real, append-only security-history table (Section 14.1)
+
+### Status
+
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role exercising all five wired audit sources at once. Closes Section 14.1's `audit_events` ("Append-only actor, action, resource, and security history") and moves Section 20 M5's own exit evidence ("every material mutation records actor, tenant, resource, correlation, and reason provenance") from zero real support to five real, wired call sites. Continuing the user's "全力推進" direction from M5-017/M5-018.
+
+### Acceptance criterion
+
+A new `audit_events` table (RLS-protected from creation, matching `ConsentRecords`/`DataDispositionTasks`) records real events from five distinct security-relevant call sites: RBAC rejections (`RoleGuard`), review decisions (`submitReview`), consent grant/revoke (`submitConsentAction`), webhook endpoint registration (`createWebhookEndpoint`), and protected-communication approval (`CommunicationApprovalService.approve()`). Every event carries `tenantId`, `actorId`, `action`, `resourceType`/`resourceId`, and — for every call site that has a real HTTP request behind it — a `correlationId` (a fresh id `ApiKeyGuard` mints per authenticated request, the only real per-request trace unit this codebase has). The table is genuinely append-only: a database trigger rejects `UPDATE`/`DELETE` outright, unconditionally, even under `app.bypass_rls`, not just "no service happens to call `.update()`." A failure to *write* an audit event never blocks the action it describes (logged and swallowed, not rethrown). Proven with 11 unit/tenant-isolation tests, a direct `psql` proof that the trigger rejects mutation even as the Postgres superuser, and a real live run: all five real audit sources fired in one pass against a real API + Temporal worker under the restricted role, producing five real rows with the exact expected shape, followed by a direct cross-tenant RLS proof on the real data.
+
+### Implementation
+
+- `src/database/entities/audit-event.entity.ts` (new) — `tenantId`, `actorId`, `action`, `resourceType`, `resourceId`, `correlationId`, `reason`, `metadata` (jsonb), `createdAt`. No `updatedAt` — nothing ever mutates a row.
+- `src/database/migrations/1787172327597-AuditEvents.ts` (new) — table + RLS (new-table shape) plus a `reject_audit_event_mutation()` PL/pgSQL function and a `BEFORE UPDATE OR DELETE` trigger, the one piece with no precedent elsewhere in this series: append-only is a real, load-bearing property for an audit trail specifically, not a nice-to-have.
+- `src/audit/audit-event.service.ts` (new) — `AuditEventService.record()`, always its own short `runInTenantContext` transaction (never sharing one with the action being audited — deliberate: an `RBAC_REJECTED` event has no successful transaction to piggyback on in the first place, so every call site uses the same standalone shape for consistency). Catches and logs any write failure rather than rethrowing — an audit-logging bug must never become a new way to break the action it was only supposed to observe.
+- `src/audit/audit.module.ts` (new) — `@Global()`, registered in both `app.module.ts` and `worker.module.ts` (the latter needed too: `CommunicationsModule`, which now depends on `AuditEventService` via `CommunicationApprovalService`, is imported by the Temporal worker bootstrap as well).
+- `src/auth/auth-context.ts`/`api-key.guard.ts` — `AuthContext` gains `correlationId`, a fresh `randomUUID()` minted per authenticated request — the only real per-request trace unit available; no distributed tracing system exists to integrate with instead.
+- `src/auth/current-auth.decorator.ts` (new) — `@CurrentAuth()`, returning the full `AuthContext` (vs. `AuthTenantId()`'s narrower `tenantId`-only case) — needed at the three controller call sites below for `apiClientId`/`correlationId`.
+- `src/auth/role.guard.ts` — records an `RBAC_REJECTED` event (action, `resourceType='route'`, `resourceId` = `Controller.method`) before throwing; `canActivate` is now `async` (was sync) to allow the write.
+- `src/cases/cases.controller.ts` — `submitReview` and `submitConsentAction` each record an audit event after their underlying service call succeeds, using `@CurrentAuth()` for `apiClientId`/`correlationId` and each DTO's own `actorId`/`reason` where available.
+- `src/webhooks/webhook-endpoints.controller.ts` — `create` records `WEBHOOK_ENDPOINT_CREATED` with the real endpoint id and `targetUrl`/`eventTypes` in `metadata`.
+- `src/communications/communication-approval.service.ts` — `approve()` records `COMMUNICATION_APPROVED` after its own transaction commits; `correlationId` stays honestly null here (no HTTP request context reaches this service — it still has no real caller, per M5-018).
+- Explicit controller-level wiring, not an interceptor — this codebase has no interceptors anywhere else, and four call sites didn't justify introducing the abstraction.
+
+### Affected files
+
+- `src/database/entities/audit-event.entity.ts` (new), `src/database/migrations/1787172327597-AuditEvents.ts` (new), `schema-migrations.spec.ts`
+- `src/audit/audit-event.service.ts` (+`.spec.ts`, new), `audit.module.ts` (new), `audit-event-tenant-isolation.spec.ts` (new)
+- `src/auth/auth-context.ts`, `api-key.guard.ts` (+`.spec.ts`), `current-auth.decorator.ts` (new), `role.guard.ts` (+`.spec.ts`), `auth.module.ts`
+- `src/cases/cases.controller.ts` (+`.spec.ts`), `cases.module.ts`
+- `src/webhooks/webhook-endpoints.controller.ts`, `webhooks.module.ts`
+- `src/communications/communication-approval.service.ts`, `communication-message.service.spec.ts`, `communication-delivery.service.spec.ts`, `communications.module.ts`
+- `src/app.module.ts`, `src/worker.module.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Append-only enforced by a database trigger, not just application convention.** Every other "nobody calls .update()" guarantee in this codebase is a code-review-time property; for an audit trail specifically, Section 14.1's own word "append-only" is load-bearing enough to deserve a real, unconditional database-level guarantee — verified directly with `psql` as the Postgres superuser (bypasses RLS entirely) and the trigger still rejected both `UPDATE` and `DELETE`.
+- **Unconditional, even under `app.bypass_rls`.** Every other RLS policy in this codebase treats that flag as a routine, frequently-used escape hatch for legitimate cross-tenant system operations. Audit history is different: allowing bypass-mode deletion would quietly reopen exactly the "can this row ever be removed" question append-only is supposed to close. A real future retention-driven purge needs its own explicit mechanism (e.g., a migration that temporarily drops the trigger) — a named, not-yet-built, Known gap, not a silent carve-out through an existing flag.
+- **Standalone transaction at every call site, not shared with the audited action's own transaction.** `RBAC_REJECTED` has no successful action to share a transaction with in the first place — the whole point is recording a rejected attempt. Rather than two different integration shapes (share-when-possible, standalone-otherwise), every call site uses the same standalone shape, which is also the more correct semantics for an audit trail generally: a write failure to the primary resource and a write failure to the audit log are different failure modes that shouldn't be coupled.
+- **Explicit controller-level calls, not an interceptor.** This codebase has never used a NestJS interceptor anywhere; four call sites (three controller methods, one service method) didn't justify introducing a new abstraction pattern just to DRY up a small amount of repetition, matching this codebase's own consistently explicit style over framework magic.
+- **Failures to write an audit event are logged and swallowed, not rethrown.** An audit-logging bug must never become a new way for this codebase's own instrumentation to break a case creation, a consent revocation, or a reviewer decision that would otherwise have succeeded — the action being described is always more important than the fact of describing it.
+- **Only five call sites wired, not every mutation in the codebase.** A blanket instrumentation pass across every service method would be a much larger, riskier change with unclear incremental value; the five chosen are exactly the security-relevant actions this whole M5 series has itself built or hardened (authorization, consent, human review, external configuration, protected communication) — a representative cross-section, not an attempt to claim full mutation coverage the charter's own exit evidence doesn't actually require in one slice.
+
+### Errors and fixes
+
+- **`src/cases/cases.controller.spec.ts` broke** — a pre-existing unit spec (not an e2e spec) that constructs `CasesController` directly with a mocked `CasesService` and calls `controller.submitReview(TENANT_ID, 'case-1', reviewDto)`, passing a plain tenantId string matching the *old* `@AuthTenantId()` signature. `submitReview`'s first parameter is now `@CurrentAuth() auth: AuthContext` (a full object), so the call broke with `Cannot read properties of undefined (reading 'record')` — the controller tried to call `this.auditEventService.record(...)` on an unconstructed second dependency the spec's own `new CasesController(casesService as never)` never supplied. Fixed by adding a mocked `AuditEventService` to the spec's own constructor call and updating the `submitReview` test to pass a full `AuthContext` fixture, plus a new assertion that the resulting audit event carries the right shape.
+- **`schema-migrations.spec.ts`'s cumulative revert chain needed one more new first step**, the same now-routine maintenance cost every migration-adding slice in this series has hit — new-table shape (`DROP TABLE` takes RLS with it), plus one extra check that `reject_audit_event_mutation()` is actually gone after revert (the migration's own `down()` explicitly drops it, not implied by `DROP TABLE` alone).
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5019verify, ports 5443/7234), fully migrated:
+  Direct psql, as the Postgres superuser (mortgage role): INSERT
+  succeeded; UPDATE and DELETE against the same row both rejected with
+  "audit_events is append-only: UPDATE/DELETE is not permitted" —
+  proven before writing a single test, not just asserted by one
+
+  npx jest api-key.guard role.guard communication --runInBand
+    8 suites / 53 tests passed
+
+  npx jest audit-event --runInBand
+    2 suites / 11 tests passed (audit-event.service.spec.ts,
+    audit-event-tenant-isolation.spec.ts)
+
+  npx jest schema-migrations.spec.ts --runInBand
+    33/33 passed (after inserting the missing revert-chain step)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    first run: 1 failure (cases.controller.spec.ts, see Errors and
+    fixes) — after the fix: 75 suites / 548 tests passed (535 -> 548:
+    +2 new suites, +13 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 28 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real npm run quickstart (review decision via the REVIEWER
+  credential), then against the same tenant: a PARTNER token's
+  rejected /reviews attempt (RBAC_REJECTED), a real webhook endpoint
+  registration, a real consent revocation, and a real communication
+  approval (via a one-off script, since no REST endpoint exists) — all
+  five real audit sources fired in one pass
+
+  queried audit_events directly against Postgres as mortgage: five
+  real rows, exact expected actions/resourceTypes/actorIds, every
+  HTTP-originated event carrying a real correlationId, the service-
+  originated COMMUNICATION_APPROVED event correctly and honestly null
+
+  queried audit_events as mortgage_app under real/fabricated tenant
+  contexts: the real tenant's session saw all 5 real rows; a
+  fabricated other-tenant session saw zero rows despite the data
+  existing
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Moves Section 20 M5's own exit evidence ("every material mutation records actor, tenant, resource, correlation, and reason provenance") from zero real support to five real, verified call sites — a genuine security-history capability where none existed before this slice.
+- Append-only is a real database-level guarantee, not an application-layer promise a future bug could silently violate.
+- No new secrets, no new external dependencies. One extra short transaction per audited action; a write failure never blocks the action itself (logged and swallowed).
+
+### Known gaps
+
+- **Not every mutation in the codebase is audited** — five representative, security-relevant call sites, not a blanket instrumentation pass (see Decisions).
+- **No retention/purge mechanism** — the append-only trigger has no carve-out for one yet; a real future retention policy needs its own explicit mechanism.
+- **No read surface** — `audit_events` has no GraphQL/REST query endpoint yet; Section 15.2's own "audit... history" surface remains unbuilt, matching the same M6 UI-milestone scoping this whole series has already applied to `data_disposition_tasks`.
+- Every other M5 Known gap (RBAC's own remaining scope, encrypted field/object boundaries, `legal_holds`, tenant-owned configuration, provider-promotion governance, consolidated negative-authorization suite) is unchanged by this slice.
+
+### Next safe step
+
+Continuing "全力推進": a consolidated negative-authorization/threat-model suite next, covering Section 16.4's scenarios that are honestly testable without inventing a subsystem this codebase doesn't have (several already have scattered coverage across this whole series' own tenant-isolation specs — this slice would consolidate and name them, then add real coverage for the gaps that are actually closable now, including the RBAC/audit-event mechanisms this and M5-017 just built). OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.

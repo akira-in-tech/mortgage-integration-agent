@@ -78,7 +78,30 @@ describeOrSkip('ApiKeyGuard', () => {
       tenantId,
       apiClientId: client.id,
       role: 'PARTNER',
+      correlationId: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      ),
     });
+  });
+
+  it('attaches a fresh correlationId to every request, even for the same client', async () => {
+    const tenantId = randomUUID();
+    const { client, token } = await apiClientService.create({
+      tenantId,
+      name: 'guard-spec-correlation-client',
+    });
+    clientIds.push(client.id);
+
+    const first = contextFor(`Bearer ${token}`);
+    await guard.canActivate(first.context);
+    const second = contextFor(`Bearer ${token}`);
+    await guard.canActivate(second.context);
+
+    expect(first.request.authContext?.correlationId).toBeTruthy();
+    expect(second.request.authContext?.correlationId).toBeTruthy();
+    expect(first.request.authContext?.correlationId).not.toBe(
+      second.request.authContext?.correlationId,
+    );
   });
 
   it('attaches a REVIEWER role (M5-017) when the client was minted with one', async () => {

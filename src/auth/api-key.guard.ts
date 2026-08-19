@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Request } from 'express';
+import { randomUUID } from 'node:crypto';
 import { ApiClient } from '../database/entities/api-client.entity';
 import { ApiClientStatus } from '../database/enums/api-client.enum';
 import { verifyApiClientSecret } from './api-client-secret';
@@ -65,6 +66,7 @@ export class ApiKeyGuard implements CanActivate {
       tenantId: client.tenantId,
       apiClientId: client.id,
       role: client.role,
+      correlationId: randomUUID(),
     };
     return true;
   }

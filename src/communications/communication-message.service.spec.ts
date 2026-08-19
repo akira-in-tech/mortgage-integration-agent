@@ -9,8 +9,10 @@ import {
   CommunicationMessageStatus,
   CommunicationTemplateStatus,
 } from '../database/enums/communication.enum';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { CommunicationMessageService } from './communication-message.service';
 import { CommunicationApprovalService } from './communication-approval.service';
+import { AuditEventService } from '../audit/audit-event.service';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
@@ -34,12 +36,16 @@ describeOrSkip(
           CommunicationTemplate,
           CommunicationMessage,
           CommunicationApproval,
+          AuditEvent,
         ],
       });
       await dataSource.initialize();
 
       messageService = new CommunicationMessageService(dataSource);
-      approvalService = new CommunicationApprovalService(dataSource);
+      approvalService = new CommunicationApprovalService(
+        dataSource,
+        new AuditEventService(dataSource),
+      );
 
       const templateRepo = dataSource.getRepository(CommunicationTemplate);
       const template = await templateRepo.save(

@@ -40,7 +40,10 @@ import { ApiKeyGuard } from '../auth/api-key.guard';
 import { RoleGuard } from '../auth/role.guard';
 import { RequireRole } from '../auth/require-role.decorator';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
+import { CurrentAuth } from '../auth/current-auth.decorator';
+import { AuthContext } from '../auth/auth-context';
 import { ApiClientRole } from '../database/enums/api-client.enum';
+import { AuditEventService } from '../audit/audit-event.service';
 
 /**
  * M2 exit-evidence surface (Section 15.1, M2 scope: "REST workflow-start
@@ -65,7 +68,10 @@ import { ApiClientRole } from '../database/enums/api-client.enum';
 @UseGuards(ApiKeyGuard)
 @Controller('v1/loan-cases')
 export class CasesController {
-  constructor(private readonly casesService: CasesService) {}
+  constructor(
+    private readonly casesService: CasesService,
+    private readonly auditEventService: AuditEventService,
+  ) {}
 
   @ApiOperation({
     operationId: 'createCase',
@@ -217,11 +223,21 @@ export class CasesController {
   @UseGuards(RoleGuard)
   @RequireRole(ApiClientRole.REVIEWER)
   async submitReview(
-    @AuthTenantId() tenantId: string,
+    @CurrentAuth() auth: AuthContext,
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Body() dto: ReviewDto,
   ): Promise<void> {
-    await this.casesService.submitReview(tenantId, caseId, dto);
+    await this.casesService.submitReview(auth.tenantId, caseId, dto);
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: dto.actorId,
+      action: `REVIEW_${dto.reviewType}`,
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: dto.reason ?? null,
+      metadata: { apiClientId: auth.apiClientId, resolution: dto.resolution },
+    });
   }
 
   // Section 15.1's `POST .../consents` (M5-005). Synchronous, unlike
@@ -243,10 +259,25 @@ export class CasesController {
   })
   @Post(':caseId/consents')
   async submitConsentAction(
-    @AuthTenantId() tenantId: string,
+    @CurrentAuth() auth: AuthContext,
     @Param('caseId', ParseUUIDPipe) caseId: string,
     @Body() dto: ConsentActionDto,
   ): Promise<ConsentRecord> {
-    return this.casesService.submitConsentAction(tenantId, caseId, dto);
+    const record = await this.casesService.submitConsentAction(
+      auth.tenantId,
+      caseId,
+      dto,
+    );
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: auth.apiClientId,
+      action: `CONSENT_${dto.action}`,
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: dto.reason ?? null,
+      metadata: { consentRecordId: record.id },
+    });
+    return record;
   }
 }

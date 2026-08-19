@@ -11,8 +11,10 @@ import {
 } from '../database/enums/communication.enum';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { verifyOutboxSignature } from '../database/outbox/outbox-signer';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { CommunicationMessageService } from './communication-message.service';
 import { CommunicationApprovalService } from './communication-approval.service';
+import { AuditEventService } from '../audit/audit-event.service';
 import { CommunicationDeliverySimulator } from './communication-delivery-simulator';
 import { CommunicationDeliveryService } from './communication-delivery.service';
 
@@ -38,12 +40,16 @@ describeOrSkip('CommunicationDeliveryService', () => {
         CommunicationMessage,
         CommunicationApproval,
         OutboxEvent,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
 
     messageService = new CommunicationMessageService(dataSource);
-    approvalService = new CommunicationApprovalService(dataSource);
+    approvalService = new CommunicationApprovalService(
+      dataSource,
+      new AuditEventService(dataSource),
+    );
     const configService = {
       get: jest.fn().mockReturnValue(OUTBOX_SIGNING_SECRET),
     };

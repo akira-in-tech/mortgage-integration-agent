@@ -3,6 +3,8 @@ import { BadRequestException } from '@nestjs/common';
 import { CasesController } from './cases.controller';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CreateCaseDto } from './dto/create-case.dto';
+import { ApiClientRole } from '../database/enums/api-client.enum';
+import { AuthContext } from '../auth/auth-context';
 
 describe('CasesController', () => {
   let casesService: {
@@ -13,9 +15,16 @@ describe('CasesController', () => {
     submitReview: jest.Mock;
     getTimeline: jest.Mock;
   };
+  let auditEventService: { record: jest.Mock };
   let controller: CasesController;
 
   const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+  const AUTH: AuthContext = {
+    tenantId: TENANT_ID,
+    apiClientId: 'client-1',
+    role: ApiClientRole.REVIEWER,
+    correlationId: 'correlation-1',
+  };
 
   // No tenantId — Section 20 M5: the request body never carries a tenant
   // field to get right or wrong; ApiKeyGuard/AuthTenantId() supplies it.
@@ -36,7 +45,11 @@ describe('CasesController', () => {
       submitReview: jest.fn(),
       getTimeline: jest.fn(),
     };
-    controller = new CasesController(casesService as never);
+    auditEventService = { record: jest.fn().mockResolvedValue(undefined) };
+    controller = new CasesController(
+      casesService as never,
+      auditEventService as never,
+    );
   });
 
   describe('create', () => {
@@ -96,17 +109,27 @@ describe('CasesController', () => {
       );
     });
 
-    it('submitReview delegates to CasesService.submitReview with the authenticated tenantId', async () => {
+    it('submitReview delegates to CasesService.submitReview with the authenticated tenantId, then records a REVIEW_CONDITION_RESOLUTION audit event (M5-019)', async () => {
       const reviewDto = {
         reviewType: 'CONDITION_RESOLUTION' as const,
         actorId: 'reviewer-1',
         resolution: 'SATISFIED' as const,
       };
-      await controller.submitReview(TENANT_ID, 'case-1', reviewDto);
+      await controller.submitReview(AUTH, 'case-1', reviewDto);
       expect(casesService.submitReview).toHaveBeenCalledWith(
         TENANT_ID,
         'case-1',
         reviewDto,
+      );
+      expect(auditEventService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          actorId: 'reviewer-1',
+          action: 'REVIEW_CONDITION_RESOLUTION',
+          resourceType: 'loan_case',
+          resourceId: 'case-1',
+          correlationId: AUTH.correlationId,
+        }),
       );
     });
 

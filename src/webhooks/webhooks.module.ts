@@ -9,6 +9,7 @@ import { WebhookDeliveryService } from './webhook-delivery.service';
 import { WebhookDispatchService } from './webhook-dispatch.service';
 import { WebhookEndpointsController } from './webhook-endpoints.controller';
 import { WebhookDeliveriesController } from './webhook-deliveries.controller';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { WebhookDeliveriesController } from './webhook-deliveries.controller';
       OutboxEvent,
       ApiClient,
     ]),
+    AuditModule,
   ],
   controllers: [WebhookEndpointsController, WebhookDeliveriesController],
   providers: [

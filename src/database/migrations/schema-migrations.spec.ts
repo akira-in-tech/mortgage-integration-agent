@@ -89,6 +89,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(await tableNames()).toEqual([
       'agent_runs',
       'api_clients',
+      'audit_events',
       'case_policy_bindings',
       'case_policy_snapshots',
       'communication_approvals',
@@ -187,6 +188,54 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the audit events migration without touching other tables', async () => {
+    // Adds a real table plus a trigger/function pair (append-only
+    // enforcement) — DROP TABLE trivially takes its policy/RLS state
+    // with it; the migration's own down() explicitly drops the trigger
+    // and function first, same as "reverts the consent records
+    // migration" below for a plain new-table migration.
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'data_disposition_tasks',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const remainingFunctions: Array<{ proname: string }> =
+      await scratchDataSource.query(
+        `SELECT proname FROM pg_proc WHERE proname = 'reject_audit_event_mutation'`,
+      );
+    expect(remainingFunctions).toEqual([]);
   });
 
   it('reverts the communication approval tenant isolation migration without touching other tables', async () => {

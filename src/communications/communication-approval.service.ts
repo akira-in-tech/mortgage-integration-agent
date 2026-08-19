@@ -8,6 +8,7 @@ import {
   CommunicationMessageStatus,
 } from '../database/enums/communication.enum';
 import { runInTenantContext } from '../database/tenant-context';
+import { AuditEventService } from '../audit/audit-event.service';
 
 /**
  * Section 6.4: "a human reviewer must approve the exact rendered
@@ -32,6 +33,7 @@ export class CommunicationApprovalService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly auditEventService: AuditEventService,
   ) {}
 
   async approve(
@@ -40,36 +42,55 @@ export class CommunicationApprovalService {
     actorId: string,
     reason?: string,
   ): Promise<CommunicationApproval> {
-    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
-      const messageRepository = manager.getRepository(CommunicationMessage);
-      const message = await messageRepository.findOneByOrFail({
-        id: communicationMessageId,
-      });
-      if (message.classification !== CommunicationClassification.PROTECTED) {
-        throw new BadRequestException(
-          `communication message ${communicationMessageId} is not PROTECTED — routine messages do not require this approval`,
-        );
-      }
-      if (message.status === CommunicationMessageStatus.APPROVED) {
-        throw new BadRequestException(
-          `communication message ${communicationMessageId} is already approved`,
-        );
-      }
+    const approval = await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      async (manager) => {
+        const messageRepository = manager.getRepository(CommunicationMessage);
+        const message = await messageRepository.findOneByOrFail({
+          id: communicationMessageId,
+        });
+        if (message.classification !== CommunicationClassification.PROTECTED) {
+          throw new BadRequestException(
+            `communication message ${communicationMessageId} is not PROTECTED — routine messages do not require this approval`,
+          );
+        }
+        if (message.status === CommunicationMessageStatus.APPROVED) {
+          throw new BadRequestException(
+            `communication message ${communicationMessageId} is already approved`,
+          );
+        }
 
-      const approvalRepository = manager.getRepository(CommunicationApproval);
-      const approval = await approvalRepository.save(
-        approvalRepository.create({
-          communicationMessageId,
-          actorId,
-          approvedRenderedContentHash: message.renderedContentHash,
-          reason: reason ?? null,
-        }),
-      );
-      await messageRepository.update(
-        { id: communicationMessageId },
-        { status: CommunicationMessageStatus.APPROVED },
-      );
-      return approval;
+        const approvalRepository = manager.getRepository(CommunicationApproval);
+        const savedApproval = await approvalRepository.save(
+          approvalRepository.create({
+            communicationMessageId,
+            actorId,
+            approvedRenderedContentHash: message.renderedContentHash,
+            reason: reason ?? null,
+          }),
+        );
+        await messageRepository.update(
+          { id: communicationMessageId },
+          { status: CommunicationMessageStatus.APPROVED },
+        );
+        return savedApproval;
+      },
+    );
+
+    // No HTTP request context reaches this service (no caller yet — see
+    // this service's own class comment), so correlationId stays null,
+    // the same honest-null pattern every other field with no real
+    // upstream source uses elsewhere in this codebase.
+    await this.auditEventService.record({
+      tenantId,
+      actorId,
+      action: 'COMMUNICATION_APPROVED',
+      resourceType: 'communication_message',
+      resourceId: communicationMessageId,
+      correlationId: null,
+      reason: reason ?? null,
     });
+    return approval;
   }
 }

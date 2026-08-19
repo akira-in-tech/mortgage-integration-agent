@@ -7,6 +7,7 @@ import { CommunicationMessageService } from './communication-message.service';
 import { CommunicationApprovalService } from './communication-approval.service';
 import { CommunicationDeliverySimulator } from './communication-delivery-simulator';
 import { CommunicationDeliveryService } from './communication-delivery.service';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { CommunicationDeliveryService } from './communication-delivery.service';
       CommunicationMessage,
       CommunicationApproval,
     ]),
+    AuditModule,
   ],
   providers: [
     CommunicationMessageService,
