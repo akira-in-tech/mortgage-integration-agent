@@ -14,6 +14,8 @@ import { LoanCase } from '../src/database/entities/loan-case.entity';
 import { ApiClient } from '../src/database/entities/api-client.entity';
 import { ApiClientService } from '../src/auth/api-client.service';
 import { ApiClientRole } from '../src/database/enums/api-client.enum';
+import { CommunicationMessageService } from '../src/communications/communication-message.service';
+import { CommunicationMessage } from '../src/database/entities/communication-message.entity';
 
 /**
  * Section 20 M5's own scope line: "threat-model tests and negative
@@ -120,7 +122,10 @@ import { ApiClientRole } from '../src/database/enums/api-client.enum';
  *   verification-result simulator, never handles real file bytes.
  * - unauthorized review override — COVERED (M5-017): `RoleGuard`
  *   requires `REVIEWER` role on `submitReview`, proven both by unit
- *   spec and a real e2e negative test.
+ *   spec and a real e2e negative test. Communication-message approval
+ *   (M5-022, Section 6.4) is gated the same way — a real e2e negative
+ *   test below, plus a real cross-tenant 404 proving RLS still hides an
+ *   unapproved message from another tenant's own REVIEWER credential.
  * - audit tampering — COVERED (M5-019): `audit_events`' own append-only
  *   database trigger, proven to reject `UPDATE`/`DELETE` even as the
  *   Postgres superuser under `app.bypass_rls`.
@@ -144,6 +149,8 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
   let tenantRepo: Repository<Tenant>;
   let caseRepo: Repository<LoanCase>;
   let apiClientRepo: Repository<ApiClient>;
+  let communicationMessageRepo: Repository<CommunicationMessage>;
+  let communicationMessageService: CommunicationMessageService;
   let apiClientService: ApiClientService;
   let tenantId: string;
   let authHeader: string;
@@ -167,6 +174,10 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
     tenantRepo = moduleRef.get(getRepositoryToken(Tenant));
     caseRepo = moduleRef.get(getRepositoryToken(LoanCase));
     apiClientRepo = moduleRef.get(getRepositoryToken(ApiClient));
+    communicationMessageRepo = moduleRef.get(
+      getRepositoryToken(CommunicationMessage),
+    );
+    communicationMessageService = moduleRef.get(CommunicationMessageService);
     apiClientService = moduleRef.get(ApiClientService);
 
     const tenant = await tenantRepo.save(
@@ -273,6 +284,84 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
       // a query-string tenantId is not read by anything.
       expect(fetched.status).toBe(200);
       expect(fetched.body.tenantId).toBe(tenantId);
+    });
+  });
+
+  describe('communication-message approval RBAC and cross-tenant isolation (M5-022)', () => {
+    let otherTenantId: string;
+    let otherReviewerToken: string;
+    const messageIds: string[] = [];
+
+    beforeAll(async () => {
+      const otherTenant = await tenantRepo.save(
+        tenantRepo.create({ name: 'Negative Authorization E2E Other Tenant' }),
+      );
+      otherTenantId = otherTenant.id;
+      const { client, token } = await apiClientService.create({
+        tenantId: otherTenantId,
+        name: 'neg-auth-e2e-other-tenant-reviewer',
+        role: ApiClientRole.REVIEWER,
+      });
+      apiClientIds.push(client.id);
+      otherReviewerToken = `Bearer ${token}`;
+    }, 30_000);
+
+    afterAll(async () => {
+      if (messageIds.length > 0) {
+        await communicationMessageRepo.delete(messageIds);
+      }
+      if (otherTenantId) {
+        await tenantRepo.delete({ id: otherTenantId });
+      }
+    }, 30_000);
+
+    async function draftProtectedMessage(): Promise<string> {
+      const message = await communicationMessageService.draft(
+        tenantId,
+        uuidv4(),
+        {
+          recipientRelationship: 'BORROWER',
+          channel: 'EMAIL',
+          locale: 'en-US',
+          variables: {},
+          freeformContent: 'Please clarify the discrepancy noted on your file.',
+          hasAttachments: false,
+        },
+      );
+      messageIds.push(message.id);
+      return message.id;
+    }
+
+    it('rejects a PARTNER-role client approving a PROTECTED communication message with 403', async () => {
+      const messageId = await draftProtectedMessage();
+      const res = await request(app.getHttpServer())
+        .post(
+          `/v1/loan-cases/some-case/communication-messages/${messageId}/approve`,
+        )
+        .set('Authorization', authHeader)
+        .send({ actorId: 'neg-auth-actor' });
+
+      expect(res.status).toBe(403);
+      const message = await communicationMessageRepo.findOneByOrFail({
+        id: messageId,
+      });
+      expect(message.status).toBe('AWAITING_APPROVAL');
+    });
+
+    it("404s for another tenant's own REVIEWER credential approving a message it cannot see (RLS)", async () => {
+      const messageId = await draftProtectedMessage();
+      const res = await request(app.getHttpServer())
+        .post(
+          `/v1/loan-cases/some-case/communication-messages/${messageId}/approve`,
+        )
+        .set('Authorization', otherReviewerToken)
+        .send({ actorId: 'neg-auth-actor-other-tenant' });
+
+      expect(res.status).toBe(404);
+      const message = await communicationMessageRepo.findOneByOrFail({
+        id: messageId,
+      });
+      expect(message.status).toBe('AWAITING_APPROVAL');
     });
   });
 });

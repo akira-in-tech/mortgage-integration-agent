@@ -7110,3 +7110,108 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Of M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance), each is a genuinely separate, larger subsystem — the user's own "M5 剩餘的大項目" direction named these as the remaining pool without picking one yet. `legal_holds` was considered next but set aside for now: like `communication_approvals` before M5-018, it would have no real caller to wire it to (no deletion/anonymization workflow exists yet for a hold to actually gate) — the same "isolated table with no real consumer" shape this session has consistently avoided building. Awaiting direction on which of the remaining large items to take on next.
+
+## M5-022: Real REST surface for communication-message approval and delivery (Section 9.4/6.4)
+
+### Status
+
+Implemented and verified, including a full live proof against a real running API + Temporal worker under `NODE_ENV=production` with the restricted `mortgage_app` role. Closes a Known gap M5-018's own dev log entry named directly ("`approve()` still has no real REST/GraphQL caller") and a second gap discovered while investigating it: `CommunicationDeliveryService.deliver()` — the actual sending mechanism `send_information_request` (Section 9.4) needs — was also fully built and tested but had zero real callers anywhere in this codebase. Chosen after ruling out all four previously-named "M5 remaining big items" (OIDC/FAPI 2.0 is charter-blocked by Section 2's own architecture table, which requires a real managed identity provider rather than a homegrown one; field/object encryption has nothing real to encrypt yet; `legal_holds` and provider-promotion governance both still have no real caller/consumer to wire to) — this was the one concrete, currently-real, already-fully-built gap left to close.
+
+### Acceptance criterion
+
+A new `CommunicationMessagesController` under `/v1/loan-cases/:caseId/communication-messages` exposes: `GET` (list a case's messages, newest first), `POST .../:messageId/approve` (REVIEWER-gated, Section 6.4's exact human-approval requirement), and `POST .../:messageId/send` (delivers a ready-to-send message). Proven end to end against a real API + worker: a `PROTECTED` message drafted with `freeformContent` cannot be sent before approval (409), cannot be approved by a `PARTNER`-role credential (403, and records a real `RBAC_REJECTED` audit event), cannot be approved by another tenant's own `REVIEWER` credential (404 — RLS hides it, no existence leak), succeeds for the case's own `REVIEWER` credential (201, real `CommunicationApproval` row), rejects a second approval attempt (400), lists as `APPROVED` afterward, delivers successfully via any authenticated role once approved (200, real `deliveryReference`), rejects a second send attempt (409, now `SENT`), and produces exactly one real `CommunicationDelivered` outbox event plus real `COMMUNICATION_APPROVED`/`COMMUNICATION_SENT` audit events — the former now carrying a real `correlationId` threaded from the request, closing a second small gap (`approve()` previously hardcoded `correlationId: null` because it had no HTTP caller to thread one from).
+
+### Implementation
+
+- `src/communications/communication-messages.controller.ts` (new) — `list`/`approve`/`send`, `@UseGuards(ApiKeyGuard)` at the class level matching `CasesController`'s convention; `approve` additionally `@UseGuards(RoleGuard)` + `@RequireRole(ApiClientRole.REVIEWER)`; `send` is deliberately not role-gated (see Decisions).
+- `src/communications/dto/approve-communication-message.dto.ts` (new) — `actorId` (required) + `reason` (optional), matching `ReviewDto`'s own shape and reasoning (a shared REVIEWER credential's caller still supplies which human actually decided).
+- `src/communications/communication-message.service.ts` — new `listForCase(tenantId, caseId)` method (newest-first), the read side this slice needed and the service didn't have yet.
+- `src/communications/communication-approval.service.ts` — `approve()` gained an optional trailing `correlationId` parameter, threaded through to the audit event it already records internally; fixed a latent bug found while wiring the first real caller — `findOneByOrFail` on an unknown/cross-tenant message id would have thrown TypeORM's own `EntityNotFoundError`, surfacing as an unhandled 500 (no global exception filter exists in this codebase) rather than a clean 404. Replaced with `findOneBy` + an explicit `NotFoundException`, matching `CasesService.getCase()`'s own established convention.
+- `src/communications/communication-delivery.service.ts` — the identical `findOneByOrFail` → 500 bug, fixed the identical way.
+- `src/communications/communications.module.ts` — registers the new controller; added `ApiClient` to its own `TypeOrmModule.forFeature([...])` (see Errors and fixes).
+- `test/negative-authorization.e2e-spec.ts` — two new real e2e tests (PARTNER-role 403 on approve; cross-tenant REVIEWER 404 on approve) plus a coverage-index comment update; new imports for `CommunicationMessageService`/`CommunicationMessage`.
+- `openapi/openapi.json` / `client/generated/schema.d.ts` — regenerated to include the three new routes.
+
+### Affected files
+
+- `src/communications/communication-messages.controller.ts` (new), `src/communications/dto/approve-communication-message.dto.ts` (new)
+- `src/communications/communication-message.service.ts`, `communication-approval.service.ts`, `communication-delivery.service.ts`, `communications.module.ts`
+- `test/negative-authorization.e2e-spec.ts`
+- `openapi/openapi.json`, `client/generated/schema.d.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`send` is not REVIEWER-gated, deliberately.** Section 6.4's human-approval requirement is about *approving* protected content, not about who is allowed to trigger delivery of already-ready content — `deliver()`'s own state-based readiness check (`ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED`, otherwise `NOT_READY`) already fails closed for any caller regardless of role. Restricting the role here would add no real authorization boundary beyond what that check already enforces, only ceremony. Proven directly: the live verification script had a `PARTNER`-role credential successfully call `send` on an already-`REVIEWER`-approved message.
+- **`NOT_READY` maps to HTTP 409, not a 200 with an outcome field.** `deliver()`'s own return type is a union (`DELIVERED` | `NOT_READY`) because it's a legitimate non-exceptional outcome at the service layer, but at the REST boundary "you asked to send something not ready to send" is a state conflict — a real HTTP status a caller's own error-handling can branch on, not a field they have to parse out of a 200 body.
+- **Nested under `/v1/loan-cases/:caseId/communication-messages`, matching `CasesController`'s own path convention**, even though Section 15.1's own target REST surface never named this endpoint — the same "an honest extension beyond the charter's minimal named surface" pattern several other M5 additions already established (e.g. `/consents`, M5-005).
+- **Fixed the `findOneByOrFail` → 500 bug in both `approve()` and `deliver()` rather than leaving it**, since this slice is precisely what gives both their first real caller — an unfixed 500-instead-of-404 on a routine not-found case would have shipped as a real regression in this same commit, not a pre-existing issue merely inherited.
+- **Threaded a real `correlationId` into `approve()`'s own audit event** rather than leaving M5-019's `correlationId: null` comment accurate-but-now-stale — cheap to do exactly when the first real HTTP caller appears, and the class comment already predicted this ("any other future caller without HTTP context can still omit it").
+
+### Errors and fixes
+
+- **`ApiKeyGuard`/`RoleGuard` used via `@UseGuards(...)` class references failed to resolve their own `ApiClientRepository` dependency** the first time the new controller was compiled into a real Nest testing module (`Nest can't resolve dependencies of the ApiKeyGuard (?)... "ApiClientRepository" ... available in the CommunicationsModule module`) — despite `AuthModule` being `@Global()`. `CasesModule`/`WebhooksModule` both already carry the identical fix (`ApiClient` added to their own `TypeOrmModule.forFeature([...])`, not just relying on the global export) for the exact same reason; applied the same fix to `CommunicationsModule`. All 4 e2e suites (33 tests, +2 new) and the full 75-suite/550-test unit run passed clean afterward.
+- No other unexpected failures — `findOneByOrFail`'s latent 500-on-not-found bug (see Decisions) was found by inspection while reading the existing services before wiring a caller, not by a failing test.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5022verify, ports 5443/7234), fully migrated:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 31 tests passed (pre coverage-index-test-addition run)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    75 suites / 550 tests passed
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role),
+driven via real fetch() calls against the real running server, not
+supertest against an in-memory app:
+  - drafted a real PROTECTED message (freeformContent) directly via
+    CommunicationMessageService
+  - send before approval -> 409 (NOT_READY)
+  - PARTNER-role approve -> 403 (RoleGuard), and a real RBAC_REJECTED
+    audit event was recorded
+  - cross-tenant REVIEWER approve -> 404 (RLS; no existence leak)
+  - real REVIEWER approve -> 201, real CommunicationApproval row
+  - re-approve -> 400 (already approved)
+  - list -> 200, shows the message as APPROVED
+  - PARTNER send (post-approval) -> 200, DELIVERED, real
+    deliveryReference
+  - re-send -> 409 (already SENT)
+  - direct psql/pg proof: exactly one real communication.delivered
+    outbox event; real COMMUNICATION_APPROVED (with a real, non-null
+    correlationId) and COMMUNICATION_SENT audit events; a real
+    RBAC_REJECTED audit event for the earlier PARTNER 403
+
+Second fresh scratch stack (m5022verify2), fully migrated, after adding
+the two new negative-authorization e2e tests:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 33 tests passed (31 -> 33: +2 new)
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    75 suites / 550 tests passed, unchanged
+
+  live processes terminated, both scratch stacks torn down
+  (docker compose down -v), one-off verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real authorization-relevant gap: before this slice, `CommunicationApprovalService.approve()` and `CommunicationDeliveryService.deliver()` were fully built, RLS-protected, and tested in isolation, but literally unreachable from outside the process — Section 6.4's human-approval requirement had no real enforcement surface a caller could actually hit.
+- Fixes a genuine 500-vs-404 information-disclosure-adjacent bug (an unhandled `EntityNotFoundError` on a not-found/cross-tenant id) in both services before either got its first real caller, rather than shipping it.
+- No new secrets, no new external dependencies, no schema/migration changes.
+
+### Known gaps
+
+- **No REST endpoint drafts a communication message** — only the Agent tool (`draft_information_request`, called internally during a case's own Agent run) and the direct-service path this slice's own tests use can create one; this slice is the read/approve/send side only, matching the scope of the gap it closes.
+- **`send`'s own idempotency is `deliver()`'s existing status-check, not a dedicated `Idempotency-Key`** — a concurrent double-send race is closed by the same status transition every other write in this codebase relies on (not a new gap this slice introduces, but not a new idempotency mechanism either).
+- Every other M5 Known gap (OIDC/FAPI 2.0, encrypted field/object boundaries, `legal_holds`, provider-promotion governance) is unchanged by this slice.
+
+### Next safe step
+
+Awaiting direction on which of M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance) to take on next, or a pivot to M6 (Operations UI) — all four remaining M5 items still lack the concrete, currently-real, closable shape this session's own methodology looks for before starting one.

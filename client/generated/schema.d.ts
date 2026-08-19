@@ -155,6 +155,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/loan-cases/{caseId}/communication-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a case's communication messages */
+        get: operations["listCommunicationMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a PROTECTED communication message for delivery */
+        post: operations["approveCommunicationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deliver a ready-to-send communication message */
+        post: operations["sendCommunicationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/webhook-endpoints": {
         parameters: {
             query?: never;
@@ -275,6 +326,12 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        CommunicationMessage: Record<string, never>;
+        ApproveCommunicationMessageDto: {
+            actorId: string;
+            reason?: string;
+        };
+        CommunicationApproval: Record<string, never>;
         CreateWebhookEndpointDto: {
             /**
              * @description Where signed delivery attempts are POSTed.
@@ -631,6 +688,130 @@ export interface operations {
             };
             /** @description No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listCommunicationMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunicationMessage"][];
+                };
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approveCommunicationMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: string;
+                caseId: unknown;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveCommunicationMessageDto"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunicationApproval"];
+                };
+            };
+            /** @description The message is not PROTECTED, or is already approved. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The authenticated API client does not have the REVIEWER role (Section 6.3/6.4, M5-017). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No communication message with this id owned by the authenticated tenant. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sendCommunicationMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: string;
+                caseId: unknown;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivered. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No communication message with this id owned by the authenticated tenant. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The message is not yet ready to send (ROUTINE+DRAFTED or PROTECTED+APPROVED only). */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

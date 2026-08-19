@@ -370,6 +370,163 @@
         ]
       }
     },
+    "/v1/loan-cases/{caseId}/communication-messages": {
+      "get": {
+        "operationId": "listCommunicationMessages",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommunicationMessage"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List a case's communication messages",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/approve": {
+      "post": {
+        "operationId": "approveCommunicationMessage",
+        "parameters": [
+          {
+            "name": "messageId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveCommunicationMessageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunicationApproval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The message is not PROTECTED, or is already approved."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "403": {
+            "description": "The authenticated API client does not have the REVIEWER role (Section 6.3/6.4, M5-017)."
+          },
+          "404": {
+            "description": "No communication message with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a PROTECTED communication message for delivery",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/send": {
+      "post": {
+        "operationId": "sendCommunicationMessage",
+        "parameters": [
+          {
+            "name": "messageId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivered."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No communication message with this id owned by the authenticated tenant."
+          },
+          "409": {
+            "description": "The message is not yet ready to send (ROUTINE+DRAFTED or PROTECTED+APPROVED only)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deliver a ready-to-send communication message",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
     "/v1/webhook-endpoints": {
       "post": {
         "operationId": "createWebhookEndpoint",
@@ -767,6 +924,32 @@
           "grantedAt",
           "createdAt"
         ]
+      },
+      "CommunicationMessage": {
+        "type": "object",
+        "properties": {}
+      },
+      "ApproveCommunicationMessageDto": {
+        "type": "object",
+        "properties": {
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "actorId"
+        ]
+      },
+      "CommunicationApproval": {
+        "type": "object",
+        "properties": {}
       },
       "CreateWebhookEndpointDto": {
         "type": "object",

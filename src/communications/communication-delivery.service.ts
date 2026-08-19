@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -52,7 +52,12 @@ export class CommunicationDeliveryService {
     return runInTenantContext(this.dataSource, tenantId, async (manager) => {
       const message = await manager
         .getRepository(CommunicationMessage)
-        .findOneByOrFail({ id: communicationMessageId, tenantId });
+        .findOneBy({ id: communicationMessageId, tenantId });
+      if (!message) {
+        throw new NotFoundException(
+          `communication message ${communicationMessageId} not found`,
+        );
+      }
 
       const ready =
         (message.classification === CommunicationClassification.ROUTINE &&

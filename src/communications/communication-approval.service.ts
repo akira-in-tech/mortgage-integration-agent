@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
@@ -27,6 +31,11 @@ import { AuditEventService } from '../audit/audit-event.service';
  * comments both name this), so there was no existing signature to
  * preserve or break — this is the first real design of it, not a
  * retrofit around a caller already depending on the old shape.
+ *
+ * `correlationId` is optional (M5-022): `CommunicationMessagesController`
+ * is this method's first real caller and passes its request's own
+ * `AuthContext.correlationId` through; any other future caller without
+ * HTTP context (e.g. a Temporal activity) can still omit it.
  */
 @Injectable()
 export class CommunicationApprovalService {
@@ -41,15 +50,22 @@ export class CommunicationApprovalService {
     communicationMessageId: string,
     actorId: string,
     reason?: string,
+    correlationId?: string | null,
   ): Promise<CommunicationApproval> {
     const approval = await runInTenantContext(
       this.dataSource,
       tenantId,
       async (manager) => {
         const messageRepository = manager.getRepository(CommunicationMessage);
-        const message = await messageRepository.findOneByOrFail({
+        const message = await messageRepository.findOneBy({
           id: communicationMessageId,
+          tenantId,
         });
+        if (!message) {
+          throw new NotFoundException(
+            `communication message ${communicationMessageId} not found`,
+          );
+        }
         if (message.classification !== CommunicationClassification.PROTECTED) {
           throw new BadRequestException(
             `communication message ${communicationMessageId} is not PROTECTED — routine messages do not require this approval`,
@@ -78,17 +94,13 @@ export class CommunicationApprovalService {
       },
     );
 
-    // No HTTP request context reaches this service (no caller yet — see
-    // this service's own class comment), so correlationId stays null,
-    // the same honest-null pattern every other field with no real
-    // upstream source uses elsewhere in this codebase.
     await this.auditEventService.record({
       tenantId,
       actorId,
       action: 'COMMUNICATION_APPROVED',
       resourceType: 'communication_message',
       resourceId: communicationMessageId,
-      correlationId: null,
+      correlationId: correlationId ?? null,
       reason: reason ?? null,
     });
     return approval;

@@ -16,11 +16,11 @@ import { runInTenantContext } from '../database/tenant-context';
  * Section 9.4's `draft_information_request` backing service: renders,
  * classifies (via `classifyCommunication`, a deterministic guard outside
  * the model), and persists — one `CommunicationMessage` row is the exact
- * record a human will approve if `PROTECTED`, or that a future real
- * channel would deliver as-is if `ROUTINE`. No delivery happens here or
- * anywhere in this codebase yet (Known gap — no real communication
- * channel exists, same status as real provider integrations generally,
- * Section 11). `communication_messages`/`communication_templates` carry
+ * record a human will approve if `PROTECTED`, or that is already
+ * ready-to-send if `ROUTINE`. Delivery itself is `CommunicationDelivery
+ * Service.deliver()`'s own job, not this service's (M5-022 gave it a
+ * real REST caller — `CommunicationMessagesController`). `communication_
+ * messages`/`communication_templates` carry
  * a real RLS policy (M5-009) — both the template read and the message
  * write below run inside one `runInTenantContext` transaction, not bare
  * repository calls.
@@ -71,5 +71,21 @@ export class CommunicationMessageService {
         }),
       );
     });
+  }
+
+  // M5-022's own read side — lets a reviewer see what's awaiting their
+  // approval, or confirm a message actually reached SENT, without a
+  // direct database query. Newest-first: the most likely thing a
+  // reviewer opening this list wants is whatever just landed.
+  async listForCase(
+    tenantId: string,
+    caseId: string,
+  ): Promise<CommunicationMessage[]> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(CommunicationMessage).find({
+        where: { tenantId, caseId },
+        order: { createdAt: 'DESC' },
+      }),
+    );
   }
 }
