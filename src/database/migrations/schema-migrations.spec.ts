@@ -188,6 +188,112 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the provider platform tenant isolation migration without touching other tables', async () => {
+    // No new table — only RLS state and a policy on
+    // provider_authorization_grants and provider_operation_intents.
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('provider_authorization_grants', 'provider_operation_intents')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'provider_authorization_grants',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'provider_operation_intents',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('provider_authorization_grants', 'provider_operation_intents')
+         ORDER BY tablename`,
+      );
+    expect(beforePolicies).toEqual([
+      {
+        tablename: 'provider_authorization_grants',
+        policyname: 'tenant_isolation',
+      },
+      {
+        tablename: 'provider_operation_intents',
+        policyname: 'tenant_isolation',
+      },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('provider_authorization_grants', 'provider_operation_intents')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'provider_authorization_grants',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'provider_operation_intents',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('provider_authorization_grants', 'provider_operation_intents')`,
+      );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the case policy tenant isolation migration without touching other tables', async () => {
     // No new table — only RLS state and a policy on case_policy_snapshots
     // and case_policy_bindings.

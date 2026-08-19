@@ -110,11 +110,11 @@ export async function dispatchProviderRequest<TFinding>(
     capability: params.capability,
   });
   if (!revalidation.valid) {
-    await deps.intentService.markFailedFinal(intent.id);
+    await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
     throw new ProviderRevalidationError(revalidation.reason);
   }
 
-  await deps.intentService.markDispatched(intent.id);
+  await deps.intentService.markDispatched(intent.tenantId, intent.id);
   try {
     const receipt = (await adapter.submit(
       params.request,
@@ -122,16 +122,16 @@ export async function dispatchProviderRequest<TFinding>(
       revalidation.grant,
       { tenantId: params.tenantId, caseId: params.caseId },
     )) as SynchronousProviderReceipt<unknown>;
-    await deps.intentService.markSucceeded(intent.id);
+    await deps.intentService.markSucceeded(intent.tenantId, intent.id);
     return adapter.normalize(receipt.payload, {
       tenantId: params.tenantId,
       caseId: params.caseId,
     }) as TFinding;
   } catch (error) {
     if (error instanceof SyntheticProviderRejectionError) {
-      await deps.intentService.markFailedFinal(intent.id);
+      await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
     } else if (error instanceof SyntheticProviderTimeoutError) {
-      await deps.intentService.markOutcomeUnknown(intent.id);
+      await deps.intentService.markOutcomeUnknown(intent.tenantId, intent.id);
     }
     throw error;
   }

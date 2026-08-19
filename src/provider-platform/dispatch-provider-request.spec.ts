@@ -56,12 +56,10 @@ describeOrSkip('dispatchProviderRequest', () => {
     registry.register(new IdentityVerificationAdapter(new IdentityService()));
     consentService = new ConsentService(dataSource);
     authorizationService = new ProviderAuthorizationService(
-      dataSource.getRepository(ProviderAuthorizationGrant),
+      dataSource,
       consentService,
     );
-    intentService = new ProviderOperationIntentService(
-      dataSource.getRepository(ProviderOperationIntent),
-    );
+    intentService = new ProviderOperationIntentService(dataSource);
   });
 
   afterAll(async () => {

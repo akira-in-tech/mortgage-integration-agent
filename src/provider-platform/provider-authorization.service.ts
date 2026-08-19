@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant as ProviderAuthorizationGrantEntity } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderCapabilityStatus } from '../database/enums/provider-platform.enum';
 import { ProviderAuthorizationGrant, ProviderCapability } from './types';
 import { ConsentService } from '../consent/consent.service';
+import { runInTenantContext } from '../database/tenant-context';
 
 export interface IssueGrantInput {
   tenantId: string;
@@ -59,30 +60,37 @@ function toGrantValue(
 @Injectable()
 export class ProviderAuthorizationService {
   constructor(
-    @InjectRepository(ProviderAuthorizationGrantEntity)
-    private readonly grantRepository: Repository<ProviderAuthorizationGrantEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     private readonly consentService: ConsentService,
   ) {}
 
   async issue(input: IssueGrantInput): Promise<ProviderAuthorizationGrant> {
     const now = new Date();
-    const entity = await this.grantRepository.save(
-      this.grantRepository.create({
-        tenantId: input.tenantId,
-        caseId: input.caseId,
-        borrowerSubjectId: input.borrowerSubjectId,
-        providerId: input.providerId,
-        capability: input.capability as unknown as ProviderCapabilityStatus,
-        purposeCode: input.purposeCode,
-        permittedDataClasses: input.permittedDataClasses,
-        permittedFields: null,
-        consentRecordIds: input.consentRecordIds ?? [],
-        permissiblePurposeDecisionId: null,
-        expiresAt: new Date(
-          now.getTime() + (input.ttlMs ?? DEFAULT_GRANT_TTL_MS),
-        ),
-        revokedAt: null,
-      }),
+    const entity = await runInTenantContext(
+      this.dataSource,
+      input.tenantId,
+      (manager) => {
+        const repo = manager.getRepository(ProviderAuthorizationGrantEntity);
+        return repo.save(
+          repo.create({
+            tenantId: input.tenantId,
+            caseId: input.caseId,
+            borrowerSubjectId: input.borrowerSubjectId,
+            providerId: input.providerId,
+            capability: input.capability as unknown as ProviderCapabilityStatus,
+            purposeCode: input.purposeCode,
+            permittedDataClasses: input.permittedDataClasses,
+            permittedFields: null,
+            consentRecordIds: input.consentRecordIds ?? [],
+            permissiblePurposeDecisionId: null,
+            expiresAt: new Date(
+              now.getTime() + (input.ttlMs ?? DEFAULT_GRANT_TTL_MS),
+            ),
+            revokedAt: null,
+          }),
+        );
+      },
     );
     return toGrantValue(entity);
   }
@@ -96,7 +104,14 @@ export class ProviderAuthorizationService {
       capability: ProviderCapability;
     },
   ): Promise<RevalidateResult> {
-    const entity = await this.grantRepository.findOneBy({ id: grantId });
+    const entity = await runInTenantContext(
+      this.dataSource,
+      expected.tenantId,
+      (manager) =>
+        manager
+          .getRepository(ProviderAuthorizationGrantEntity)
+          .findOneBy({ id: grantId }),
+    );
     if (!entity) {
       return {
         valid: false,
@@ -146,10 +161,12 @@ export class ProviderAuthorizationService {
     return { valid: true, grant: toGrantValue(entity) };
   }
 
-  async revoke(grantId: string): Promise<void> {
-    await this.grantRepository.update(
-      { id: grantId },
-      { revokedAt: new Date() },
+  /** No caller exists yet (Known gap, same shape as `ProviderOperationIntentService`'s undriven `RECONCILING`/`CANCELLED` states) — `tenantId` is still required, matching this service's every other method, so a future caller can never accidentally revoke another tenant's grant. */
+  async revoke(tenantId: string, grantId: string): Promise<void> {
+    await runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager
+        .getRepository(ProviderAuthorizationGrantEntity)
+        .update({ id: grantId }, { revokedAt: new Date() }),
     );
   }
 }

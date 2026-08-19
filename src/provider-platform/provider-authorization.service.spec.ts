@@ -36,10 +36,7 @@ describeOrSkip('ProviderAuthorizationService', () => {
     });
     await dataSource.initialize();
     consentService = new ConsentService(dataSource);
-    service = new ProviderAuthorizationService(
-      dataSource.getRepository(ProviderAuthorizationGrant),
-      consentService,
-    );
+    service = new ProviderAuthorizationService(dataSource, consentService);
   });
 
   afterAll(async () => {
@@ -167,7 +164,7 @@ describeOrSkip('ProviderAuthorizationService', () => {
     const grant = await service.issue(baseInput);
     grantIds.push(grant.id);
 
-    await service.revoke(grant.id);
+    await service.revoke(baseInput.tenantId, grant.id);
 
     const result = await service.revalidate(grant.id, {
       tenantId: baseInput.tenantId,

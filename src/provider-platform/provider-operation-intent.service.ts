@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { createHash, randomUUID } from 'node:crypto';
 import { ProviderOperationIntent as ProviderOperationIntentEntity } from '../database/entities/provider-operation-intent.entity';
 import {
@@ -12,6 +12,7 @@ import {
   ProviderEffectClass,
   ProviderOperationIntent,
 } from './types';
+import { runInTenantContext } from '../database/tenant-context';
 
 export interface PrepareIntentInput {
   tenantId: string;
@@ -53,55 +54,70 @@ function toIntentValue(
 @Injectable()
 export class ProviderOperationIntentService {
   constructor(
-    @InjectRepository(ProviderOperationIntentEntity)
-    private readonly intentRepository: Repository<ProviderOperationIntentEntity>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async prepare(input: PrepareIntentInput): Promise<ProviderOperationIntent> {
     const requestFingerprint = createHash('sha256')
       .update(JSON.stringify(input.requestPayloadForFingerprint))
       .digest('hex');
-    const entity = await this.intentRepository.save(
-      this.intentRepository.create({
-        tenantId: input.tenantId,
-        caseId: input.caseId,
-        providerId: input.providerId,
-        capability: input.capability as unknown as ProviderCapabilityStatus,
-        effectClass: input.effectClass,
-        requestFingerprint,
-        idempotencyKey: randomUUID(),
-        authorizationGrantId: input.authorizationGrantId,
-      }),
+    const entity = await runInTenantContext(
+      this.dataSource,
+      input.tenantId,
+      (manager) => {
+        const repo = manager.getRepository(ProviderOperationIntentEntity);
+        return repo.save(
+          repo.create({
+            tenantId: input.tenantId,
+            caseId: input.caseId,
+            providerId: input.providerId,
+            capability: input.capability as unknown as ProviderCapabilityStatus,
+            effectClass: input.effectClass,
+            requestFingerprint,
+            idempotencyKey: randomUUID(),
+            authorizationGrantId: input.authorizationGrantId,
+          }),
+        );
+      },
     );
     return toIntentValue(entity);
   }
 
-  async markDispatched(id: string): Promise<void> {
-    await this.intentRepository.update(
-      { id },
-      { state: ProviderOperationIntentStatus.DISPATCHED },
-    );
+  private setState(
+    tenantId: string,
+    id: string,
+    state: ProviderOperationIntentStatus,
+  ): Promise<void> {
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      await manager
+        .getRepository(ProviderOperationIntentEntity)
+        .update({ id }, { state });
+    });
   }
 
-  async markSucceeded(id: string): Promise<void> {
-    await this.intentRepository.update(
-      { id },
-      { state: ProviderOperationIntentStatus.SUCCEEDED },
-    );
+  async markDispatched(tenantId: string, id: string): Promise<void> {
+    await this.setState(tenantId, id, ProviderOperationIntentStatus.DISPATCHED);
   }
 
-  async markFailedFinal(id: string): Promise<void> {
-    await this.intentRepository.update(
-      { id },
-      { state: ProviderOperationIntentStatus.FAILED_FINAL },
+  async markSucceeded(tenantId: string, id: string): Promise<void> {
+    await this.setState(tenantId, id, ProviderOperationIntentStatus.SUCCEEDED);
+  }
+
+  async markFailedFinal(tenantId: string, id: string): Promise<void> {
+    await this.setState(
+      tenantId,
+      id,
+      ProviderOperationIntentStatus.FAILED_FINAL,
     );
   }
 
   /** Section 11.5: "After an ambiguous timeout, the state becomes OUTCOME_UNKNOWN." Our synthetic transient-failure injection is this codebase's own analog of that ambiguity. */
-  async markOutcomeUnknown(id: string): Promise<void> {
-    await this.intentRepository.update(
-      { id },
-      { state: ProviderOperationIntentStatus.OUTCOME_UNKNOWN },
+  async markOutcomeUnknown(tenantId: string, id: string): Promise<void> {
+    await this.setState(
+      tenantId,
+      id,
+      ProviderOperationIntentStatus.OUTCOME_UNKNOWN,
     );
   }
 }

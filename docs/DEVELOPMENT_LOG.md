@@ -6322,3 +6322,100 @@ development) + real Temporal worker against a separate scratch stack
 ### Next safe step
 
 The ten entirely-unbuilt Section 9.4 tools and the sandbox scenario library remain the largest not-yet-started items from the original "什麼沒做" follow-up. Building the approval-gated `send_information_request` path (a real Temporal signal/resume design) remains the natural next increment in the communications area. Not started; awaiting direction.
+
+## M5-014: PostgreSQL row-level security for `provider_authorization_grants`/`provider_operation_intents`
+
+### Status
+
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role. Extends M5-002 through M5-010's row-level-security pattern to Section 11.5's dispatch-path tables — chosen autonomously (per the user's "你決定下一步做什麼") as the highest-value remaining M5 item: unlike most of this series, this was a genuinely *live* gap, not a dormant one — `dispatchProviderRequest` exercises these two tables on every real income/credit/document/asset/identity fetch, and both services used plain `@InjectRepository` with zero tenant scoping until this slice.
+
+### Acceptance criterion
+
+A query against either table with no tenant context and no explicit bypass sees zero rows, even when real rows exist for other tenants. `ProviderAuthorizationService.revoke()` and `ProviderOperationIntentService`'s four `mark*()` methods — previously the only methods in the whole M5 series with *zero* tenant scoping in their SQL, not even an unenforced one — now genuinely cannot affect a different tenant's row even if a future caller passed the wrong id. The real dispatch path (`dispatchProviderRequest`, exercised on every evidence fetch) continues to work correctly end-to-end under the restricted `mortgage_app` role. Proven with 9 new tests (a dedicated `provider-platform-tenant-isolation.spec.ts`, mirroring `consent-tenant-isolation.spec.ts`'s own real-Postgres-as-`mortgage_app` pattern, plus one new `schema-migrations.spec.ts` cumulative-revert step), the full existing test suite passing unchanged elsewhere, and a real quickstart run through a real API + real Temporal worker under `NODE_ENV=production`, followed by direct Postgres queries proving cross-tenant isolation on the real rows it created.
+
+### Implementation
+
+- `src/database/migrations/1787161668146-ProviderPlatformTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior slice in this series. Both tables have direct `tenantId` columns, no join needed.
+- `src/provider-platform/provider-authorization.service.ts` — converted from `@InjectRepository(ProviderAuthorizationGrant)` to `@InjectDataSource()`, mirroring `ConsentService`'s own established shape (a per-method-call `runInTenantContext`, not one long-lived transaction spanning the external provider call). `issue()` and `revalidate()`'s read now run inside tenant context (`revalidate()` already took `expected.tenantId` as an argument — directly reusable). `revoke(grantId)` — previously the only method in this whole file with **zero** tenant scoping in its SQL — gained a required `tenantId` parameter; it has no real caller anywhere in this codebase yet (a pre-existing, honestly-documented gap, same shape as `ProviderOperationIntentService`'s undriven `RECONCILING`/`CANCELLED` states), so this is a signature-only change with no production call site to update.
+- `src/provider-platform/provider-operation-intent.service.ts` — same conversion. `prepare()` now runs in tenant context. `markDispatched`/`markSucceeded`/`markFailedFinal`/`markOutcomeUnknown` — all four previously bare `update({ id }, ...)` calls with no tenant predicate at all — now each require a `tenantId` parameter (a shared private `setState()` helper avoids repeating the `runInTenantContext` wrapping four times).
+- `src/provider-platform/dispatch-provider-request.ts` — its four `mark*()` call sites updated to pass `intent.tenantId` (the returned `ProviderOperationIntent` value already carries it — no new argument threading needed anywhere upstream).
+- `src/provider-platform/provider-platform-tenant-isolation.spec.ts` (new) — 9 tests: no-context-sees-zero, each tenant sees only its own grant/intent, a direct id lookup for another tenant's grant returns nothing, an `UPDATE` against another tenant's grant/intent (the exact query shape `revoke()`/`mark*()` now issue) affects zero rows without erroring, an `INSERT` claiming a different tenant than the session context is rejected by Postgres itself, and bypass mode sees everything.
+- `src/database/migrations/schema-migrations.spec.ts` — the file's own cumulative revert-chain test suite required one new step (inserted first, mirroring the file's own documented maintenance instruction: "grows... whenever a new migration is added"), since `undoLastMigration()` always reverts whichever migration is currently latest — without this addition, every subsequent revert-chain assertion silently checks the *wrong* migration's effects, one position off.
+- Six direct-construction call sites updated for the new `DataSource`-based constructors and the `mark*()`/`revoke()` signature changes: `evaluation-report.ts`, `case-conditions.activities.spec.ts`, `evaluation/runner.spec.ts`, `dispatch-provider-request.spec.ts`, `provider-authorization.service.spec.ts`, `provider-operation-intent.service.spec.ts`.
+
+### Affected files
+
+- `src/database/migrations/1787161668146-ProviderPlatformTenantIsolation.ts` (new)
+- `src/database/migrations/schema-migrations.spec.ts`
+- `src/provider-platform/provider-authorization.service.ts` (+`.spec.ts`), `provider-operation-intent.service.ts` (+`.spec.ts`), `dispatch-provider-request.ts` (+`.spec.ts`)
+- `src/provider-platform/provider-platform-tenant-isolation.spec.ts` (new)
+- `src/evaluation-report.ts`, `src/workflows/case-conditions.activities.spec.ts`, `src/evaluation/runner.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`communication_approvals` deliberately still out of scope**, for the exact reason M5-009's own migration comment already recorded: no `tenantId` column of its own (would need a join through `communication_messages`, unlike either table this slice touches), and its sole writer (`CommunicationApprovalService.approve()`) still has no real caller anywhere in this codebase to define what a threaded-through signature should look like — confirmed this is still true today (a fresh grep, not trusting the prior slice's note at face value, same methodology M5-007/M5-009 themselves used), not just assumed unchanged. Revisit together with the approval-gated `send_information_request` path.
+- **Multiple short transactions, not one long transaction spanning the external provider call.** `dispatchProviderRequest` interleaves grant/intent writes with a call to `adapter.submit()` — every adapter in this codebase is synthetic/in-process today, but wrapping the *entire* dispatch in one `runInTenantContext` would hold a Postgres transaction open across whatever a real future provider adapter's network call takes, a bad pattern regardless of whether today's synthetic adapters would ever expose it. Followed `ConsentService`'s own already-established shape instead: each service method opens its own short transaction, exactly where a write actually happens.
+- **`revalidate()`'s existing manual `entity.tenantId !== expected.tenantId` check was left in place, not removed as newly-redundant.** Once the read itself is tenant-scoped, that specific branch becomes unreachable *given a correctly-configured non-superuser role* — but this codebase's own `TypeOrmOptions` warning (`APP_DATABASE_URL is not set in production — falling back to DATABASE_URL... if superuser, RLS provides no real protection`) documents a real, not hypothetical, misconfiguration this check still catches. Kept as the same kind of defense-in-depth the codebase already explicitly reasons about elsewhere, not new speculative validation.
+- **`revoke(tenantId, grantId)`'s new `tenantId` parameter has no real caller to thread it from.** Added anyway, matching every other method's own convention, rather than leaving the method's SQL tenant-unscoped until some future caller shows up — the same reasoning `ProviderOperationIntentService`'s own doc comment already applies to its undriven `RECONCILING`/`CANCELLED` states: an honest, documented gap in what calls the method, not a gap in what the method itself enforces once called.
+
+### Errors and fixes
+
+- **The first full-suite run showed 27 failures, all in `schema-migrations.spec.ts`.** Root cause: that file's own cumulative revert-chain tests call `undoLastMigration()` in strict sequence, one call per test, each test titled after the specific migration it expects to be reverting — adding a new latest migration without adding a matching new first revert test shifts every subsequent test's `undoLastMigration()` call to actually revert the *previous* test's migration instead, one position off, cascading through all 27 remaining revert-chain tests. Exactly the maintenance cost the file's own top-of-file comment already documents ("grows... whenever a new migration is added"), not a real regression — fixed by inserting a new first revert test for this slice's own migration, after which the full chain (29 tests now) passed cleanly.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5014verify, ports 5443/7234), fully migrated:
+  npx jest schema-migrations.spec.ts --runInBand
+    first run: 1/28 passed, 27 failed (see Errors and fixes) — after
+    inserting the missing revert-chain test: 29/29 passed
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    69 suites / 509 tests passed (500 -> 509: +1 new suite
+    (provider-platform-tenant-isolation.spec.ts, 8 tests) +1 new
+    schema-migrations.spec.ts revert-chain test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real `npm run quickstart` script end-to-end: case creation,
+  workflow start, three real evidence fetches (income/credit/document —
+  each one a real dispatchProviderRequest call issuing a grant,
+  preparing an intent, revalidating, dispatching, and marking SUCCEEDED,
+  all now RLS-protected), a condition opened, Agent run, reviewer
+  resolution, workflow completed — the whole real dispatch path works
+  unchanged under the restricted role
+
+  queried provider_authorization_grants/provider_operation_intents
+  directly against Postgres as mortgage_app: the real tenant's own
+  session (SET LOCAL app.current_tenant_id) saw its real 3 grants / 3
+  SUCCEEDED intents; a fabricated other-tenant session saw zero rows
+  despite the data existing; no tenant context at all also saw zero
+  rows (fail closed); a superuser connection confirmed the real rows
+  actually exist
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a genuinely live gap, not a dormant one: `dispatchProviderRequest` is exercised on every real income/credit/document/asset/identity fetch this codebase performs — before this slice, a direct query against either table (a compromised or buggy internal caller, not just a hostile external one) had no database-layer tenant boundary at all.
+- `revoke()`/`mark*()` genuinely cannot affect a different tenant's row now, closing a real authorization gap that existed independent of RLS itself: those methods previously issued `UPDATE ... WHERE id = $1` with no tenant predicate whatsoever, relying entirely on the caller happening to pass the right id.
+- No new secrets, no new external dependencies, no performance concern beyond one more short transaction per grant/intent write — the same cost profile every other RLS-converted service in this series already has.
+
+### Known gaps
+
+- **`communication_approvals` remains out of scope** — see Decisions.
+- Every other M5 Known gap (RBAC, OIDC/FAPI 2.0, encrypted field/object boundaries, data-disposition workflow, `send_information_request`/`escalate_to_reviewer`/`check_policy_change_impact` unwired, sandbox scenario library) is unchanged by this slice.
+
+### Next safe step
+
+`communication_approvals` RLS, together with building the approval-gated `send_information_request` path that would finally give `CommunicationApprovalService.approve()` a real caller to define a `tenantId`-threaded signature for. RBAC and OIDC/FAPI 2.0 remain the largest untouched items in M5's own charter scope. Not started; awaiting direction.

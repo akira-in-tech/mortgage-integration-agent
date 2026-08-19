@@ -161,11 +161,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
     evaluationManifestService = new EvaluationManifestService(dataSource);
     consentService = new ConsentService(dataSource);
     providerAuthorizationService = new ProviderAuthorizationService(
-      dataSource.getRepository(ProviderAuthorizationGrant),
+      dataSource,
       consentService,
     );
     providerOperationIntentService = new ProviderOperationIntentService(
-      dataSource.getRepository(ProviderOperationIntent),
+      dataSource,
     );
     messageService = new CommunicationMessageService(dataSource);
 

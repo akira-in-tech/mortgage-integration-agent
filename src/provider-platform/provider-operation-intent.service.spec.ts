@@ -31,9 +31,7 @@ describeOrSkip('ProviderOperationIntentService', () => {
       entities: [ProviderOperationIntent],
     });
     await dataSource.initialize();
-    service = new ProviderOperationIntentService(
-      dataSource.getRepository(ProviderOperationIntent),
-    );
+    service = new ProviderOperationIntentService(dataSource);
   });
 
   afterAll(async () => {
@@ -90,22 +88,22 @@ describeOrSkip('ProviderOperationIntentService', () => {
 
     const dispatched = await service.prepare(baseInput);
     intentIds.push(dispatched.id);
-    await service.markDispatched(dispatched.id);
+    await service.markDispatched(baseInput.tenantId, dispatched.id);
     expect(await stateOf(dispatched.id)).toBe('DISPATCHED');
 
     const succeeded = await service.prepare(baseInput);
     intentIds.push(succeeded.id);
-    await service.markSucceeded(succeeded.id);
+    await service.markSucceeded(baseInput.tenantId, succeeded.id);
     expect(await stateOf(succeeded.id)).toBe('SUCCEEDED');
 
     const failedFinal = await service.prepare(baseInput);
     intentIds.push(failedFinal.id);
-    await service.markFailedFinal(failedFinal.id);
+    await service.markFailedFinal(baseInput.tenantId, failedFinal.id);
     expect(await stateOf(failedFinal.id)).toBe('FAILED_FINAL');
 
     const outcomeUnknown = await service.prepare(baseInput);
     intentIds.push(outcomeUnknown.id);
-    await service.markOutcomeUnknown(outcomeUnknown.id);
+    await service.markOutcomeUnknown(baseInput.tenantId, outcomeUnknown.id);
     expect(await stateOf(outcomeUnknown.id)).toBe('OUTCOME_UNKNOWN');
   });
 });

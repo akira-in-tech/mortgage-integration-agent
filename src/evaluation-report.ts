@@ -120,11 +120,11 @@ async function main(): Promise<void> {
   );
   const consentService = new ConsentService(dataSource);
   const providerAuthorizationService = new ProviderAuthorizationService(
-    dataSource.getRepository(ProviderAuthorizationGrant),
+    dataSource,
     consentService,
   );
   const providerOperationIntentService = new ProviderOperationIntentService(
-    dataSource.getRepository(ProviderOperationIntent),
+    dataSource,
   );
   const messageService = new CommunicationMessageService(dataSource);
 
