@@ -23,6 +23,8 @@ import { PolicyCatalogGeneration } from '../../database/entities/policy-catalog-
 import { EvaluationInputManifest } from '../../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../../database/entities/agent-run.entity';
 import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
+import { CommunicationMessage } from '../../database/entities/communication-message.entity';
+import { CommunicationTemplate } from '../../database/entities/communication-template.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -33,6 +35,7 @@ import { LoanType } from '../../database/enums/loan-type.enum';
 import { PolicyApplicabilityResolverService } from '../../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../../policy/evaluation-manifest.service';
+import { CommunicationMessageService } from '../../communications/communication-message.service';
 import { LendingOperationsAgentState } from '../agent-state.types';
 import { AgentRunInput } from '../agent-runtime.types';
 import { createLendingOperationsAgentRuntime } from './lending-operations-agent-runtime';
@@ -50,6 +53,7 @@ const ALL_TOOLS = [
   'check_case_completeness',
   'evaluate_policy',
   'create_condition',
+  'draft_information_request',
 ];
 
 describeOrSkip(
@@ -83,6 +87,8 @@ describeOrSkip(
           EvaluationInputManifest,
           AgentRun,
           ToolAttempt,
+          CommunicationMessage,
+          CommunicationTemplate,
         ],
       });
       await dataSource.initialize();
@@ -98,10 +104,12 @@ describeOrSkip(
         dataSource.getRepository(PolicyCatalogGeneration),
       );
       evaluationManifestService = new EvaluationManifestService(dataSource);
+      const messageService = new CommunicationMessageService(dataSource);
       runtime = createLendingOperationsAgentRuntime({
         dataSource,
         policyEvaluationService,
         evaluationManifestService,
+        messageService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 
@@ -198,6 +206,9 @@ describeOrSkip(
         await dataSource.getRepository(OutboxEvent).delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
         await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
+        await dataSource
+          .getRepository(CommunicationMessage)
+          .delete({ tenantId });
         if (caseIds.length) {
           await dataSource.getRepository(EvidenceFact).delete({ tenantId });
           const conditions = await dataSource
@@ -458,8 +469,30 @@ describeOrSkip(
         'check_case_completeness',
         'evaluate_policy',
         'create_condition',
+        'draft_information_request',
       ]);
       expect(toolAttempts.every((a) => a.outcome === 'SUCCESS')).toBe(true);
+
+      // M5-012: a condition being genuinely opened also drafts a real
+      // remediation request — never sent (no approved template is seeded
+      // anywhere in this codebase, so it's always PROTECTED and requires
+      // human approval first), but a real, persisted, evidence-backed
+      // CommunicationMessage, not a fabricated side effect.
+      const communicationMessageId = result.finalState.proposedAction?.arguments
+        .communicationMessageId as string;
+      expect(communicationMessageId).toBeTruthy();
+      const message = await dataSource
+        .getRepository(CommunicationMessage)
+        .findOneByOrFail({ id: communicationMessageId });
+      expect(message).toMatchObject({
+        tenantId,
+        caseId,
+        classification: 'PROTECTED',
+        status: 'AWAITING_APPROVAL',
+        recipientRelationship: 'BORROWER',
+        channel: 'EMAIL',
+      });
+      expect(message.renderedContent).toContain('VERIFY_INCOME_DISCREPANCY');
     });
 
     it('propagates a stale-version failure instead of creating a condition when the case has moved on since the run began', async () => {

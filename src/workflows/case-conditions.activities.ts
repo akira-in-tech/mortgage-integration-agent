@@ -36,6 +36,7 @@ import {
 import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
 import { ConsentService } from '../consent/consent.service';
+import { CommunicationMessageService } from '../communications/communication-message.service';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -45,6 +46,7 @@ export interface CaseConditionsActivitiesDeps {
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
   consentService: ConsentService;
+  messageService: CommunicationMessageService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -84,6 +86,7 @@ const AGENT_ALLOWED_TOOLS = [
   'check_case_completeness',
   'evaluate_policy',
   'create_condition',
+  'draft_information_request',
 ];
 
 interface ResolveConditionInput extends CaseRef {
@@ -171,6 +174,7 @@ export function createCaseConditionsActivities(
     providerAuthorizationService,
     providerOperationIntentService,
     consentService,
+    messageService,
     outboxSigningSecret,
   } = deps;
   const providerDispatchDeps = {
@@ -184,6 +188,7 @@ export function createCaseConditionsActivities(
     dataSource,
     policyEvaluationService,
     evaluationManifestService,
+    messageService,
     outboxSigningSecret,
   });
 

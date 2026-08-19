@@ -29,10 +29,15 @@ import {
   StaleCaseVersionError,
 } from '../tools/create-condition.tool';
 import {
+  draftInformationRequestTool,
+  DraftInformationRequestResult,
+} from '../tools/draft-information-request.tool';
+import {
   PolicyEvaluationService,
   RESOLVER_VERSION,
 } from '../../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../../policy/evaluation-manifest.service';
+import { CommunicationMessageService } from '../../communications/communication-message.service';
 import { evaluatePolicyRule } from '../../policy/dsl/policy-rule-evaluator';
 import { PolicyFactContext } from '../../policy/dsl/policy-rule.types';
 import { loanTypeToProductCode } from '../../policy/product-code';
@@ -60,6 +65,7 @@ export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
   policyEvaluationService: PolicyEvaluationService;
   evaluationManifestService: EvaluationManifestService;
+  messageService: CommunicationMessageService;
   outboxSigningSecret: string;
 }
 
@@ -207,17 +213,24 @@ function consentInvalid(
 
 /**
  * Section 9.2's `AgentRuntimePort` implemented against a real LangGraph.js
- * v1 `StateGraph`, orchestrating the three tools that exist today
+ * v1 `StateGraph`, orchestrating the tools that exist today
  * (src/agent-runtime/tools/) in the same order Section 9.5's Agent loop
  * describes: verify consent, check completeness, request a guarded
  * policy evaluation, then propose (and, since `create_condition`'s
  * approval boundary is a structural guard rather than a human gate,
- * execute) a condition transition. `allowedTools` is enforced by only
- * registering the subset
- * of tools it names — an unlisted tool is simply not in the registry
- * `invokeTool` looks up, so it fails the same tested way an unregistered
- * name always does (agent-tool.types.spec.ts), rather than through a
- * separate allow-check that could drift from that behavior.
+ * execute) a condition transition — and, when a condition was genuinely
+ * opened, draft a remediation request to the borrower explaining what it
+ * needs (M5-012; `draft_information_request` only ever persists a
+ * `CommunicationMessage`, it never sends anything — that remains a
+ * separate, still-manual step, since no communication template is
+ * seeded anywhere in this codebase, so the drafted message is always
+ * classified `PROTECTED` and requires human approval before
+ * `send_information_request` — itself still not wired into this graph —
+ * could ever deliver it). `allowedTools` is enforced by only registering
+ * the subset of tools it names — an unlisted tool is simply not in the
+ * registry `invokeTool` looks up, so it fails the same tested way an
+ * unregistered name always does (agent-tool.types.spec.ts), rather than
+ * through a separate allow-check that could drift from that behavior.
  *
  * Wired into the M2 Temporal workflow since M3-008: `case-conditions
  * .activities.ts`'s `evaluateConditions` calls this runtime instead of
@@ -238,6 +251,7 @@ export function createLendingOperationsAgentRuntime(
       dataSource: deps.dataSource,
       outboxSigningSecret: deps.outboxSigningSecret,
     }),
+    draftInformationRequestTool({ messageService: deps.messageService }),
   ];
 
   return {
@@ -526,14 +540,54 @@ export function createLendingOperationsAgentRuntime(
             state.agentState.caseVersion,
           );
         }
+
+        // A condition was genuinely opened — draft (not send; see this
+        // function's own class comment) a remediation request explaining
+        // it, using the DSL evaluator's own real reason string (the same
+        // evidence-backed text `case-timeline.service.ts` already shows),
+        // not a fabricated narrative. No case-level channel/locale/
+        // contact-preference model exists yet, so EMAIL/en-US/BORROWER
+        // are the only defaults available — a real gap, not silently
+        // assumed correct (Known gaps).
+        const draftInvocation = await invokeTool(
+          registry,
+          'draft_information_request',
+          toolContext,
+          {
+            recipientRelationship: 'BORROWER',
+            channel: 'EMAIL',
+            locale: 'en-US',
+            variables: {},
+            freeformContent: `A condition on your loan application requires attention: ${match.version.rule.outcome.condition}. ${match.result.reason}`,
+            hasAttachments: false,
+          },
+        );
+        const withDraftAttempt = recordAttempt(
+          consumeStep(nextState),
+          'draft_information_request',
+          draftInvocation.outcome,
+          draftInvocation.error,
+        );
+        if (draftInvocation.outcome === 'FAILURE') {
+          return routeMandatoryReview(
+            withDraftAttempt,
+            classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+              `draft_information_request failed: ${draftInvocation.error}`,
+            ),
+          );
+        }
+        const drafted = draftInvocation.result as DraftInformationRequestResult;
+
         return {
           agentState: {
-            ...nextState,
+            ...withDraftAttempt,
             proposedAction: {
               tool: 'create_condition',
               arguments: {
                 conditionId: created.conditionId,
                 code: match.version.rule.outcome.condition,
+                communicationMessageId: drafted.communicationMessageId,
               },
             },
           },

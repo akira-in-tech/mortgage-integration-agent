@@ -21,6 +21,8 @@ import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { CommunicationMessage } from '../database/entities/communication-message.entity';
+import { CommunicationTemplate } from '../database/entities/communication-template.entity';
 import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
@@ -28,6 +30,7 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { CommunicationMessageService } from '../communications/communication-message.service';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditService } from '../integrations/credit/credit.service';
@@ -71,6 +74,8 @@ describeOrSkip('runCorpus', () => {
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
         ConsentRecord,
+        CommunicationMessage,
+        CommunicationTemplate,
       ],
     });
     await dataSource.initialize();
@@ -122,6 +127,7 @@ describeOrSkip('runCorpus', () => {
     const providerOperationIntentService = new ProviderOperationIntentService(
       dataSource.getRepository(ProviderOperationIntent),
     );
+    const messageService = new CommunicationMessageService(dataSource);
     return {
       dataSource,
       policyEvaluationService,
@@ -130,6 +136,7 @@ describeOrSkip('runCorpus', () => {
       providerAuthorizationService,
       providerOperationIntentService,
       consentService,
+      messageService,
       outboxSigningSecret: 'runner-spec-signing-secret-32-characters',
     };
   }

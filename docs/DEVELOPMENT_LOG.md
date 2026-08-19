@@ -6129,3 +6129,103 @@ APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 The other two items from the same "什麼沒做" follow-up: wiring the four dormant-but-built Agent tools (`draft_information_request`, `send_information_request`, `escalate_to_reviewer`, `check_policy_change_impact`) into `AGENT_ALLOWED_TOOLS`/the graph's actual node topology, and — separately, much larger — the ten entirely-unbuilt Section 9.4 tools plus M4's sandbox scenario library and webhook inspector. Not started; awaiting direction on scope and ordering.
+
+## M5-012: Wire `draft_information_request` into the LangGraph runtime
+
+### Status
+
+Implemented and verified, including a real live workflow run. Closes one of the four dormant-but-built Agent tools from the same "項目還差什麼沒做" follow-up — `draft_information_request` now genuinely fires whenever `resolveOutcomeNode` opens a real condition, drafting a real `CommunicationMessage` explaining it to the borrower.
+
+Chosen after investigating all four dormant tools and finding each needed a real, non-mechanical design decision before it could be wired in (see the M5-011 entry's own "什麼沒做" follow-up context) — the user was asked to choose a direction twice: first confirming that none of the four could be safely mechanically wired, then, after `check_policy_change_impact` (the initially-proposed "safest" candidate) turned out to have a structural blocker of its own — its required `policyVersionId` argument only ever exists inside `PolicyActivationService`, never in a per-case Agent run's own state, so there is no point in the existing graph where it could even be called meaningfully — switching to `draft_information_request` instead, which fits naturally right after `create_condition` succeeds.
+
+### Acceptance criterion
+
+A real condition being opened by the Agent graph also drafts a real, persisted `CommunicationMessage` — using the DSL evaluator's own evidence-backed reason string, not a fabricated narrative — classified `PROTECTED` (no communication template is seeded anywhere in this codebase, so `freeformContent` is the only honest option, and Section 6.4 always classifies free-form content `PROTECTED`) and left `AWAITING_APPROVAL`. Nothing is ever sent — `send_information_request` remains deliberately unwired, since a `PROTECTED` message needs human approval first and no path for that exists in the Temporal workflow yet. Proven with a direct unit assertion against a real database, the full existing test suite passing unchanged elsewhere, and a real case driven through the real API and Temporal worker under `NODE_ENV=production` with the non-superuser role, producing a real message row confirmed tenant-isolated directly against Postgres.
+
+### Implementation
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` — `resolveOutcomeNode`'s `create_condition` success path now also calls `draft_information_request` (a new step, consuming its own step-budget unit — each real tool invocation gets one, matching every other node's existing convention), using `EMAIL`/`en-US`/`BORROWER` as the only defaults available (no case-level channel/locale/contact-preference model exists yet — a named, not silently assumed, gap) and freeform content built from the matched rule's own condition code and the DSL evaluator's real reason string. A `FAILURE` outcome routes to manual review, the same pattern `create_condition`'s own failure handling already uses. The drafted message's id is threaded into `proposedAction.arguments.communicationMessageId` for observability (visible in the case timeline, `case-timeline.service.ts`'s existing `AGENT_RUN` entries).
+- `LendingOperationsAgentRuntimeDeps` gained `messageService: CommunicationMessageService`; `CaseConditionsActivitiesDeps`/`EvaluationRunnerDeps` gained the same, threaded through from `worker.ts`/`evaluation-report.ts`/`evaluation/runner.ts`.
+- `src/worker.module.ts` — imports `CommunicationsModule`, which it never had before this slice (a real, if narrow, gap: `CommunicationMessageService` was genuinely unavailable in the Temporal worker process until now, even though `draft_information_request`'s tool code has existed since M3-012).
+- `src/evaluation/runner.ts`'s `cleanupEvaluationRun` now also deletes `communication_messages` — the evaluation corpus harness's own fixture cases open conditions too, so it now produces real message rows that need cleaning up like every other side effect it already tracks.
+- Five direct-construction call sites updated for the new `messageService` dependency (`case-conditions.activities.spec.ts` — four separate call sites in one file, `lending-operations-agent-runtime.spec.ts`, `evaluation/runner.spec.ts`, plus the two production files above).
+
+### Affected files
+
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` (+`.spec.ts`)
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`)
+- `src/worker.module.ts`, `src/worker.ts`
+- `src/evaluation/runner.ts` (+`.spec.ts`), `src/evaluation-report.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`check_policy_change_impact` abandoned mid-investigation, not forced into the graph.** Its own `policyVersionId` argument has no source anywhere in a per-case Agent run's state — only `PolicyActivationService` (a completely different, system-triggered call path) ever knows which version just activated. Wiring it in would have meant either duplicating the assessment record `PolicyChangeImpactService.assessImpact()`'s existing catalog-wide scan already writes, or restructuring that method's internals (recently hardened under RLS in M5-008) to route through Agent runs for uncertain benefit. Surfaced to the user rather than picked unilaterally — a genuine architecture question, not an implementation detail.
+- **`send_information_request` deliberately left unwired.** Sending a `PROTECTED` message needs human approval (`CommunicationApprovalService.approve()`) first, and there is no signal/resume path in the Temporal workflow for that today — building one is real, separately-scoped orchestration work (a new Temporal signal, a decision about whether/how the workflow pauses), not something to improvise as a side effect of wiring in `draft_information_request`.
+- **Each tool call consumes its own step-budget unit.** `resolveOutcomeNode` previously consumed exactly one step (`stepped`) covering its one tool call (`create_condition`); adding a second real tool call without a second `consumeStep` would have under-counted budget usage relative to every other node's own one-step-per-tool-call convention (`checkCompletenessNode`, `evaluatePolicyNode`). No mid-node budget re-check was added before the second call, matching this file's own existing granularity (budget is checked once per node entry, not per tool call within a node) — harmless in this graph's specific topology since `resolveOutcomeNode` is the last node before `END` regardless.
+
+### Errors and fixes
+
+- **Both directly-affected specs failed on their very first run** with `TypeORMError: Entity metadata for CommunicationMessage#template was not found` — the same relation-metadata gap found repeatedly throughout this M5 series (a spec's `DataSource` must declare every entity a queried entity has a `@ManyToOne` relation to, even when that related entity is never queried directly). Fixed by adding `CommunicationTemplate` to five specs' entity lists (`lending-operations-agent-runtime.spec.ts`, `case-conditions.activities.spec.ts`, `runner.spec.ts`, plus proactively fixing the same latent gap in `evaluation-report.ts`, which hadn't been exercised yet but would have hit the identical error the first time anything in it actually drafted a message).
+- **The full test suite's first run showed 2 failures** (`case-conditions.workflow.spec.ts`, `webhook-dispatch.service.spec.ts`) that looked alarming at first — both unrelated to any file this slice touched. Isolated by re-running each failing spec alone: both passed cleanly standalone, and a full second run of the entire suite (490/490) also passed cleanly — confirmed as a one-off flake under `--runInBand` load (likely real-Temporal-replay/real-local-HTTP-server resource contention now that the suite has grown to 68 files), not a regression, by reproducing a clean run rather than assuming either way.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (toolwire, ports 5443/7234), fully migrated:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npx jest lending-operations-agent
+  -runtime.spec.ts case-conditions.activities.spec.ts --runInBand
+    24/24 passed (after fixing the CommunicationTemplate relation gap)
+
+  DATABASE_URL=... npx jest runner.spec.ts --runInBand
+    6/6 passed
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    first run: 488/490 (2 unrelated flakes, see Errors and fixes) —
+    both isolated specs passed alone; full re-run: 68 suites / 490 tests
+    passed cleanly (67/454 -> 68/490 baseline was already correct before
+    this slice's own +36 from M5-011; this slice added 0 new suites,
+    only extended existing ones, so the same 68/490 total confirms
+    nothing regressed)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  seeded a real tenant + API-client credential, created a real case,
+  started its real workflow — the case timeline showed a real AGENT_RUN
+  entry listing all four tool attempts as SUCCESS: check_case_
+  completeness, evaluate_policy, create_condition,
+  draft_information_request
+
+  queried communication_messages directly against Postgres as
+  mortgage_app: a real row existed with the exact expected shape
+  (PROTECTED, AWAITING_APPROVAL, BORROWER/EMAIL, rendered content
+  containing the real condition code and the DSL evaluator's own real
+  reason string); a fabricated other-tenant session (inside an explicit
+  transaction, SET LOCAL) saw zero rows despite the row existing; the
+  real tenant's own session saw exactly its own 1 row
+
+  scratch stack torn down (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes one of four Agent tools that were built, tested, and completely dormant — the Agent graph now genuinely exercises a fourth registered tool, not three, and the borrower-facing remediation message this codebase's own launch scenario (Section 7.1) describes is now a real, persisted artifact instead of something only the DSL evaluator's own condition description implied.
+- Correctly fails closed on the approval boundary: a `PROTECTED` message can never be sent by this slice's own change, since `send_information_request` stays unwired and `CommunicationApprovalService.approve()` still has no caller — the new capability is strictly additive (a real draft exists now) without weakening Section 6.4's exact-approval requirement at all.
+- No new secrets, no new external dependencies, no performance concern beyond one more `runInTenantContext` transaction per condition-opening run (the same cost profile every other tool call in this graph already has).
+
+### Known gaps
+
+- **`send_information_request`, `escalate_to_reviewer`, and `check_policy_change_impact` remain unwired** — see Decisions for why each is a real, separate design question, not a mechanical follow-up to this slice.
+- **No case-level channel/locale/contact-preference model** — `EMAIL`/`en-US`/`BORROWER` are hardcoded defaults, not derived from any real per-case or per-tenant preference (none exists).
+- Every other M5 Known gap (`communication_approvals` RLS, `provider_operation_intents`/`provider_authorization_grants` RLS, RBAC, data-disposition workflow, redirect-following on the SSRF guard) is unchanged by this slice.
+
+### Next safe step
+
+The ten entirely-unbuilt Section 9.4 tools (`inspect_documents`, `fetch_income_evidence`, `fetch_asset_evidence`, `fetch_credit_evidence`, `check_identity_consistency`, `calculate_qualified_income`, `calculate_dti`, `calculate_ltv`, `compare_evidence`, `publish_case_update`) plus M4's sandbox scenario library and webhook inspector remain the large, separately-scoped item from the same "什麼沒做" follow-up — not started. Building an approval-gated send path for `send_information_request` (a real Temporal signal/resume design) is the natural next increment specifically in the communications area, now that a real `PROTECTED` message actually exists to approve. Not started; awaiting direction.

@@ -16,6 +16,7 @@ import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -27,6 +28,7 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { CommunicationMessageService } from '../communications/communication-message.service';
 import {
   EvaluationCaseFixture,
   EvaluationCaseResult,
@@ -41,6 +43,7 @@ export interface EvaluationRunnerDeps {
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
   consentService: ConsentService;
+  messageService: CommunicationMessageService;
   outboxSigningSecret: string;
 }
 
@@ -331,6 +334,7 @@ export async function cleanupEvaluationRun(
   }
 
   await dataSource.getRepository(ConsentRecord).delete({ tenantId });
+  await dataSource.getRepository(CommunicationMessage).delete({ tenantId });
   await dataSource.getRepository(LoanCase).delete({ tenantId });
 }
 
@@ -348,6 +352,7 @@ export async function runCorpus(
     providerAuthorizationService: deps.providerAuthorizationService,
     providerOperationIntentService: deps.providerOperationIntentService,
     consentService: deps.consentService,
+    messageService: deps.messageService,
     outboxSigningSecret: deps.outboxSigningSecret,
   });
 

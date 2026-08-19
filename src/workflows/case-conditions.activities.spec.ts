@@ -32,6 +32,8 @@ import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { CommunicationMessage } from '../database/entities/communication-message.entity';
+import { CommunicationTemplate } from '../database/entities/communication-template.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -48,6 +50,7 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ConsentService } from '../consent/consent.service';
+import { CommunicationMessageService } from '../communications/communication-message.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
@@ -108,6 +111,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let providerAuthorizationService: ProviderAuthorizationService;
   let providerOperationIntentService: ProviderOperationIntentService;
   let consentService: ConsentService;
+  let messageService: CommunicationMessageService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -138,6 +142,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
         ConsentRecord,
+        CommunicationMessage,
+        CommunicationTemplate,
       ],
     });
     await dataSource.initialize();
@@ -161,6 +167,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     providerOperationIntentService = new ProviderOperationIntentService(
       dataSource.getRepository(ProviderOperationIntent),
     );
+    messageService = new CommunicationMessageService(dataSource);
 
     const plaidService = { getIncomeData: jest.fn() } as any;
     activities = createCaseConditionsActivities({
@@ -171,6 +178,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerAuthorizationService,
       providerOperationIntentService,
       consentService,
+      messageService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -212,6 +220,9 @@ describeOrSkip('createCaseConditionsActivities', () => {
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
         await dataSource.getRepository(ConsentRecord).delete({ tenantId });
+        await dataSource
+          .getRepository(CommunicationMessage)
+          .delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
         await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
         const conditions = await conditionRepo.find({
@@ -355,6 +366,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerAuthorizationService,
       providerOperationIntentService,
       consentService,
+      messageService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -641,6 +653,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerAuthorizationService,
         providerOperationIntentService,
         consentService,
+        messageService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -731,6 +744,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerAuthorizationService,
         providerOperationIntentService,
         consentService,
+        messageService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 
