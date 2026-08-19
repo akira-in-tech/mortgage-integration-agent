@@ -43,10 +43,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
     await dataSource.initialize();
 
     messageService = new CommunicationMessageService(dataSource);
-    approvalService = new CommunicationApprovalService(
-      dataSource.getRepository(CommunicationMessage),
-      dataSource.getRepository(CommunicationApproval),
-    );
+    approvalService = new CommunicationApprovalService(dataSource);
     const configService = {
       get: jest.fn().mockReturnValue(OUTBOX_SIGNING_SECRET),
     };
@@ -155,7 +152,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
       freeformContent: 'Please call our office to discuss your file.',
       hasAttachments: false,
     });
-    await approvalService.approve(message.id, 'reviewer-1');
+    await approvalService.approve(TENANT_ID, message.id, 'reviewer-1');
 
     const result = await deliveryService.deliver(TENANT_ID, message.id);
 

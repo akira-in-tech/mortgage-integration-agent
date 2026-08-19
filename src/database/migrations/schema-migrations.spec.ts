@@ -189,6 +189,92 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the communication approval tenant isolation migration without touching other tables', async () => {
+    // No new table, no new column — only RLS state and a join-based
+    // policy on communication_approvals (like condition_transitions/
+    // tool_attempts, it has no tenantId column of its own).
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname = 'communication_approvals' AND relkind = 'r'`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'communication_approvals',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename = 'communication_approvals'`,
+      );
+    expect(beforePolicies).toEqual([
+      { tablename: 'communication_approvals', policyname: 'tenant_isolation' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'data_disposition_tasks',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname = 'communication_approvals' AND relkind = 'r'`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'communication_approvals',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename = 'communication_approvals'`,
+      );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the api client role migration without touching other tables', async () => {
     // No new table — only a column (and its enum type) on api_clients.
     const beforeColumns: Array<{ column_name: string }> =

@@ -39,10 +39,7 @@ describeOrSkip(
       await dataSource.initialize();
 
       messageService = new CommunicationMessageService(dataSource);
-      approvalService = new CommunicationApprovalService(
-        dataSource.getRepository(CommunicationMessage),
-        dataSource.getRepository(CommunicationApproval),
-      );
+      approvalService = new CommunicationApprovalService(dataSource);
 
       const templateRepo = dataSource.getRepository(CommunicationTemplate);
       const template = await templateRepo.save(
@@ -140,6 +137,7 @@ describeOrSkip(
       });
 
       const approval = await approvalService.approve(
+        TENANT_ID,
         message.id,
         'reviewer-1',
         'Reviewed and cleared for sending.',
@@ -168,7 +166,7 @@ describeOrSkip(
       });
 
       await expect(
-        approvalService.approve(message.id, 'reviewer-1'),
+        approvalService.approve(TENANT_ID, message.id, 'reviewer-1'),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -181,10 +179,10 @@ describeOrSkip(
         freeformContent: 'A second protected message.',
         hasAttachments: false,
       });
-      await approvalService.approve(message.id, 'reviewer-1');
+      await approvalService.approve(TENANT_ID, message.id, 'reviewer-1');
 
       await expect(
-        approvalService.approve(message.id, 'reviewer-2'),
+        approvalService.approve(TENANT_ID, message.id, 'reviewer-2'),
       ).rejects.toThrow(BadRequestException);
     });
   },

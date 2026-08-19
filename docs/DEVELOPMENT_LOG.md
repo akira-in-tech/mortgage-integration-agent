@@ -6726,3 +6726,97 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Continuing the user's "全力推進" direction: `communication_approvals` RLS (a real, closable gap — add a `tenantId` column derived from the message relation, matching the pattern every other retrofitted table in this series already used), then a lightweight but real `audit_events` table wired into the security-relevant mutation points this slice and its predecessors created (RBAC rejections, consent revocation, review decisions), then a consolidated negative-authorization/threat-model suite covering Section 16.4's scenarios that are honestly testable without a subsystem this codebase doesn't have. OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.
+
+## M5-018: PostgreSQL row-level security for `communication_approvals`, closing the last named M5 RLS gap
+
+### Status
+
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role. Closes the one table M5-009's and M5-014's own migrations each named and deliberately deferred — `communication_approvals` had no `tenantId` column and its sole writer, `CommunicationApprovalService.approve()`, had no `tenantId` in its signature and no real caller anywhere in this codebase. Continuing the user's "全力推進" (push through the rest) direction from M5-017.
+
+### Acceptance criterion
+
+`communication_approvals` is now RLS-protected via a join through `communication_messages` (the same shape `condition_transitions`/`tool_attempts` already established for a table with no `tenantId` column of its own) — a query with no tenant context sees zero rows even when real rows exist, a fabricated other-tenant context sees zero rows, and an `INSERT` referencing a message owned by a *different* tenant than the session context is rejected by Postgres itself, not just a direct-column mismatch. `CommunicationApprovalService.approve()` now takes an explicit `tenantId` parameter — the very first real design of that signature, not a retrofit around an existing caller, since none existed. Proven with a dedicated 7-test tenant-isolation spec (`mortgage_app` role), the two existing specs that exercise `approve()` updated and passing, and a real live run: a real case driven through `quickstart` produced a real `PROTECTED`/`AWAITING_APPROVAL` message via `draft_information_request`, approved directly through the real service under the restricted role, flipping the message to `APPROVED` — then direct Postgres queries proved the real tenant sees its own approval while a fabricated other-tenant session sees zero rows despite the data existing.
+
+### Implementation
+
+- `src/communications/communication-approval.service.ts` — converted from `@InjectRepository` ×2 to `@InjectDataSource()`; `approve()` gained a required `tenantId` first parameter and now runs entirely inside one `runInTenantContext` transaction (the message read, the approval insert, and the message-status update all share it — matching the atomicity reasoning every other RLS-converted service in this series already uses).
+- `src/database/migrations/1787171713047-CommunicationApprovalTenantIsolation.ts` (new) — `ENABLE`/`FORCE ROW LEVEL SECURITY` plus a join-based `tenant_isolation` policy: `EXISTS (SELECT 1 FROM communication_messages cm WHERE cm.id = communication_approvals."communicationMessageId" AND cm."tenantId" = ...)`. No new column, no backfill needed — there were no real rows to migrate (no caller had ever created one outside tests).
+- `src/communications/communication-approval-tenant-isolation.spec.ts` (new) — 7 tests, same shape as every other tenant-isolation spec in this series, adapted for the join: fixture rows need a real parent `communication_messages` row to reference.
+- `src/communications/communication-message.service.spec.ts`, `communication-delivery.service.spec.ts` — the only two places `approve()` was ever called (both test files) updated for the new `DataSource`-based constructor and the new `tenantId` parameter.
+
+### Affected files
+
+- `src/communications/communication-approval.service.ts` (+`.spec.ts` sites in the two files above)
+- `src/communications/communication-approval-tenant-isolation.spec.ts` (new)
+- `src/database/migrations/1787171713047-CommunicationApprovalTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Join-based policy, not a denormalized `tenantId` column.** `communication_approvals` has a real, non-nullable `ON DELETE CASCADE` foreign key to `communication_messages`, which already carries RLS and a `tenantId` column — the identical shape `condition_transitions`/`tool_attempts` already established for exactly this situation. A denormalized column was considered (and was this codebase's own original plan, from an earlier session) but rejected once the join-based precedent was re-confirmed as the established, consistent choice for a table with a real tenant-scoped parent, rather than inventing a second pattern for the same problem shape.
+- **`approve()`'s new signature designed fresh, not retrofitted.** With zero real callers to preserve compatibility for, this was a genuine first design rather than a constrained retrofit — `tenantId` placed first, matching every other RLS-protected service method's own convention in this codebase.
+- **No backfill migration needed.** Every prior retrofit in this series that added RLS to an existing table had real production-shaped rows to consider; `communication_approvals` never had a real caller, so there was nothing to backfill — confirmed, not assumed, by checking the table was empty in every environment this slice touched.
+
+### Errors and fixes
+
+- **The relation-metadata gap hit again**, this time in the new tenant-isolation spec itself: `TypeORMError: Entity metadata for CommunicationMessage#template was not found` — fixed by adding `CommunicationTemplate` to its entities array, the same fix applied repeatedly throughout this whole M5 series whenever `CommunicationMessage` is registered anywhere.
+- **`schema-migrations.spec.ts`'s cumulative revert chain needed one more new first step**, the same now-routine maintenance cost every migration-adding slice in this series has hit — this one RLS-only (no new table, no new column), so the new test follows the simpler `pg_class`/`pg_policies` before/after style `CasePolicyTenantIsolation`'s own revert test already used.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5018verify, ports 5443/7234), fully migrated:
+  npx jest schema-migrations.spec.ts --runInBand
+    32/32 passed (after inserting the missing revert-chain step)
+
+  npx jest communication --runInBand
+    6 suites / 38 tests passed (after fixing the CommunicationTemplate
+    relation-metadata gap)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    73 suites / 535 tests passed (527 -> 535: +1 new suite
+    (communication-approval-tenant-isolation.spec.ts, 7 tests), +1 new
+    schema-migrations.spec.ts revert-chain test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 28 tests passed, unchanged
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  ran the real npm run quickstart — produced a real case with a real
+  PROTECTED/AWAITING_APPROVAL CommunicationMessage (draft_information_
+  request:SUCCESS in the Agent run)
+
+  called the real CommunicationApprovalService.approve() directly
+  (a one-off script, since no REST endpoint exists — the same honest
+  gap the service's own comment already names) under the restricted
+  role: a real CommunicationApproval row was created and the message
+  flipped to APPROVED
+
+  queried communication_approvals directly against Postgres as
+  mortgage_app: the real tenant's own session saw its 1 real approval;
+  a fabricated other-tenant session saw zero rows despite the data
+  existing; no tenant context at all also saw zero rows (fail closed)
+
+  live processes terminated and the scratch stack torn down
+  (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes the last table this whole M5 RLS series had explicitly named and deferred across two prior migrations' own comments — every tenant-scoped table in this codebase's current schema now has row-level security.
+- No new secrets, no new external dependencies, no performance concern beyond the same one-extra-`EXISTS`-subquery cost `condition_transitions`/`tool_attempts` already accepted for this exact policy shape.
+- Since `approve()` had no real caller before this slice, this closes a purely structural gap (the table's own protection) rather than a live exploitable one — matching M5-014's own "live vs. dormant gap" distinction, this one was dormant, unlike that slice's provider-platform tables.
+
+### Known gaps
+
+- **`approve()` still has no real REST/GraphQL caller** — Section 6.4's protected-communication approval flow remains only reachable by direct service call (or the M5-017-adjacent question of building an approval-gated `send_information_request` path, still not attempted).
+- Every other M5 Known gap (RBAC's own remaining scope beyond `submitReview`, encrypted field/object boundaries, `audit_events`, `legal_holds`, tenant-owned configuration, provider-promotion governance, consolidated negative-authorization suite) is unchanged by this slice.
+
+### Next safe step
+
+Continuing "全力推進": a lightweight but real `audit_events` table next, wired into the security-relevant mutation points this whole M5 series has built (RBAC rejections, consent revocation, review decisions, webhook registration) — then a consolidated negative-authorization/threat-model suite covering Section 16.4's scenarios that are honestly testable without inventing a subsystem this codebase doesn't have. OIDC/FAPI 2.0 and provider-promotion governance remain explicitly out of scope per the user's own direction.
