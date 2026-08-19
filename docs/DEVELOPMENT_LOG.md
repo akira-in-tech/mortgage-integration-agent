@@ -5823,3 +5823,109 @@ role (not a superuser connection):
 ### Next safe step
 
 `communication_messages`/`communication_templates` are the next table group needing a service-shape audit before scoping (not yet done — unlike `policy_change_impact_assessments`, whose complexity M5-007 had already scoped in advance). `case_policy_bindings`/`case_policy_snapshots` (mechanical `PolicyEvaluationService` conversion, now well understood) and `provider_operation_intents`/`provider_authorization_grants` (real `tenantId`-threading work) remain the two largest table groups. Not started; awaiting direction.
+
+## M5-009: PostgreSQL row-level security for `communication_messages`/`communication_templates`
+
+### Status
+
+Implemented and verified, including a real live run driving the actual `CommunicationMessageService.draft()` → `CommunicationDeliveryService.deliver()` chain against the real `mortgage_app` role. Extends RLS to Section 9.4's `draft_information_request`/`send_information_request` backing tables.
+
+Chosen as M5-008's own named "next table group needing a service-shape audit," continuing the "继续" delegation. The audit found a three-way split, not one uniform shape: `CommunicationMessageService.draft()` was mechanical (`tenantId` already an explicit parameter, just needed the `@InjectRepository` pair swapped for a `DataSource` and wrapped); `CommunicationDeliveryService.deliver()` had a bare, unwrapped initial read with **no** `tenantId` parameter at all, but its one real caller (`send_information_request`'s tool wrapper) already had a genuine `tenantId` in its `ToolContext` and simply discarded it — a real, fixable gap, not a design question; `CommunicationApprovalService.approve()` also has no `tenantId` parameter, but — unlike `deliver()` — has *no* caller anywhere in production code to define what a threaded-through signature should even look like, so it was left alone and named as a known gap instead of guessed at.
+
+### Acceptance criterion
+
+A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a different tenant's context, sees zero rows on `communication_messages`/`communication_templates` — even against real rows the actual production code path produced — while the owning tenant's context sees exactly its own rows. Proven at the database layer (a 6-test RLS proof spec covering both tables together) and at the real-service layer: a standalone script drove the genuine `CommunicationMessageService.draft()` → `CommunicationDeliveryService.deliver()` chain against `mortgage_app`, producing a real `SENT` message, then confirmed invisible under a fabricated other-tenant session and fully visible under its own, directly against Postgres.
+
+### Implementation
+
+- `src/database/migrations/1787148432002-CommunicationTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration, applied to both tables (each has its own direct `tenantId` column, no join needed).
+- `src/communications/communication-message.service.ts` — constructor swapped from two `@InjectRepository`s to `@InjectDataSource()`; `draft()`'s template read and message write now run inside one `runInTenantContext` transaction.
+- `src/communications/communication-delivery.service.ts` — `deliver()` gained a `tenantId: string` first parameter; its previously-bare initial `CommunicationMessage` lookup and its already-wrapped update+outbox-write now run inside one shared `runInTenantContext` transaction (a minor simplification, mirroring M5-008's `assessImpactForCase` merge), rather than a bare read followed by a separately-wrapped write.
+- `src/agent-runtime/tools/send-information-request.tool.ts` — `execute(_context, args)` renamed to `execute({ tenantId }, args)`, now threading the tool's own real `ToolContext.tenantId` into `deliver(tenantId, args.communicationMessageId)` instead of discarding it.
+- `src/communications/communication-tenant-isolation.spec.ts` (new) — the RLS proof, covering both tables in one spec (they're created together in every real fixture), 6 tests mirroring the established pattern.
+- Four direct-construction call sites updated for `CommunicationMessageService`'s new single-argument constructor (`communication-message.service.spec.ts`, `communication-delivery.service.spec.ts`, `draft-information-request.tool.spec.ts`); five `.deliver(message.id)` call sites in `communication-delivery.service.spec.ts` updated to `.deliver(TENANT_ID, message.id)`; `send-information-request.tool.spec.ts`'s mock assertion updated to expect the threaded `tenantId` argument.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test, same shape as every prior one. No new table, so the "applies every migration" test's table list needed no change.
+
+### Affected files
+
+- `src/database/migrations/1787148432002-CommunicationTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/communications/communication-message.service.ts` (+`.spec.ts`), `communication-delivery.service.ts` (+`.spec.ts`), `communication-tenant-isolation.spec.ts` (new)
+- `src/agent-runtime/tools/send-information-request.tool.ts` (+`.spec.ts`), `draft-information-request.tool.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Fixed `deliver()`'s missing `tenantId` parameter in this same slice rather than deferring it alongside `approve()`.** The two looked identical at first glance (both bare reads, both missing `tenantId`), but `deliver()` has a real, well-defined caller (`sendInformationRequestTool`, which already carries a genuine `ToolContext.tenantId` — it was simply being discarded as `_context`) while `approve()` has none at all. Threading a parameter through to a real, already-correct caller is a mechanical fix; inventing a signature for a method nothing calls yet would be guessing at a design decision that isn't this slice's to make.
+- **`CommunicationApprovalService.approve()` and `communication_approvals` left entirely untouched, named as a known gap rather than silently left inconsistent.** Once `communication_messages` has RLS, `approve()`'s own bare `CommunicationMessage` lookup will now correctly return zero rows under the restricted role (it never sets any tenant context) — this is a direct, disclosed consequence of this migration, not a new bug this slice introduces, and it's the same fail-closed direction every other unwrapped read of an RLS-protected table already takes. Since nothing in production calls `approve()` today (it isn't a registered Agent tool, by the service's own design comment, and has no REST endpoint), this fail-closed behavior has no live effect — but it's recorded explicitly so a future caller doesn't discover it by surprise.
+- **Wrote a standalone verification script exercising the real `draft()` → `deliver()` chain under `mortgage_app`**, the same reasoning as M5-008: `communication-message.service.spec.ts`/`communication-delivery.service.spec.ts` (the existing integration coverage) connect via `DATABASE_URL`'s own superuser role, so they prove functional correctness but not RLS wiring. Neither `draft_information_request` nor `send_information_request` is in `AGENT_ALLOWED_TOOLS` yet (a pre-existing gap, not something this slice changes), so there is no live-HTTP path to drive this through the running API the way M5-005/M5-006/M5-007 did — the standalone script is the equivalent proof for a code path that exists and works but isn't wired into the live workflow yet.
+
+### Errors and fixes
+
+- **The verification script's own fixture setup (not production code) initially inserted a `CommunicationTemplate` with a bare, unwrapped `save()` call, hitting the exact RLS rejection this slice exists to enforce.** A bug in the throwaway script, not the service under test — fixed by wrapping that insert in `runInTenantContext`, the same class of script-authoring mistake (and the same fix) as M5-008's live-verification script hit with its own `LoanCase` fixture.
+- **The same script then failed with `EntityMetadataNotFoundError: No metadata for "OutboxEvent"` the first time `deliver()` reached its `writeOutboxEvent` call**, since the script's own `DataSource` hadn't registered that entity — fixed by adding `OutboxEvent` to the script's entity list. Not a production code issue; the real app's `DataSource` already registers every entity globally.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5009verify, ports 5443/7234):
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    27/27 passed (26 -> 27: +1 new revert test), run on a virgin
+    cluster first
+
+  migration:run applied CommunicationTenantIsolation1787148432002
+    cleanly on top of PolicyChangeImpactAssessmentTenantIsolation1787132677787
+
+  DATABASE_URL=... npx jest communication-tenant-isolation.spec.ts
+  communication-message.service.spec.ts communication-delivery.service.spec.ts
+  draft-information-request.tool.spec.ts send-information-request.tool.spec.ts
+  --runInBand
+    21/21 passed against the real mortgage_app role, first attempt
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    66 suites / 447 tests passed (65/440 -> 66/447: +1 new suite,
+    +7 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged from M5-008 (neither
+    communication tool is e2e-reachable yet)
+
+Manual live verification — a standalone script exercising the real
+CommunicationMessageService.draft() -> CommunicationDeliveryService
+.deliver() chain against the real mortgage_app role (not a superuser
+connection):
+  created a real APPROVED template, drafted a real ROUTINE message
+  against it, delivered it — the real code path produced a genuine
+  SENT message with a real deliveryReference, confirmed via a direct
+  Postgres query on a separate admin connection
+
+  queried the real message row as mortgage_app: a fabricated
+  other-tenant session (inside an explicit transaction, SET LOCAL) saw
+  zero rows despite the row existing; the real tenant's own session
+  saw exactly its own 1 row
+
+  scratch stack torn down (docker compose down -v) after verification;
+  the throwaway verification script and its temporary package.json
+  entry were both removed before committing
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes two real gaps at once: `communication_messages`/`communication_templates` now have a database-layer tenant backstop, and `send_information_request`'s own tool wrapper now correctly threads the real tenant context it already had instead of silently discarding it — a genuine tightening of that tool's own boundary, independent of RLS.
+- No new secrets, no new external dependencies, no performance concern beyond the established pattern's own (indexed equality checks on both tables).
+
+### Known gaps
+
+- **`communication_approvals` still has no RLS, and its sole writer (`CommunicationApprovalService.approve()`) has no `tenantId` in its signature** — unlike `deliver()`, there is no real caller today to define a correct threaded-through signature; inventing one wasn't attempted. Once RLS lands on `communication_messages`, `approve()`'s own bare read will correctly fail closed under the restricted role — disclosed, not a silent surprise.
+- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — unchanged; converting `PolicyEvaluationService` (mechanical, per M5-007's corrected understanding) plus adding the migration itself remains separate, not-yet-attempted work.
+- **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — unchanged; several methods don't have `tenantId` in scope today.
+- **Neither `draft_information_request` nor `send_information_request` is registered in `AGENT_ALLOWED_TOOLS`** — a pre-existing gap this slice found but did not create or attempt to close; wiring them in is a separate scope decision (what triggers a communication in the current graph, and whether `send_information_request` should require the same kind of interrupt-for-review `check_policy_change_impact`/manual-review paths already use).
+- **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated since M5-004.
+- **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — unchanged.
+
+### Next safe step
+
+`case_policy_bindings`/`case_policy_snapshots` (via `PolicyEvaluationService`, mechanical per M5-007's corrected understanding — swap three injected repositories for one `DataSource`, wrap `evaluate()`) is now the best-understood remaining table group. `provider_operation_intents`/`provider_authorization_grants` need their own audit of exactly which methods lack `tenantId` (not yet done in the same detail this slice gave `communication_approvals`). `communication_approvals` itself is now scoped but deliberately not attempted (see Known gaps). Not started; awaiting direction.

@@ -32,7 +32,7 @@ describe('sendInformationRequestTool', () => {
       communicationMessageId: 'message-1',
     });
 
-    expect(deliver).toHaveBeenCalledWith('message-1');
+    expect(deliver).toHaveBeenCalledWith('tenant-1', 'message-1');
     expect(result).toEqual({
       outcome: 'DELIVERED',
       deliveryReference: 'sim-abc123',

@@ -38,10 +38,7 @@ describeOrSkip(
       });
       await dataSource.initialize();
 
-      messageService = new CommunicationMessageService(
-        dataSource.getRepository(CommunicationTemplate),
-        dataSource.getRepository(CommunicationMessage),
-      );
+      messageService = new CommunicationMessageService(dataSource);
       approvalService = new CommunicationApprovalService(
         dataSource.getRepository(CommunicationMessage),
         dataSource.getRepository(CommunicationApproval),

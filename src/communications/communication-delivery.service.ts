@@ -27,6 +27,14 @@ export type DeliverCommunicationResult =
  * bound to this exact `renderedContentHash`, M3-012). Any other
  * combination — `PROTECTED` and not yet `APPROVED`, or already `SENT` —
  * is rejected as `NOT_READY`, never delivered.
+ *
+ * `communication_messages` carries a real RLS policy (M5-009) — `deliver`
+ * now takes `tenantId` explicitly (threaded from `send_information_request
+ * `'s own `ToolContext`, which already carried it) so its lookup and
+ * update both run inside one `runInTenantContext` transaction, rather
+ * than a bare initial read followed by a wrapped update — closing a
+ * latent gap the same shape `case-timeline.service.ts` had before
+ * M5-006 fixed it.
  */
 @Injectable()
 export class CommunicationDeliveryService {
@@ -38,66 +46,63 @@ export class CommunicationDeliveryService {
   ) {}
 
   async deliver(
+    tenantId: string,
     communicationMessageId: string,
   ): Promise<DeliverCommunicationResult> {
-    const message = await this.dataSource
-      .getRepository(CommunicationMessage)
-      .findOneByOrFail({ id: communicationMessageId });
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const message = await manager
+        .getRepository(CommunicationMessage)
+        .findOneByOrFail({ id: communicationMessageId, tenantId });
 
-    const ready =
-      (message.classification === CommunicationClassification.ROUTINE &&
-        message.status === CommunicationMessageStatus.DRAFTED) ||
-      (message.classification === CommunicationClassification.PROTECTED &&
-        message.status === CommunicationMessageStatus.APPROVED);
-    if (!ready) {
-      return {
-        outcome: 'NOT_READY',
-        reason: `communication message ${communicationMessageId} is ${message.classification}/${message.status}, not ready to send`,
-      };
-    }
+      const ready =
+        (message.classification === CommunicationClassification.ROUTINE &&
+          message.status === CommunicationMessageStatus.DRAFTED) ||
+        (message.classification === CommunicationClassification.PROTECTED &&
+          message.status === CommunicationMessageStatus.APPROVED);
+      if (!ready) {
+        return {
+          outcome: 'NOT_READY',
+          reason: `communication message ${communicationMessageId} is ${message.classification}/${message.status}, not ready to send`,
+        };
+      }
 
-    const { deliveryReference } = await this.simulator.send(
-      message.id,
-      message.renderedContentHash,
-      message.channel,
-    );
-    const sentAt = new Date();
-    const outboxSigningSecret = this.configService.get<string>(
-      'OUTBOX_SIGNING_SECRET',
-      'dev-outbox-signing-secret-change-me',
-    );
+      const { deliveryReference } = await this.simulator.send(
+        message.id,
+        message.renderedContentHash,
+        message.channel,
+      );
+      const sentAt = new Date();
+      const outboxSigningSecret = this.configService.get<string>(
+        'OUTBOX_SIGNING_SECRET',
+        'dev-outbox-signing-secret-change-me',
+      );
 
-    await runInTenantContext(
-      this.dataSource,
-      message.tenantId,
-      async (manager) => {
-        await manager.getRepository(CommunicationMessage).update(
-          { id: communicationMessageId },
-          {
-            status: CommunicationMessageStatus.SENT,
-            deliveryReference,
-            sentAt,
-          },
-        );
-        await writeOutboxEvent(manager, outboxSigningSecret, {
-          tenantId: message.tenantId,
+      await manager.getRepository(CommunicationMessage).update(
+        { id: communicationMessageId },
+        {
+          status: CommunicationMessageStatus.SENT,
+          deliveryReference,
+          sentAt,
+        },
+      );
+      await writeOutboxEvent(manager, outboxSigningSecret, {
+        tenantId: message.tenantId,
+        caseId: message.caseId,
+        eventType: OutboxEventType.CommunicationDelivered,
+        payload: {
           caseId: message.caseId,
-          eventType: OutboxEventType.CommunicationDelivered,
-          payload: {
-            caseId: message.caseId,
-            communicationMessageId,
-            classification: message.classification,
-            channel: message.channel,
-            deliveryReference,
-          },
-        });
-      },
-    );
+          communicationMessageId,
+          classification: message.classification,
+          channel: message.channel,
+          deliveryReference,
+        },
+      });
 
-    return {
-      outcome: 'DELIVERED',
-      deliveryReference,
-      sentAt: sentAt.toISOString(),
-    };
+      return {
+        outcome: 'DELIVERED',
+        deliveryReference,
+        sentAt: sentAt.toISOString(),
+      };
+    });
   }
 }

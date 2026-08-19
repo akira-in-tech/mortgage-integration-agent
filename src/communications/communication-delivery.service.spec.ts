@@ -42,10 +42,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
     });
     await dataSource.initialize();
 
-    messageService = new CommunicationMessageService(
-      dataSource.getRepository(CommunicationTemplate),
-      dataSource.getRepository(CommunicationMessage),
-    );
+    messageService = new CommunicationMessageService(dataSource);
     approvalService = new CommunicationApprovalService(
       dataSource.getRepository(CommunicationMessage),
       dataSource.getRepository(CommunicationApproval),
@@ -113,7 +110,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
     });
     expect(message.classification).toBe(CommunicationClassification.ROUTINE);
 
-    const result = await deliveryService.deliver(message.id);
+    const result = await deliveryService.deliver(TENANT_ID, message.id);
 
     if (result.outcome !== 'DELIVERED') {
       throw new Error(`expected DELIVERED, got ${result.outcome}`);
@@ -160,7 +157,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
     });
     await approvalService.approve(message.id, 'reviewer-1');
 
-    const result = await deliveryService.deliver(message.id);
+    const result = await deliveryService.deliver(TENANT_ID, message.id);
 
     expect(result.outcome).toBe('DELIVERED');
     const updated = await dataSource
@@ -179,7 +176,7 @@ describeOrSkip('CommunicationDeliveryService', () => {
       hasAttachments: false,
     });
 
-    const result = await deliveryService.deliver(message.id);
+    const result = await deliveryService.deliver(TENANT_ID, message.id);
 
     expect(result).toEqual({
       outcome: 'NOT_READY',
@@ -202,10 +199,10 @@ describeOrSkip('CommunicationDeliveryService', () => {
       variables: { evidenceType: 'bank statement' },
       hasAttachments: false,
     });
-    const first = await deliveryService.deliver(message.id);
+    const first = await deliveryService.deliver(TENANT_ID, message.id);
     expect(first.outcome).toBe('DELIVERED');
 
-    const second = await deliveryService.deliver(message.id);
+    const second = await deliveryService.deliver(TENANT_ID, message.id);
     expect(second.outcome).toBe('NOT_READY');
 
     const events = await dataSource.getRepository(OutboxEvent).find({

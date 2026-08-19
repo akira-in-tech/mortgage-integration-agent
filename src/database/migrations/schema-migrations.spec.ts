@@ -188,6 +188,106 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the communication tenant isolation migration without touching other tables', async () => {
+    // No new table — only RLS state and a policy on communication_messages
+    // and communication_templates.
+    const beforeRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('communication_messages', 'communication_templates')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(beforeRls).toEqual([
+      {
+        relname: 'communication_messages',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+      {
+        relname: 'communication_templates',
+        relrowsecurity: true,
+        relforcerowsecurity: true,
+      },
+    ]);
+    const beforePolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('communication_messages', 'communication_templates')
+         ORDER BY tablename`,
+      );
+    expect(beforePolicies).toEqual([
+      { tablename: 'communication_messages', policyname: 'tenant_isolation' },
+      { tablename: 'communication_templates', policyname: 'tenant_isolation' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).toEqual([
+      'agent_runs',
+      'api_clients',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
+
+    const afterRls: Array<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }> = await scratchDataSource.query(
+      `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
+       WHERE relname IN ('communication_messages', 'communication_templates')
+         AND relkind = 'r'
+       ORDER BY relname`,
+    );
+    expect(afterRls).toEqual([
+      {
+        relname: 'communication_messages',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+      {
+        relname: 'communication_templates',
+        relrowsecurity: false,
+        relforcerowsecurity: false,
+      },
+    ]);
+    const afterPolicies: Array<{ tablename: string; policyname: string }> =
+      await scratchDataSource.query(
+        `SELECT tablename, policyname FROM pg_policies
+         WHERE tablename IN ('communication_messages', 'communication_templates')`,
+      );
+    expect(afterPolicies).toEqual([]);
+  });
+
   it('reverts the policy change impact assessment tenant isolation migration without touching other tables', async () => {
     // No new table — only RLS state and a policy on
     // policy_change_impact_assessments.

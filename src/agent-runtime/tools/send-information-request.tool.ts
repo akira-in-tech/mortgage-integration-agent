@@ -31,8 +31,9 @@ export function sendInformationRequestTool(
     sideEffect: 'EXTERNAL_COMMUNICATION',
     approvalBoundary:
       'Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content; formal notices outside product scope remain prohibited',
-    async execute(_context, args) {
+    async execute({ tenantId }, args) {
       return deps.communicationDeliveryService.deliver(
+        tenantId,
         args.communicationMessageId,
       );
     },

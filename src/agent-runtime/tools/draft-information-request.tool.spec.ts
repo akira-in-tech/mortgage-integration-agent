@@ -29,10 +29,7 @@ describeOrSkip('draftInformationRequestTool', () => {
     });
     await dataSource.initialize();
 
-    const messageService = new CommunicationMessageService(
-      dataSource.getRepository(CommunicationTemplate),
-      dataSource.getRepository(CommunicationMessage),
-    );
+    const messageService = new CommunicationMessageService(dataSource);
     tool = draftInformationRequestTool({ messageService });
 
     const templateRepo = dataSource.getRepository(CommunicationTemplate);
