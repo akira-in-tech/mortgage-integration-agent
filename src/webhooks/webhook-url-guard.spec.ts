@@ -1,8 +1,10 @@
 import 'reflect-metadata';
 import {
   assertPublicWebhookTarget,
+  isSandboxEnvironment,
   WebhookTargetBlockedError,
 } from './webhook-url-guard';
+import { NodeEnvironment } from '../config/env.validation';
 
 describe('assertPublicWebhookTarget', () => {
   it('rejects a malformed URL', async () => {
@@ -111,5 +113,75 @@ describe('assertPublicWebhookTarget', () => {
         ),
       ).rejects.toThrow(WebhookTargetBlockedError);
     });
+  });
+
+  describe('allowLoopbackForSandbox (M5-013)', () => {
+    it('still blocks loopback by default (option omitted)', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://127.0.0.1:4000/inbound'),
+      ).rejects.toThrow(WebhookTargetBlockedError);
+    });
+
+    it('still blocks loopback when the option is explicitly false', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://127.0.0.1:4000/inbound', {
+          allowLoopbackForSandbox: false,
+        }),
+      ).rejects.toThrow(WebhookTargetBlockedError);
+    });
+
+    it('allows an IPv4 loopback literal when the option is true', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://127.0.0.1:4000/inbound', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows "localhost" (resolves to loopback) when the option is true', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://localhost:4000/inbound', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('allows an IPv6 loopback literal when the option is true', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://[::1]:4000/inbound', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('does NOT extend the exception to any other private/reserved range even when true — only loopback is ever relaxed', async () => {
+      await expect(
+        assertPublicWebhookTarget('http://10.0.0.5/hook', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).rejects.toThrow(WebhookTargetBlockedError);
+      await expect(
+        assertPublicWebhookTarget('http://169.254.169.254/hook', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).rejects.toThrow(WebhookTargetBlockedError);
+      await expect(
+        assertPublicWebhookTarget('http://[fc00::1]/hook', {
+          allowLoopbackForSandbox: true,
+        }),
+      ).rejects.toThrow(WebhookTargetBlockedError);
+    });
+  });
+});
+
+describe('isSandboxEnvironment', () => {
+  it('is true only for development and test', () => {
+    expect(isSandboxEnvironment(NodeEnvironment.Development)).toBe(true);
+    expect(isSandboxEnvironment(NodeEnvironment.Test)).toBe(true);
+  });
+
+  it('is false for staging and production — the two environments meant to mirror production security posture', () => {
+    expect(isSandboxEnvironment(NodeEnvironment.Staging)).toBe(false);
+    expect(isSandboxEnvironment(NodeEnvironment.Production)).toBe(false);
   });
 });

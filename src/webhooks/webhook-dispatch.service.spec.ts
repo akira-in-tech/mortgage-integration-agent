@@ -98,8 +98,16 @@ describeOrSkip('WebhookDispatchService', () => {
       entities: [OutboxEvent, WebhookEndpoint, WebhookDelivery],
     });
     await dataSource.initialize();
-    endpointService = new WebhookEndpointService(dataSource);
-    dispatchService = new WebhookDispatchService(dataSource, endpointService);
+    const configService = { get: () => 'test' };
+    endpointService = new WebhookEndpointService(
+      dataSource,
+      configService as never,
+    );
+    dispatchService = new WebhookDispatchService(
+      dataSource,
+      endpointService,
+      configService as never,
+    );
   });
 
   afterAll(async () => {

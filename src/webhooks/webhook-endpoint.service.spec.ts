@@ -20,7 +20,8 @@ describeOrSkip('WebhookEndpointService', () => {
       entities: [WebhookEndpoint],
     });
     await dataSource.initialize();
-    service = new WebhookEndpointService(dataSource);
+    const configService = { get: () => 'test' };
+    service = new WebhookEndpointService(dataSource, configService as never);
   });
 
   afterAll(async () => {
@@ -109,6 +110,46 @@ describeOrSkip('WebhookEndpointService', () => {
         }),
     );
     expect(persisted).toHaveLength(0);
+  });
+
+  it('create() still rejects a loopback targetUrl under NODE_ENV=production — the sandbox exception never applies there (M5-013)', async () => {
+    const prodConfigService = { get: () => 'production' };
+    const prodService = new WebhookEndpointService(
+      dataSource,
+      prodConfigService as never,
+    );
+
+    await expect(
+      prodService.create(tenantId, {
+        targetUrl: 'http://127.0.0.1:4000/inbound',
+        eventTypes: ['loan_case.created'],
+      }),
+    ).rejects.toThrow('private or reserved address');
+
+    const persisted = await runInTenantContext(
+      dataSource,
+      tenantId,
+      (manager) =>
+        manager.getRepository(WebhookEndpoint).find({
+          where: { tenantId, targetUrl: 'http://127.0.0.1:4000/inbound' },
+        }),
+    );
+    expect(persisted).toHaveLength(0);
+  });
+
+  it("create() allows a loopback targetUrl under NODE_ENV=development — the sandbox exception this codebase's webhook inspector relies on (M5-013)", async () => {
+    const devConfigService = { get: () => 'development' };
+    const devService = new WebhookEndpointService(
+      dataSource,
+      devConfigService as never,
+    );
+
+    const endpoint = await devService.create(tenantId, {
+      targetUrl: 'http://127.0.0.1:4000/inbound',
+      eventTypes: ['loan_case.created'],
+    });
+    endpointIds.push(endpoint.id);
+    expect(endpoint.targetUrl).toBe('http://127.0.0.1:4000/inbound');
   });
 
   it('findByIdOrFail() throws NotFoundException for an unknown id', async () => {

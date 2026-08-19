@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import { WebhookEndpoint } from '../database/entities/webhook-endpoint.entity';
@@ -12,14 +13,17 @@ import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { runInTenantContext } from '../database/tenant-context';
 import {
   assertPublicWebhookTarget,
+  isSandboxEnvironment,
   WebhookTargetBlockedError,
 } from './webhook-url-guard';
+import { NodeEnvironment } from '../config/env.validation';
 
 @Injectable()
 export class WebhookEndpointService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(
@@ -28,8 +32,18 @@ export class WebhookEndpointService {
   ): Promise<WebhookEndpoint> {
     // SSRF guard (Section 16.4): rejects a target that's a literal or
     // resolves to a private/reserved address before it's ever persisted.
+    // `allowLoopbackForSandbox` only ever relaxes in development/test
+    // (webhook-url-guard.ts's own `isSandboxEnvironment` is the single
+    // source of truth for that) — the developer-sandbox webhook
+    // inspector (M5-013) is the one real reason a loopback target is
+    // ever legitimate.
+    const nodeEnv = this.configService.get<NodeEnvironment>('NODE_ENV');
     try {
-      await assertPublicWebhookTarget(dto.targetUrl);
+      await assertPublicWebhookTarget(dto.targetUrl, {
+        allowLoopbackForSandbox: isSandboxEnvironment(
+          nodeEnv ?? NodeEnvironment.Development,
+        ),
+      });
     } catch (error) {
       if (error instanceof WebhookTargetBlockedError) {
         throw new BadRequestException(error.message);

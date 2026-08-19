@@ -1,5 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIPv4, isIPv6 } from 'node:net';
+import { NodeEnvironment } from '../config/env.validation';
 
 /**
  * Section 16.4's own named threat-model concern: a webhook `targetUrl`
@@ -23,6 +24,12 @@ import { isIPv4, isIPv6 } from 'node:net';
  * (loopback, link-local, unique-local, IPv4-mapped) rather than
  * exhaustive. Proportionate to a synthetic/demo product's real threat
  * model, not a claim of complete SSRF immunity.
+ *
+ * `assertPublicWebhookTarget`'s own `allowLoopbackForSandbox` option
+ * (M5-013) is the one narrow, deliberate exception — see that option's
+ * own doc comment for exactly what it does and does not relax, and why
+ * it exists at all (the developer-sandbox webhook inspector has to
+ * register a target pointing at its own local listener).
  */
 export class WebhookTargetBlockedError extends Error {
   constructor(message: string) {
@@ -130,6 +137,70 @@ function isBlockedAddress(address: string): boolean {
   return true; // Not a recognizable literal IP — fail closed.
 }
 
+const LOOPBACK_IPV4 = range('127.0.0.0/8');
+
+/** Loopback specifically (127.0.0.0/8, ::1, and their IPv4-mapped IPv6 forms) — the one narrow carve-out `allowLoopbackForSandbox` grants. Every other blocked range (RFC1918 private, link-local/cloud-metadata, carrier-grade NAT, etc.) is never affected by that option. */
+function isLoopback(address: string): boolean {
+  if (isIPv4(address)) {
+    const value = ipv4ToInt(address);
+    return (
+      value >>> (32 - LOOPBACK_IPV4.prefixLength) ===
+      LOOPBACK_IPV4.base >>> (32 - LOOPBACK_IPV4.prefixLength)
+    );
+  }
+  if (isIPv6(address)) {
+    const value = ipv6ToBigInt(address);
+    if (value === 1n) return true; // ::1
+    if (value >> 32n === 0xffffn) {
+      // IPv4-mapped — ::ffff:127.0.0.1 is still loopback.
+      const embedded = value & 0xffffffffn;
+      const octets = [
+        (embedded >> 24n) & 0xffn,
+        (embedded >> 16n) & 0xffn,
+        (embedded >> 8n) & 0xffn,
+        embedded & 0xffn,
+      ];
+      return isLoopback(octets.join('.'));
+    }
+    return false;
+  }
+  return false;
+}
+
+/**
+ * The single source of truth both real call sites use to decide whether
+ * `allowLoopbackForSandbox` may ever be `true` — kept here, not
+ * duplicated at each call site, since getting this wrong in only one of
+ * the two places would silently open the exception in production
+ * without the other one noticing. Deliberately excludes `staging`: that
+ * environment exists to mirror production's own security posture
+ * (Section 19.3), not to also relax it.
+ */
+export function isSandboxEnvironment(nodeEnv: NodeEnvironment): boolean {
+  return (
+    nodeEnv === NodeEnvironment.Development || nodeEnv === NodeEnvironment.Test
+  );
+}
+
+export interface AssertPublicWebhookTargetOptions {
+  /**
+   * Loopback (127.0.0.0/8, ::1, and their IPv4-mapped forms) is allowed
+   * when true — every other blocked range (RFC1918 private, link-local/
+   * cloud-metadata, carrier-grade NAT, documentation, multicast, etc.)
+   * stays blocked regardless. The one real, legitimate reason to ever
+   * set this: Section 8.8/15.5's developer-sandbox "webhook inspection"
+   * tooling (`client/webhook-inspector.ts`, M5-013) has to register a
+   * target pointing at its own locally-running listener, which is by
+   * definition loopback — there is no other way for that tool to work.
+   * Callers gate this on environment (`NODE_ENV` `development`/`test`
+   * only — never `staging`/`production`), never a blanket always-on
+   * default; this option itself carries no environment check of its
+   * own, so it stays a pure function of its inputs, easy to test
+   * deterministically without mutating `process.env`.
+   */
+  allowLoopbackForSandbox?: boolean;
+}
+
 /**
  * Throws `WebhookTargetBlockedError` if `targetUrl` is not a plausible
  * public HTTP(S) receiver. Callers decide how to surface that — the API
@@ -143,6 +214,7 @@ function isBlockedAddress(address: string): boolean {
  */
 export async function assertPublicWebhookTarget(
   targetUrl: string,
+  options: AssertPublicWebhookTargetOptions = {},
 ): Promise<void> {
   let parsed: URL;
   try {
@@ -188,7 +260,11 @@ export async function assertPublicWebhookTarget(
       `webhook target host "${hostname}" did not resolve to any address`,
     );
   }
-  const blocked = addresses.filter((address) => isBlockedAddress(address));
+  const blocked = addresses
+    .filter((address) => isBlockedAddress(address))
+    .filter(
+      (address) => !(options.allowLoopbackForSandbox && isLoopback(address)),
+    );
   if (blocked.length > 0) {
     throw new WebhookTargetBlockedError(
       `webhook target host "${hostname}" resolves to a private or reserved address (${blocked.join(', ')}) and cannot be used`,

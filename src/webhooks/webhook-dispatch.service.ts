@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { DataSource, IsNull, LessThanOrEqual } from 'typeorm';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import {
@@ -9,7 +10,11 @@ import {
 import { WebhookDeliveryStatus } from '../database/enums/webhook.enum';
 import { WebhookEndpointService } from './webhook-endpoint.service';
 import { signWebhookDelivery } from './webhook-signer';
-import { assertPublicWebhookTarget } from './webhook-url-guard';
+import {
+  assertPublicWebhookTarget,
+  isSandboxEnvironment,
+} from './webhook-url-guard';
+import { NodeEnvironment } from '../config/env.validation';
 import {
   runInTenantContext,
   runWithRlsBypass,
@@ -66,6 +71,7 @@ export class WebhookDispatchService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly endpointService: WebhookEndpointService,
+    private readonly configService: ConfigService,
   ) {}
 
   async dispatchPendingEvents(
@@ -196,7 +202,12 @@ export class WebhookDispatchService {
       // Re-checked here, not just once at registration (webhook-url-guard.ts's
       // own comment on why): DNS answers can legitimately change between
       // registration and a retried delivery firing hours or days later.
-      await assertPublicWebhookTarget(endpoint.targetUrl);
+      const nodeEnv = this.configService.get<NodeEnvironment>('NODE_ENV');
+      await assertPublicWebhookTarget(endpoint.targetUrl, {
+        allowLoopbackForSandbox: isSandboxEnvironment(
+          nodeEnv ?? NodeEnvironment.Development,
+        ),
+      });
       const response = await fetch(endpoint.targetUrl, {
         method: 'POST',
         headers: {

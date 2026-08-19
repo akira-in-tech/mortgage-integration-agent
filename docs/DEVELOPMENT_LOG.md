@@ -6229,3 +6229,96 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 The ten entirely-unbuilt Section 9.4 tools (`inspect_documents`, `fetch_income_evidence`, `fetch_asset_evidence`, `fetch_credit_evidence`, `check_identity_consistency`, `calculate_qualified_income`, `calculate_dti`, `calculate_ltv`, `compare_evidence`, `publish_case_update`) plus M4's sandbox scenario library and webhook inspector remain the large, separately-scoped item from the same "什麼沒做" follow-up — not started. Building an approval-gated send path for `send_information_request` (a real Temporal signal/resume design) is the natural next increment specifically in the communications area, now that a real `PROTECTED` message actually exists to approve. Not started; awaiting direction.
+
+## M5-013: Webhook inspector (Section 8.8/15.5's developer sandbox) + a narrow, environment-gated SSRF loopback exception
+
+### Status
+
+Implemented and verified, including a real live run against the running API and worker. Closes the webhook-inspection half of the third "什麼沒做" follow-up item ("M4 sandbox/webhook inspector: 章程要求的sandbox場景庫、webhook inspector工具都沒做") — a real local HTTP listener that registers itself as a genuine webhook endpoint and verifies every inbound delivery's real HMAC signature live, per the user's explicit "move on to the remaining item (M4 sandbox/webhook inspector)" instruction. The sandbox scenario library (Section 8.8's other named item) is a separate, not-yet-started piece — see Known gaps.
+
+### Acceptance criterion
+
+Running `npm run webhook-inspector` against a real API server that is not `NODE_ENV=production` seeds a tenant, mints an API-client credential, starts a local listener, and successfully registers that listener as a real webhook endpoint via `POST /v1/webhook-endpoints` — which requires the SSRF guard (M5-011) to admit a loopback target, something it could not do before this slice. Real events (case creation, workflow-run progress) then arrive at the listener as genuinely signed deliveries, each independently re-verified with `webhook-signer.ts`'s own `verifyWebhookSignature` — the identical code a real external integration would run — and printed with a clear VALID/INVALID verdict. The same guard still rejects a loopback target under `NODE_ENV=production` exactly as before this slice, proven by a dedicated integration test. Proven with 8 new unit tests on the guard's loopback exception, 2 new real-Postgres integration tests (production still rejects, development allows), and a full live run: a real API + real Temporal worker + the real inspector process, driving a real case and workflow run through to 7 correctly-ordered, signature-VALID deliveries, cross-checked directly against Postgres (`webhook_deliveries.status = SUCCEEDED` for all 7).
+
+### Implementation
+
+- `src/webhooks/webhook-url-guard.ts` — added `AssertPublicWebhookTargetOptions.allowLoopbackForSandbox`: when `true`, loopback addresses only (`127.0.0.0/8`, `::1`, and their IPv4-mapped forms — a new `isLoopback()` check) are exempted from the blocked-address filter; every other blocked range (RFC1918 private, link-local/cloud-metadata, carrier-grade NAT, documentation, multicast, reserved) is unaffected regardless of the option. Added `isSandboxEnvironment(nodeEnv: NodeEnvironment): boolean` — the single exported source of truth both real call sites use to decide when the option may ever be `true` (`Development`/`Test` only, explicitly excluding `Staging`/`Production` per Section 19.3's staging-mirrors-production posture). The option itself carries no environment check of its own, staying a pure function of its inputs.
+- `src/webhooks/webhook-endpoint.service.ts` / `webhook-dispatch.service.ts` — both now inject `ConfigService`, read `NODE_ENV`, and pass `allowLoopbackForSandbox: isSandboxEnvironment(nodeEnv ?? NodeEnvironment.Development)` into the guard call.
+- `client/webhook-inspector.ts` (new) — following `client/quickstart.ts`'s established pattern (direct-SQL tenant seed, `ApiClientService` used directly to mint a credential, all other traffic through the real generated OpenAPI client): starts a local `http` listener, registers it as a real webhook endpoint subscribed to all 12 known `OutboxEventType`s, and logs each inbound delivery's id, type, timestamp, real signature-verification verdict, and payload as it arrives.
+- `package.json` — added the `webhook-inspector` script (`ts-node -r tsconfig-paths/register client/webhook-inspector.ts`), alongside the existing `quickstart` script.
+
+### Affected files
+
+- `src/webhooks/webhook-url-guard.ts` (+`.spec.ts`)
+- `src/webhooks/webhook-endpoint.service.ts` (+`.spec.ts`), `webhook-dispatch.service.ts` (+`.spec.ts`)
+- `client/webhook-inspector.ts` (new)
+- `package.json`, `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Loopback only, never a blanket "skip SSRF checks in dev" flag.** The inspector's actual need is narrow (register `http://127.0.0.1:<port>/inbound`) — a blanket dev-mode bypass would also quietly re-admit RFC1918 private ranges and the cloud-metadata address in every developer's local environment, which is a strictly bigger, unnecessary weakening for a need that loopback alone satisfies. `isLoopback()` is a dedicated check, not a reuse/relaxation of any existing range check.
+- **Environment-gated via a single exported `isSandboxEnvironment()` helper, not duplicated inline `NODE_ENV` checks at each call site.** Two call sites (`WebhookEndpointService.create()`, `WebhookDispatchService.attemptDelivery()`) both need the same decision; duplicating the environment logic would risk one of them drifting (e.g. someone later adding `Staging` to one check but not the other) without either call site's own test suite catching it. A single function both call is the single point where that logic can be verified once and trusted everywhere.
+- **`Staging` deliberately excluded alongside `Production`.** The charter (Section 19.3) treats staging as mirroring production's security posture, not a relaxed environment — verified this is still true today by reading `env.validation.ts` directly rather than assuming, and confirmed `isSandboxEnvironment` returns `false` for both in a dedicated test.
+- **The inspector mints its own second tenant/credential rather than accepting one via CLI args.** Matches `quickstart.ts`'s own existing convention exactly (no new pattern introduced) and keeps the tool fully self-contained — running it never requires already having a valid API-client token.
+- **No sandbox scenario library built in this slice.** Section 8.8/15.5 names two separate sandbox capabilities — webhook inspection (this slice) and a scenario library (curated demo cases/fixtures for exploring the platform) — investigated only enough to confirm they are genuinely separate pieces of work with no shared implementation, not attempted together. Left as a named Known gap rather than silently expanding this slice's scope.
+
+### Errors and fixes
+
+- **`client/webhook-inspector.ts`'s first draft referenced `endpointSecret` inside the `createServer` request-handler closure before its `const` declaration later in the same function.** This would have worked at runtime regardless (the handler only ever fires after registration completes and assigns the value), but is a fragile use-before-define pattern that a later refactor could easily break silently. Fixed by declaring `let endpointSecret = ''` before `createServer(...)`, with a comment explaining why the ordering is safe, assigning it only after registration succeeds.
+- No test-suite failures were hit for the SSRF-relaxation code itself — all 8 new `webhook-url-guard.spec.ts` tests and both new `webhook-endpoint.service.spec.ts` integration tests (production-still-rejects, development-allows) passed on first attempt.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5013verify, ports 5443/7234), fully migrated:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    68 suites / 500 tests passed (490 -> 500: +8 webhook-url-guard.spec.ts
+    loopback-exception tests, +2 webhook-endpoint.service.spec.ts
+    production/development integration tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged
+
+Manual live verification — real API (NODE_ENV unset, defaults to
+development) + real Temporal worker against a separate scratch stack
+(sandbox013, ports 5443/7234):
+  ran the actual `npm run webhook-inspector` command for real — it
+  seeded a tenant, minted a credential, started listening on
+  127.0.0.1:4500/inbound, and successfully registered itself as a real
+  webhook endpoint (confirming the SSRF loopback exception works in the
+  live running server, not just in isolated tests)
+
+  minted a second API-client credential for the same tenant, created a
+  real case, then started its real workflow run
+
+  the inspector's own live log showed exactly 7 deliveries, in order,
+  all signature VALID: loan_case.created, workflow_run.started,
+  evidence.updated x3 (INCOME/CREDIT/DOCUMENT), condition.opened
+  (VERIFY_INCOME_DISCREPANCY), workflow_run.waiting_for_review
+
+  cross-checked directly against Postgres: all 7 corresponding
+  webhook_deliveries rows show status = SUCCEEDED
+
+  live processes (API, worker, inspector) terminated and both scratch
+  stacks (sandbox013, m5013verify) torn down (docker compose down -v)
+  after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Production and staging behavior is provably unchanged — `isSandboxEnvironment()` returns `false` for both, and a dedicated integration test proves `NODE_ENV=production` still rejects a loopback target with the same error as before this slice.
+- The exception is scoped to loopback only, never any other blocked range, in development/test environments only — the narrowest carve-out that makes the sandbox tool possible, not a general SSRF relaxation.
+- No new secrets, no new external dependencies, no data persisted beyond what `quickstart.ts`'s own established pattern already persists (a demo tenant, an API-client credential, whatever cases/workflow runs are driven through it manually).
+
+### Known gaps
+
+- **Section 8.8/15.5's sandbox *scenario library* (curated demo cases/fixtures) is not built** — a genuinely separate piece of work from webhook inspection, not attempted this slice (see Decisions).
+- Every other M5/M5-011/M5-012 Known gap (`communication_approvals`/`provider_operation_intents`/`provider_authorization_grants` RLS, RBAC, data-disposition workflow, redirect-following on the SSRF guard, `send_information_request`/`escalate_to_reviewer`/`check_policy_change_impact` unwired) is unchanged by this slice.
+
+### Next safe step
+
+The ten entirely-unbuilt Section 9.4 tools and the sandbox scenario library remain the largest not-yet-started items from the original "什麼沒做" follow-up. Building the approval-gated `send_information_request` path (a real Temporal signal/resume design) remains the natural next increment in the communications area. Not started; awaiting direction.
