@@ -41,9 +41,7 @@ describeOrSkip('EvaluationManifestService', () => {
       ],
     });
     await dataSource.initialize();
-    service = new EvaluationManifestService(
-      dataSource.getRepository(EvaluationInputManifest),
-    );
+    service = new EvaluationManifestService(dataSource);
 
     const tenant = await dataSource
       .getRepository(Tenant)

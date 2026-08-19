@@ -108,9 +108,7 @@ describeOrSkip('runCorpus', () => {
       dataSource.getRepository(CasePolicyBinding),
       dataSource.getRepository(PolicyCatalogGeneration),
     );
-    const evaluationManifestService = new EvaluationManifestService(
-      dataSource.getRepository(EvaluationInputManifest),
-    );
+    const evaluationManifestService = new EvaluationManifestService(dataSource);
     const providerRegistry = new ProviderRegistryService();
     providerRegistry.register(new PlaidIncomeAdapter(new PlaidService()));
     providerRegistry.register(new CreditReportAdapter(new CreditService()));

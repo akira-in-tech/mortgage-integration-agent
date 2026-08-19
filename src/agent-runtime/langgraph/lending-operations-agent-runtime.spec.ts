@@ -98,9 +98,7 @@ describeOrSkip(
         dataSource.getRepository(CasePolicyBinding),
         dataSource.getRepository(PolicyCatalogGeneration),
       );
-      evaluationManifestService = new EvaluationManifestService(
-        dataSource.getRepository(EvaluationInputManifest),
-      );
+      evaluationManifestService = new EvaluationManifestService(dataSource);
       runtime = createLendingOperationsAgentRuntime({
         dataSource,
         policyEvaluationService,

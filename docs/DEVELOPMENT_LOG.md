@@ -5618,3 +5618,104 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 The two explicitly-deferred "expensive" table groups (policy bindings/snapshots, provider operation intents/authorization grants) are the natural next RLS increment, but both require a real service-layer refactor first (giving `PolicyEvaluationService` a `DataSource`, threading `tenantId` through the provider-platform methods that lack it) rather than a mechanical migration-plus-wrap — a genuine design decision, not made unilaterally here. RBAC roles and the data-disposition workflow remain the other honestly-buildable options, both still without charter-provided scaffolding. Not started; awaiting direction.
+
+## M5-007: PostgreSQL row-level security for `evaluation_input_manifests`
+
+### Status
+
+Implemented and verified, including a real live workflow run. Extends M5-002/M5-004/M5-005/M5-006's row-level security pattern to Section 10.5's `evaluation_input_manifests` — the durable, evidence-backed record of exactly what every completed DSL evaluation read.
+
+Chosen autonomously as the next M5 slice (the user again delegated the choice — "繼續"). Before scoping it, ran a fresh, direct audit of every entity for a `tenantId` column (`grep tenantId! src/database/entities/*.entity.ts`), rather than trusting M5-006's own dev-log Known gaps list at face value — that list named exactly two deferred groups (`case_policy_bindings`/`case_policy_snapshots`, `provider_operation_intents`/`provider_authorization_grants`), but the fresh audit found `evaluation_input_manifests`, `communication_messages`, `communication_templates`, and `policy_change_impact_assessments` also have real `tenantId` columns and no RLS — simply missed by M5-004/M5-006's own scoping, not tables anyone deliberately excluded. Of these, `evaluation_input_manifests` was the clear next slice: exactly one write path (`EvaluationManifestService.assemble()`, a single insert-only `save()`), no reads anywhere in production code, and both real call sites already run outside any surrounding `runInTenantContext` block — no nesting concerns, no shared-method-across-different-tenant-contexts complexity like `PolicyChangeImpactService`'s `assessOneCase` has (see Known gaps).
+
+Also corrected a factual error in M5-006's own dev-log entry along the way: `PolicyEvaluationService` does *not* have "no `DataSource`/`EntityManager` at all" — it has three `@InjectRepository`-injected repositories, just never wrapped in `runInTenantContext`, the identical unwrapped-repository pattern `case-timeline.service.ts` had before M5-006 fixed it. Converting it is mechanical (swap the injected repositories for a `DataSource`, wrap `evaluate()`'s body), but is still real, non-trivial work because `PolicyChangeImpactService.assessOneCase()` shares `CasePolicyBinding`/`CasePolicySnapshot` reads across two callers needing different tenant contexts (`assessImpact()`'s cross-tenant bypass scan vs. `assessImpactForCase()`'s single-tenant lookup) — not because no `DataSource` exists at all.
+
+### Acceptance criterion
+
+A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a different tenant's context, sees zero rows on `evaluation_input_manifests` — even against a real row that genuinely exists — while the owning tenant's context sees exactly its own row. Proven at the database layer (a 6-test RLS proof spec, `evaluation-manifest-tenant-isolation.spec.ts`) and at the live-application layer (a real case driven through the real LangGraph agent runtime under `NODE_ENV=production`/`APP_DATABASE_URL`, whose resulting manifest row was then queried directly against Postgres under a fabricated other-tenant session and found invisible, then under the real tenant's session and found fully visible).
+
+### Implementation
+
+- `src/database/migrations/1787130439264-EvaluationManifestTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration; `evaluation_input_manifests` has its own direct `tenantId` column, no join needed.
+- `src/policy/evaluation-manifest.service.ts` — `EvaluationManifestService`'s constructor changed from `@InjectRepository(EvaluationInputManifest)` to `@InjectDataSource()`; `assemble()`'s single `save()` now runs inside `runInTenantContext(this.dataSource, input.tenantId, ...)`.
+- Five direct-construction call sites updated from `new EvaluationManifestService(dataSource.getRepository(EvaluationInputManifest))` to `new EvaluationManifestService(dataSource)` — `src/evaluation-report.ts`, `src/workflows/case-conditions.activities.spec.ts`, `src/evaluation/runner.spec.ts`, `src/agent-runtime/langgraph/lending-operations-agent-runtime.spec.ts`, `src/policy/evaluation-manifest.service.spec.ts`. All five already had `dataSource` in scope — a pure mechanical swap, the same class of constructor-signature update M5-005's own Errors and fixes found being missed in spec files, caught here proactively by grepping every `new EvaluationManifestService(` call site before running anything.
+- `src/policy/evaluation-manifest-tenant-isolation.spec.ts` (new) — the RLS proof, mirroring `consent-tenant-isolation.spec.ts`'s pattern (simple direct-`tenantId` table, no join), 6 tests: no-context zero visibility, tenant A/B own-row visibility, cross-tenant direct-id lookup returning null, cross-tenant spoofed-INSERT rejection, bypass-mode inclusion.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test (`'reverts the evaluation manifest tenant isolation migration without touching other tables'`), inserted as the newest (first) revert test, same shape as every prior one. No new table, so the "applies every migration" test's table list needed no change.
+
+### Affected files
+
+- `src/database/migrations/1787130439264-EvaluationManifestTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/policy/evaluation-manifest.service.ts`, `evaluation-manifest.service.spec.ts`, `evaluation-manifest-tenant-isolation.spec.ts` (new)
+- `src/evaluation-report.ts`, `src/evaluation/runner.spec.ts`
+- `src/workflows/case-conditions.activities.spec.ts`
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Scoped to exactly one table, not the whole freshly-discovered list.** `communication_messages`/`communication_templates` and `policy_change_impact_assessments` are real, similarly-sized gaps, but each has its own service-level shape to verify before touching (not yet audited this slice) — bundling them in without that same care would repeat the exact mistake this slice is correcting (M5-006's own scoping missing tables it didn't look hard enough for). Named explicitly in Known gaps rather than silently left for "later" with no trace.
+- **`PolicyChangeImpactService` and `PolicyEvaluationService` (the `case_policy_bindings`/`case_policy_snapshots` group) deliberately not attempted here despite the corrected understanding that `PolicyEvaluationService` itself is a mechanical wrap.** `PolicyChangeImpactService.assessOneCase()`'s shared bare reads across two different-tenant-context callers is the real remaining complexity M5-006's dev log undersold — that needs `assessOneCase` refactored to accept an `EntityManager` parameter (mirroring `finalizeReadyForUnderwriting`'s existing pattern in `case-conditions.activities.ts`) with each caller supplying its own context, a real design decision about method shape, not attempted in the same slice as a single-table, single-service, zero-read table like this one.
+
+### Errors and fixes
+
+None encountered — `npm run build`/`lint:check` passed clean on the first attempt, and every test run (migration revert, RLS proof spec, full suite, e2e) passed on its first attempt. The pre-existing `client.query() when the client is already executing a query is deprecated` warning during the e2e run is the same one already confirmed pre-existing (not this slice's) in M5-006.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5007verify, ports 5443/7234):
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    25/25 passed (24 -> 25: +1 new revert test), run on a virgin
+    cluster first
+
+  migration:run applied EvaluationManifestTenantIsolation1787130439264
+    cleanly on top of CaseConditionsAgentTenantIsolation1787129406858
+
+  DATABASE_URL=... npx jest evaluation-manifest-tenant-isolation.spec.ts
+  --runInBand
+    6/6 passed against the real mortgage_app role, first attempt
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    64 suites / 433 tests passed (63/426 -> 64/433: +1 new suite,
+    +7 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged from M5-006 (no e2e-visible
+    behavior change)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  seeded a real tenant + API-client credential, created a real case,
+  started its real workflow — it landed in CONDITIONS_OPEN with a real
+  income-discrepancy condition opened, meaning resolveOutcomeNode's
+  evaluationManifestService.assemble() call genuinely ran
+
+  queried evaluation_input_manifests directly against Postgres as
+  mortgage_app: a real row existed referencing the real caseId/
+  policyBindingId; a fabricated other-tenant session (inside an explicit
+  transaction, SET LOCAL) saw zero rows despite that row existing; the
+  real tenant's own session saw exactly its own 1 row
+
+  scratch stack torn down (docker compose down -v) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real gap that had gone unnamed until this slice's own fresh audit: `evaluation_input_manifests` — the durable record Section 18.3's release gate ("evaluations without a valid immutable input manifest accepted: 0") depends on for audit integrity — had no database-layer tenant backstop at all before this, despite carrying a real `tenantId` column since its first migration.
+- No new secrets, no new external dependencies, no performance concern beyond the established pattern's own (a single indexed equality check on an insert-only table).
+
+### Known gaps
+
+- **`communication_messages`/`communication_templates` still have no RLS** — newly named by this slice's own fresh audit, not previously tracked anywhere. Service-level shape not yet audited; real follow-up work.
+- **`policy_change_impact_assessments` still has no RLS** — same audit finding. Its owning service (`PolicyChangeImpactService`) already has a `DataSource` injected, but see Decisions for why it's still real work, not a one-line wrap.
+- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — corrected understanding this slice: `PolicyEvaluationService` *does* have injected repositories (M5-006's dev log entry was wrong to say it has none), so converting it to `runInTenantContext` is mechanical: swap three injected repositories for one `DataSource`. The real remaining work is `PolicyChangeImpactService.assessOneCase()`'s shared bare reads across two different-tenant-context callers (see Decisions) — that needs a method-shape change, not just a constructor swap.
+- **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — unchanged from M5-006's own Known gap; several methods don't have `tenantId` in scope today.
+- **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated since M5-004.
+- **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — unchanged from M5-006's own Next safe step.
+
+### Next safe step
+
+`policy_change_impact_assessments` (via `PolicyChangeImpactService`, which already has a `DataSource`) is the next-cheapest remaining table — its own two-different-tenant-context complexity is now understood and scoped (see Decisions), unlike when M5-004/M5-006 first deferred it as part of an undifferentiated "expensive" group. `communication_messages`/`communication_templates` need their own service-shape audit first (not yet done). `case_policy_bindings`/`case_policy_snapshots` and `provider_operation_intents`/`provider_authorization_grants` remain the two largest remaining table groups, both needing real service refactors. Not started; awaiting direction.

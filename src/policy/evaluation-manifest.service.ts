@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import {
   EvaluationInputManifest,
   EvaluationManifestEvidenceRef,
 } from '../database/entities/evaluation-input-manifest.entity';
 import { EvidenceFact } from '../database/entities/evidence-fact.entity';
 import { computeDigest } from './policy-digest';
+import { runInTenantContext } from '../database/tenant-context';
 
 export interface AssembleManifestInput {
   tenantId: string;
@@ -25,13 +26,16 @@ export interface AssembleManifestInput {
  * Called from `resolveOutcomeNode` (lending-operations-agent-runtime.ts)
  * right before `create_condition`, the same pairing the charter text
  * itself uses ("condition writes use compare-and-swap... requires a new
- * evaluation manifest").
+ * evaluation manifest"). `evaluation_input_manifests` carries a real RLS
+ * policy (M5-007) — the single insert below runs inside
+ * `runInTenantContext`, not a bare repository call, so it can't touch a
+ * row RLS would reject.
  */
 @Injectable()
 export class EvaluationManifestService {
   constructor(
-    @InjectRepository(EvaluationInputManifest)
-    private readonly manifestRepository: Repository<EvaluationInputManifest>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
   async assemble(
@@ -61,11 +65,9 @@ export class EvaluationManifestService {
     };
     const manifestHash = computeDigest(contentToHash);
 
-    return this.manifestRepository.save(
-      this.manifestRepository.create({
-        ...contentToHash,
-        manifestHash,
-      }),
-    );
+    return runInTenantContext(this.dataSource, input.tenantId, (manager) => {
+      const repo = manager.getRepository(EvaluationInputManifest);
+      return repo.save(repo.create({ ...contentToHash, manifestHash }));
+    });
   }
 }

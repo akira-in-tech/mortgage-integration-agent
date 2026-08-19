@@ -153,9 +153,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(CasePolicyBinding),
       dataSource.getRepository(PolicyCatalogGeneration),
     );
-    evaluationManifestService = new EvaluationManifestService(
-      dataSource.getRepository(EvaluationInputManifest),
-    );
+    evaluationManifestService = new EvaluationManifestService(dataSource);
     consentService = new ConsentService(dataSource);
     providerAuthorizationService = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
