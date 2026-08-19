@@ -39,6 +39,7 @@ describe('CasesService', () => {
     getWorkflowStatus: jest.Mock;
   };
   let caseTimelineService: { getTimeline: jest.Mock };
+  let consentService: { grantForCase: jest.Mock; revoke: jest.Mock };
   let service: CasesService;
 
   beforeEach(() => {
@@ -94,6 +95,10 @@ describe('CasesService', () => {
       getWorkflowStatus: jest.fn(),
     };
     caseTimelineService = { getTimeline: jest.fn() };
+    consentService = {
+      grantForCase: jest.fn().mockResolvedValue({ id: 'consent-record-1' }),
+      revoke: jest.fn().mockResolvedValue({ id: 'consent-record-1' }),
+    };
     service = new CasesService(
       tenantRepo as never,
       jurisdictionRepo as never,
@@ -101,6 +106,7 @@ describe('CasesService', () => {
       temporalClient as never,
       configService as never,
       caseTimelineService as never,
+      consentService as never,
     );
   });
 
@@ -148,6 +154,14 @@ describe('CasesService', () => {
         }),
       );
       expect(txOutboxRepo.save).toHaveBeenCalled();
+      // M5-005: every new case gets an implicit consent grant, matching
+      // this codebase's existing behavior (a case has always processed
+      // successfully with no separate consent step) — this is what
+      // gives submitConsentAction()'s REVOKE something real to revoke.
+      expect(consentService.grantForCase).toHaveBeenCalledWith(
+        TENANT_ID,
+        CASE_ID,
+      );
     });
 
     it('returns the existing case instead of creating a duplicate for a repeated key', async () => {
@@ -365,6 +379,53 @@ describe('CasesService', () => {
           actorId: 'reviewer-2',
         }),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('submitConsentAction', () => {
+    beforeEach(() => {
+      caseRepo.findOneBy.mockResolvedValue({ id: CASE_ID } as LoanCase);
+    });
+
+    it('REVOKE delegates to ConsentService.revoke with the reason', async () => {
+      const revoked = { id: 'consent-record-1', revokedAt: new Date() };
+      consentService.revoke.mockResolvedValue(revoked);
+
+      const result = await service.submitConsentAction(TENANT_ID, CASE_ID, {
+        action: 'REVOKE',
+        reason: 'borrower withdrew',
+      });
+
+      expect(consentService.revoke).toHaveBeenCalledWith(
+        TENANT_ID,
+        CASE_ID,
+        'borrower withdrew',
+      );
+      expect(result).toBe(revoked);
+    });
+
+    it('GRANT delegates to ConsentService.grantForCase', async () => {
+      const granted = { id: 'consent-record-2' };
+      consentService.grantForCase.mockResolvedValue(granted);
+
+      const result = await service.submitConsentAction(TENANT_ID, CASE_ID, {
+        action: 'GRANT',
+      });
+
+      expect(consentService.grantForCase).toHaveBeenCalledWith(
+        TENANT_ID,
+        CASE_ID,
+      );
+      expect(result).toBe(granted);
+    });
+
+    it('404s for a case that belongs to a different tenant, without calling ConsentService', async () => {
+      caseRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.submitConsentAction(TENANT_ID, CASE_ID, { action: 'REVOKE' }),
+      ).rejects.toThrow(NotFoundException);
+      expect(consentService.revoke).not.toHaveBeenCalled();
     });
   });
 

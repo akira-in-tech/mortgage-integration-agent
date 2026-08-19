@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
+import { ConsentService } from '../consent/consent.service';
 import { dispatchProviderRequest } from './dispatch-provider-request';
 import { ProviderCapability } from './types';
 import { AssetService } from '../integrations/asset/asset.service';
@@ -29,6 +31,7 @@ describeOrSkip('dispatchProviderRequest', () => {
   let registry: ProviderRegistryService;
   let authorizationService: ProviderAuthorizationService;
   let intentService: ProviderOperationIntentService;
+  let consentService: ConsentService;
   // Every test uses a fresh randomUUID() tenantId and tracks it here so
   // afterAll can remove exactly what this file created — findOneByOrFail
   // on a shared/persistent scratch database has no defined row when more
@@ -41,14 +44,20 @@ describeOrSkip('dispatchProviderRequest', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [ProviderAuthorizationGrant, ProviderOperationIntent],
+      entities: [
+        ProviderAuthorizationGrant,
+        ProviderOperationIntent,
+        ConsentRecord,
+      ],
     });
     await dataSource.initialize();
     registry = new ProviderRegistryService();
     registry.register(new AssetVerificationAdapter(new AssetService()));
     registry.register(new IdentityVerificationAdapter(new IdentityService()));
+    consentService = new ConsentService(dataSource);
     authorizationService = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
+      consentService,
     );
     intentService = new ProviderOperationIntentService(
       dataSource.getRepository(ProviderOperationIntent),
@@ -75,7 +84,12 @@ describeOrSkip('dispatchProviderRequest', () => {
     }
   });
 
-  const deps = () => ({ registry, authorizationService, intentService });
+  const deps = () => ({
+    registry,
+    authorizationService,
+    intentService,
+    consentService,
+  });
 
   function newTenantId(): string {
     const id = randomUUID();
@@ -202,6 +216,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           registry: registryWithNoAdapters,
           authorizationService,
           intentService,
+          consentService,
         },
         {
           tenantId,

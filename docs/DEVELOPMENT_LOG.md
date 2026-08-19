@@ -5378,3 +5378,137 @@ with APP_DATABASE_URL pointed at mortgage_app (M5-003's role):
 ### Next safe step
 
 The concurrency bug found this slice (`Promise.all` on a shared connection) is worth a deliberate, dedicated grep across the rest of the codebase outside this slice's own 4-table scope, since the same risky pattern could exist wherever a `dataSource.transaction`/`runInTenantContext` callback issues more than one query — not yet done as a full audit, only fixed where this slice's own work happened to touch it. Otherwise, the honestly-buildable increments remain: `loan_conditions` + the Agent-runtime/provider-platform tables (the deferred, larger-blast-radius RLS extension), or M5's other still-open items (RBAC roles, consent enforcement, OIDC). Not started; awaiting direction.
+
+## M5-005: Real consent enforcement (`consent_records`, Section 6.3's "Consent... may stop processing")
+
+### Status
+
+Implemented and verified, including a real live workflow run proving a previously-dead code path now genuinely fires: the LangGraph runtime's `verifyConsent` node, built in M3-009 and wired as the graph's literal first step, has been real, tested, but permanently inert in production ever since — its only caller always hardcoded `consentStatus: 'VALID'` because no consent-tracking entity existed. It now reads real data, and a real revoked-consent case, driven through a real Temporal worker, genuinely landed in `MANUAL_REVIEW`.
+
+Chosen autonomously as the next M5 slice (the user delegated the choice) over RBAC roles: consent enforcement was already concretely scoped by the charter's own type definitions and trigger lists (Section 9.3's `ConsentStatus`, Section 9.6's "consent revoked mid-case" as the *first* mandatory review trigger listed), already had a real, tested, dead-code enforcement point waiting for real data (M3-009), and sits at the very top of Section 6.3's authority order — RBAC's own design space (what roles, what granularity) has no equivalent charter-provided scaffolding and isn't a call this session should make unilaterally.
+
+### Acceptance criterion
+
+A case whose consent has been revoked stops new processing (Section 14.2) — proven at three layers: a unit-level activity test (`evaluateConditions` returns `REVIEW_REQUIRED` for a revoked-consent case), a provider-dispatch-level test (`ProviderAuthorizationService.revalidate()` fails closed when a grant's referenced consent record is revoked, classified non-retryable), and a real live workflow run (a genuine case, revoked before its workflow starts, driven through a real Temporal worker under `NODE_ENV=production` and the M5-003 restricted role, landing in `MANUAL_REVIEW`).
+
+### Implementation
+
+- `src/database/entities/consent-record.entity.ts` (new) — Section 14.1's `consent_records`, deliberately one record per case (not per purpose — a documented simplification against the charter's fuller per-purpose/policy-version model, matched to the single scalar `consentStatus` field the Agent state actually consumes today). `src/database/migrations/1787126773274-ConsentRecords.ts` (new) — a genuinely new table, so RLS (`FORCE ROW LEVEL SECURITY` + the same `tenant_isolation` policy pattern as M5-002/M5-004) is applied in the *same* migration that creates it, never retrofitted; `AppRuntimeRole`'s (M5-003) `GRANT ... ON ALL TABLES`/`ALTER DEFAULT PRIVILEGES` already covers it automatically.
+- `src/consent/consent.service.ts` (new), `consent.module.ts` (new, `@Global()`, same reasoning as `AuthModule`) — `grantForCase()`, `revoke()`, `getStatus()` (computes `VALID`/`MISSING`/`EXPIRED`/`REVOKED` from the case's most recent record), `activeRecordId()`, `isRecordValid()` (bypasses tenant scoping deliberately — the caller, `ProviderAuthorizationService`, has already independently confirmed the grant's own tenant match before this is ever reached).
+- `CasesService.createCase()` now calls `consentService.grantForCase()` right after a case is created — implicit, automatic consent, matching this codebase's existing behavior exactly (every case has always processed successfully with no separate consent step) rather than introducing a new required step that would break case creation for every existing caller. `CasesService.submitConsentAction()` + `POST /v1/loan-cases/{caseId}/consents` (`ConsentActionDto`, `{action: "GRANT" | "REVOKE", reason?}`) is the new real capability — synchronous, not a Temporal signal, since a consent action is a plain database write; returns the resulting `ConsentRecord` directly (`201`, matching `createCase()`'s own precedent for a POST that returns a created/mutated resource without an explicit `@HttpCode` override).
+- `case-conditions.activities.ts`'s `evaluateConditions` now calls `consentService.getStatus(tenantId, caseId)` instead of hardcoding `'VALID'` — the single-line change that makes M3-009's `verifyConsent` node real.
+- `ProviderAuthorizationService.issue()` accepts an optional `consentRecordIds` input (populated by `dispatchProviderRequest` via `consentService.activeRecordId()`); `revalidate()` now also confirms every referenced id is still granted and unrevoked (Section 11.5's own exact language), failing closed alongside its existing tenant/case/provider/capability/expiry/revocation checks.
+- `dispatchProviderRequest` throws a new `ProviderRevalidationError` (not a plain `Error`) on any revalidation failure; `case-conditions.activities.ts`'s `callProviderWithRetryClassification` classifies it `ApplicationFailure.nonRetryable` — a mismatched, expired, revoked, or consent-invalidated grant can never succeed on retry, the identical reasoning already applied to a terminal synthetic provider rejection (found and fixed after a live-verification run showed the *un*-classified version wasting ~3 seconds of pointless Temporal retries before finally failing; the classified version fails in ~90ms).
+- `evaluation/runner.ts`/`runner.spec.ts`/`evaluation-report.ts` updated to grant consent for every fixture case they create directly (bypassing `CasesService`) — matches real behavior, keeps the whole corpus's expected outcomes unchanged.
+- `src/consent/consent-tenant-isolation.spec.ts` (new) — the RLS proof, mirroring M5-002/M5-004's pattern against the real `mortgage_app` role, simpler than the other two (a direct `tenantId` column, no join-based policy, RLS present from the table's first migration).
+
+### Affected files
+
+- `src/database/entities/consent-record.entity.ts` (new), `src/database/migrations/1787126773274-ConsentRecords.ts` (new), `schema-migrations.spec.ts`
+- `src/consent/consent.service.ts` (+`.spec.ts`, new), `consent.module.ts` (new), `consent-tenant-isolation.spec.ts` (new)
+- `src/cases/cases.service.ts` (+`.spec.ts`), `cases.controller.ts`, `dto/consent-action.dto.ts` (new)
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`)
+- `src/provider-platform/provider-authorization.service.ts` (+`.spec.ts`), `dispatch-provider-request.ts` (+`.spec.ts`)
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` (unchanged this slice — `verifyConsent` was already built in M3-009)
+- `src/evaluation/runner.ts`, `runner.spec.ts`, `src/evaluation-report.ts`
+- `src/app.module.ts`, `src/worker.module.ts`
+- `test/cases.e2e-spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Implicit auto-grant at case creation, not a required explicit grant step.** Section 15.1's target contract lists `POST .../consents` as its own endpoint, which could imply consent must be explicitly granted before a case can process. Requiring that would be a breaking change to case creation for every existing caller (including this codebase's own quickstart/e2e suites) and doesn't match the real-world framing that applying for a mortgage already constitutes consenting to the processing that evaluates it. Revocation — the actual, genuinely new safety capability Section 6.3/14.2 care about — is unaffected by this choice.
+- **One consent record per case, not the charter's fuller per-purpose/scope/policy-version model (Section 14.1).** `LendingOperationsAgentState.consentStatus` is a single scalar the Agent run already consumes; modeling per-purpose consent now would build structure nothing reads yet. `purpose`/`scope` columns exist on the entity today as descriptive fields, not yet a real per-purpose access boundary — documented as a known simplification, not silently narrowed.
+- **`activeRecordId()` returns the case's most recent record regardless of whether it's revoked, not `null` once revoked.** This looked like a bug during live verification (a revoked case's provider dispatch still tries to attach a — now stale — consent reference) but is the correct design given the auto-grant invariant: every real case always has at least one consent record, so "most recent" always accurately reflects true current state, and attaching the stale reference is exactly what lets `revalidate()`'s own explicit consent check catch it and fail closed. Returning `null` instead would make `consentRecordIds` empty, which `revalidate()` treats as "nothing to check" — the opposite of what's needed.
+- **`ProviderRevalidationError` classified non-retryable, not left as a generic thrown `Error`.** Found live, not by design foresight — see Errors and fixes.
+- **Data-disposition review for already-collected evidence (Section 14.2's third consequence of revocation) explicitly not attempted.** M0-010's own roadmap note already separated "consent-revocation propagation to dependent grants" from "the data-disposition workflow" as two distinct pieces of future M5 work; this slice does the first, not the second, and says so plainly rather than letting "consent enforcement" read as more complete than it is.
+
+### Errors and fixes
+
+- **First live workflow run revoked a case's consent, started its workflow, and the case correctly landed in `MANUAL_REVIEW` — but took ~3.25 seconds to get there and reported a generic `"ActivityFailure: Activity task failed"` reason instead of anything consent-specific.** Root cause: `dispatchProviderRequest`'s revalidation-failure branch threw a plain `Error`, which `callProviderWithRetryClassification` doesn't recognize, so it propagated unclassified — Temporal applied its own default retry policy (up to 3 attempts with backoff) before finally giving up, wasting real time on a request that could never succeed no matter how many times it was retried. Fixed by introducing `ProviderRevalidationError` and classifying it `ApplicationFailure.nonRetryable` (see Decisions). Re-ran the identical live scenario after the fix: the same case now fails in ~90ms, immediately, with no wasted retries — confirmed by comparing the real `workflow_run.started`→`workflow_run.failed` outbox-event timestamps from both runs directly.
+- **The outbox event's `reason` field still shows the generic `"ActivityFailure: Activity task failed"` string even after the classification fix — not the specific `ProviderRevalidationError` message.** Root cause, confirmed by reading `case-conditions.workflow.ts`: its top-level `catch` blocks (both the evidence-collection one and the `evaluateConditions` one) call `String(error)` on whatever Temporal's own `ActivityFailure` wrapper produces, which doesn't drill into the wrapped cause's specific message — a pre-existing limitation of this workflow's error reporting that affects *every* activity failure reported this way, not something this slice introduced or made worse (if anything, the classification fix above made the failure faster). Left as-is rather than expanding scope to fix generic error-message extraction workflow-wide — tracked honestly in Known gaps instead of silently accepted or silently expanded into.
+- **`case-conditions.activities.spec.ts` failed with `Cannot read properties of undefined (reading 'isRecordValid')` on the first run after wiring `consentService` into `ProviderAuthorizationService`'s constructor.** That spec file's own `beforeAll` still constructed `ProviderAuthorizationService` with only its old single argument (the repository) — `consentService` was added to `createCaseConditionsActivities`'s deps object correctly, but the *separate* `ProviderAuthorizationService` constructor call three lines above it was missed. The exact same class of ordering/completeness bug the M5-002/M5-003/M5-004 slices repeatedly found in their own direct-instantiation spec files — found immediately by running the affected spec, not live.
+- **`evaluation/runner.spec.ts` (a file distinct from `runner.ts` itself, easy to miss in a `grep -l createCaseConditionsActivities` sweep since it doesn't call that function by name in its own `deps()` — it constructs `EvaluationRunnerDeps` inline) failed the same way** — full test suite run surfaced 5 failures there after the `EvaluationRunnerDeps` interface gained a required `consentService` field. Fixed by updating its own `deps()` helper and entity list, same pattern as every other direct-construction spec.
+
+### Verification
+
+```text
+npm run build / npm run lint:check (after `npm run lint` auto-fixed
+formatting)
+  both passed clean
+
+Migration (m5005-verify / m5005-final scratch stacks, ports 5443/7234):
+  a from-empty migration:run applied ConsentRecords1787126773274 cleanly
+  on top of CaseCoreTenantIsolation1787084811062
+
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    23/23 passed (22 -> 23: +1 new revert test), run on a virgin
+    cluster first
+
+  DATABASE_URL=... npx jest consent-tenant-isolation consent.service.spec.ts --runInBand
+    15/15 passed against the real mortgage_app role, first attempt
+
+  DATABASE_URL=... npx jest case-conditions.activities.spec.ts
+  provider-authorization.service.spec.ts dispatch-provider-request.spec.ts --runInBand
+    initial run: 4 failures (the ProviderAuthorizationService
+    constructor-ordering bug above) — fixed, re-ran clean: 26/26,
+    later 27/27 once the revalidation-classification test was added
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand
+  --no-cache --silent
+    initial run: 5 failures, all in evaluation/runner.spec.ts (the
+    missing-consentService bug above) — fixed, re-ran clean: final
+    count 63 suites passed, 425 tests passed (61/424 -> 63/425:
+    +2 suites [consent.service.spec.ts, consent-tenant-isolation.spec.ts],
+    +1 test net beyond that — several existing specs gained assertions
+    rather than new `it()` blocks)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    27/27 passed (23 -> 27: +4 new consent e2e tests — implicit grant
+    at creation, REVOKE marks it revoked with the reason, GRANT after
+    REVOKE creates a fresh record, cross-tenant REVOKE 404s)
+
+Manual live verification — the real case-conditions workflow under
+NODE_ENV=production with APP_DATABASE_URL (M5-003's restricted role):
+  seeded a real tenant, minted a real API-client credential, created a
+  real case (implicit consent granted automatically, confirmed via a
+  direct query), revoked it via a real POST .../consents call (201,
+  revokedAt/revocationReason both real and returned), then started the
+  real workflow
+
+  first run (before the non-retryable classification fix): case
+  correctly landed in MANUAL_REVIEW after ~3.25s, generic reason string
+
+  restarted the real API + worker after the fix, ran the identical
+  scenario against a fresh case: MANUAL_REVIEW after ~90ms — direct,
+  measured confirmation the classification fix works, not just an
+  inference from reading the code
+
+  queried the real consent_records row this live run produced directly
+  against Postgres as mortgage_app: invisible under a different
+  tenant's session context, fully visible (with its real revokedAt/
+  revocationReason) under its own tenant's — the same M5-002/M5-004
+  database-layer proof pattern, this time against a real revoked
+  consent record a live workflow run actually produced
+
+  synthetic tenant/case/api-client/consent data removed with the
+  scratch stack teardown (docker compose down -v)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real, previously-inert safety gap: Section 6.3's own top-priority authority-order item ("Consent... may stop processing") is now genuinely enforced, not merely represented by dead code waiting for data that never came.
+- The non-retryable classification fix is also a genuine, independent cost/reliability improvement — any revalidation failure (not just a consent one; a mismatched or expired grant benefits identically) now fails fast instead of burning a worker's time and the configured retry budget on an attempt that could never succeed.
+- No new secrets, no new external dependencies, no performance concern beyond the established RLS pattern's own (an indexed equality check, same order of cost as this codebase's existing `WHERE tenantId = ...` clauses).
+
+### Known gaps
+
+- **No data-disposition review for evidence already collected under a since-revoked consent (Section 14.2's third consequence)** — this slice stops *new* processing, which is the literal Section 6.3 requirement, but does not flag, review, or dispose of evidence a case already gathered before its consent was revoked. Real, separately-scoped follow-up, explicitly named in M0-010's own original roadmap note.
+- **Consent revocation only takes effect the next time `evaluateConditions` runs, not by interrupting an Agent run already in flight.** Not a practical gap today — this codebase's Agent runs are synchronous and make no model calls, so there is no meaningful "in flight" window — but would become a real one if that ever changes.
+- **The case timeline/outbox event's failure reason is a generic Temporal string, not the specific consent-related message**, for the reason in Errors and fixes above — a pre-existing, workflow-wide limitation this slice's live verification happened to surface clearly for the first time, not something newly introduced.
+- **`purpose`/`scope` are descriptive strings, not a real per-purpose consent boundary** — see Decisions. The charter's fuller Section 14.1 model (also binding a policy version) isn't modeled.
+- **`evaluation/runner.ts`'s own direct fixture inserts (bypassing `CasesService`, `runInTenantContext`) still aren't RLS-audited** — unchanged from M5-004's own Known gap; this slice only added the consent grant those fixtures now also need, not a broader audit of that file.
+
+### Next safe step
+
+The honestly-buildable increments remaining in M5: RBAC roles (still no charter-provided scaffolding to build against — would need its own design pass, not a mechanical extension of an existing pattern), the data-disposition review workflow this slice's own Known gaps names, extending RLS to `loan_conditions` and the Agent-runtime/provider-platform tables (M5-004's own deferred scope), or OIDC. Not started; awaiting direction.

@@ -13,6 +13,7 @@ import { AppModule } from '../src/app.module';
 import { Tenant } from '../src/database/entities/tenant.entity';
 import { LoanCase } from '../src/database/entities/loan-case.entity';
 import { ApiClient } from '../src/database/entities/api-client.entity';
+import { ConsentRecord } from '../src/database/entities/consent-record.entity';
 import { ApiClientService } from '../src/auth/api-client.service';
 
 // Same "skip instead of failing" convention as loan.e2e-spec.ts and the
@@ -38,6 +39,7 @@ describeOrSkip(
     let tenantRepo: Repository<Tenant>;
     let caseRepo: Repository<LoanCase>;
     let apiClientRepo: Repository<ApiClient>;
+    let consentRepo: Repository<ConsentRecord>;
     let apiClientService: ApiClientService;
     let tenantId: string;
     let authHeader: string;
@@ -66,6 +68,7 @@ describeOrSkip(
       tenantRepo = moduleRef.get(getRepositoryToken(Tenant));
       caseRepo = moduleRef.get(getRepositoryToken(LoanCase));
       apiClientRepo = moduleRef.get(getRepositoryToken(ApiClient));
+      consentRepo = moduleRef.get(getRepositoryToken(ConsentRecord));
       apiClientService = moduleRef.get(ApiClientService);
 
       const tenant = await tenantRepo.save(
@@ -120,10 +123,12 @@ describeOrSkip(
         await apiClientRepo.delete(apiClientIds);
       }
       if (tenantId) {
+        await consentRepo.delete({ tenantId });
         await caseRepo.delete({ tenantId });
         await tenantRepo.delete({ id: tenantId });
       }
       if (otherTenantId) {
+        await consentRepo.delete({ tenantId: otherTenantId });
         await tenantRepo.delete({ id: otherTenantId });
       }
       await app?.close();
@@ -394,6 +399,89 @@ describeOrSkip(
         });
 
       expect(res.status).toBe(404);
+    });
+
+    // Section 15.1's POST .../consents (M5-005).
+    it('a new case gets an implicit GRANTED consent record automatically', async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      expect(created.status).toBe(201);
+
+      const record = await consentRepo.findOneByOrFail({
+        caseId: created.body.id,
+      });
+      expect(record.tenantId).toBe(tenantId);
+      expect(record.revokedAt).toBeNull();
+    });
+
+    it('REVOKE marks the active consent record revoked with the given reason', async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      const caseId = created.body.id;
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/consents`)
+        .set('Authorization', authHeader)
+        .send({ action: 'REVOKE', reason: 'e2e borrower withdrew' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.revokedAt).not.toBeNull();
+      expect(res.body.revocationReason).toBe('e2e borrower withdrew');
+
+      const record = await consentRepo.findOneByOrFail({ id: res.body.id });
+      expect(record.revokedAt).not.toBeNull();
+    });
+
+    it('GRANT after a REVOKE creates a fresh active consent record', async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+      const caseId = created.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/consents`)
+        .set('Authorization', authHeader)
+        .send({ action: 'REVOKE' });
+
+      const res = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${caseId}/consents`)
+        .set('Authorization', authHeader)
+        .send({ action: 'GRANT' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.revokedAt).toBeNull();
+    });
+
+    it("404s for another tenant's real, valid credential revoking someone else's case consent", async () => {
+      const payload = createCasePayload();
+      const created = await request(app.getHttpServer())
+        .post('/v1/loan-cases')
+        .set('Authorization', authHeader)
+        .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+        .send(payload);
+
+      const crossTenantRevoke = await request(app.getHttpServer())
+        .post(`/v1/loan-cases/${created.body.id}/consents`)
+        .set('Authorization', otherAuthHeader)
+        .send({ action: 'REVOKE' });
+      expect(crossTenantRevoke.status).toBe(404);
+
+      // The real record is untouched.
+      const record = await consentRepo.findOneByOrFail({
+        caseId: created.body.id,
+      });
+      expect(record.revokedAt).toBeNull();
     });
   },
 );

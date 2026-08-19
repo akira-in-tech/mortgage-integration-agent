@@ -11,6 +11,7 @@ import { ProviderOperationIntentService } from './provider-platform/provider-ope
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
+import { ConsentService } from './consent/consent.service';
 
 async function bootstrap(): Promise<void> {
   // A plain Nest application context, not createApplicationContext + an
@@ -28,6 +29,7 @@ async function bootstrap(): Promise<void> {
     providerOperationIntentService: appContext.get(
       ProviderOperationIntentService,
     ),
+    consentService: appContext.get(ConsentService),
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',

@@ -7,6 +7,7 @@ import { PolicyModule } from './policy/policy.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { validateEnvironment } from './config/env.validation';
 import { createTypeOrmOptions } from './database/typeorm-options.factory';
+import { ConsentModule } from './consent/consent.module';
 
 /**
  * Deliberately not AppModule: the worker process never serves HTTP or
@@ -32,6 +33,7 @@ import { createTypeOrmOptions } from './database/typeorm-options.factory';
     IntegrationsModule,
     PolicyModule,
     WebhooksModule,
+    ConsentModule,
   ],
 })
 export class WorkerModule {}

@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { ProviderAuthorizationGrant as ProviderAuthorizationGrantEntity } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderCapabilityStatus } from '../database/enums/provider-platform.enum';
 import { ProviderAuthorizationGrant, ProviderCapability } from './types';
+import { ConsentService } from '../consent/consent.service';
 
 export interface IssueGrantInput {
   tenantId: string;
@@ -15,6 +16,8 @@ export interface IssueGrantInput {
   permittedDataClasses: string[];
   /** Defaults to a short-lived grant (Section 11.5: authorization is "... and time-bound") — long enough for one Agent-run/activity attempt, not a standing credential. */
   ttlMs?: number;
+  /** The case's own consent record(s) authorizing this dispatch (M5-005) — empty when the caller has none to attach (e.g. a direct `issue()` call outside `dispatchProviderRequest`), which `revalidate()` treats as "no consent constraint to check," not a failure. */
+  consentRecordIds?: string[];
 }
 
 const DEFAULT_GRANT_TTL_MS = 5 * 60 * 1000;
@@ -58,6 +61,7 @@ export class ProviderAuthorizationService {
   constructor(
     @InjectRepository(ProviderAuthorizationGrantEntity)
     private readonly grantRepository: Repository<ProviderAuthorizationGrantEntity>,
+    private readonly consentService: ConsentService,
   ) {}
 
   async issue(input: IssueGrantInput): Promise<ProviderAuthorizationGrant> {
@@ -72,7 +76,7 @@ export class ProviderAuthorizationService {
         purposeCode: input.purposeCode,
         permittedDataClasses: input.permittedDataClasses,
         permittedFields: null,
-        consentRecordIds: [],
+        consentRecordIds: input.consentRecordIds ?? [],
         permissiblePurposeDecisionId: null,
         expiresAt: new Date(
           now.getTime() + (input.ttlMs ?? DEFAULT_GRANT_TTL_MS),
@@ -122,6 +126,22 @@ export class ProviderAuthorizationService {
         valid: false,
         reason: `authorization grant ${grantId} expired at ${entity.expiresAt.toISOString()}`,
       };
+    }
+    // Section 11.5: "Revalidation also confirms every referenced consent
+    // record is still granted and unrevoked; a stale, mismatched,
+    // expired, or revoked reference fails closed instead of dispatching."
+    // An empty consentRecordIds array (a grant with nothing attached —
+    // the only kind that could exist before M5-005) means there's no
+    // consent constraint to check, not a failure.
+    for (const consentRecordId of entity.consentRecordIds) {
+      const stillValid =
+        await this.consentService.isRecordValid(consentRecordId);
+      if (!stillValid) {
+        return {
+          valid: false,
+          reason: `authorization grant ${grantId} references consent record ${consentRecordId}, which is no longer granted and unrevoked`,
+        };
+      }
     }
     return { valid: true, grant: toGrantValue(entity) };
   }

@@ -10,11 +10,31 @@ import {
   SyntheticProviderRejectionError,
   SyntheticProviderTimeoutError,
 } from '../integrations/synthetic-provider-failures';
+import { ConsentService } from '../consent/consent.service';
 
 export interface DispatchProviderRequestDeps {
   registry: ProviderRegistryService;
   authorizationService: ProviderAuthorizationService;
   intentService: ProviderOperationIntentService;
+  consentService: ConsentService;
+}
+
+/**
+ * A grant that failed `revalidate()` — mismatched tenant/case/provider/
+ * capability, expired, revoked, or (M5-005) referencing a consent record
+ * that's no longer granted and unrevoked. Every one of these is terminal
+ * for this specific attempt: retrying the identical request can never
+ * turn a mismatched or revoked grant into a valid one, the same
+ * "retrying can never fix this" reasoning `SyntheticProviderRejectionError`
+ * already carries for a terminal provider rejection — see this error's
+ * own classification in `callProviderWithRetryClassification`
+ * (case-conditions.activities.ts).
+ */
+export class ProviderRevalidationError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderRevalidationError';
+  }
 }
 
 export interface DispatchProviderRequestParams {
@@ -54,6 +74,14 @@ export async function dispatchProviderRequest<TFinding>(
   const mode = params.mode ?? 'SIMULATOR';
   const adapter = deps.registry.resolve(params.capability, mode);
 
+  // M5-005: attach the case's own active consent record (if any) to the
+  // grant being issued, so revalidate() can later confirm it's still
+  // granted and unrevoked (Section 11.5) immediately before dispatch.
+  const consentRecordId = await deps.consentService.activeRecordId(
+    params.tenantId,
+    params.caseId,
+  );
+
   const grant = await deps.authorizationService.issue({
     tenantId: params.tenantId,
     caseId: params.caseId,
@@ -62,6 +90,7 @@ export async function dispatchProviderRequest<TFinding>(
     capability: params.capability,
     purposeCode: params.purposeCode,
     permittedDataClasses: params.permittedDataClasses,
+    consentRecordIds: consentRecordId ? [consentRecordId] : [],
   });
 
   const intent = await deps.intentService.prepare({
@@ -82,7 +111,7 @@ export async function dispatchProviderRequest<TFinding>(
   });
   if (!revalidation.valid) {
     await deps.intentService.markFailedFinal(intent.id);
-    throw new Error(revalidation.reason);
+    throw new ProviderRevalidationError(revalidation.reason);
   }
 
   await deps.intentService.markDispatched(intent.id);

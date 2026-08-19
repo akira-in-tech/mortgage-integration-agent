@@ -29,9 +29,13 @@ import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.t
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
-import { dispatchProviderRequest } from '../provider-platform/dispatch-provider-request';
+import {
+  dispatchProviderRequest,
+  ProviderRevalidationError,
+} from '../provider-platform/dispatch-provider-request';
 import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
+import { ConsentService } from '../consent/consent.service';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -40,6 +44,7 @@ export interface CaseConditionsActivitiesDeps {
   providerRegistry: ProviderRegistryService;
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
+  consentService: ConsentService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -120,6 +125,17 @@ async function callProviderWithRetryClassification<T>(
         providerName,
       );
     }
+    if (error instanceof ProviderRevalidationError) {
+      // A mismatched, expired, revoked, or (M5-005) consent-invalidated
+      // grant — retrying the identical request can never fix any of
+      // these, so this is unconditionally non-retryable, the same
+      // reasoning as a terminal synthetic provider rejection above.
+      throw ApplicationFailure.nonRetryable(
+        error.message,
+        'ProviderAuthorizationRevalidationFailed',
+        providerName,
+      );
+    }
     throw error;
   }
 }
@@ -154,12 +170,14 @@ export function createCaseConditionsActivities(
     providerRegistry,
     providerAuthorizationService,
     providerOperationIntentService,
+    consentService,
     outboxSigningSecret,
   } = deps;
   const providerDispatchDeps = {
     registry: providerRegistry,
     authorizationService: providerAuthorizationService,
     intentService: providerOperationIntentService,
+    consentService,
   };
 
   const agentRuntime = createLendingOperationsAgentRuntime({
@@ -368,6 +386,13 @@ export function createCaseConditionsActivities(
             .getRepository(LoanCase)
             .findOneByOrFail({ id: caseId, tenantId }),
       );
+      // M5-005: real consent status, no longer a hardcoded 'VALID' —
+      // this is what finally makes the LangGraph runtime's verifyConsent
+      // node (built in M3-009, wired as the graph's first step) able to
+      // genuinely route a revoked/expired/missing-consent case to manual
+      // review instead of always seeing a placeholder that could never
+      // fail.
+      const consentStatus = await consentService.getStatus(tenantId, caseId);
 
       const now = new Date();
       const runDeadlineAt = new Date(
@@ -379,11 +404,7 @@ export function createCaseConditionsActivities(
         caseVersion: loanCase.version,
         workflowRunId,
         workflowStatus: loanCase.status,
-        // No consent-tracking entity exists yet (M0-010's Known gaps) —
-        // this Agent run has nothing to check consent against, same
-        // placeholder every other LendingOperationsAgentState in this
-        // codebase uses today.
-        consentStatus: 'VALID',
+        consentStatus,
         evidenceSummary: [],
         openConditions: [],
         providerHealth: [],

@@ -12,9 +12,12 @@ import { writeOutboxEvent } from '../database/outbox/outbox-writer';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
+import { ConsentActionDto } from './dto/consent-action.dto';
 import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
 import { isUniqueViolation } from '../database/postgres-errors';
 import { runInTenantContext } from '../database/tenant-context';
+import { ConsentService } from '../consent/consent.service';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 
 /** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. */
 export class StartWorkflowRunResult {
@@ -55,6 +58,7 @@ export class CasesService {
     private readonly temporalClient: TemporalClientService,
     private readonly configService: ConfigService,
     private readonly caseTimelineService: CaseTimelineService,
+    private readonly consentService: ConsentService,
   ) {}
 
   /**
@@ -100,12 +104,12 @@ export class CasesService {
     );
 
     try {
-      return await runInTenantContext(
+      const loanCase = await runInTenantContext(
         this.dataSource,
         tenantId,
         async (manager) => {
           const caseRepo = manager.getRepository(LoanCase);
-          const loanCase = await caseRepo.save(
+          const created = await caseRepo.save(
             caseRepo.create({
               tenantId,
               idempotencyKey,
@@ -119,10 +123,10 @@ export class CasesService {
           );
           await writeOutboxEvent(manager, outboxSigningSecret, {
             tenantId,
-            caseId: loanCase.id,
+            caseId: created.id,
             eventType: OutboxEventType.LoanCaseCreated,
             payload: {
-              caseId: loanCase.id,
+              caseId: created.id,
               borrowerId: dto.borrowerId,
               requestedAmount: dto.requestedAmount,
               loanType: dto.loanType,
@@ -130,9 +134,17 @@ export class CasesService {
               jurisdictionCode: dto.jurisdictionCode,
             },
           });
-          return loanCase;
+          return created;
         },
       );
+      // M5-005: applying for a mortgage is itself the act of consenting
+      // to the processing that evaluates it — implicit, real consent
+      // from the moment a case exists, not a separate required step
+      // that would break case creation for every existing caller.
+      // Explicit revocation (submitConsentAction() below) is the new
+      // capability; this is what it has something real to revoke.
+      await this.consentService.grantForCase(tenantId, loanCase.id);
+      return loanCase;
     } catch (error) {
       if (isUniqueViolation(error)) {
         return await runInTenantContext(this.dataSource, tenantId, (manager) =>
@@ -229,6 +241,24 @@ export class CasesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Section 15.1's `POST .../consents` (M5-005). Tenant ownership is
+   * checked the same way every other case-scoped method here does
+   * (`getCase()` 404s on a cross-tenant or nonexistent case) before
+   * either consent action runs.
+   */
+  async submitConsentAction(
+    tenantId: string,
+    caseId: string,
+    dto: ConsentActionDto,
+  ): Promise<ConsentRecord> {
+    await this.getCase(tenantId, caseId);
+    if (dto.action === 'REVOKE') {
+      return this.consentService.revoke(tenantId, caseId, dto.reason);
+    }
+    return this.consentService.grantForCase(tenantId, caseId);
   }
 
   /**

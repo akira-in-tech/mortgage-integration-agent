@@ -31,7 +31,9 @@ import {
 } from './cases.service';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
+import { ConsentActionDto } from './dto/consent-action.dto';
 import { LoanCase } from '../database/entities/loan-case.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { TimelineEntry } from './case-timeline.service';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
@@ -210,5 +212,31 @@ export class CasesController {
     @Body() dto: ReviewDto,
   ): Promise<void> {
     await this.casesService.submitReview(tenantId, caseId, dto);
+  }
+
+  // Section 15.1's `POST .../consents` (M5-005). Synchronous, unlike
+  // /reviews — a consent action is a plain database write, not a
+  // Temporal signal, so the resulting record is returned directly rather
+  // than 202-and-poll.
+  @ApiOperation({
+    operationId: 'submitConsentAction',
+    summary: 'Grant or revoke consent for a case',
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiCreatedResponse({ type: ConsentRecord })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid API credentials.',
+  })
+  @ApiNotFoundResponse({
+    description:
+      'No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it.',
+  })
+  @Post(':caseId/consents')
+  async submitConsentAction(
+    @AuthTenantId() tenantId: string,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: ConsentActionDto,
+  ): Promise<ConsentRecord> {
+    return this.casesService.submitConsentAction(tenantId, caseId, dto);
   }
 }

@@ -20,12 +20,14 @@ import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { PolicyApplicabilityResolverService } from '../policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ConsentService } from '../consent/consent.service';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditService } from '../integrations/credit/credit.service';
@@ -68,6 +70,7 @@ describeOrSkip('runCorpus', () => {
         ToolAttempt,
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
+        ConsentRecord,
       ],
     });
     await dataSource.initialize();
@@ -114,8 +117,10 @@ describeOrSkip('runCorpus', () => {
     providerRegistry.register(
       new DocumentVerificationAdapter(new DocumentService()),
     );
+    const consentService = new ConsentService(dataSource);
     const providerAuthorizationService = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
+      consentService,
     );
     const providerOperationIntentService = new ProviderOperationIntentService(
       dataSource.getRepository(ProviderOperationIntent),
@@ -127,6 +132,7 @@ describeOrSkip('runCorpus', () => {
       providerRegistry,
       providerAuthorizationService,
       providerOperationIntentService,
+      consentService,
       outboxSigningSecret: 'runner-spec-signing-secret-32-characters',
     };
   }

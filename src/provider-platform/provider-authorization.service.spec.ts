@@ -1,7 +1,9 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { ProviderAuthorizationService } from './provider-authorization.service';
+import { ConsentService } from '../consent/consent.service';
 import { ProviderCapability } from './types';
 
 // Requires a reachable Postgres (same convention as the other real-DB
@@ -12,7 +14,9 @@ const describeOrSkip = DATABASE_URL ? describe : describe.skip;
 describeOrSkip('ProviderAuthorizationService', () => {
   let dataSource: DataSource;
   let service: ProviderAuthorizationService;
+  let consentService: ConsentService;
   const grantIds: string[] = [];
+  const consentRecordIds: string[] = [];
 
   const baseInput = {
     tenantId: '11111111-1111-1111-1111-111111111111',
@@ -28,11 +32,13 @@ describeOrSkip('ProviderAuthorizationService', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [ProviderAuthorizationGrant],
+      entities: [ProviderAuthorizationGrant, ConsentRecord],
     });
     await dataSource.initialize();
+    consentService = new ConsentService(dataSource);
     service = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
+      consentService,
     );
   });
 
@@ -42,6 +48,9 @@ describeOrSkip('ProviderAuthorizationService', () => {
         await dataSource
           .getRepository(ProviderAuthorizationGrant)
           .delete(grantIds);
+      }
+      if (consentRecordIds.length > 0) {
+        await dataSource.getRepository(ConsentRecord).delete(consentRecordIds);
       }
       await dataSource.destroy();
     }
@@ -170,6 +179,41 @@ describeOrSkip('ProviderAuthorizationService', () => {
     expect(result).toEqual({
       valid: false,
       reason: expect.stringContaining('revoked'),
+    });
+  });
+
+  it('revalidate() fails closed when a referenced consent record has been revoked (M5-005, Section 11.5)', async () => {
+    const consentRecord = await consentService.grantForCase(
+      baseInput.tenantId,
+      baseInput.caseId,
+    );
+    consentRecordIds.push(consentRecord.id);
+
+    const grant = await service.issue({
+      ...baseInput,
+      consentRecordIds: [consentRecord.id],
+    });
+    grantIds.push(grant.id);
+
+    const beforeRevoke = await service.revalidate(grant.id, {
+      tenantId: baseInput.tenantId,
+      caseId: baseInput.caseId,
+      providerId: baseInput.providerId,
+      capability: baseInput.capability,
+    });
+    expect(beforeRevoke.valid).toBe(true);
+
+    await consentService.revoke(baseInput.tenantId, baseInput.caseId);
+
+    const afterRevoke = await service.revalidate(grant.id, {
+      tenantId: baseInput.tenantId,
+      caseId: baseInput.caseId,
+      providerId: baseInput.providerId,
+      capability: baseInput.capability,
+    });
+    expect(afterRevoke).toEqual({
+      valid: false,
+      reason: expect.stringContaining('no longer granted and unrevoked'),
     });
   });
 });

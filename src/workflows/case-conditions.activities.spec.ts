@@ -31,6 +31,7 @@ import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -46,6 +47,7 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ConsentService } from '../consent/consent.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
@@ -105,6 +107,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let evaluationManifestService: EvaluationManifestService;
   let providerAuthorizationService: ProviderAuthorizationService;
   let providerOperationIntentService: ProviderOperationIntentService;
+  let consentService: ConsentService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -134,6 +137,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ToolAttempt,
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
+        ConsentRecord,
       ],
     });
     await dataSource.initialize();
@@ -152,8 +156,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
     evaluationManifestService = new EvaluationManifestService(
       dataSource.getRepository(EvaluationInputManifest),
     );
+    consentService = new ConsentService(dataSource);
     providerAuthorizationService = new ProviderAuthorizationService(
       dataSource.getRepository(ProviderAuthorizationGrant),
+      consentService,
     );
     providerOperationIntentService = new ProviderOperationIntentService(
       dataSource.getRepository(ProviderOperationIntent),
@@ -167,6 +173,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       evaluationManifestService,
       providerAuthorizationService,
       providerOperationIntentService,
+      consentService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -207,6 +214,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
           .delete({ tenantId });
         await evidenceRepo.delete({ tenantId });
         await outboxRepo.delete({ tenantId });
+        await dataSource.getRepository(ConsentRecord).delete({ tenantId });
         await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
         await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
         const conditions = await conditionRepo.find({
@@ -248,6 +256,12 @@ describeOrSkip('createCaseConditionsActivities', () => {
       }),
     );
     caseIds.push(loanCase.id);
+    // Matches CasesService.createCase()'s own real behavior (M5-005) —
+    // evaluateConditions now reads real consent status, so every test
+    // case needs the same implicit grant a real case gets at creation,
+    // or every evaluateConditions() call in this file would see MISSING
+    // instead of VALID.
+    await consentService.grantForCase(tenantId, loanCase.id);
     return loanCase.id;
   }
 
@@ -343,6 +357,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       evaluationManifestService,
       providerAuthorizationService,
       providerOperationIntentService,
+      consentService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -399,6 +414,35 @@ describeOrSkip('createCaseConditionsActivities', () => {
       caseId,
       finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
     });
+  });
+
+  it('evaluateConditions routes to REVIEW_REQUIRED when the case consent has been revoked (M5-005, Section 9.6: "consent revoked mid-case")', async () => {
+    // Same otherwise-clean setup as the READY case above — the only
+    // difference is the explicit revoke() call, proving this is genuinely
+    // the consentStatus check (verifyConsent, the LangGraph runtime's own
+    // first node, built in M3-009 but permanently inert until this
+    // slice), not some other unrelated review trigger.
+    const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+    await seedEvidence(caseId, 9000);
+    await consentService.revoke(tenantId, caseId, 'borrower withdrew consent');
+
+    const result = await activities.evaluateConditions({
+      tenantId,
+      caseId,
+      workflowRunId: 'activities-spec-run-consent-revoked',
+    });
+
+    expect(result).toEqual({
+      outcome: 'REVIEW_REQUIRED',
+      reviewReason: expect.stringContaining('consentStatus'),
+    });
+    // No condition opened, no READY transition — the run stopped at the
+    // very first node, before check_case_completeness/evaluate_policy/
+    // create_condition ever ran.
+    const conditions = await dataSource
+      .getRepository(LoanCondition)
+      .find({ where: { caseId } });
+    expect(conditions).toHaveLength(0);
   });
 
   it('evaluateConditions with an income discrepancy opens a condition from the resolved rule and writes condition.opened + workflow_run.waiting_for_review atomically', async () => {
@@ -599,6 +643,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         evaluationManifestService,
         providerAuthorizationService,
         providerOperationIntentService,
+        consentService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -639,6 +684,39 @@ describeOrSkip('createCaseConditionsActivities', () => {
       });
     });
 
+    it('classifies a revoked-consent provider dispatch as non-retryable (M5-005, Section 11.5)', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      // makeCase() already granted consent; revoke it before ever
+      // dispatching — the same scenario a real revoked-consent case hits,
+      // since dispatchProviderRequest attaches whatever the case's own
+      // most recent consent record is (M5-005) and revalidate() then
+      // rejects it. Retrying a request against an already-revoked
+      // consent record can never succeed, so this must be non-retryable
+      // the same way a terminal provider rejection already is above —
+      // not left to Temporal's default retry policy to waste attempts on.
+      await consentService.revoke(
+        tenantId,
+        caseId,
+        'spec: revoked before dispatch',
+      );
+
+      await expect(
+        realActivities.fetchIncomeEvidence({
+          tenantId,
+          caseId,
+          borrowerId: 'activities-spec-borrower',
+        }),
+      ).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'ProviderAuthorizationRevalidationFailed',
+      });
+
+      const facts = await dataSource
+        .getRepository(EvidenceFact)
+        .find({ where: { caseId } });
+      expect(facts).toHaveLength(0);
+    });
+
     it('leaves an unrecognized error unclassified (propagated as-is)', async () => {
       const caseId = await makeCase({ statedMonthlyIncome: 9000 });
       const brokenPlaid = {
@@ -655,6 +733,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         evaluationManifestService,
         providerAuthorizationService,
         providerOperationIntentService,
+        consentService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

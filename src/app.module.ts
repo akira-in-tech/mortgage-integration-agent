@@ -20,6 +20,7 @@ import { PolicyModule } from './policy/policy.module';
 import { CommunicationsModule } from './communications/communications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AuthModule } from './auth/auth.module';
+import { ConsentModule } from './consent/consent.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { AuthModule } from './auth/auth.module';
     HealthModule,
     TemporalModule,
     AuthModule,
+    ConsentModule,
     CasesModule,
     PolicyModule,
     CommunicationsModule,

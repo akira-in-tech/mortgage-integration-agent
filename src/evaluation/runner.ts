@@ -15,6 +15,7 @@ import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.en
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -25,6 +26,7 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ConsentService } from '../consent/consent.service';
 import {
   EvaluationCaseFixture,
   EvaluationCaseResult,
@@ -38,6 +40,7 @@ export interface EvaluationRunnerDeps {
   providerRegistry: ProviderRegistryService;
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
+  consentService: ConsentService;
   outboxSigningSecret: string;
 }
 
@@ -114,6 +117,11 @@ async function runOneCase(
       }),
     );
     const caseId = loanCase.id;
+    // Matches CasesService.createCase()'s own real behavior (M5-005):
+    // a case starts with implicit consent granted, so this corpus's
+    // fixtures exercise the same VALID-by-default path real cases do,
+    // not an artifact of bypassing CasesService.
+    await deps.consentService.grantForCase(tenantId, caseId);
 
     if (fixture.category === 'provider-failure') {
       return await runProviderFailureCase(
@@ -322,6 +330,7 @@ export async function cleanupEvaluationRun(
       .delete(conditions.map((c) => ({ id: c.id })));
   }
 
+  await dataSource.getRepository(ConsentRecord).delete({ tenantId });
   await dataSource.getRepository(LoanCase).delete({ tenantId });
 }
 
@@ -338,6 +347,7 @@ export async function runCorpus(
     providerRegistry: deps.providerRegistry,
     providerAuthorizationService: deps.providerAuthorizationService,
     providerOperationIntentService: deps.providerOperationIntentService,
+    consentService: deps.consentService,
     outboxSigningSecret: deps.outboxSigningSecret,
   });
 
