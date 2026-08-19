@@ -90,9 +90,6 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
     );
     impactService = new PolicyChangeImpactService(
       dataSource.getRepository(PolicyApplicability),
-      dataSource.getRepository(CasePolicyBinding),
-      dataSource.getRepository(CasePolicySnapshot),
-      dataSource.getRepository(PolicyChangeImpactAssessment),
       dataSource,
       resolver,
     );

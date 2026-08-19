@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
@@ -61,18 +61,25 @@ function classifyImpact(
  * Known gap: no transition-rule/grandfathering evaluation (Section 10.6's
  * "future-effective" and "approved grandfathering" outcomes) — only
  * NO_IMPACT / REQUIRES_REEVALUATION / AMBIGUOUS are distinguished.
+ *
+ * `policy_change_impact_assessments` carries a real RLS policy (M5-008);
+ * `assessOneCase` below takes an `EntityManager` rather than owning its
+ * own repositories, since its two callers need different tenant
+ * contexts — `assessImpact`'s cross-tenant candidate scan (genuinely
+ * cross-tenant by design, `runWithRlsBypass`) vs. `assessImpactForCase`'s
+ * single, already-known tenant (`runInTenantContext`) — the same
+ * bypass-for-discovery-then-per-item-context split
+ * `WebhookDispatchService`'s due-delivery scan already uses.
+ * `case_policy_bindings`/`case_policy_snapshots` themselves still have no
+ * RLS policy of their own (separately deferred); running their reads
+ * through the same manager is harmless today and becomes protective
+ * automatically once that table group gets its own migration.
  */
 @Injectable()
 export class PolicyChangeImpactService {
   constructor(
     @InjectRepository(PolicyApplicability)
     private readonly applicabilityRepository: Repository<PolicyApplicability>,
-    @InjectRepository(CasePolicyBinding)
-    private readonly bindingRepository: Repository<CasePolicyBinding>,
-    @InjectRepository(CasePolicySnapshot)
-    private readonly snapshotRepository: Repository<CasePolicySnapshot>,
-    @InjectRepository(PolicyChangeImpactAssessment)
-    private readonly assessmentRepository: Repository<PolicyChangeImpactAssessment>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly resolver: PolicyApplicabilityResolverService,
@@ -111,12 +118,21 @@ export class PolicyChangeImpactService {
       );
 
       for (const loanCase of affectedCases) {
-        const assessment = await this.assessOneCase(loanCase, {
-          policyVersionId,
-          jurisdictionCode: applicability.jurisdictionCode,
-          productCode: applicability.productCode,
-          lifecycleEvent: applicability.lifecycleEvent,
-        });
+        // Each case's own binding/snapshot read and assessment write runs
+        // under that case's own tenant context, not the bypass above —
+        // the bypass is scoped as narrowly as possible, to the candidate
+        // discovery scan alone.
+        const assessment = await runInTenantContext(
+          this.dataSource,
+          loanCase.tenantId,
+          (manager) =>
+            this.assessOneCase(manager, loanCase, {
+              policyVersionId,
+              jurisdictionCode: applicability.jurisdictionCode,
+              productCode: applicability.productCode,
+              lifecycleEvent: applicability.lifecycleEvent,
+            }),
+        );
         if (assessment) {
           assessments.push(assessment);
         }
@@ -144,24 +160,22 @@ export class PolicyChangeImpactService {
     caseId: string,
     policyVersionId: string,
   ): Promise<PolicyChangeImpactAssessment | null> {
-    const loanCase = await runInTenantContext(
-      this.dataSource,
-      tenantId,
-      (manager) =>
-        manager.getRepository(LoanCase).findOneByOrFail({
-          id: caseId,
-          tenantId,
-        }),
-    );
-    return this.assessOneCase(loanCase, {
-      policyVersionId,
-      jurisdictionCode: loanCase.jurisdictionCode,
-      productCode: loanTypeToProductCode(loanCase.loanType),
-      lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const loanCase = await manager.getRepository(LoanCase).findOneByOrFail({
+        id: caseId,
+        tenantId,
+      });
+      return this.assessOneCase(manager, loanCase, {
+        policyVersionId,
+        jurisdictionCode: loanCase.jurisdictionCode,
+        productCode: loanTypeToProductCode(loanCase.loanType),
+        lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+      });
     });
   }
 
   private async assessOneCase(
+    manager: EntityManager,
     loanCase: LoanCase,
     context: {
       policyVersionId: string;
@@ -170,14 +184,16 @@ export class PolicyChangeImpactService {
       lifecycleEvent: string;
     },
   ): Promise<PolicyChangeImpactAssessment | null> {
-    const activeBinding = await this.bindingRepository.findOne({
-      where: {
-        tenantId: loanCase.tenantId,
-        caseId: loanCase.id,
-        invalidatedAt: IsNull(),
-      },
-      order: { boundAt: 'DESC' },
-    });
+    const activeBinding = await manager
+      .getRepository(CasePolicyBinding)
+      .findOne({
+        where: {
+          tenantId: loanCase.tenantId,
+          caseId: loanCase.id,
+          invalidatedAt: IsNull(),
+        },
+        order: { boundAt: 'DESC' },
+      });
     if (!activeBinding) {
       // No live binding to impact — this case has never been evaluated,
       // or its last evaluation was already REVIEW_REQUIRED (which
@@ -185,9 +201,9 @@ export class PolicyChangeImpactService {
       return null;
     }
 
-    const priorSnapshot = await this.snapshotRepository.findOneByOrFail({
-      id: activeBinding.policySnapshotId,
-    });
+    const priorSnapshot = await manager
+      .getRepository(CasePolicySnapshot)
+      .findOneByOrFail({ id: activeBinding.policySnapshotId });
     const dryRun = await this.resolver.resolve({
       jurisdictionCode: context.jurisdictionCode,
       productCode: context.productCode,
@@ -196,8 +212,9 @@ export class PolicyChangeImpactService {
     });
     const { impact, details } = classifyImpact(priorSnapshot, dryRun);
 
-    return this.assessmentRepository.save(
-      this.assessmentRepository.create({
+    const assessmentRepo = manager.getRepository(PolicyChangeImpactAssessment);
+    return assessmentRepo.save(
+      assessmentRepo.create({
         policyVersionId: context.policyVersionId,
         tenantId: loanCase.tenantId,
         caseId: loanCase.id,

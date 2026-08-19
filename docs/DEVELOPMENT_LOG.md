@@ -5719,3 +5719,107 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 `policy_change_impact_assessments` (via `PolicyChangeImpactService`, which already has a `DataSource`) is the next-cheapest remaining table — its own two-different-tenant-context complexity is now understood and scoped (see Decisions), unlike when M5-004/M5-006 first deferred it as part of an undifferentiated "expensive" group. `communication_messages`/`communication_templates` need their own service-shape audit first (not yet done). `case_policy_bindings`/`case_policy_snapshots` and `provider_operation_intents`/`provider_authorization_grants` remain the two largest remaining table groups, both needing real service refactors. Not started; awaiting direction.
+
+## M5-008: PostgreSQL row-level security for `policy_change_impact_assessments`
+
+### Status
+
+Implemented and verified, including a real live run that exercises the actual production call chain (`PolicyActivationService.withdraw()` → `PolicyChangeImpactService.assessImpact()` → `assessOneCase()`) against the real `mortgage_app` role. Extends RLS to Section 10.6's dry-run comparison record — one row per case a policy activation or withdrawal potentially affects.
+
+Chosen as M5-007's own named "next-cheapest remaining table," continuing the user's "繼續" delegation. `PolicyChangeImpactService.assessOneCase()` shared bare `CasePolicyBinding`/`CasePolicySnapshot`/`PolicyChangeImpactAssessment` reads/writes across two callers needing different tenant contexts: `assessImpact()`'s catalog-wide cross-tenant candidate scan vs. `assessImpactForCase()`'s single-tenant lookup — the exact complexity M5-007 flagged as the real remaining work (not a missing `DataSource`, which the service already had). Fixed with the same bypass-for-discovery-then-per-item-context split `WebhookDispatchService`'s due-delivery scan already established: `assessOneCase` now takes an `EntityManager` parameter instead of owning its own repositories, and each caller supplies its own context.
+
+### Acceptance criterion
+
+A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a different tenant's context, sees zero rows on `policy_change_impact_assessments` — even against a real row the actual production code path produced — while the owning tenant's context sees exactly its own row. Proven at the database layer (a 6-test RLS proof spec) and, more importantly for this slice, at the real-service layer: a standalone script drove the genuine `PolicyActivationService.withdraw()` → `assessImpact()` → `assessOneCase()` chain end to end against `mortgage_app` (not a superuser connection, and not the isolated RLS-policy spec, which only proves the table's policy works, not that the refactored service code is wired to it correctly), producing a real `REQUIRES_REEVALUATION` assessment, then confirmed invisible under a fabricated other-tenant session and fully visible under its own, directly against Postgres.
+
+### Implementation
+
+- `src/database/migrations/1787132677787-PolicyChangeImpactAssessmentTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration; direct `tenantId` column, no join needed.
+- `src/policy/policy-change-impact.service.ts` — constructor no longer takes `CasePolicyBinding`/`CasePolicySnapshot`/`PolicyChangeImpactAssessment` repositories (only `PolicyApplicability`, catalog data with no tenant scoping, stays a bare injected repository); `assessOneCase` is now `private async assessOneCase(manager: EntityManager, loanCase: LoanCase, context): Promise<...>`, using `manager.getRepository(...)` for all three tables. `assessImpact()`'s per-case loop wraps each `assessOneCase` call in `runInTenantContext(dataSource, loanCase.tenantId, ...)` — narrower than the candidate-discovery bypass above it, scoped to exactly the case being assessed. `assessImpactForCase()` now does its `LoanCase` lookup and `assessOneCase` call inside one shared `runInTenantContext`, a minor simplification (previously two separate calls).
+- One direct-construction call site updated (`policy-activation.service.spec.ts`) — dropped the three removed constructor arguments.
+- `src/policy/policy-change-impact-assessment-tenant-isolation.spec.ts` (new) — the RLS proof, 6 tests mirroring `evaluation-manifest-tenant-isolation.spec.ts`'s pattern. Needed a real `PolicyVersion`→`PolicySourceRevision`→`PolicySource`→`Jurisdiction` fixture chain (not just a random UUID) because `PolicyChangeImpactAssessment.policyVersionId` carries a real foreign key — the first RLS proof spec in this series to need a referenced-entity fixture chain rather than only the row under test.
+- `src/database/migrations/schema-migrations.spec.ts` — new revert test, same shape as every prior one. No new table, so the "applies every migration" test's table list needed no change.
+
+### Affected files
+
+- `src/database/migrations/1787132677787-PolicyChangeImpactAssessmentTenantIsolation.ts` (new), `schema-migrations.spec.ts`
+- `src/policy/policy-change-impact.service.ts`, `policy-change-impact-assessment-tenant-isolation.spec.ts` (new)
+- `src/policy/policy-activation.service.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Bypass scoped to only the cross-tenant candidate scan, not the whole `assessImpact()` loop.** Each case's own binding/snapshot read and assessment write runs under that specific case's own tenant context (`runInTenantContext(loanCase.tenantId)`), not the bypass — minimizing the bypass's blast radius to exactly the one query that's genuinely cross-tenant by design (finding which cases across all tenants a jurisdiction/product match), the same principle `WebhookDispatchService` already established.
+- **`case_policy_bindings`/`case_policy_snapshots` still deliberately not given their own RLS policy in this slice**, even though `assessOneCase` now reads them through a real `EntityManager` inside `runInTenantContext`. Wrapping is harmless today (no policy exists on those tables yet, so the session variable has no observable effect) and becomes protective automatically whenever that table group gets its own migration — but adding that migration itself is separate, larger scope (also requires converting `PolicyEvaluationService`, per M5-007's own corrected understanding) and wasn't attempted here.
+- **Wrote a standalone verification script exercising the real service call chain under `mortgage_app`, beyond the isolated RLS-policy spec.** `policy-activation.service.spec.ts` (the only existing integration coverage for this code path) connects via `DATABASE_URL`'s own superuser role, so it proves functional correctness but not RLS — it would pass identically whether or not the refactor's `runInTenantContext`/`runWithRlsBypass` calls were wired correctly at all. Given this slice's core risk was exactly that wiring (a method-shape change spanning two call sites), a real run against the restricted role was the only way to catch a wiring mistake the way M5-004's `Promise.all` bug or M5-005's retry-classification bug were both caught live rather than in a bypassed spec.
+
+### Errors and fixes
+
+- **The standalone verification script initially failed to compile under `ts-node` with `TS2591: Cannot find name 'process'` / `'node:crypto'`, even though `npm run evaluate` (an existing, working `ts-node` script in the same project) succeeded under identical invocation.** Isolated by testing a byte-identical copy of the working script (succeeded) and a trivial one-line new file (failed identically to the real script) — confirmed environment/tooling-specific to fresh, previously-uncompiled files in this session, not anything about the script's own content. Not a project configuration defect (untouched project files build and test cleanly throughout, via `nest build`/`jest`, neither of which showed this issue) — worked around for this one throwaway script with an explicit `/// <reference types="node" />` directive. Script deleted after use; not part of this commit.
+- **The verification script's own fixture setup (not production code) initially inserted a `LoanCase` with a bare, unwrapped `save()` call, hitting the exact RLS rejection this whole series exists to enforce** (`new row violates row-level security policy for table "loan_cases"`) — a bug in the throwaway script, not the service under test; fixed by wrapping that one insert in `runInTenantContext`, matching how real production code creates cases.
+
+### Verification
+
+```text
+npm run lint / npm run build / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5008verify, ports 5443/7234):
+  DATABASE_URL=... npx jest schema-migrations.spec.ts --runInBand
+    26/26 passed (25 -> 26: +1 new revert test), run on a virgin
+    cluster first
+
+  migration:run applied PolicyChangeImpactAssessmentTenantIsolation1787132677787
+    cleanly on top of EvaluationManifestTenantIsolation1787130439264
+
+  DATABASE_URL=... npx jest policy-change-impact-assessment-tenant-isolation.spec.ts
+  policy-activation.service.spec.ts check-policy-change-impact.tool.spec.ts --runInBand
+    19/19 passed against the real mortgage_app role (after fixing the
+    new spec's own missing PolicyVersion relation-chain entities and FK
+    fixture, both errors caught on the very first run)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    65 suites / 440 tests passed (64/433 -> 65/440: +1 new suite,
+    +7 tests)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    3 suites / 27 tests passed, unchanged from M5-007
+
+Manual live verification — a standalone script exercising the real
+PolicyActivationService.withdraw() -> PolicyChangeImpactService
+.assessImpact() -> assessOneCase() chain against the real mortgage_app
+role (not a superuser connection):
+  seeded a real tenant/jurisdiction/policy source/revision/RELEASED
+  version/applicability row, created a real case, evaluated it (real
+  CasePolicyBinding/CasePolicySnapshot), then withdrew the version —
+  the real code path produced one REQUIRES_REEVALUATION assessment,
+  confirmed both in the withdraw() return value and via a direct
+  Postgres query on a separate admin connection
+
+  queried the real assessment row as mortgage_app: a fabricated
+  other-tenant session (inside an explicit transaction, SET LOCAL) saw
+  zero rows despite the row existing; the real tenant's own session
+  saw exactly its own 1 row
+
+  scratch stack torn down (docker compose down -v) after verification;
+  the throwaway verification script and its temporary package.json
+  entry were both removed before committing
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real gap: `policy_change_impact_assessments` — Section 10.6's own advisory dry-run record — now has a database-layer tenant backstop, and the refactor closing it was verified against the actual refactored service code path under the restricted role, not just an isolated table-policy proof.
+- No new secrets, no new external dependencies, no performance concern beyond the established pattern's own (a single indexed equality check; the bypass-scoped-to-discovery-only design keeps the audited cross-tenant surface as narrow as it was before this slice).
+
+### Known gaps
+
+- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — unchanged; converting `PolicyEvaluationService` (mechanical, per M5-007's corrected understanding) plus adding the migration itself remains separate, not-yet-attempted work.
+- **`communication_messages`/`communication_templates` still have no RLS** — unchanged from M5-007's own Known gap; service-level shape not yet audited.
+- **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — unchanged; several methods don't have `tenantId` in scope today.
+- **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated since M5-004.
+- **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — unchanged.
+
+### Next safe step
+
+`communication_messages`/`communication_templates` are the next table group needing a service-shape audit before scoping (not yet done — unlike `policy_change_impact_assessments`, whose complexity M5-007 had already scoped in advance). `case_policy_bindings`/`case_policy_snapshots` (mechanical `PolicyEvaluationService` conversion, now well understood) and `provider_operation_intents`/`provider_authorization_grants` (real `tenantId`-threading work) remain the two largest table groups. Not started; awaiting direction.
