@@ -4,19 +4,29 @@ import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
+import { ProviderPromotionManifest } from '../database/entities/provider-promotion-manifest.entity';
+import { ProviderCertificationRecord } from '../database/entities/provider-certification-record.entity';
+import { ProviderApprovalRecord } from '../database/entities/provider-approval-record.entity';
+import { ProviderActivation } from '../database/entities/provider-activation.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
+import { ProviderPromotionService } from './provider-promotion.service';
+import {
+  ProviderCertificationDecision,
+  ProviderApprovalDecision,
+} from '../database/enums/provider-promotion.enum';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import {
   dispatchProviderRequest,
   ProviderDisabledError,
+  ProviderNotActivatedError,
 } from './dispatch-provider-request';
-import { ProviderCapability } from './types';
+import { AnyProviderAdapter, ProviderCapability } from './types';
 import { AssetService } from '../integrations/asset/asset.service';
 import { AssetVerificationAdapter } from '../integrations/asset/asset-verification.adapter';
 import { IdentityService } from '../integrations/identity/identity.service';
@@ -39,6 +49,7 @@ describeOrSkip('dispatchProviderRequest', () => {
   let authorizationService: ProviderAuthorizationService;
   let intentService: ProviderOperationIntentService;
   let killSwitchService: ProviderKillSwitchService;
+  let promotionService: ProviderPromotionService;
   let consentService: ConsentService;
   // Every test uses a fresh randomUUID() tenantId and tracks it here so
   // afterAll can remove exactly what this file created — findOneByOrFail
@@ -56,6 +67,10 @@ describeOrSkip('dispatchProviderRequest', () => {
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
         ProviderAdapterStatus,
+        ProviderPromotionManifest,
+        ProviderCertificationRecord,
+        ProviderApprovalRecord,
+        ProviderActivation,
         ConsentRecord,
       ],
     });
@@ -73,6 +88,12 @@ describeOrSkip('dispatchProviderRequest', () => {
     );
     intentService = new ProviderOperationIntentService(dataSource);
     killSwitchService = new ProviderKillSwitchService(dataSource);
+    promotionService = new ProviderPromotionService(
+      dataSource.getRepository(ProviderPromotionManifest),
+      dataSource.getRepository(ProviderCertificationRecord),
+      dataSource.getRepository(ProviderApprovalRecord),
+      dataSource.getRepository(ProviderActivation),
+    );
   });
 
   afterAll(async () => {
@@ -94,6 +115,30 @@ describeOrSkip('dispatchProviderRequest', () => {
       await dataSource.getRepository(ProviderAdapterStatus).delete({
         providerId: 'asset-verification-simulator',
       });
+      await dataSource.getRepository(ProviderActivation).delete({
+        providerId: 'promotion-gate-spec-provider',
+      });
+      const manifests = await dataSource
+        .getRepository(ProviderPromotionManifest)
+        .find({ where: { providerId: 'promotion-gate-spec-provider' } });
+      if (manifests.length > 0) {
+        const manifestIds = manifests.map((m) => m.id);
+        await dataSource
+          .getRepository(ProviderCertificationRecord)
+          .createQueryBuilder()
+          .delete()
+          .where('"manifestId" IN (:...ids)', { ids: manifestIds })
+          .execute();
+        await dataSource
+          .getRepository(ProviderApprovalRecord)
+          .createQueryBuilder()
+          .delete()
+          .where('"manifestId" IN (:...ids)', { ids: manifestIds })
+          .execute();
+        await dataSource.getRepository(ProviderPromotionManifest).delete({
+          providerId: 'promotion-gate-spec-provider',
+        });
+      }
       await dataSource.destroy();
     }
   });
@@ -103,6 +148,7 @@ describeOrSkip('dispatchProviderRequest', () => {
     authorizationService,
     intentService,
     killSwitchService,
+    promotionService,
     consentService,
   });
 
@@ -232,6 +278,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           authorizationService,
           intentService,
           killSwitchService,
+          promotionService,
           consentService,
         },
         {
@@ -310,6 +357,107 @@ describeOrSkip('dispatchProviderRequest', () => {
         permittedDataClasses: ['ASSET'],
       });
       expect(finding).toMatchObject({ liquidAssets: expect.any(Number) });
+    });
+  });
+
+  describe('promotion gate (Section 11.4, M4-007)', () => {
+    // A minimal synthetic adapter, not a real provider integration — this
+    // block tests dispatchProviderRequest's own AUTHORIZED_SANDBOX gate,
+    // not any specific adapter's behavior (plaid-income-sandbox.adapter.spec.ts
+    // already covers the real Plaid adapter end to end).
+    const gateTestAdapter: AnyProviderAdapter = {
+      providerId: 'promotion-gate-spec-provider',
+      capability: ProviderCapability.ASSET,
+      mode: 'AUTHORIZED_SANDBOX',
+      operation: {
+        effectClass: 'REUSABLE_LOOKUP',
+        supportsStatusLookup: false,
+        supportsCancellation: false,
+        fallbackPolicy: 'PROHIBITED',
+      },
+      submit: async () => ({ status: 'COMPLETE', payload: { ok: true } }),
+      normalize: (payload) => payload,
+      healthCheck: async () => ({
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+      }),
+    };
+
+    beforeAll(() => {
+      registry.register(gateTestAdapter);
+    });
+
+    it('fails closed with ProviderNotActivatedError before promotion, and dispatches for real once propose->certify->approve->activate all pass', async () => {
+      const tenantId = newTenantId();
+
+      await expect(
+        dispatchProviderRequest(deps(), {
+          tenantId,
+          caseId: randomUUID(),
+          borrowerSubjectId: 'promotion-gate-borrower',
+          capability: ProviderCapability.ASSET,
+          mode: 'AUTHORIZED_SANDBOX',
+          request: {},
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['ASSET'],
+        }),
+      ).rejects.toThrow(ProviderNotActivatedError);
+
+      const manifest = await promotionService.propose({
+        providerId: 'promotion-gate-spec-provider',
+        capability: ProviderCapability.ASSET,
+        mode: 'AUTHORIZED_SANDBOX',
+        adapterVersion: '1.0.0-spec',
+        endpointAllowlist: ['https://example.invalid/spec'],
+        dataClassifications: ['ASSET'],
+        proposedBy: 'dispatch-spec-proposer',
+      });
+
+      // Certified but not yet approved: still blocked.
+      await promotionService.certify(
+        manifest.id,
+        'sandbox',
+        'dispatch-spec-proposer',
+        ProviderCertificationDecision.PASSED,
+        'evidence://dispatch-spec-run',
+      );
+      await expect(
+        dispatchProviderRequest(deps(), {
+          tenantId,
+          caseId: randomUUID(),
+          borrowerSubjectId: 'promotion-gate-borrower',
+          capability: ProviderCapability.ASSET,
+          mode: 'AUTHORIZED_SANDBOX',
+          request: {},
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['ASSET'],
+        }),
+      ).rejects.toThrow(ProviderNotActivatedError);
+
+      await promotionService.approve(
+        manifest.id,
+        'compliance',
+        'dispatch-spec-approver',
+        ProviderApprovalDecision.APPROVED,
+      );
+      await promotionService.activate(
+        manifest.id,
+        'sandbox',
+        'dispatch-spec-activator',
+        null,
+      );
+
+      const finding = await dispatchProviderRequest(deps(), {
+        tenantId,
+        caseId: randomUUID(),
+        borrowerSubjectId: 'promotion-gate-borrower',
+        capability: ProviderCapability.ASSET,
+        mode: 'AUTHORIZED_SANDBOX',
+        request: {},
+        purposeCode: 'UNDERWRITING_EVIDENCE',
+        permittedDataClasses: ['ASSET'],
+      });
+      expect(finding).toEqual({ ok: true });
     });
   });
 });

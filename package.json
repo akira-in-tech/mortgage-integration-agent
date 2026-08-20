@@ -43,6 +43,7 @@
     "seed-communication-template": "ts-node -r tsconfig-paths/register src/seed-communication-template.ts",
     "manage-legal-hold": "ts-node -r tsconfig-paths/register src/manage-legal-hold.ts",
     "resolve-data-disposition-task": "ts-node -r tsconfig-paths/register src/resolve-data-disposition-task.ts",
+    "manage-provider-promotion": "ts-node -r tsconfig-paths/register src/manage-provider-promotion.ts",
     "generate:client": "openapi-typescript openapi/openapi.json -o client/generated/schema.d.ts",
     "quickstart": "ts-node -r tsconfig-paths/register client/quickstart.ts",
     "webhook-inspector": "ts-node -r tsconfig-paths/register client/webhook-inspector.ts",

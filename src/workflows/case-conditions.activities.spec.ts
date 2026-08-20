@@ -32,6 +32,10 @@ import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
+import { ProviderPromotionManifest } from '../database/entities/provider-promotion-manifest.entity';
+import { ProviderCertificationRecord } from '../database/entities/provider-certification-record.entity';
+import { ProviderApprovalRecord } from '../database/entities/provider-approval-record.entity';
+import { ProviderActivation } from '../database/entities/provider-activation.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import { CommunicationTemplateStatus } from '../database/enums/communication.enum';
@@ -56,6 +60,7 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
+import { ProviderPromotionService } from '../provider-platform/provider-promotion.service';
 import { ProviderCapability } from '../provider-platform/types';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
@@ -125,6 +130,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let providerAuthorizationService: ProviderAuthorizationService;
   let providerOperationIntentService: ProviderOperationIntentService;
   let providerKillSwitchService: ProviderKillSwitchService;
+  let providerPromotionService: ProviderPromotionService;
   let consentService: ConsentService;
   let messageService: CommunicationMessageService;
   let communicationDeliveryService: CommunicationDeliveryService;
@@ -158,6 +164,10 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
         ProviderAdapterStatus,
+        ProviderPromotionManifest,
+        ProviderCertificationRecord,
+        ProviderApprovalRecord,
+        ProviderActivation,
         ConsentRecord,
         CommunicationMessage,
         CommunicationTemplate,
@@ -189,6 +199,12 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource,
     );
     providerKillSwitchService = new ProviderKillSwitchService(dataSource);
+    providerPromotionService = new ProviderPromotionService(
+      dataSource.getRepository(ProviderPromotionManifest),
+      dataSource.getRepository(ProviderCertificationRecord),
+      dataSource.getRepository(ProviderApprovalRecord),
+      dataSource.getRepository(ProviderActivation),
+    );
     messageService = new CommunicationMessageService(dataSource);
     communicationDeliveryService = new CommunicationDeliveryService(
       dataSource,
@@ -205,6 +221,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerAuthorizationService,
       providerOperationIntentService,
       providerKillSwitchService,
+      providerPromotionService,
       consentService,
       messageService,
       communicationDeliveryService,
@@ -398,6 +415,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerAuthorizationService,
       providerOperationIntentService,
       providerKillSwitchService,
+      providerPromotionService,
       consentService,
       messageService,
       communicationDeliveryService,
@@ -789,6 +807,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerAuthorizationService,
         providerOperationIntentService,
         providerKillSwitchService,
+        providerPromotionService,
         consentService,
         messageService,
         communicationDeliveryService,
@@ -919,6 +938,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerAuthorizationService,
         providerOperationIntentService,
         providerKillSwitchService,
+        providerPromotionService,
         consentService,
         messageService,
         communicationDeliveryService,

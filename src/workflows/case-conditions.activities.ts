@@ -31,6 +31,7 @@ import { ProviderRegistryService } from '../provider-platform/provider-registry.
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
 import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
+import { ProviderPromotionService } from '../provider-platform/provider-promotion.service';
 import {
   dispatchProviderRequest,
   ProviderRevalidationError,
@@ -68,6 +69,7 @@ export interface CaseConditionsActivitiesDeps {
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
   providerKillSwitchService: ProviderKillSwitchService;
+  providerPromotionService: ProviderPromotionService;
   consentService: ConsentService;
   messageService: CommunicationMessageService;
   communicationDeliveryService: CommunicationDeliveryService;
@@ -229,6 +231,7 @@ export function createCaseConditionsActivities(
     providerAuthorizationService,
     providerOperationIntentService,
     providerKillSwitchService,
+    providerPromotionService,
     consentService,
     messageService,
     communicationDeliveryService,
@@ -239,6 +242,7 @@ export function createCaseConditionsActivities(
     authorizationService: providerAuthorizationService,
     intentService: providerOperationIntentService,
     killSwitchService: providerKillSwitchService,
+    promotionService: providerPromotionService,
     consentService,
   };
 

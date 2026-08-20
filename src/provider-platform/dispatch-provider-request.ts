@@ -2,6 +2,7 @@ import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
+import { ProviderPromotionService } from './provider-promotion.service';
 import {
   ProviderCapability,
   ProviderMode,
@@ -19,6 +20,7 @@ export interface DispatchProviderRequestDeps {
   intentService: ProviderOperationIntentService;
   consentService: ConsentService;
   killSwitchService: ProviderKillSwitchService;
+  promotionService: ProviderPromotionService;
 }
 
 /**
@@ -32,6 +34,21 @@ export class ProviderDisabledError extends Error {
   constructor(reason: string) {
     super(reason);
     this.name = 'ProviderDisabledError';
+  }
+}
+
+/**
+ * Section 11.4's governed promotion chain (M4-007): a non-`SIMULATOR`
+ * mode with no current `ProviderActivation` — distinct from
+ * `ProviderDisabledError` (an operator has explicitly turned an otherwise-
+ * promoted provider off). This is the default-deny state: nothing is
+ * reachable until it has actually gone through propose -> certify ->
+ * approve -> activate.
+ */
+export class ProviderNotActivatedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderNotActivatedError';
   }
 }
 
@@ -69,7 +86,8 @@ export interface DispatchProviderRequestParams {
  * resolve the registered adapter (Section 11.6's routing, reduced to its
  * first constraint since only one adapter is ever registered per
  * capability today) -> check the kill switch (Section 11.4, M4-006) ->
- * issue a fresh, time-bound authorization grant -> persist the operation
+ * check the governed promotion chain for any non-SIMULATOR mode (Section
+ * 11.4, M4-007) -> issue a fresh, time-bound authorization grant -> persist the operation
  * intent *before* dispatch (Section 11.5) -> revalidate the grant
  * immediately before the external call, failing closed on any mismatch ->
  * dispatch -> record the real outcome on the intent, classifying a
@@ -100,6 +118,22 @@ export async function dispatchProviderRequest<TFinding>(
     throw new ProviderDisabledError(
       `provider ${adapter.providerId} capability=${params.capability} mode=${mode} is disabled — see provider_adapter_status for the reason`,
     );
+  }
+
+  // M4-007: SIMULATOR stays the free default (Section 11.1) — the
+  // governed promotion chain only gates modes real credentials could
+  // actually reach.
+  if (mode !== 'SIMULATOR') {
+    const activated = await deps.promotionService.isActivated(
+      adapter.providerId,
+      params.capability,
+      mode,
+    );
+    if (!activated) {
+      throw new ProviderNotActivatedError(
+        `provider ${adapter.providerId} capability=${params.capability} mode=${mode} has no active promotion — see provider_activations`,
+      );
+    }
   }
 
   // M5-005: attach the case's own active consent record (if any) to the

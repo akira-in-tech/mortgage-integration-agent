@@ -26,6 +26,10 @@ import { ToolAttempt } from './database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from './database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from './database/entities/provider-operation-intent.entity';
 import { ProviderAdapterStatus } from './database/entities/provider-adapter-status.entity';
+import { ProviderPromotionManifest } from './database/entities/provider-promotion-manifest.entity';
+import { ProviderCertificationRecord } from './database/entities/provider-certification-record.entity';
+import { ProviderApprovalRecord } from './database/entities/provider-approval-record.entity';
+import { ProviderActivation } from './database/entities/provider-activation.entity';
 import { ConsentRecord } from './database/entities/consent-record.entity';
 import { CommunicationMessage } from './database/entities/communication-message.entity';
 import { CommunicationTemplate } from './database/entities/communication-template.entity';
@@ -36,6 +40,7 @@ import { ProviderRegistryService } from './provider-platform/provider-registry.s
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
+import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
 import { ConsentService } from './consent/consent.service';
 import { DataDispositionService } from './data-disposition/data-disposition.service';
 import { LegalHoldService } from './data-disposition/legal-hold.service';
@@ -103,6 +108,10 @@ async function main(): Promise<void> {
       ProviderAuthorizationGrant,
       ProviderOperationIntent,
       ProviderAdapterStatus,
+      ProviderPromotionManifest,
+      ProviderCertificationRecord,
+      ProviderApprovalRecord,
+      ProviderActivation,
       ConsentRecord,
       CommunicationMessage,
       CommunicationTemplate,
@@ -141,6 +150,12 @@ async function main(): Promise<void> {
     dataSource,
   );
   const providerKillSwitchService = new ProviderKillSwitchService(dataSource);
+  const providerPromotionService = new ProviderPromotionService(
+    dataSource.getRepository(ProviderPromotionManifest),
+    dataSource.getRepository(ProviderCertificationRecord),
+    dataSource.getRepository(ProviderApprovalRecord),
+    dataSource.getRepository(ProviderActivation),
+  );
   const messageService = new CommunicationMessageService(dataSource);
   const communicationDeliveryService = new CommunicationDeliveryService(
     dataSource,
@@ -169,6 +184,7 @@ async function main(): Promise<void> {
         providerAuthorizationService,
         providerOperationIntentService,
         providerKillSwitchService,
+        providerPromotionService,
         consentService,
         messageService,
         communicationDeliveryService,

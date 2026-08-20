@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { PlaidIncomeAdapter } from './plaid/plaid-income.adapter';
+import { PlaidIncomeSandboxAdapter } from './plaid/plaid-income-sandbox.adapter';
 import { CreditReportAdapter } from './credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from './document/document-verification.adapter';
 import { AssetVerificationAdapter } from './asset/asset-verification.adapter';
@@ -24,6 +25,7 @@ export class ProviderAdapterBootstrapService implements OnModuleInit {
   constructor(
     private readonly registry: ProviderRegistryService,
     private readonly plaidIncomeAdapter: PlaidIncomeAdapter,
+    private readonly plaidIncomeSandboxAdapter: PlaidIncomeSandboxAdapter,
     private readonly creditReportAdapter: CreditReportAdapter,
     private readonly documentVerificationAdapter: DocumentVerificationAdapter,
     private readonly assetVerificationAdapter: AssetVerificationAdapter,
@@ -32,6 +34,12 @@ export class ProviderAdapterBootstrapService implements OnModuleInit {
 
   onModuleInit(): void {
     this.registry.register(this.plaidIncomeAdapter);
+    // M4-007: registering costs nothing at boot (a plain in-memory map
+    // insert, no network call) — the real credential check only happens
+    // if/when something actually dispatches to AUTHORIZED_SANDBOX mode,
+    // matching this codebase's own established "fail at call time, not
+    // boot time" convention for missing configuration.
+    this.registry.register(this.plaidIncomeSandboxAdapter);
     this.registry.register(this.creditReportAdapter);
     this.registry.register(this.documentVerificationAdapter);
     this.registry.register(this.assetVerificationAdapter);

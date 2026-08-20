@@ -9,6 +9,7 @@ import { ProviderRegistryService } from './provider-platform/provider-registry.s
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
+import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
@@ -33,6 +34,7 @@ async function bootstrap(): Promise<void> {
       ProviderOperationIntentService,
     ),
     providerKillSwitchService: appContext.get(ProviderKillSwitchService),
+    providerPromotionService: appContext.get(ProviderPromotionService),
     consentService: appContext.get(ConsentService),
     messageService: appContext.get(CommunicationMessageService),
     communicationDeliveryService: appContext.get(CommunicationDeliveryService),

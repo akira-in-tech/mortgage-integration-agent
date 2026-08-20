@@ -13,15 +13,19 @@ import {
 /**
  * Section 11.4's own explicit standalone requirement: "a kill switch can
  * suspend a provider or capability without redeploying the application."
- * Deliberately NOT the full `ProviderPromotionManifest`/
+ * Deliberately kept separate from the full `ProviderPromotionManifest`/
  * `ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation`
- * chain the charter designs around a governed `PRODUCTION_BYOC` promotion
- * — this codebase has only ever implemented `SIMULATOR` mode (M4-001's own
- * scoping note), so certifying or dual-approving a promotion to a mode
- * that doesn't exist would be ceremony around nothing real. The kill
- * switch itself is real and useful today regardless: right now, nothing
- * in this codebase can stop `ProviderRegistryService.resolve()` from
- * keeping returning a misbehaving adapter short of a redeploy.
+ * chain (M4-007, `ProviderPromotionService`) rather than merged into it:
+ * this is a single-actor emergency stop with no dual control, the
+ * governed chain is the opposite (default-deny, dual-control promotion).
+ * `dispatchProviderRequest` checks both — a provider can be promoted
+ * (`ProviderActivation.state = ACTIVE`) and still be kill-switched off;
+ * for `SIMULATOR` mode (this table's own original scope) the promotion
+ * chain is never consulted at all, so this table's default-ACTIVE
+ * behavior is unchanged from M4-006. The kill switch itself is real and
+ * useful today regardless: right now, nothing in this codebase can stop
+ * `ProviderRegistryService.resolve()` from keeping returning a
+ * misbehaving adapter short of a redeploy.
  *
  * NOT RLS-protected, deliberately — matches `tenants`/the policy catalog's
  * own precedent (M5-021's investigation): `ProviderRegistryService`

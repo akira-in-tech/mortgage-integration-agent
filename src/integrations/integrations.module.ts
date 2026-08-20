@@ -5,6 +5,8 @@ import { DocumentService } from './document/document.service';
 import { AssetService } from './asset/asset.service';
 import { IdentityService } from './identity/identity.service';
 import { PlaidIncomeAdapter } from './plaid/plaid-income.adapter';
+import { PlaidSandboxService } from './plaid/plaid-sandbox.service';
+import { PlaidIncomeSandboxAdapter } from './plaid/plaid-income-sandbox.adapter';
 import { CreditReportAdapter } from './credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from './document/document-verification.adapter';
 import { AssetVerificationAdapter } from './asset/asset-verification.adapter';
@@ -21,6 +23,8 @@ import { ProviderPlatformModule } from '../provider-platform/provider-platform.m
     AssetService,
     IdentityService,
     PlaidIncomeAdapter,
+    PlaidSandboxService,
+    PlaidIncomeSandboxAdapter,
     CreditReportAdapter,
     DocumentVerificationAdapter,
     AssetVerificationAdapter,

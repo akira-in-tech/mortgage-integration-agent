@@ -1,13 +1,14 @@
 /**
  * Section 11's provider platform, honestly scoped to what this codebase
- * can back today: three real simulator adapters (income/credit/document)
- * behind one real capability contract, `SIMULATOR` the only mode any
- * adapter actually implements. `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` stay
- * as vocabulary (Section 11.1 names all three), never as a claim that this
- * codebase can talk to a real provider — no real credentials, promotion
- * manifest, or certification pipeline exists yet (see
- * docs/DEVELOPMENT_LOG.md's M4-001 entry for exactly why those are
- * deliberately deferred, not fabricated).
+ * can back today: five real simulator adapters (income/credit/document/
+ * asset/identity) behind one real capability contract, plus (M4-007) one
+ * real `AUTHORIZED_SANDBOX` adapter — Plaid's actual sandbox API — gated
+ * behind a real governed promotion chain (`ProviderPromotionService`:
+ * propose -> certify -> approve -> activate, Section 11.4). `PRODUCTION_BYOC`
+ * stays as vocabulary only (Section 11.1 names all three modes), never as
+ * a claim that this codebase can talk to a real production provider — no
+ * real production credentials or BYOC onboarding flow exists yet (see
+ * docs/DEVELOPMENT_LOG.md's M4-001 and M4-007 entries).
  */
 
 /** Section 7.2's target capability vocabulary. Only INCOME/CREDIT/DOCUMENT have a real registered adapter — ASSET/IDENTITY are named but unbuilt (Known gap). */

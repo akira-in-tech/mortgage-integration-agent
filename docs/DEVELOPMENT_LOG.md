@@ -7605,3 +7605,121 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Both gaps named as "buildable without any external dependency" (M3-024, M5-025) are now closed. What remains — OIDC/FAPI 2.0, encrypted field/object boundaries, and the provider-promotion governance chain (M4/M5) — each still needs either an external identity-provider decision or a second real provider mode this codebase doesn't have. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.
+
+## M4-007: A real `AUTHORIZED_SANDBOX` provider (Plaid) and the governed promotion chain that gates it (Section 11.1/11.4)
+
+### Status
+
+Implemented and verified, including a real live proof under real Plaid sandbox credentials and a real running database: the exact scenario M4-006's own entry named as blocking the full chain — "certifying or dual-approving a promotion to a mode that doesn't exist would be ceremony around nothing real" — no longer applies. This is the second real provider mode this codebase has ever had (`SIMULATOR` was the only one since M4-001), and the governed chain Section 11.4 designs around it: `ProviderPromotionManifest` -> `ProviderCertificationRecord` -> `ProviderApprovalRecord` -> `ProviderActivation`, mirroring `PolicyTransitionApprovalService`'s exact dual-control shape (Section 16.1). Deliberately scoped to two closable pieces — the real adapter, and the real governance chain that gates it — and deliberately NOT wired into the live default underwriting dispatch path (see Decisions): every real case today still resolves through `SIMULATOR` exactly as before this slice.
+
+### Acceptance criterion
+
+`PlaidIncomeSandboxAdapter` (`providerId: 'plaid-sandbox'`, `mode: 'AUTHORIZED_SANDBOX'`) makes real HTTP calls to `sandbox.plaid.com` — `/user/create`, `/sandbox/public_token/create`, `/item/public_token/exchange`, `/credit/bank_income/get` — and maps Plaid's real Bank Income response into this codebase's existing `PlaidIncomeData` shape. `dispatchProviderRequest` refuses to dispatch to it (`ProviderNotActivatedError`) until a manifest for `{plaid-sandbox, INCOME, AUTHORIZED_SANDBOX}` has gone through `propose()` -> a `PASSED`, unexpired `certify()` -> an `APPROVED`, unexpired `approve()` from a *different* actor than the proposer -> `activate()`; `SIMULATOR` mode is never gated (Section 11.1's free default is unchanged). Live-verified end to end: `status` reports `NOT ACTIVATED` before any of this; `activate()` fails closed with neither certification nor approval, then with only one of the two; a same-actor `approve()` is rejected; a real dispatch after full activation returns real Plaid data (`monthlyIncome: 2100.78, employmentStatus: "FULL_TIME", bankAccountAge: 11.93, incomeStability: 100`) through the unmodified production `dispatchProviderRequest` code path.
+
+### Implementation
+
+**Part 1 — the real adapter:**
+
+- `src/integrations/plaid/plaid-sandbox.service.ts` (new, +`.spec.ts`) — `PlaidSandboxService`, a real HTTP client against `https://sandbox.plaid.com` using real `PLAID_SANDBOX_CLIENT_ID`/`PLAID_SANDBOX_SECRET`; exported `mapBankIncomeToPlaidIncomeData()` — a pure function mapping Plaid's real `bank_income_sources[]` shape into `PlaidIncomeData`: `monthlyIncome` from the `SALARY` source only (falling back to `GIG_ECONOMY`, classified `SELF_EMPLOYED`; `UNEMPLOYED`/0 if neither exists) divided by real elapsed months; `bankAccountAge` as the earliest `start_date` across every source, in months — an honest *lower bound*, since Plaid's real Accounts product has no account-opening-date field at all (confirmed empirically against all 14 real sandbox accounts); `incomeStability` as a real coefficient-of-variation score over `historical_summary[]`'s monthly buckets (100 for zero variance, lower for volatile income).
+- `src/integrations/plaid/plaid-income-sandbox.adapter.ts` (new, +`.spec.ts`) — `PlaidIncomeSandboxAdapter implements ProviderAdapter<...>`, same shape as the existing `PlaidIncomeAdapter` (`SIMULATOR`); `submit()` calls the real service, `healthCheck()` does a real `HEAD` against `sandbox.plaid.com`.
+- `src/integrations/integrations.module.ts`, `src/integrations/provider-adapter-bootstrap.service.ts` — registers the new adapter alongside the existing five; registration itself is free (no network call, no credential check) — a missing/invalid credential only fails at actual dispatch time, matching this codebase's established "fail at call time, not boot time" convention.
+
+**Part 2 — the governance chain:**
+
+- `src/database/enums/provider-promotion.enum.ts` (new) — `ProviderCertificationDecision` (`PASSED`/`FAILED`/`REVOKED`), `ProviderApprovalDecision` (`APPROVED`/`REJECTED`/`REVOKED`), `ProviderActivationState` — deliberately binary (`ACTIVE`/`DEACTIVATED`), mirroring `ProviderAdapterState`'s own M4-006 reasoning: no distinct real consequence for a third value.
+- Four new entities (`provider-promotion-manifest.entity.ts`, `provider-certification-record.entity.ts`, `provider-approval-record.entity.ts`, `provider-activation.entity.ts`) — an honestly-trimmed subset of the charter's full field lists (keeps `endpointAllowlist`, `dataClassifications`, `adapterVersion`, `contentHash`, `validFrom`/`validUntil`; skips fields referencing governance subsystems that don't exist, like `consentAndPurposePolicyId`/`rateAndCostBudgetId`). Manifest and certification/approval records are immutable/append-only (new row per proposal or decision, never mutated); `ProviderActivation` is current-state-only, one row per `{providerId, capability, mode}`, matching `ProviderAdapterStatus`'s own precedent. None are tenant-scoped or RLS-protected — same reasoning as `ProviderAdapterStatus`: `ProviderRegistryService.resolve()` has no tenant dimension, so neither does promoting one of its registrations.
+- `src/database/migrations/1787177800000-ProviderPromotionChain.ts` (new) — all four tables, no RLS.
+- `src/provider-platform/provider-promotion.service.ts` (new, +`.spec.ts`) — `propose()` (increments `version` per tuple, computes a real `contentHash` via the existing `computeDigest()`), `certify()`, `approve()` (rejects self-approval exactly like `PolicyTransitionApprovalService`, only for `APPROVED` decisions), `activate()` (requires a current `PASSED`+unexpired certification for the target environment AND a current `APPROVED`+unexpired approval; an optimistic-lock `expectedCurrentManifestVersion` guards against two operators racing to activate two different manifests for the same tuple), `deactivate()` (single-actor, matching the kill switch's own "emergency disable needs no dual control" precedent), `isActivated()` (the real dispatch-time gate — fails closed, no row means never-activated, the opposite of the kill switch's own "no row means ACTIVE" default).
+- `src/provider-platform/dispatch-provider-request.ts` — new `ProviderNotActivatedError`; checked right after the kill-switch check, only for `mode !== 'SIMULATOR'`.
+- `src/manage-provider-promotion.ts` (new script, 6 subcommands: propose/certify/approve/activate/deactivate/status) — matches `set-provider-status.ts`/`manage-legal-hold.ts`'s established script-not-endpoint convention; `package.json` gained one entry.
+- Threaded `providerPromotionService` through every `DispatchProviderRequestDeps`/`CaseConditionsActivitiesDeps`/`EvaluationRunnerDeps` construction site: `worker.ts`, `evaluation-report.ts`, `evaluation/runner.ts`, and all their `.spec.ts` fixtures (4 call sites in `case-conditions.activities.spec.ts`, 1 in `dispatch-provider-request.spec.ts`, 1 in `runner.spec.ts`).
+- `provider-adapter-status.entity.ts`, `provider-platform/types.ts` — comments updated to stop claiming no promotion chain or second provider mode exists.
+
+### Affected files
+
+- `src/integrations/plaid/plaid-sandbox.service.ts` (new, +`.spec.ts`), `plaid-income-sandbox.adapter.ts` (new, +`.spec.ts`)
+- `src/integrations/integrations.module.ts`, `provider-adapter-bootstrap.service.ts`
+- `src/database/enums/provider-promotion.enum.ts` (new)
+- `src/database/entities/provider-promotion-manifest.entity.ts`, `provider-certification-record.entity.ts`, `provider-approval-record.entity.ts`, `provider-activation.entity.ts` (all new)
+- `src/database/migrations/1787177800000-ProviderPromotionChain.ts` (new), `schema-migrations.spec.ts`
+- `src/database/entities/provider-adapter-status.entity.ts`, `src/provider-platform/types.ts` (comment accuracy only)
+- `src/provider-platform/provider-promotion.service.ts` (new, +`.spec.ts`), `dispatch-provider-request.ts` (+`.spec.ts`), `provider-platform.module.ts`
+- `src/manage-provider-promotion.ts` (new), `package.json`
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`), `src/worker.ts`, `src/evaluation/runner.ts` (+`.spec.ts`), `src/evaluation-report.ts`
+- `.env` (git-ignored; real sandbox-only Plaid credentials, never production)
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Investigated Plaid's real sandbox API directly before writing any mapping code** — live `curl` calls with real credentials plus `WebFetch` against Plaid's actual documentation, the same "confirm real state before designing" discipline this session has applied to internal code all along, now applied to an external, real system. Found and fixed a real integration bug this way: `/sandbox/public_token/create`'s `user_id` belongs at the request's top level, not nested in `options` (nesting throws `HTTP 400 UNKNOWN_FIELDS`).
+- **Not wired into the live default underwriting dispatch path.** `dispatchProviderRequest`'s `mode` parameter defaults to `SIMULATOR` and nothing in `case-conditions.activities.ts` was changed to ever pass `AUTHORIZED_SANDBOX` — every real case today resolves exactly as before this slice. Reached deliberately, not by omission: routing real borrower PII through a real external sandbox from the live decisioning path intersects with the still-fully-deferred field/object-encryption item (Section 11.5/16.2), and this slice's own acceptance criterion — a real adapter, gated by a real governance chain, both provably real via direct dispatch calls — doesn't need that wiring to be honest.
+- **Binary `ProviderActivationState` (`ACTIVE`/`DEACTIVATED`), not the charter's `ACTIVE`/`SUSPENDED`/`DISABLED`.** Same reasoning `ProviderAdapterState` already established (M4-006): no real behavioral difference between a third value and `DEACTIVATED` exists in this codebase yet.
+- **`ProviderActivation` stays separate from the pre-existing kill switch, not merged into it.** They're opposite defaults for opposite failure modes: the kill switch defaults ACTIVE (an emergency single-actor stop for something already trusted), the promotion chain defaults DEACTIVATED/never-activated (a default-deny gate for something not yet trusted). `dispatchProviderRequest` checks both for any non-`SIMULATOR` mode; `SIMULATOR` itself only ever goes through the kill switch, unchanged from M4-006.
+- **No FK constraints from certification/approval records to their manifest** — matches this codebase's existing convention (`PolicyTransitionApproval.policyVersionId`) of plain `uuid` reference columns without a declared relation.
+- **Credential handling**: the real Plaid Client ID and Secret, received via chat, were written directly to the git-ignored `.env` and never echoed back, placed in visible command text, or logged — sourced via `set -a; source .env; set +a` for every verification step, and redacted from printed API-response output during investigation.
+
+### Errors and fixes
+
+- **`/sandbox/public_token/create` field placement** — see Decisions above.
+- **A hand-miscalculated test expectation** in `plaid-sandbox.service.spec.ts`: first draft expected `monthlyIncome ≈ 2094.05` from a miscounted date span; the actual, correct value (348 real days ÷ 30.44 avg days/month) is `2100.78`. Fixed the test, not the (already-correct) production formula.
+- **The default Plaid sandbox test user has no clean payroll transactions** — confirmed via a real `/transactions/sync` call before relying on it for anything; switched to Plaid's own documented `user_bank_income` override persona for income-specific testing instead.
+- **A self-inflicted `replace_all` overlap** while threading `providerPromotionService` through `case-conditions.activities.spec.ts`'s four call sites: a 6-space-indent replacement string matched as a substring of the file's 8-space-indent occurrences too, duplicating one line at two of the four sites. Caught immediately by re-grepping the file's own edited state before moving on, not by a later test failure.
+- The usual `schema-migrations.spec.ts` maintenance ritual — a new first revert-chain test (four new tables, no RLS, matching `provider_adapter_status`'s own precedent).
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+Fresh scratch stack (ports 5544/7244), fully migrated via npm run migration:run:
+  npm test -- --runInBand
+    79 of 80 suites passed (1 pre-existing skip: case-conditions.workflow.spec.ts,
+    needs TEMPORAL_ADDRESS, unrelated to this slice)
+    583 passed / 10 skipped / 593 total
+    (10 skipped = describeOrSkip specs gated on env not present in every run)
+  With PLAID_SANDBOX_CLIENT_ID/SECRET sourced: plaid-income-sandbox.adapter.spec.ts's
+    3 real-network tests against sandbox.plaid.com all passed
+
+Second fresh scratch stack (ports 5545/7245), fully migrated:
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (no REST surface changed)
+
+Manual live verification against the first scratch stack:
+  - npm run manage-provider-promotion -- status plaid-sandbox INCOME
+    AUTHORIZED_SANDBOX -> NOT ACTIVATED
+  - propose -> activate before certify/approve -> real BadRequestException
+    ("no current PASSED, unexpired certification")
+  - certify PASSED -> approve as the SAME actor -> real BadRequestException
+    ("self-approval is not permitted")
+  - approve as a DIFFERENT actor -> APPROVED -> activate -> succeeds
+  - status -> ACTIVE
+  - direct dispatchProviderRequest() call (mode: AUTHORIZED_SANDBOX,
+    capability: INCOME) through the unmodified production dispatch
+    function -> real Plaid data: {monthlyIncome: 2100.78,
+    employmentStatus: "FULL_TIME", bankAccountAge: 11.93,
+    incomeStability: 100}
+  - status for a never-promoted tuple (plaid-sandbox/CREDIT/AUTHORIZED_SANDBOX)
+    -> NOT ACTIVATED, confirming the gate isn't accidentally always-open
+
+  both scratch stacks torn down (docker rm -f + network rm), one-off
+  verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- No behavioral change to any existing case: `SIMULATOR` remains the only mode any real workflow dispatches to; this slice is reachable only through direct `dispatchProviderRequest` calls (specs, scripts, and any future explicit wiring).
+- New real external dependency: `sandbox.plaid.com`, sandbox-only credentials, never production. No real borrower PII is sent — every test/verification used synthetic borrower IDs and Plaid's own sandbox test personas.
+- The governance chain defaults deny, not allow: a manifest that's merely proposed (not certified+approved+activated) grants no dispatch access — the opposite failure mode from an unbacked "trust by default" gate.
+- No new secrets beyond the two Plaid sandbox values, both git-ignored in `.env`.
+
+### Known gaps
+
+- **`bankAccountAge` is a lower bound, not a true account-open date** — Plaid's real Accounts product has no such field (confirmed empirically); the earliest income-source `start_date` is the best honest proxy available.
+- **`PART_TIME` employment status is never actually producible** from this real data source — Plaid's Bank Income categories don't distinguish it from `FULL_TIME`'s `SALARY` category. Left in the type for interface parity with the `SIMULATOR` adapter, not fabricated.
+- **`ProviderActivation` is current-state-only**, same tradeoff `ProviderAdapterStatus` already made — no full history of past activate/deactivate cycles.
+- **No dispatch-time wiring into the live underwriting workflow** — by design (see Decisions), tracked here as the concrete next step if real Plaid-sourced income ever needs to reach a real case.
+- **No approval-role RBAC** — `approvalRole` is a free-text string, the same honest scoping `PolicyTransitionApproval` already uses instead of a real role system.
+- Every other M4/M5/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+The provider-promotion governance chain named in every prior "remaining gaps" list is now closed. What's left: OIDC/FAPI 2.0 (still awaiting the user's go-ahead to self-host Keycloak), encrypted field/object boundaries (now unblocked in principle — a second real provider mode exists — but still a large, separate slice), and wiring `AUTHORIZED_SANDBOX` into a real case's live dispatch path if that's ever wanted. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.
