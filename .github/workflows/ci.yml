@@ -62,18 +62,29 @@ jobs:
       # gRPC port before continuing since auto-setup runs a schema
       # migration on first boot and takes a few seconds to become ready.
       - run: |
-          docker run -d --name temporal --network host \
+          # NOT --network host: on this runner's Docker setup that leaves
+          # the container on its own private bridge IP regardless (its own
+          # frontend logs its reachable address as a 10.x address, not
+          # 127.0.0.1) — host mode silently not applying, not just slow to
+          # apply. Explicit publish + --add-host=host.docker.internal
+          # works everywhere host mode does and everywhere it doesn't:
+          # the container reaches the postgres service (bound to this
+          # runner's own localhost:5432) via the real host-gateway address,
+          # and 7233 is really published to this runner's own localhost.
+          docker run -d --name temporal \
+            --add-host=host.docker.internal:host-gateway \
+            -p 7233:7233 \
             -e DB=postgres12 \
             -e DB_PORT=5432 \
             -e POSTGRES_USER=mortgage \
             -e POSTGRES_PWD=mortgage_demo \
-            -e POSTGRES_SEEDS=localhost \
+            -e POSTGRES_SEEDS=host.docker.internal \
             temporalio/auto-setup:1.29.7
           # auto-setup runs its own schema migration and search-attribute
           # setup on first boot before it ever opens 7233 — a runner under
-          # load can genuinely take longer than the previous 60s budget,
-          # not just hang, so this polls for up to 3 minutes. `docker logs`
-          # on failure/timeout means the next real problem here is visible
+          # load can genuinely take longer than a short budget, not just
+          # hang, so this polls for up to 3 minutes. `docker logs` on
+          # failure/timeout means the next real problem here is visible
           # instead of another silent "did not become ready" guess.
           for i in $(seq 1 90); do
             (echo > /dev/tcp/127.0.0.1/7233) 2>/dev/null && exit 0
