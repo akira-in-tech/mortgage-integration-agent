@@ -544,5 +544,118 @@ describeOrSkip(
       });
       expect(record.revokedAt).toBeNull();
     });
+
+    describe('escalate — escalate_to_reviewer real REST caller (M5-023)', () => {
+      it('pauses a freshly created case for review', async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+        const caseId = created.body.id;
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${caseId}/escalate`)
+          .set('Authorization', authHeader)
+          .send({ actorId: 'e2e-reviewer', reason: 'suspicious pattern' });
+
+        expect(res.status).toBe(200);
+        const loanCase = await caseRepo.findOneByOrFail({ id: caseId });
+        expect(loanCase.status).toBe('WAITING_FOR_REVIEW');
+      });
+
+      it('409s escalating a case that is already WAITING_FOR_REVIEW', async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+        const caseId = created.body.id;
+
+        await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${caseId}/escalate`)
+          .set('Authorization', authHeader)
+          .send({ actorId: 'e2e-reviewer', reason: 'first escalation' });
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${caseId}/escalate`)
+          .set('Authorization', authHeader)
+          .send({ actorId: 'e2e-reviewer', reason: 'second escalation' });
+
+        expect(res.status).toBe(409);
+      });
+
+      it("404s for another tenant's real, valid credential escalating someone else's case", async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${created.body.id}/escalate`)
+          .set('Authorization', otherAuthHeader)
+          .send({ actorId: 'e2e-other-reviewer', reason: 'irrelevant' });
+
+        expect(res.status).toBe(404);
+        const loanCase = await caseRepo.findOneByOrFail({
+          id: created.body.id,
+        });
+        expect(loanCase.status).not.toBe('WAITING_FOR_REVIEW');
+      });
+    });
+
+    describe('policy-change-impact — check_policy_change_impact real REST caller (M5-023)', () => {
+      it('reports assessed:false for a case that has never been evaluated (no live binding yet)', async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+        const caseId = created.body.id;
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${caseId}/policy-change-impact`)
+          .set('Authorization', authHeader)
+          .send({ policyVersionId: uuidv4() });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+          assessed: false,
+          reason: 'case has no live policy binding to compare against',
+        });
+      });
+
+      it('rejects a non-UUID policyVersionId with 400', async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+        const caseId = created.body.id;
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${caseId}/policy-change-impact`)
+          .set('Authorization', authHeader)
+          .send({ policyVersionId: 'not-a-uuid' });
+
+        expect(res.status).toBe(400);
+      });
+
+      it("404s for another tenant's real, valid credential checking someone else's case", async () => {
+        const created = await request(app.getHttpServer())
+          .post('/v1/loan-cases')
+          .set('Authorization', authHeader)
+          .set('Idempotency-Key', `e2e-key-${uuidv4()}`)
+          .send(createCasePayload());
+
+        const res = await request(app.getHttpServer())
+          .post(`/v1/loan-cases/${created.body.id}/policy-change-impact`)
+          .set('Authorization', otherAuthHeader)
+          .send({ policyVersionId: uuidv4() });
+
+        expect(res.status).toBe(404);
+      });
+    });
   },
 );

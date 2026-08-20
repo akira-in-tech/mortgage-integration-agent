@@ -150,4 +150,33 @@ describeOrSkip('escalateToReviewerTool', () => {
       .findOneByOrFail({ id: caseId });
     expect(updatedCase.status).toBe(CaseStatus.DRAFT);
   });
+
+  it('returns INVALID_STATUS and writes nothing when the case is already at a status escalation cannot apply to (M5-023)', async () => {
+    const caseId = await makeCase();
+    await dataSource
+      .getRepository(LoanCase)
+      .update({ id: caseId }, { status: CaseStatus.READY_FOR_UNDERWRITING });
+    const beforeVersion = (
+      await dataSource.getRepository(LoanCase).findOneByOrFail({ id: caseId })
+    ).version;
+
+    const result = await tool.execute(
+      { tenantId, caseId },
+      { reason: 'irrelevant', expectedCaseVersion: beforeVersion },
+    );
+
+    expect(result).toEqual({
+      outcome: 'INVALID_STATUS',
+      currentStatus: CaseStatus.READY_FOR_UNDERWRITING,
+    });
+    const events = await dataSource
+      .getRepository(OutboxEvent)
+      .find({ where: { caseId } });
+    expect(events).toHaveLength(0);
+    const updatedCase = await dataSource
+      .getRepository(LoanCase)
+      .findOneByOrFail({ id: caseId });
+    expect(updatedCase.status).toBe(CaseStatus.READY_FOR_UNDERWRITING);
+    expect(updatedCase.version).toBe(beforeVersion);
+  });
 });

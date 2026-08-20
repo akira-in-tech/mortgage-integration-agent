@@ -155,6 +155,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/loan-cases/{caseId}/escalate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a case for human review (escalate_to_reviewer) */
+        post: operations["escalateCase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/policy-change-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check whether a policy version affects this case's own live binding */
+        post: operations["checkPolicyChangeImpact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}/communication-messages": {
         parameters: {
             query?: never;
@@ -325,6 +359,14 @@ export interface components {
             revocationReason?: Record<string, never>;
             /** Format: date-time */
             createdAt: string;
+        };
+        EscalateDto: {
+            actorId: string;
+            reason: string;
+        };
+        CheckPolicyChangeImpactDto: {
+            /** Format: uuid */
+            policyVersionId: string;
         };
         CommunicationMessage: Record<string, never>;
         ApproveCommunicationMessageDto: {
@@ -687,6 +729,89 @@ export interface operations {
                 content?: never;
             };
             /** @description No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    escalateCase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EscalateDto"];
+            };
+        };
+        responses: {
+            /** @description Escalated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The case changed since it was last read, or is already at a status escalation cannot apply to (already WAITING_FOR_REVIEW, or a terminal status). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    checkPolicyChangeImpact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckPolicyChangeImpactDto"];
+            };
+        };
+        responses: {
+            /** @description Assessment result (advisory only). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;

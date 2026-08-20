@@ -40,6 +40,7 @@ describe('CasesService', () => {
   };
   let caseTimelineService: { getTimeline: jest.Mock };
   let consentService: { grantForCase: jest.Mock; revoke: jest.Mock };
+  let policyChangeImpactService: { assessImpactForCase: jest.Mock };
   let service: CasesService;
 
   beforeEach(() => {
@@ -99,6 +100,7 @@ describe('CasesService', () => {
       grantForCase: jest.fn().mockResolvedValue({ id: 'consent-record-1' }),
       revoke: jest.fn().mockResolvedValue({ id: 'consent-record-1' }),
     };
+    policyChangeImpactService = { assessImpactForCase: jest.fn() };
     service = new CasesService(
       tenantRepo as never,
       jurisdictionRepo as never,
@@ -107,6 +109,7 @@ describe('CasesService', () => {
       configService as never,
       caseTimelineService as never,
       consentService as never,
+      policyChangeImpactService as never,
     );
   });
 

@@ -15,6 +15,7 @@ import {
   ApiAcceptedResponse,
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiHeader,
@@ -33,6 +34,8 @@ import {
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
 import { ConsentActionDto } from './dto/consent-action.dto';
+import { EscalateDto } from './dto/escalate.dto';
+import { CheckPolicyChangeImpactDto } from './dto/check-policy-change-impact.dto';
 import { LoanCase } from '../database/entities/loan-case.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { TimelineEntry } from './case-timeline.service';
@@ -44,6 +47,7 @@ import { CurrentAuth } from '../auth/current-auth.decorator';
 import { AuthContext } from '../auth/auth-context';
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { AuditEventService } from '../audit/audit-event.service';
+import { CheckPolicyChangeImpactResult } from '../agent-runtime/tools/check-policy-change-impact.tool';
 
 /**
  * M2 exit-evidence surface (Section 15.1, M2 scope: "REST workflow-start
@@ -279,5 +283,76 @@ export class CasesController {
       metadata: { consentRecordId: record.id },
     });
     return record;
+  }
+
+  // `escalate_to_reviewer`'s (Section 9.4) first real caller (M5-023) —
+  // a human reviewer's own judgment call, since this codebase has no
+  // real automatic detector to hand the decision to instead (see that
+  // tool's own comment). Open to any authenticated role: escalating only
+  // ever adds human scrutiny to a case, never removes it, so it carries
+  // none of the approval-bypass risk `submitReview`'s REVIEWER gate
+  // exists for.
+  @ApiOperation({
+    operationId: 'escalateCase',
+    summary: 'Pause a case for human review (escalate_to_reviewer)',
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiOkResponse({ description: 'Escalated.' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid API credentials.',
+  })
+  @ApiNotFoundResponse({
+    description: 'No case with this id owned by the authenticated tenant.',
+  })
+  @ApiConflictResponse({
+    description:
+      'The case changed since it was last read, or is already at a status escalation cannot apply to (already WAITING_FOR_REVIEW, or a terminal status).',
+  })
+  @Post(':caseId/escalate')
+  @HttpCode(HttpStatus.OK)
+  async escalate(
+    @CurrentAuth() auth: AuthContext,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: EscalateDto,
+  ): Promise<void> {
+    await this.casesService.escalate(auth.tenantId, caseId, dto);
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: dto.actorId,
+      action: 'CASE_ESCALATED',
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: dto.reason,
+      metadata: { apiClientId: auth.apiClientId },
+    });
+  }
+
+  // `check_policy_change_impact`'s (Section 9.4) first real caller
+  // (M5-023) — an operator's own per-case advisory question, distinct
+  // from PolicyActivationService.activate()'s existing automatic
+  // catalog-wide scan. Advisory only (the tool's own approval boundary:
+  // "cannot change case applicability"), so no RBAC restriction.
+  @ApiOperation({
+    operationId: 'checkPolicyChangeImpact',
+    summary:
+      "Check whether a policy version affects this case's own live binding",
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiOkResponse({ description: 'Assessment result (advisory only).' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid API credentials.',
+  })
+  @ApiNotFoundResponse({
+    description: 'No case with this id owned by the authenticated tenant.',
+  })
+  @Post(':caseId/policy-change-impact')
+  @HttpCode(HttpStatus.OK)
+  async checkPolicyChangeImpact(
+    @AuthTenantId() tenantId: string,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Body() dto: CheckPolicyChangeImpactDto,
+  ): Promise<CheckPolicyChangeImpactResult> {
+    return this.casesService.checkPolicyChangeImpact(tenantId, caseId, dto);
   }
 }

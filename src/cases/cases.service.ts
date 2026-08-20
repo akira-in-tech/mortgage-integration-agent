@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -13,11 +17,26 @@ import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { CreateCaseDto } from './dto/create-case.dto';
 import { ReviewDto } from './dto/review.dto';
 import { ConsentActionDto } from './dto/consent-action.dto';
+import { EscalateDto } from './dto/escalate.dto';
+import { CheckPolicyChangeImpactDto } from './dto/check-policy-change-impact.dto';
 import { CaseTimelineService, TimelineEntry } from './case-timeline.service';
 import { isUniqueViolation } from '../database/postgres-errors';
 import { runInTenantContext } from '../database/tenant-context';
 import { ConsentService } from '../consent/consent.service';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { PolicyChangeImpactService } from '../policy/policy-change-impact.service';
+import {
+  buildToolRegistry,
+  invokeTool,
+} from '../agent-runtime/agent-tool.types';
+import {
+  escalateToReviewerTool,
+  EscalateToReviewerResult,
+} from '../agent-runtime/tools/escalate-to-reviewer.tool';
+import {
+  checkPolicyChangeImpactTool,
+  CheckPolicyChangeImpactResult,
+} from '../agent-runtime/tools/check-policy-change-impact.tool';
 
 /** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. */
 export class StartWorkflowRunResult {
@@ -59,7 +78,15 @@ export class CasesService {
     private readonly configService: ConfigService,
     private readonly caseTimelineService: CaseTimelineService,
     private readonly consentService: ConsentService,
+    private readonly policyChangeImpactService: PolicyChangeImpactService,
   ) {}
+
+  private outboxSigningSecret(): string {
+    return this.configService.get<string>(
+      'OUTBOX_SIGNING_SECRET',
+      'dev-outbox-signing-secret-change-me',
+    );
+  }
 
   /**
    * Idempotent on (tenantId, idempotencyKey): a retried request with the
@@ -259,6 +286,83 @@ export class CasesService {
       return this.consentService.revoke(tenantId, caseId, dto.reason);
     }
     return this.consentService.grantForCase(tenantId, caseId);
+  }
+
+  /**
+   * `POST .../escalate` (M5-023) — `escalate_to_reviewer`'s (Section 9.4)
+   * first real caller: a human reviewer's own judgment call, since this
+   * codebase's own honest self-count (`mandatory-review-triggers.ts`)
+   * has no real automatic detector to hand this decision to instead (see
+   * that tool's own updated comment). Goes through the actual registered
+   * tool (`invokeTool`/`buildToolRegistry`), not a raw service call —
+   * `escalate_to_reviewer` had no real invocation anywhere in this
+   * codebase before this slice, so this is its first one, not a
+   * bypass of it.
+   */
+  async escalate(
+    tenantId: string,
+    caseId: string,
+    dto: EscalateDto,
+  ): Promise<void> {
+    const loanCase = await this.getCase(tenantId, caseId);
+    const registry = buildToolRegistry([
+      escalateToReviewerTool({
+        dataSource: this.dataSource,
+        outboxSigningSecret: this.outboxSigningSecret(),
+      }),
+    ]);
+    const invocation = await invokeTool(
+      registry,
+      'escalate_to_reviewer',
+      { tenantId, caseId },
+      { reason: dto.reason, expectedCaseVersion: loanCase.version },
+    );
+    if (invocation.outcome === 'FAILURE') {
+      throw new Error(`escalate_to_reviewer failed: ${invocation.error}`);
+    }
+    const result = invocation.result as EscalateToReviewerResult;
+    if (result.outcome === 'STALE_CASE_VERSION') {
+      throw new ConflictException(
+        `case ${caseId} changed since it was last read — retry`,
+      );
+    }
+    if (result.outcome === 'INVALID_STATUS') {
+      throw new ConflictException(
+        `case ${caseId} cannot be escalated from status ${result.currentStatus}`,
+      );
+    }
+  }
+
+  /**
+   * `POST .../policy-change-impact` (M5-023) — `check_policy_change_impact`'s
+   * (Section 9.4) first real caller: an operator's own per-case advisory
+   * question, distinct from `PolicyActivationService.activate()`'s
+   * existing automatic catalog-wide scan (see `CheckPolicyChangeImpactDto`'s
+   * own comment). Advisory only — `assessed: false` is a legitimate,
+   * non-error outcome (no live binding to compare against yet), not
+   * mapped to any error status.
+   */
+  async checkPolicyChangeImpact(
+    tenantId: string,
+    caseId: string,
+    dto: CheckPolicyChangeImpactDto,
+  ): Promise<CheckPolicyChangeImpactResult> {
+    await this.getCase(tenantId, caseId);
+    const registry = buildToolRegistry([
+      checkPolicyChangeImpactTool({
+        policyChangeImpactService: this.policyChangeImpactService,
+      }),
+    ]);
+    const invocation = await invokeTool(
+      registry,
+      'check_policy_change_impact',
+      { tenantId, caseId },
+      { policyVersionId: dto.policyVersionId },
+    );
+    if (invocation.outcome === 'FAILURE') {
+      throw new Error(`check_policy_change_impact failed: ${invocation.error}`);
+    }
+    return invocation.result as CheckPolicyChangeImpactResult;
   }
 
   /**

@@ -370,6 +370,101 @@
         ]
       }
     },
+    "/v1/loan-cases/{caseId}/escalate": {
+      "post": {
+        "operationId": "escalateCase",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscalateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Escalated."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          },
+          "409": {
+            "description": "The case changed since it was last read, or is already at a status escalation cannot apply to (already WAITING_FOR_REVIEW, or a terminal status)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pause a case for human review (escalate_to_reviewer)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/policy-change-impact": {
+      "post": {
+        "operationId": "checkPolicyChangeImpact",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckPolicyChangeImpactDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment result (advisory only)."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Check whether a policy version affects this case's own live binding",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}/communication-messages": {
       "get": {
         "operationId": "listCommunicationMessages",
@@ -923,6 +1018,37 @@
           "scope",
           "grantedAt",
           "createdAt"
+        ]
+      },
+      "EscalateDto": {
+        "type": "object",
+        "properties": {
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "actorId",
+          "reason"
+        ]
+      },
+      "CheckPolicyChangeImpactDto": {
+        "type": "object",
+        "properties": {
+          "policyVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "policyVersionId"
         ]
       },
       "CommunicationMessage": {

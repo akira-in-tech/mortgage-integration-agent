@@ -7215,3 +7215,102 @@ the two new negative-authorization e2e tests:
 ### Next safe step
 
 Awaiting direction on which of M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance) to take on next, or a pivot to M6 (Operations UI) — all four remaining M5 items still lack the concrete, currently-real, closable shape this session's own methodology looks for before starting one.
+
+## M5-023: Real REST callers for escalate_to_reviewer and check_policy_change_impact (Section 9.4)
+
+### Status
+
+Implemented and verified, including a real live proof against a real running API + Temporal worker under `NODE_ENV=production` with the restricted `mortgage_app` role. Closes the M3 gap the user asked to fill directly: of Section 9.4's sixteen registered tools, seven are real, and three of those seven (`escalate_to_reviewer`, `check_policy_change_impact`, `send_information_request`) were never invoked anywhere in this codebase. Investigated all three individually rather than mechanically wiring each into `lending-operations-agent-runtime.ts`'s own `StateGraph`:
+
+- **`send_information_request`** — concluded no further work belongs in this slice. Every communication message in this codebase is always classified `PROTECTED` (no `ROUTINE` template is seeded anywhere), so Section 6.4 forbids the Agent from ever supplying its own approval — there is no real scenario today where the graph's own synchronous run could invoke this tool and have it succeed. M5-022 already gave the underlying `CommunicationDeliveryService.deliver()` a real REST caller, which is the actual capability gap; forcing the trivial pass-through tool wrapper into the graph would only ever be exercised by a scenario (a `ROUTINE` message) that cannot occur with this codebase's current real data.
+- **`escalate_to_reviewer`** — this codebase's own honest self-count (`mandatory-review-triggers.ts`'s module comment: "currently detect four of twelve" Section 9.6 triggers) already established that no fifth real, non-fabricated automatic detector exists today. Inventing one to give this tool an automatic call site would be exactly the fabricated-coverage trap this codebase's own standing conventions warn against. Given a real REST caller instead — a human reviewer's own judgment call, the same "give the tool to a human instead of a fabricated Agent decision" shape M5-022 already used for `send_information_request`/`approve`.
+- **`check_policy_change_impact`** — reading `PolicyChangeImpactService` in full showed `assessImpact()` (the catalog-wide scan `PolicyActivationService.activate()`/`withdraw()` already triggers) and `assessImpactForCase()` (this tool's own backing method) share one private `assessOneCase()` helper — the tool is structurally an operator's own per-case advisory query ("does this one case need a fresh look?"), not something the per-case Agent graph's own control flow needs, since `evaluatePolicyNode` already gets real binding-validation/re-resolution on every run via `PolicyEvaluationService`. Given a real REST caller for the same reason as the other two.
+
+### Acceptance criterion
+
+`POST /v1/loan-cases/{caseId}/escalate` and `POST /v1/loan-cases/{caseId}/policy-change-impact` both exist, both go through the actual registered `AgentTool`s via `invokeTool`/`buildToolRegistry` (not a bypass calling the underlying service directly), and both are proven end to end against a real API + worker: escalating a fresh case succeeds (`200`, case now `WAITING_FOR_REVIEW`, a real signed `case.escalated` outbox event, a real `CASE_ESCALATED` audit event with the real reason); escalating it again `409`s (a new `INVALID_STATUS` outcome — see Errors and fixes); a cross-tenant credential gets `404` on both new routes, never a resource-existence-leaking `403`; a never-evaluated case's policy-change-impact check reports the real, honest `{assessed: false, reason: "case has no live policy binding to compare against"}` outcome, not an error.
+
+### Implementation
+
+- `src/agent-runtime/tools/escalate-to-reviewer.tool.ts` — new `ESCALATABLE_STATUSES` guard (`DRAFT`/`COLLECTING_EVIDENCE`/`CONDITIONS_OPEN`/`WAITING_FOR_INFORMATION` only) and a new `INVALID_STATUS` outcome, checked atomically in the same compare-and-swap `UPDATE ... WHERE status IN (...)` as the existing version check — not a separate read-then-write race. Found while designing the REST caller: the tool's own pre-existing logic would have silently regressed an already-`READY_FOR_UNDERWRITING`/`MANUAL_REVIEW`/`CLOSED` case back to `WAITING_FOR_REVIEW` given a valid version, with no real caller having ever exercised that path before now.
+- `src/cases/dto/escalate.dto.ts`, `src/cases/dto/check-policy-change-impact.dto.ts` (new) — `actorId`/`reason` (both required, matching `EscalateToReviewerArgs`'s own contract) and a `@IsUUID()` `policyVersionId` respectively.
+- `src/cases/cases.service.ts` — `escalate()`/`checkPolicyChangeImpact()`, each: `getCase()` first (tenant-ownership 404, and for escalate, the case's current `version` for compare-and-swap), builds a one-tool registry, calls `invokeTool`. Gained a `PolicyChangeImpactService` constructor dependency and a small `outboxSigningSecret()` private helper (used by the new `escalate()`; the pre-existing `createCase()` call site was left as its own inline call, not refactored, to keep this slice's diff minimal).
+- `src/cases/cases.controller.ts` — `escalate`/`checkPolicyChangeImpact` routes; `escalate` records a `CASE_ESCALATED` audit event after success (M5-019's pattern), `checkPolicyChangeImpact` does not (advisory-only, and the assessment itself already lives in its own `policy_change_impact_assessments` row — the same reasoning M5-019's own "representative cross-section, not a blanket pass" scoping used).
+- `src/cases/cases.module.ts` — imports `PolicyModule` (not `@Global()`, unlike `AuthModule`/`ConsentModule`/`AuditModule`, so this one needed an explicit import for `PolicyChangeImpactService` to resolve).
+- `test/cases.e2e-spec.ts` — six new e2e tests (three per new route: happy path, a real conflict/negative case, cross-tenant 404).
+- `src/agent-runtime/tools/escalate-to-reviewer.tool.spec.ts` — one new unit test for the `INVALID_STATUS` outcome.
+- `openapi/openapi.json` / `client/generated/schema.d.ts` — regenerated.
+
+### Affected files
+
+- `src/agent-runtime/tools/escalate-to-reviewer.tool.ts` (+`.spec.ts`)
+- `src/cases/dto/escalate.dto.ts` (new), `src/cases/dto/check-policy-change-impact.dto.ts` (new)
+- `src/cases/cases.service.ts` (+`.spec.ts`), `cases.controller.ts`, `cases.module.ts`
+- `test/cases.e2e-spec.ts`
+- `openapi/openapi.json`, `client/generated/schema.d.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **A real REST caller for each, not a forced LangGraph node, and not a Temporal signal/resume mechanism.** Considered a new `communicationApproved`-style Temporal signal that would resume `case-conditions.workflow.ts` to invoke `send_information_request` after a human's REST approval (M5-022) — rejected once tracing the actual workflow control flow showed condition *resolution* (`resolveConditionSignal`, already real) and communication *delivery* are genuinely independent concerns in this codebase: the workflow's own durable wait is on the condition being resolved, never on the drafted message being sent. Coupling them would have been complexity serving no real requirement, not a genuine gap.
+- **Went through `invokeTool`/`buildToolRegistry`, not the underlying services directly** — unlike M5-022's `approve`/`send` (which called `CommunicationApprovalService`/`CommunicationDeliveryService` directly, reasonable there since the Agent-tool wrappers add zero logic beyond a pass-through). Here, going through the real registry costs nothing extra and gives these two tools their first genuine invocation anywhere in the codebase, matching the "a registered tool is the only path to this side effect" invariant more strictly.
+- **`escalate` is open to any authenticated role, not REVIEWER-gated.** Escalating only ever adds human scrutiny to a case, never removes it — it carries none of the approval-bypass risk `submitReview`'s/communication-`approve`'s REVIEWER gates exist for.
+- **Fixed the tool's own missing status guard while giving it a real caller**, rather than leaving it and discovering the regression later: this slice is precisely what gives `escalate_to_reviewer` its first real invocation, so an unguarded regression bug would have shipped as a genuine new bug in this same commit, not merely an inherited pre-existing one (the same reasoning M5-022 used for its own `findOneByOrFail` fix).
+
+### Errors and fixes
+
+- **Found via design review, not a failing test**: `escalateToReviewerTool`'s pre-existing compare-and-swap `UPDATE` had no status guard at all — a correctly-versioned escalation request against an already-`READY_FOR_UNDERWRITING` case would have silently regressed it back to `WAITING_FOR_REVIEW`. Never triggered before this slice (the tool had zero real callers), so not a live regression, but a real latent bug in code about to get its first one. Fixed with `ESCALATABLE_STATUSES` + a new `INVALID_STATUS` outcome, checked atomically in the same `UPDATE ... WHERE ... status IN (...)` as the version compare-and-swap.
+- No other unexpected failures — both new REST routes' happy paths and negative cases passed on the first full verification run.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check
+  all passed clean
+
+Fresh scratch stack (m5023verify, ports 5443/7234), fully migrated
+(no new migration in this slice):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    75 suites / 551 tests passed (550 -> 551: +1 new INVALID_STATUS unit test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 39 tests passed (33 -> 39: +6 new e2e tests)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role),
+driven via real fetch() calls against the real running server:
+  - created a real case (DRAFT)
+  - policy-change-impact on a never-evaluated case -> 200,
+    {assessed:false, reason:"case has no live policy binding..."}
+  - cross-tenant policy-change-impact -> 404
+  - escalate -> 200, case now WAITING_FOR_REVIEW
+  - re-escalate (already WAITING_FOR_REVIEW) -> 409 (INVALID_STATUS)
+  - cross-tenant escalate -> 404
+  - direct psql proof: exactly one real case.escalated outbox event
+    (real signature-verifiable payload) and exactly one real
+    CASE_ESCALATED audit event carrying the real supplied reason
+
+  openapi/openapi.json + client/generated/schema.d.ts regenerated
+  against a throwaway migrated scratch Postgres, diff confirmed
+  purely additive
+
+  live processes terminated, all scratch stacks torn down
+  (docker compose down -v), one-off verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real "written and tested but never invoked in a live process" gap for two of Section 9.4's seven real tools, and fixes a genuine latent case-status-regression bug in the third before it ever had a real caller to trigger it.
+- `escalate`'s open-to-any-role design was a deliberate risk judgment (see Decisions), not an oversight — recorded here so a future reviewer can re-evaluate it explicitly rather than rediscover the reasoning from scratch.
+- No new secrets, no new external dependencies, no migrations.
+
+### Known gaps
+
+- **`check_policy_change_impact` does not validate that `policyVersionId` references a real `PolicyVersion` row** — this is `PolicyChangeImpactService.assessImpactForCase()`'s own pre-existing characteristic (it only ever stores the id, never looks it up), now reachable by an external caller for the first time. Low real risk (the resulting assessment row is tenant-scoped and RLS-protected, so a garbage id only ever produces a slightly garbage advisory row inside the caller's own tenant, never a cross-tenant or security issue) — noted rather than silently left undocumented.
+- **`send_information_request` remains genuinely un-wireable into the LangGraph graph today** (see Status) — revisit only if a real `ROUTINE`-eligible communication template is ever seeded, which would be the first real scenario this tool's graph-level wiring could ever actually exercise.
+- Every other M5/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Awaiting direction: M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance) still lack a concrete closable shape; M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project at this point.

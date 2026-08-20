@@ -13,6 +13,7 @@ import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { ApiClient } from '../database/entities/api-client.entity';
 import { TemporalModule } from '../workflows/temporal.module';
 import { AuditModule } from '../audit/audit.module';
+import { PolicyModule } from '../policy/policy.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AuditModule } from '../audit/audit.module';
     ]),
     TemporalModule,
     AuditModule,
+    PolicyModule,
   ],
   controllers: [CasesController],
   providers: [CasesService, CaseTimelineService],
