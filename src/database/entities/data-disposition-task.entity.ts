@@ -8,6 +8,7 @@ import {
 import {
   DataDispositionTaskStatus,
   DataDispositionTaskType,
+  DataDispositionResolutionOutcome,
 } from '../enums/data-disposition.enum';
 
 /**
@@ -18,8 +19,12 @@ import {
  * opened, not a live query; a document/normalized-finding/cache/search-
  * index/backup lineage doesn't exist yet for any of those concepts to
  * traverse (Known gap — this codebase has none of those subsystems).
- * `resolvedAt` stays always-null: nothing in this codebase advances a
- * task past `PENDING` yet (see the enum's own comment).
+ *
+ * `resolutionOutcome`/`resolvedBy` (M5-025) are the real "deletion
+ * verification records what was deleted, anonymized, [or] retained
+ * under a valid hold" Section 14.2 requires — populated by
+ * `DataDispositionService.resolve()`, the first real thing that ever
+ * advances a task past `PENDING`.
  */
 @Entity('data_disposition_tasks')
 @Index('IDX_data_disposition_tasks_tenant_case', ['tenantId', 'caseId'])
@@ -58,4 +63,14 @@ export class DataDispositionTask {
 
   @Column({ type: 'timestamptz', nullable: true })
   resolvedAt!: Date | null;
+
+  @Column({
+    type: 'enum',
+    enum: DataDispositionResolutionOutcome,
+    nullable: true,
+  })
+  resolutionOutcome!: DataDispositionResolutionOutcome | null;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  resolvedBy!: string | null;
 }

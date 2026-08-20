@@ -101,6 +101,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'evaluation_input_manifests',
       'evidence_facts',
       'jurisdictions',
+      'legal_holds',
       'loan_applications',
       'loan_cases',
       'loan_conditions',
@@ -189,6 +190,67 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the legal holds + data disposition resolution migration, dropping legal_holds and the two new columns', async () => {
+    expect(await tableNames()).toContain('legal_holds');
+    const beforeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+           AND column_name IN ('resolutionOutcome', 'resolvedBy')
+         ORDER BY column_name`,
+      );
+    expect(beforeColumns).toEqual([
+      { column_name: 'resolutionOutcome' },
+      { column_name: 'resolvedBy' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    const afterTables = await tableNames();
+    expect(afterTables).not.toContain('legal_holds');
+    const afterColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+           AND column_name IN ('resolutionOutcome', 'resolvedBy')`,
+      );
+    expect(afterColumns).toEqual([]);
+    expect(afterTables).toEqual([
+      'agent_runs',
+      'api_clients',
+      'audit_events',
+      'case_policy_bindings',
+      'case_policy_snapshots',
+      'communication_approvals',
+      'communication_messages',
+      'communication_templates',
+      'condition_transitions',
+      'consent_records',
+      'data_disposition_tasks',
+      'evaluation_input_manifests',
+      'evidence_facts',
+      'jurisdictions',
+      'loan_applications',
+      'loan_cases',
+      'loan_conditions',
+      'outbox_events',
+      'policy_applicability',
+      'policy_catalog_generation',
+      'policy_change_impact_assessments',
+      'policy_source_revisions',
+      'policy_sources',
+      'policy_transition_approvals',
+      'policy_versions',
+      'provider_adapter_status',
+      'provider_authorization_grants',
+      'provider_operation_intents',
+      'tenants',
+      'tool_attempts',
+      'webhook_deliveries',
+      'webhook_endpoints',
+    ]);
   });
 
   it('reverts the provider adapter status migration, dropping only that table', async () => {

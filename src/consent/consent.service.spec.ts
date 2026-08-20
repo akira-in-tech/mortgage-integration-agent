@@ -18,6 +18,7 @@ import {
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { ConsentService } from './consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
+import { LegalHoldService } from '../data-disposition/legal-hold.service';
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -48,7 +49,7 @@ describeOrSkip('ConsentService', () => {
     await dataSource.initialize();
     service = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource),
+      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
     );
 
     const tenantRepo = dataSource.getRepository(Tenant);

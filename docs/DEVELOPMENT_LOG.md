@@ -7504,3 +7504,104 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Next safe step
 
 Continuing directly to the other gap named alongside this one: `legal_holds` and a real deletion/anonymization/verification executor for `data_disposition_tasks`, closing the second of the two gaps identified as buildable without any external dependency.
+
+## M5-025: legal_holds and real data-disposition-task resolution (Section 14.1/14.2)
+
+### Status
+
+Implemented and verified, including a real live proof under `NODE_ENV=production` covering all three real disposition outcomes end to end against a real running API + worker. Closes the second of two gaps identified as buildable without any external dependency (alongside M3-024): `data_disposition_tasks` had existed since M5-015 but nothing had ever advanced a task past `PENDING`, and `legal_holds` — a top-level Section 14.1 entity — had never been built at all. Both needed each other to be honest: a real deletion/anonymization executor with no way to check a legal hold first would violate Section 14.2's own "legal holds are explicit, scoped, reviewable, and never inferred" requirement, so this is one slice, not two.
+
+### Acceptance criterion
+
+`DataDispositionService.resolve(tenantId, taskId, action, actorId)` — `action` is `DELETE`, `ANONYMIZE`, or `RETAIN` — is the first real thing that ever acts on a `PENDING` task. `DELETE`/`ANONYMIZE` both check `LegalHoldService.hasActiveHold()` first and fail closed if a hold is active; `RETAIN` requires an active hold to be a legitimate, explainable choice (this codebase's only real retention basis) and fails closed otherwise. `DELETE` really removes the referenced `evidence_facts` rows; `ANONYMIZE` keeps the rows but blanks `value` to `{}`; either way the task moves straight to `VERIFIED` with a real `resolutionOutcome`/`resolvedBy`/`resolvedAt`. Live-verified: a real DELETE removed real evidence rows; a real active hold genuinely blocked a real DELETE attempt (task stayed `PENDING`); `RETAIN` under that same hold succeeded and left the evidence completely untouched; a separate real ANONYMIZE blanked real evidence values while keeping the rows.
+
+### Implementation
+
+- `src/database/enums/legal-hold.enum.ts` (new) — `LegalHoldStatus` (`ACTIVE`/`RELEASED`).
+- `src/database/entities/legal-hold.entity.ts` (new) — one row per hold, not an append-only log (documented simplicity tradeoff, same shape M4-006's kill switch already made).
+- `src/database/enums/data-disposition.enum.ts` — new `DataDispositionResolutionOutcome` (`DELETED`/`ANONYMIZED`/`RETAINED_UNDER_HOLD` — deliberately no `PENDING_BACKUP_EXPIRY`, since this codebase has no backup subsystem to track one against).
+- `src/database/entities/data-disposition-task.entity.ts` — new `resolutionOutcome`/`resolvedBy` columns.
+- `src/database/migrations/1787177700000-LegalHoldsAndDataDispositionResolution.ts` (new) — `legal_holds` table + RLS, plus the two new columns on the already-RLS-protected `data_disposition_tasks`, in one migration (one real feature slice).
+- `src/data-disposition/legal-hold.service.ts` (new, +`.spec.ts`) — `place()` (rejects a second `ACTIVE` hold for the same case), `release()`, `hasActiveHold()` (checked fresh on every call, never cached).
+- `src/data-disposition/data-disposition.service.ts` — new `resolve()` method; gained a `LegalHoldService` constructor dependency.
+- `src/data-disposition/data-disposition.module.ts` — registers `LegalHold`/`LegalHoldService`.
+- `src/manage-legal-hold.ts` (new script) — `npm run manage-legal-hold -- <tenantId> <caseId> place <ownerId> <reason>` / `... <legalHoldId> release <releasedBy>`.
+- `src/resolve-data-disposition-task.ts` (new script) — `npm run resolve-data-disposition-task -- <tenantId> <taskId> <DELETE|ANONYMIZE|RETAIN> <actorId>`.
+- `package.json` — two new script entries.
+- Threaded the new `LegalHoldService` constructor dependency through every raw `new DataDispositionService(...)` construction site (7 files: `evaluation-report.ts` and 6 `.spec.ts` fixtures).
+
+### Affected files
+
+- `src/database/enums/legal-hold.enum.ts` (new), `src/database/entities/legal-hold.entity.ts` (new)
+- `src/database/enums/data-disposition.enum.ts`, `src/database/entities/data-disposition-task.entity.ts`
+- `src/database/migrations/1787177700000-LegalHoldsAndDataDispositionResolution.ts` (new), `schema-migrations.spec.ts`
+- `src/data-disposition/legal-hold.service.ts` (new, +`.spec.ts`), `data-disposition.service.ts` (+`.spec.ts`), `data-disposition.module.ts`
+- `src/manage-legal-hold.ts` (new), `src/resolve-data-disposition-task.ts` (new), `package.json`
+- `src/evaluation-report.ts`, `src/workflows/case-conditions.activities.spec.ts`, `src/consent/consent.service.spec.ts`, `src/evaluation/runner.spec.ts`, `src/provider-platform/provider-authorization.service.spec.ts`, `src/provider-platform/dispatch-provider-request.spec.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`legal_holds` is its own dedicated table, not a `DataDispositionTaskType.LEGAL_HOLD` row.** The charter lists `legal_holds` as its own top-level Section 14.1 entity with its own lifecycle (place/review/release), structurally different from a disposition task's own PENDING-to-VERIFIED resolution flow. `DataDispositionTaskType.LEGAL_HOLD` stays declared-but-undriven (unchanged Known gap) rather than repurposed to mean something it doesn't.
+- **`RETAIN` requires an active hold; there is no "retain for an unrelated business reason" option.** This codebase has exactly one real, honest retention basis (Section 14.2: "retained under a valid hold") — inventing a second freeform retention reason with no real backing policy would be exactly the fabricated-coverage this session's own methodology avoids.
+- **`ANONYMIZE` blanks `value` to `{}` rather than deleting the row.** Keeps the row (and its `factType`/`sourceKind`/`observedAt` lineage metadata) as a real anonymized marker, distinct from `DELETE`'s full removal — matching Section 14.2's own explicit distinction between "deleted" and "anonymized" as two different real outcomes to record, not one.
+- **Scripts, not REST endpoints, for both new actions** — matches `create-api-client.ts`/`set-tenant-agent-budget.ts`/`set-provider-status.ts`'s own established convention exactly: deciding to actually delete or anonymize collected evidence, or to place/release a legal hold, is squarely a human, out-of-band decision this codebase's two-role tenant RBAC has no admin tier for.
+- **One migration for both `legal_holds` and the `data_disposition_tasks` columns**, not two — `resolve()` cannot exist honestly without `legal_holds` to check first, so splitting the migration would have shipped a half-working intermediate state.
+
+### Errors and fixes
+
+- **A real FK violation in this slice's own new tests**: `makeCaseWithTask()`'s first draft attached evidence to a bare `randomUUID()` "case id" with no real `LoanCase` row behind it — `EvidenceFact.case` is a real FK (`onDelete: CASCADE`), unlike `DataDispositionTask.caseId`, which is a plain column with no FK of its own. Fixed by creating a genuine `LoanCase` row per test.
+- **The same relation-metadata gap this session has hit repeatedly**: `resolve-data-disposition-task.ts`'s live-verify run failed with `Entity metadata for EvidenceFact#case was not found` — its `DataSource`'s own `entities: [...]` array was missing `LoanCase` (and transitively `Tenant`/`Jurisdiction`, `LoanCase`'s own two `@ManyToOne` relations). Fixed by adding all three.
+
+### Verification
+
+```text
+npm run build / npx tsc --noEmit / npm run lint / npm run lint:check
+  all passed clean (tsc's only remaining errors are the same 3
+  pre-existing, unrelated loan.service.spec.ts errors noted in M4-006)
+
+Fresh scratch stack (m5025verify, ports 5443/7234), fully migrated:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    77 suites / 574 tests passed (561 -> 574: +1 new suite,
+    legal-hold.service.spec.ts, 6 tests; +7 new DataDispositionService
+    resolve() tests; +1 schema-migrations.spec.ts revert-chain test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 39 tests passed, unchanged (no REST surface changed)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  - scenario 1 (DELETE): a real case's real evidence, revoked consent
+    opened a real PENDING RETENTION_REVIEW task with 3 real evidence
+    ids snapshotted; npm run resolve-data-disposition-task ... DELETE
+    -> task VERIFIED/DELETED, all 3 evidence_facts rows genuinely gone
+  - scenario 2 (hold blocks DELETE, then RETAIN): npm run
+    manage-legal-hold ... place put a real ACTIVE hold on a second
+    case; a DELETE attempt against that case's task genuinely failed
+    (task stayed PENDING, real evidence untouched); RETAIN then
+    succeeded -> task VERIFIED/RETAINED_UNDER_HOLD, all evidence intact
+  - scenario 3 (ANONYMIZE): a third case's task resolved via
+    ANONYMIZE -> all 3 evidence_facts rows still exist but every
+    value column is genuinely {}
+
+  live processes terminated, scratch stack torn down (docker compose
+  down -v), one-off verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real Section 14.2 compliance gap: before this slice, a data-disposition review could be opened but never actually resolved — no deletion, anonymization, or hold ever really happened, meaning the whole mechanism was observational only.
+- `legal_holds` is real, explicit, and checked fresh on every `resolve()` call — never inferred from case status or any other signal, matching Section 14.2's own explicit requirement.
+- No new secrets, no new external dependencies, no behavioral change for any existing `PENDING` task until an operator explicitly resolves it.
+
+### Known gaps
+
+- **`legal_holds` is current-state-only, not a full append-only history** — matches `ProviderAdapterStatus`'s own documented simplicity tradeoff (M4-006); a genuine future need for "every past hold on this case, not just the current one" would need a dedicated history table.
+- **Only `evidence_facts` is a real deletion/anonymization target** — Section 14.2's fuller lineage ("document, evidence, normalized finding, cache, search index, prompt, evaluation artifact, object, and backup") stays unbuilt for every concept beyond evidence, since this codebase has none of those other subsystems to traverse (same honest scoping `DataDispositionTask.affectedEvidenceFactIds` already had).
+- **No backup-expiry tracking** — this codebase has no backup subsystem at all, so `DataDispositionResolutionOutcome` deliberately has no `PENDING_BACKUP_EXPIRY` value to track against nothing real.
+- Every other M5/M4/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Both gaps named as "buildable without any external dependency" (M3-024, M5-025) are now closed. What remains — OIDC/FAPI 2.0, encrypted field/object boundaries, and the provider-promotion governance chain (M4/M5) — each still needs either an external identity-provider decision or a second real provider mode this codebase doesn't have. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.

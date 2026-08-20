@@ -11,6 +11,7 @@ import { ProviderOperationIntentService } from './provider-operation-intent.serv
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
+import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import {
   dispatchProviderRequest,
   ProviderDisabledError,
@@ -64,7 +65,7 @@ describeOrSkip('dispatchProviderRequest', () => {
     registry.register(new IdentityVerificationAdapter(new IdentityService()));
     consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource),
+      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
     );
     authorizationService = new ProviderAuthorizationService(
       dataSource,

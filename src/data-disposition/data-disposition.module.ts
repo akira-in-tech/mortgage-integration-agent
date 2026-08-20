@@ -1,7 +1,9 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
+import { LegalHold } from '../database/entities/legal-hold.entity';
 import { DataDispositionService } from './data-disposition.service';
+import { LegalHoldService } from './legal-hold.service';
 
 /**
  * `@Global()`, same reasoning as `ConsentModule`: `DataDispositionService`
@@ -11,8 +13,8 @@ import { DataDispositionService } from './data-disposition.service';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([DataDispositionTask])],
-  providers: [DataDispositionService],
-  exports: [DataDispositionService],
+  imports: [TypeOrmModule.forFeature([DataDispositionTask, LegalHold])],
+  providers: [DataDispositionService, LegalHoldService],
+  exports: [DataDispositionService, LegalHoldService],
 })
 export class DataDispositionModule {}

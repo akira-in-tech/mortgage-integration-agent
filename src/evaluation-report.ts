@@ -38,6 +38,7 @@ import { ProviderOperationIntentService } from './provider-platform/provider-ope
 import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
 import { ConsentService } from './consent/consent.service';
 import { DataDispositionService } from './data-disposition/data-disposition.service';
+import { LegalHoldService } from './data-disposition/legal-hold.service';
 import { DataDispositionTask } from './database/entities/data-disposition-task.entity';
 import { ConfigService } from '@nestjs/config';
 import { CommunicationMessageService } from './communications/communication-message.service';
@@ -127,7 +128,10 @@ async function main(): Promise<void> {
   providerRegistry.register(
     new DocumentVerificationAdapter(new DocumentService()),
   );
-  const dataDispositionService = new DataDispositionService(dataSource);
+  const dataDispositionService = new DataDispositionService(
+    dataSource,
+    new LegalHoldService(dataSource),
+  );
   const consentService = new ConsentService(dataSource, dataDispositionService);
   const providerAuthorizationService = new ProviderAuthorizationService(
     dataSource,

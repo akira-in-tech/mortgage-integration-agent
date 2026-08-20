@@ -10,6 +10,7 @@ import { DataDispositionTask } from '../database/entities/data-disposition-task.
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
+import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import { ProviderCapability } from './types';
 
 // Requires a reachable Postgres (same convention as the other real-DB
@@ -51,7 +52,7 @@ describeOrSkip('ProviderAuthorizationService', () => {
     await dataSource.initialize();
     consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource),
+      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
     );
     service = new ProviderAuthorizationService(dataSource, consentService);
   });
