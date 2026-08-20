@@ -61,6 +61,7 @@ function contextFor(
     request.headers['x-tenant-id'] = tenantIdHeader;
   }
   const context = {
+    getType: () => 'http',
     switchToHttp: () => ({ getRequest: () => request }),
   } as unknown as ExecutionContext;
   return { context, request };

@@ -10,6 +10,7 @@ import { AuthContext } from './auth-context';
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { REQUIRED_ROLES_KEY } from './require-role.decorator';
 import { AuditEventService } from '../audit/audit-event.service';
+import { getRequestFromContext } from './get-request-from-context';
 
 /**
  * M5-017's scoped RBAC (Section 20 M5's own scope line). Runs after
@@ -40,9 +41,9 @@ export class RoleGuard implements CanActivate {
       return true;
     }
 
-    const request = context
-      .switchToHttp()
-      .getRequest<Request & { authContext?: AuthContext }>();
+    const request = getRequestFromContext(context) as Request & {
+      authContext?: AuthContext;
+    };
     if (!request.authContext) {
       // Programming error, not a caller-triggerable state — see
       // AuthTenantId's identical reasoning.

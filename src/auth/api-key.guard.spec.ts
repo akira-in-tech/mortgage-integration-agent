@@ -31,6 +31,7 @@ function contextFor(authorizationHeader?: string): {
     request.headers['authorization'] = authorizationHeader;
   }
   const context = {
+    getType: () => 'http',
     switchToHttp: () => ({ getRequest: () => request }),
   } as unknown as ExecutionContext;
   return { context, request };

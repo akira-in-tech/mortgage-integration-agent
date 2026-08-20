@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
+import { ObjectType, Field } from '@nestjs/graphql';
+import GraphQLJSON from 'graphql-type-json';
 import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
@@ -9,19 +11,33 @@ import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { OutboxEventType } from '../database/outbox/outbox-event-types';
 import { runInTenantContext } from '../database/tenant-context';
 
-/** A class, not an interface — `CasesController.getTimeline()` returns this directly, and `@nestjs/swagger` needs a real runtime class to introspect into an OpenAPI schema. Object literals still satisfy it structurally. */
+/**
+ * A class, not an interface — `CasesController.getTimeline()` returns this
+ * directly, and `@nestjs/swagger` needs a real runtime class to introspect
+ * into an OpenAPI schema; `@nestjs/graphql` (M6) needs the same for the
+ * `LoanCase.timeline` field. `kind` stays a plain `@Field(() => String)`
+ * rather than a registered GraphQL enum — a real TS string-literal union
+ * already constrains it at the type level, and this is a read-only,
+ * server-computed field no client ever supplies, so a registered enum's
+ * usual client-side-validation benefit doesn't apply here.
+ */
+@ObjectType()
 export class TimelineEntry {
   @ApiProperty()
+  @Field()
   timestamp!: string;
 
   @ApiProperty({ enum: ['DOMAIN_EVENT', 'AGENT_RUN'] })
+  @Field(() => String)
   kind!: 'DOMAIN_EVENT' | 'AGENT_RUN';
 
   /** Evidence-backed: built from real, already-persisted data (a condition's own DSL-evaluator reason, a run's actual tool outcomes) — never a generated or inferred narrative. */
   @ApiProperty()
+  @Field()
   summary!: string;
 
   @ApiProperty({ type: 'object', additionalProperties: true })
+  @Field(() => GraphQLJSON)
   detail!: Record<string, unknown>;
 }
 

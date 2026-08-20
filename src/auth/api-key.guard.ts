@@ -12,6 +12,7 @@ import { ApiClient } from '../database/entities/api-client.entity';
 import { ApiClientStatus } from '../database/enums/api-client.enum';
 import { verifyApiClientSecret } from './api-client-secret';
 import { AuthContext } from './auth-context';
+import { getRequestFromContext } from './get-request-from-context';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -35,9 +36,9 @@ export class ApiKeyGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context
-      .switchToHttp()
-      .getRequest<Request & { authContext?: AuthContext }>();
+    const request = getRequestFromContext(context) as Request & {
+      authContext?: AuthContext;
+    };
 
     const header = request.headers['authorization'];
     const token =

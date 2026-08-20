@@ -13,6 +13,7 @@ function contextFor(
 ): ExecutionContext {
   const request: { authContext?: AuthContext } = { authContext };
   return {
+    getType: () => 'http',
     switchToHttp: () => ({ getRequest: () => request }),
     getHandler: () => handler,
     getClass: () => ({ name: 'FixtureController' }),

@@ -12,6 +12,7 @@ import { User } from '../database/entities/user.entity';
 import { TenantMembership } from '../database/entities/tenant-membership.entity';
 import { OidcService } from './oidc.service';
 import { AuthContext } from './auth-context';
+import { getRequestFromContext } from './get-request-from-context';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,9 +41,9 @@ export class OidcGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context
-      .switchToHttp()
-      .getRequest<Request & { authContext?: AuthContext }>();
+    const request = getRequestFromContext(context) as Request & {
+      authContext?: AuthContext;
+    };
 
     const header = request.headers['authorization'];
     const token =

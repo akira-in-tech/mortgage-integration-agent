@@ -7836,3 +7836,93 @@ against the same scratch Postgres) plus real curl calls:
 ### Next safe step
 
 Both credential models Section 20 M5 names ("OIDC and scoped API-client authentication") are now real. What's left of M5's own scope: encrypted field/object boundaries (unblocked in principle since M4-007, still a large separate slice) and a FAPI 2.0-profiled client configuration if a real ecosystem partner ever requires it. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project — and now has a real human-identity system to actually build a login flow against.
+
+## M6-001: A real GraphQL operations-query surface — case, evidence, conditions, timeline (Section 15.2)
+
+### Status
+
+Implemented and verified, including a real live proof: a real running API server, queried over real HTTP with a real Keycloak-issued OIDC token, returned a real case's own core fields plus its real (empty or populated) evidence facts, conditions, and timeline through genuine nested GraphQL field resolution — not a REST response reshaped into GraphQL's wire format. Closes the query-layer half of Section 15.2/the tech-stack table's own assignment ("GraphQL + Apollo Server — flexible case, evidence, and timeline querying for the console"), which had been essentially unbuilt: the only resolver in this codebase before this slice was `LoanResolver`, the older pre-Agent-runtime `evaluateLoan` one-shot path. This is deliberately scoped to the query layer only — no React console exists yet; that's the rest of M6.
+
+### Acceptance criterion
+
+`query { case(caseId: ID!) { ...LoanCase fields... evidenceFacts { ... } conditions { ... } timeline { ... } } }` — a single top-level `case` query gated by the same `TenantAuthGuard` (M5-024) REST already uses (machine `api_client` or human OIDC, either one), with `evidenceFacts`/`conditions`/`timeline` as lazy `@ResolveField()`s a client only pays for by asking for them. Live-verified: the real query above, run with a real OIDC bearer token + `X-Tenant-Id` header against a real running server, returned a real case's real fields and a real, non-empty `timeline` (the real `loan_case.created` domain event); the identical query with no `Authorization` header, and again with a real token against a tenant the caller has no membership in, both failed with the identical generic `UNAUTHENTICATED` GraphQL error `ApiKeyGuard`/`OidcGuard` already use for REST.
+
+### Implementation
+
+- **The real, non-obvious blocker found and fixed first**: every existing auth guard/decorator (`ApiKeyGuard`, `OidcGuard`, `RoleGuard`, `AuthTenantId()`, `CurrentAuth()`) read the request via `context.switchToHttp().getRequest()` — which does not populate correctly for a GraphQL resolver's `ExecutionContext`, the identical real distinction `GqlThrottlerGuard`'s own comment already documented for rate limiting (predates this slice). `src/auth/get-request-from-context.ts` (new, +`.spec.ts`) centralizes the fix `GqlThrottlerGuard` already applied ad hoc: check `context.getType()`, extract `req` via `GqlExecutionContext.create(context).getContext()` for `'graphql'`, fall back to `switchToHttp()` otherwise. All five call sites now use it; every existing mock `ExecutionContext` in their spec files needed a `getType: () => 'http'` stub added (a real, if narrow, regression this slice's own first full-suite run caught immediately).
+- `src/database/entities/loan-case.entity.ts`, `evidence-fact.entity.ts`, `loan-condition.entity.ts`, `src/cases/case-timeline.service.ts` (`TimelineEntry`) — `@ObjectType()`/`@Field()` added directly onto these same classes, alongside their pre-existing `@Entity()`/`@Column()`/`@ApiProperty()` decorators (`LoanCase` already did this dual-decoration for two transports; this is a third, real one reusing the same fields rather than a parallel GraphQL DTO). New enum registrations: `CaseStatus` (in `loan-case.entity.ts`, deliberately *not* inside `case-status.enum.ts` itself — that file's own comment already explains why it stays free of anything the Temporal-sandboxed workflow can't load, and `@nestjs/graphql` is exactly that kind of heavy import), `EvidenceType`/`EvidenceSourceKind`/`ConditionStatus`. `LoanType` is already registered by `src/loan/loan.model.ts` — registering it twice throws at startup, so `loan-case.entity.ts` reuses it. `EvidenceFact.value`/`TimelineEntry.detail` (both JSONB/`Record<string, unknown>`) use the `graphql-type-json` scalar (new dependency) rather than a hand-rolled one.
+- `src/cases/case-query.service.ts` (new, +`.spec.ts`) — `listEvidenceFacts()`/`listConditions()`, real tenant-scoped reads via `runInTenantContext`, the first real query surface of any kind for either table (no REST route lists either). Kept separate from `CasesService` (REST-facing orchestration, per that class's own comment), the same "small, focused read service" shape `CaseTimelineService` already is.
+- `src/cases/cases.resolver.ts` (new, +`.spec.ts`) — `@Resolver(() => LoanCase)`, `@UseGuards(TenantAuthGuard)`; the `case` query plus three `@ResolveField()`s (`evidenceFacts`, `conditions`, `timeline`, the last delegating to the already-existing `CasesService.getTimeline()`/`CaseTimelineService`).
+- `src/cases/cases.module.ts` — registers `CaseQueryService`/`CasesResolver`, adds `EvidenceFact` to `TypeOrmModule.forFeature()`.
+- `package.json` — `graphql-type-json` dependency.
+
+### Affected files
+
+- `src/auth/get-request-from-context.ts` (new, +`.spec.ts`)
+- `src/auth/api-key.guard.ts` (+`.spec.ts`), `oidc.guard.ts` (+`.spec.ts`), `role.guard.ts` (+`.spec.ts`), `current-auth.decorator.ts`, `auth-tenant-id.decorator.ts` — all switched to the new helper
+- `src/database/entities/loan-case.entity.ts`, `evidence-fact.entity.ts`, `loan-condition.entity.ts`
+- `src/cases/case-timeline.service.ts`, `case-query.service.ts` (new, +`.spec.ts`), `cases.resolver.ts` (new, +`.spec.ts`), `cases.module.ts`
+- `package.json`, `package-lock.json`
+
+### Decisions and alternatives
+
+- **Decorate the existing entities directly for GraphQL, not a parallel DTO layer.** `LoanCase` already carries both `@ApiProperty()` (REST) and `@Column()` (TypeORM) on the same fields — adding `@Field()` is the same established pattern extended to a third transport, not a new one. Rejected a separate `CaseGraphQLType` mirroring every field: real duplication-drift risk (a new REST field silently missing from GraphQL, or vice versa) for no real benefit here, since every field genuinely is meant to be readable through both surfaces.
+- **`@ResolveField()`s, not an eagerly-populated top-level query.** A client asking only for `{ id status }` triggers zero evidence/condition/timeline reads — GraphQL's own main advantage over a REST response shape that always returns everything.
+- **`X-Tenant-Id` (already established by M5-024's `OidcGuard`) works identically for GraphQL** — no new tenant-resolution mechanism needed; `TenantAuthGuard` itself needed zero changes, only the request-extraction helper underneath it.
+- **`CaseQueryService` stays separate from `CasesService`.** Matches this codebase's own established preference (`ProviderKillSwitchService`/`ProviderPromotionService`, M4-006/M4-007) for small, single-purpose services over widening an existing one's responsibility.
+
+### Errors and fixes
+
+- **`context.switchToHttp()` not working for GraphQL resolver contexts** — the real, central finding of this slice; see Implementation. Found immediately when actually booting the app and running a real query, not caught by `tsc`/lint (both passed clean before this was ever run).
+- **`UndefinedTypeError` on `EvidenceFact.validThrough`** — a real, if narrow, `@nestjs/graphql` reflection limitation: a nullable `Date | null`-typed field needs an explicit `@Field(() => Date, { nullable: true })`, since the implicit form's design-time-metadata inference doesn't resolve correctly through the union. Caught at real app boot (schema generation fails fast with a specific, actionable message naming the exact field), fixed by making the type explicit — the same fix `policySnapshotId`/`evaluationManifestId` (`LoanCondition`) already needed and got right the first time by analogy.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+Fresh scratch stack (Postgres 5547, Temporal 7247, Keycloak 8091):
+  npm test -- --runInBand
+    84 of 86 suites passed (2 pre-existing skips) — 604 passed / 13
+    skipped / 617 total, including the new get-request-from-context,
+    case-query.service, and cases.resolver specs
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (no REST
+    route touched)
+  npm run generate:openapi — zero diff against the committed
+    openapi/openapi.json, confirming the REST surface is genuinely
+    untouched (git status openapi/ clean)
+
+Manual live verification — a real API server (NODE_ENV=development):
+  - real POST /v1/loan-cases with a real OIDC token -> a real case
+  - real POST /graphql: query { case(caseId) { id status borrowerId
+    requestedAmount statedMonthlyIncome loanType evidenceFacts { id
+    factType } conditions { id code status } timeline { kind summary
+    timestamp } } } with the same real OIDC token + X-Tenant-Id ->
+    the real case's real fields, real empty evidenceFacts/conditions
+    (none exist yet for this synthetic case), real non-empty timeline
+    (the real loan_case.created domain event)
+  - the identical query with no Authorization header -> real
+    UNAUTHENTICATED GraphQL error
+  - the identical query, real token, a different/never-granted
+    X-Tenant-Id -> real UNAUTHENTICATED GraphQL error
+
+  live API server stopped, scratch stack torn down (docker rm -f +
+  network rm)
+```
+
+### Security, privacy, cost, and compatibility
+
+- No new authentication mechanism — reuses `TenantAuthGuard`/`ApiKeyGuard`/`OidcGuard` exactly as REST already does; the only real change was making the *existing* guards correctly read a GraphQL resolver's request, not a new trust boundary.
+- No new secrets, no new external dependency beyond `graphql-type-json` (a tiny, single-purpose, widely-used scalar package — chosen over hand-rolling JSON parse/serialize edge cases).
+- `tenantId` is deliberately not exposed as a `@Field()` on `EvidenceFact`/`LoanCondition` (only `LoanCase` already exposed it via REST) — reduces redundant exposure since it's already implied by the parent case a client had to authenticate into.
+
+### Known gaps
+
+- **No React console yet** — this slice is the query layer only, per its own explicit scope. M6's "operations users can understand, review, and recover every synthetic case without direct database access" user-visible outcome needs a real frontend still.
+- **No mutations** (satisfy/waive a condition, approve a communication, submit a review) exposed over GraphQL — those all have real REST routes already; whether a console needs GraphQL mutations too, or drives writes through the existing REST surface, is an open design question for the next slice.
+- **No case-list query** — only single-case lookup by id exists; a console's own case queue/worklist view needs a real list/filter/paginate query this slice doesn't build.
+- Every other M5/M4/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+The GraphQL query layer this slice built is real and ready to build a React screen against. Concretely: a case-detail/timeline view, real login via the OIDC/Keycloak stack M5-024 already built, is the natural next slice — the smallest real vertical slice of M6's own user-visible outcome, not the whole console at once.

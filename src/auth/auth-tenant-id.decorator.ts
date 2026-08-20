@@ -1,6 +1,7 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthContext } from './auth-context';
+import { getRequestFromContext } from './get-request-from-context';
 
 /**
  * The tenantId a controller method should ever act on — always the one
@@ -12,9 +13,9 @@ import { AuthContext } from './auth-context';
  */
 export const AuthTenantId = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): string => {
-    const request = ctx
-      .switchToHttp()
-      .getRequest<Request & { authContext?: AuthContext }>();
+    const request = getRequestFromContext(ctx) as Request & {
+      authContext?: AuthContext;
+    };
     if (!request.authContext) {
       // TenantAuthGuard did not run — a route missing
       // @UseGuards(TenantAuthGuard) while still using this decorator is a
