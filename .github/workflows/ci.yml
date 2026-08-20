@@ -47,6 +47,15 @@ jobs:
 
       - run: npm run build
 
+      # Real-DB spec files each open their own standalone DataSource
+      # (never through AppModule), so they never benefit from
+      # `synchronize: true` — only a process that actually boots AppModule
+      # (e2e specs, below) gets the schema for free. Without this step,
+      # every unit spec that touches Postgres directly fails with
+      # "relation ... does not exist" against this run's brand-new,
+      # never-migrated service container.
+      - run: npm run migration:run
+
       # Temporal's own auto-setup image needs the postgres service above,
       # so it can't be declared as a `services:` container (those all start
       # together with no ordering) — run it directly instead, and poll its
