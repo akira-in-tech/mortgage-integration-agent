@@ -31,6 +31,8 @@ jobs:
       NODE_ENV: test
       DECISION_PROVIDER: rules
       TEMPORAL_ADDRESS: localhost:7233
+      OIDC_ISSUER_URL: http://localhost:8080/realms/mortgage-agent
+      OIDC_AUDIENCE: mortgage-agent-app
 
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +94,29 @@ jobs:
           done
           echo "Temporal server did not become ready in time" >&2
           docker logs temporal
+          exit 1
+
+      # Real, self-hosted OIDC (M5-024) — same reasoning as Temporal above:
+      # it needs a file from this run's own checkout (keycloak/realm-
+      # export.json), which doesn't exist yet when `services:` containers
+      # start, so it's run directly instead. No Postgres dependency of its
+      # own (start-dev's embedded dev database), so no readiness ordering
+      # against the postgres service is needed here.
+      - run: |
+          docker run -d --name keycloak \
+            -p 8080:8080 \
+            -e KEYCLOAK_ADMIN=admin \
+            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -v "$GITHUB_WORKSPACE/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
+            quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null -w '' "$OIDC_ISSUER_URL/.well-known/openid-configuration" \
+              && curl -s "$OIDC_ISSUER_URL/.well-known/openid-configuration" | grep -q issuer \
+              && exit 0
+            sleep 2
+          done
+          echo "Keycloak did not become ready in time" >&2
+          docker logs keycloak
           exit 1
 
       # DATABASE_URL and TEMPORAL_ADDRESS are set above, so this also runs
