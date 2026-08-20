@@ -30,9 +30,11 @@ import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.t
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
 import {
   dispatchProviderRequest,
   ProviderRevalidationError,
+  ProviderDisabledError,
 } from '../provider-platform/dispatch-provider-request';
 import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
@@ -46,6 +48,7 @@ export interface CaseConditionsActivitiesDeps {
   providerRegistry: ProviderRegistryService;
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
+  providerKillSwitchService: ProviderKillSwitchService;
   consentService: ConsentService;
   messageService: CommunicationMessageService;
   /** HMAC secret for outbox event signing (Section 15.3). */
@@ -157,6 +160,20 @@ async function callProviderWithRetryClassification<T>(
         providerName,
       );
     }
+    if (error instanceof ProviderDisabledError) {
+      // Section 11.4's kill switch (M4-006) — an operator's own
+      // deliberate action, unlikely to flip back within this activity's
+      // few-second retry window. Same "retrying can never fix this
+      // attempt" reasoning as ProviderRevalidationError above, so this
+      // routes straight to manual review rather than burning Temporal's
+      // configured retry budget against a provider an operator
+      // intentionally turned off.
+      throw ApplicationFailure.nonRetryable(
+        error.message,
+        'ProviderDisabled',
+        providerName,
+      );
+    }
     throw error;
   }
 }
@@ -191,6 +208,7 @@ export function createCaseConditionsActivities(
     providerRegistry,
     providerAuthorizationService,
     providerOperationIntentService,
+    providerKillSwitchService,
     consentService,
     messageService,
     outboxSigningSecret,
@@ -199,6 +217,7 @@ export function createCaseConditionsActivities(
     registry: providerRegistry,
     authorizationService: providerAuthorizationService,
     intentService: providerOperationIntentService,
+    killSwitchService: providerKillSwitchService,
     consentService,
   };
 

@@ -7314,3 +7314,102 @@ driven via real fetch() calls against the real running server:
 ### Next safe step
 
 Awaiting direction: M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries, provider-promotion governance) still lack a concrete closable shape; M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project at this point.
+
+## M4-006: Provider kill switch (Section 11.4)
+
+### Status
+
+Implemented and verified, including a real live proof under `NODE_ENV=production`: the identical scenario, run twice against the same tenant, reaches `READY_FOR_UNDERWRITING` when its income provider is active and `MANUAL_REVIEW` when it's disabled — with zero redeploy in between, only a real script writing to a real table a real running worker process consults on its very next dispatch. Closes the one concrete, currently-real piece of M4's own governance gap: Section 11.4's full `ProviderPromotionManifest`/`ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation` chain is designed around a governed `PRODUCTION_BYOC` promotion, and this codebase has only ever implemented `SIMULATOR` mode (M4-001's own scoping note) — certifying or dual-approving a promotion to a mode that doesn't exist would be ceremony around nothing real, the same "fabricated coverage" trap this session has consistently avoided elsewhere. Section 11.4's own kill-switch language is explicitly independent of that: "a kill switch can suspend a provider or capability without redeploying the application" is real and useful today regardless of what mode exists, and — checked directly — nothing in this codebase could do that before this slice: `ProviderRegistryService.resolve()` is a pure in-memory lookup with no concept of "currently enabled."
+
+### Acceptance criterion
+
+A new `provider_adapter_status` table (no row for a tuple = ACTIVE, the implicit default) is checked by `dispatch-provider-request.ts` immediately after resolving the adapter, on every single provider dispatch. `npm run set-provider-status -- <providerId> <capability> <mode> <enable|disable> <actorId> [reason]` toggles it. Proven live: the same case-conditions scenario, same tenant, driven through the real REST API and a real Temporal worker — `READY_FOR_UNDERWRITING` with the provider active, `MANUAL_REVIEW` immediately (no wasted retries) once disabled via the script alone, `READY_FOR_UNDERWRITING` again once re-enabled — the worker process was never restarted between any of these three runs.
+
+### Implementation
+
+- `src/database/enums/provider-platform.enum.ts` — new `ProviderAdapterState` (`ACTIVE`/`DISABLED`) — deliberately two states, not the charter's fuller `ACTIVE`/`SUSPENDED`/`DISABLED`, since this codebase has no distinct real meaning for SUSPENDED vs DISABLED yet.
+- `src/database/entities/provider-adapter-status.entity.ts` (new) — unique on `(providerId, capability, mode)`; NOT RLS-protected (see Decisions).
+- `src/database/migrations/1787177600000-ProviderAdapterStatus.ts` (new).
+- `src/provider-platform/provider-kill-switch.service.ts` (new, +`.spec.ts`) — `isActive()`/`disable()`/`enable()`, upserting on the tuple's own unique constraint.
+- `src/provider-platform/dispatch-provider-request.ts` — new `ProviderDisabledError`; checked right after `registry.resolve()`, before any grant/intent machinery runs.
+- `src/provider-platform/provider-platform.module.ts` — registers the new entity/service.
+- `src/workflows/case-conditions.activities.ts` — `callProviderWithRetryClassification` now classifies `ProviderDisabledError` as `ApplicationFailure.nonRetryable('ProviderDisabled', ...)`, the same "retrying can never fix this attempt" reasoning already applied to `ProviderRevalidationError` — an operator's deliberate disable won't flip back within a few seconds, so burning Temporal's retry budget against it would only slow the route to manual review, not avoid it.
+- `src/set-provider-status.ts` (new script) — matches `create-api-client.ts`/`set-tenant-agent-budget.ts`'s own established script-not-endpoint convention.
+- `package.json` — new script entry.
+- Threaded `providerKillSwitchService` through every `CaseConditionsActivitiesDeps`/`EvaluationRunnerDeps` construction site: `worker.ts`, `evaluation-report.ts`, and both files' own `.spec.ts` test fixtures (4 call sites in `case-conditions.activities.spec.ts`, 1 shared `deps()` factory in `runner.spec.ts`).
+
+### Affected files
+
+- `src/database/enums/provider-platform.enum.ts`, `src/database/entities/provider-adapter-status.entity.ts` (new), `src/database/migrations/1787177600000-ProviderAdapterStatus.ts` (new), `schema-migrations.spec.ts`
+- `src/provider-platform/provider-kill-switch.service.ts` (new, +`.spec.ts`), `dispatch-provider-request.ts` (+`.spec.ts`), `provider-platform.module.ts`
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`)
+- `src/worker.ts`, `src/evaluation/runner.ts` (+`.spec.ts`), `src/evaluation-report.ts`
+- `src/set-provider-status.ts` (new), `package.json`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **A standalone kill switch, not the full manifest/certification/approval/activation chain.** Considered building `ProviderPromotionManifest` rows for the 5 currently-real `SIMULATOR` adapters too (their `providerId`/`capability`/`mode` identity is genuinely real) — rejected: most of that interface's fields (`credentialRef`, `webhookSecretRef`, `endpointAllowlist`) would be honestly empty for `SIMULATOR` (Section 11.1: "free default," no real credentials), and a `ProviderCertificationRecord`/`ProviderApprovalRecord` pair certifying/dual-approving a `SIMULATOR` adapter against itself has no real stakes to govern — there is no second mode it's being promoted *to*. The kill switch stands entirely on its own in the charter's own text and doesn't need that machinery to have genuine value.
+- **Two states (`ACTIVE`/`DISABLED`), not the charter's three (`ACTIVE`/`SUSPENDED`/`DISABLED`).** This codebase has no real distinction between "suspended" and "disabled" yet — both would mean "don't dispatch," with the same real consequence — so declaring a third value nothing differentiates would be the same kind of unbacked vocabulary this codebase's own conventions avoid.
+- **No RLS on `provider_adapter_status`.** `ProviderRegistryService` registers exactly one adapter per `{capability, mode}` globally, shared identically across every tenant — there is no tenant dimension to scope this to, matching `tenants`/the policy catalog's own precedent (M5-021's investigation) of a real, deliberately-unprotected shared table.
+- **Current-state-only, not an append-only event log.** One row per tuple, upserted — not the fuller attributable history `audit_events` gives tenant-scoped actions. `audit_events` itself structurally cannot represent this action (its `tenantId` column is NOT NULL and RLS-enforced; this action has no tenant), and building a second bespoke event-sourced history table for a single boolean flag would be premature abstraction for what's realistically an infrequent operator action. Recorded as an honest Known gap, not silently accepted.
+- **Classified `ProviderDisabledError` in `callProviderWithRetryClassification` while wiring it in**, rather than leaving it to fall through as an unclassified error (Temporal's default 3-attempt retry policy) — the identical reasoning already applied to `ProviderRevalidationError`, so leaving it out would have been a real, if minor, inconsistency shipped in the same commit that introduced the error type.
+
+### Errors and fixes
+
+- None functionally — every new test (the 5-test `provider-kill-switch.service.spec.ts`, the new `dispatch-provider-request.spec.ts` kill-switch test, the new `case-conditions.activities.spec.ts` classification test, and the new `schema-migrations.spec.ts` revert-chain test) passed on the first full verification run.
+- The usual `schema-migrations.spec.ts` maintenance ritual — a new first revert-chain test (new-table style, matching `DataDispositionTasks`'/`AuditEvents`' own precedent minus the RLS-specific checks, since this table has none).
+
+### Verification
+
+```text
+npm run build / npx tsc --noEmit / npm run lint / npm run lint:check
+  all passed clean (tsc's only remaining errors are 3 pre-existing,
+  unrelated loan.service.spec.ts type errors, confirmed present on a
+  git stash of this slice's own changes too)
+
+Fresh scratch stack (m4006verify, ports 5443/7234), fully migrated:
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    76 suites / 559 tests passed (551 -> 559: +1 new suite,
+    provider-kill-switch.service.spec.ts, 5 tests; +1 dispatch-provider-
+    request.spec.ts kill-switch test; +1 case-conditions.activities.spec.ts
+    classification test; +1 schema-migrations.spec.ts revert-chain test)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 39 tests passed, unchanged (no REST surface changed)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role),
+the same worker process running throughout all three runs below:
+  - baseline: a real case run through the real workflow with the
+    income provider at its default ACTIVE state -> READY_FOR_UNDERWRITING
+  - ran npm run set-provider-status -- plaid-simulator INCOME SIMULATOR
+    disable ... (the real script, real process, no redeploy)
+  - the identical scenario, same tenant -> MANUAL_REVIEW, immediately
+    (no wasted retry attempts, confirming the nonRetryable classification)
+  - ran npm run set-provider-status -- ... enable ...
+  - the identical scenario again -> READY_FOR_UNDERWRITING
+  - direct psql proof: exactly one provider_adapter_status row, final
+    state ACTIVE, matching the script's own last action
+
+  live processes terminated, scratch stack torn down (docker compose
+  down -v), one-off verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real operational gap: before this slice, a misbehaving simulator adapter (a real bug, a bad synthetic-data regression) had no way to be taken offline short of a code change and redeploy — genuinely risky for any production-shaped incident-response story, even at `SIMULATOR` scale.
+- `disable()`/`enable()` require no dual approval (Section 11.4: "Emergency disable remains a single authorized fail-safe action" — only governed `PRODUCTION_BYOC` re-enable needs the fuller approval chain this slice doesn't build). Recorded as a deliberate scope decision, not an oversight.
+- No new secrets, no new external dependencies, no behavioral change for any tuple that's never been explicitly disabled — every existing adapter keeps its current real dispatch behavior unchanged (implicit ACTIVE default).
+
+### Known gaps
+
+- **Current-state-only, no history of past disable/enable cycles** (see Decisions) — a future real need for "who disabled this and when, across every past incident" would need a dedicated event-sourced table, not a retrofit of this one.
+- **No dual-approval re-enable path** — matches Section 11.4's own single-action emergency-disable language, but a governed `PRODUCTION_BYOC` re-enable (requiring the fuller approval chain) remains unbuilt, tied to the same missing second provider mode as the rest of Section 11.4/11.8's governance chain.
+- The full `ProviderPromotionManifest`/`ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation` chain remains unbuilt — still blocked on there being no second real provider mode to promote to or certify against.
+- Every other M4/M5/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Awaiting direction: M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries) and the rest of M4's provider-promotion governance chain still lack a concrete closable shape without a second real provider mode; M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.

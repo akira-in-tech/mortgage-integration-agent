@@ -17,3 +17,16 @@ export enum ProviderOperationIntentStatus {
   RECONCILING = 'RECONCILING',
   CANCELLED = 'CANCELLED',
 }
+
+/**
+ * M4-006's own scoped-down `ProviderActivation` (Section 11.4): a binary
+ * kill switch, not the full ACTIVE/SUSPENDED/DISABLED state machine the
+ * charter's fuller interface names — this codebase has no distinct real
+ * meaning for SUSPENDED vs DISABLED yet (both would mean "don't dispatch"
+ * with no different real consequence), so collapsing to two states is
+ * honest rather than declaring a third value nothing differentiates.
+ */
+export enum ProviderAdapterState {
+  ACTIVE = 'ACTIVE',
+  DISABLED = 'DISABLED',
+}

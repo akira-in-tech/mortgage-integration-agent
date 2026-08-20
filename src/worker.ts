@@ -8,6 +8,7 @@ import { EvaluationManifestService } from './policy/evaluation-manifest.service'
 import { ProviderRegistryService } from './provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
+import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
@@ -30,6 +31,7 @@ async function bootstrap(): Promise<void> {
     providerOperationIntentService: appContext.get(
       ProviderOperationIntentService,
     ),
+    providerKillSwitchService: appContext.get(ProviderKillSwitchService),
     consentService: appContext.get(ConsentService),
     messageService: appContext.get(CommunicationMessageService),
     outboxSigningSecret: configService.get<string>(

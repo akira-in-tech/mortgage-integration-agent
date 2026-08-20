@@ -3,13 +3,18 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
+import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
-import { dispatchProviderRequest } from './dispatch-provider-request';
+import {
+  dispatchProviderRequest,
+  ProviderDisabledError,
+} from './dispatch-provider-request';
 import { ProviderCapability } from './types';
 import { AssetService } from '../integrations/asset/asset.service';
 import { AssetVerificationAdapter } from '../integrations/asset/asset-verification.adapter';
@@ -32,6 +37,7 @@ describeOrSkip('dispatchProviderRequest', () => {
   let registry: ProviderRegistryService;
   let authorizationService: ProviderAuthorizationService;
   let intentService: ProviderOperationIntentService;
+  let killSwitchService: ProviderKillSwitchService;
   let consentService: ConsentService;
   // Every test uses a fresh randomUUID() tenantId and tracks it here so
   // afterAll can remove exactly what this file created — findOneByOrFail
@@ -48,6 +54,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       entities: [
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
+        ProviderAdapterStatus,
         ConsentRecord,
       ],
     });
@@ -64,6 +71,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       consentService,
     );
     intentService = new ProviderOperationIntentService(dataSource);
+    killSwitchService = new ProviderKillSwitchService(dataSource);
   });
 
   afterAll(async () => {
@@ -82,6 +90,9 @@ describeOrSkip('dispatchProviderRequest', () => {
           .where('"tenantId" IN (:...ids)', { ids: testTenantIds })
           .execute();
       }
+      await dataSource.getRepository(ProviderAdapterStatus).delete({
+        providerId: 'asset-verification-simulator',
+      });
       await dataSource.destroy();
     }
   });
@@ -90,6 +101,7 @@ describeOrSkip('dispatchProviderRequest', () => {
     registry,
     authorizationService,
     intentService,
+    killSwitchService,
     consentService,
   });
 
@@ -218,6 +230,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           registry: registryWithNoAdapters,
           authorizationService,
           intentService,
+          killSwitchService,
           consentService,
         },
         {
@@ -236,5 +249,66 @@ describeOrSkip('dispatchProviderRequest', () => {
       .getRepository(ProviderAuthorizationGrant)
       .find({ where: { tenantId } });
     expect(grants).toHaveLength(0);
+  });
+
+  describe('kill switch (Section 11.4, M4-006)', () => {
+    afterEach(async () => {
+      // Every test in this block ends with the tuple re-enabled, so it
+      // never leaks a disabled state into a sibling test file that also
+      // registers 'asset-verification-simulator'.
+      await killSwitchService.enable(
+        'asset-verification-simulator',
+        ProviderCapability.ASSET,
+        'SIMULATOR',
+        'dispatch-spec-cleanup',
+      );
+    });
+
+    it('blocks dispatch and issues no grant once a capability is disabled, and real dispatch resumes once re-enabled', async () => {
+      const tenantId = newTenantId();
+
+      await killSwitchService.disable(
+        'asset-verification-simulator',
+        ProviderCapability.ASSET,
+        'SIMULATOR',
+        'dispatch-spec: simulating an operational incident',
+        'dispatch-spec-operator',
+      );
+
+      await expect(
+        dispatchProviderRequest(deps(), {
+          tenantId,
+          caseId: randomUUID(),
+          borrowerSubjectId: 'kill-switch-borrower',
+          capability: ProviderCapability.ASSET,
+          request: { borrowerId: 'kill-switch-borrower' },
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['ASSET'],
+        }),
+      ).rejects.toThrow(ProviderDisabledError);
+
+      const grants = await dataSource
+        .getRepository(ProviderAuthorizationGrant)
+        .find({ where: { tenantId } });
+      expect(grants).toHaveLength(0);
+
+      await killSwitchService.enable(
+        'asset-verification-simulator',
+        ProviderCapability.ASSET,
+        'SIMULATOR',
+        'dispatch-spec-operator',
+      );
+
+      const finding = await dispatchProviderRequest(deps(), {
+        tenantId,
+        caseId: randomUUID(),
+        borrowerSubjectId: 'kill-switch-borrower-2',
+        capability: ProviderCapability.ASSET,
+        request: { borrowerId: 'kill-switch-borrower-2' },
+        purposeCode: 'UNDERWRITING_EVIDENCE',
+        permittedDataClasses: ['ASSET'],
+      });
+      expect(finding).toMatchObject({ liquidAssets: expect.any(Number) });
+    });
   });
 });

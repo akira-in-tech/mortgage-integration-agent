@@ -1,6 +1,7 @@
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
 import { ProviderRegistryService } from './provider-registry.service';
+import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import {
   ProviderCapability,
   ProviderMode,
@@ -17,6 +18,21 @@ export interface DispatchProviderRequestDeps {
   authorizationService: ProviderAuthorizationService;
   intentService: ProviderOperationIntentService;
   consentService: ConsentService;
+  killSwitchService: ProviderKillSwitchService;
+}
+
+/**
+ * Section 11.4: "a kill switch can suspend a provider or capability
+ * without redeploying the application" (M4-006). A platform-operational
+ * block, not a per-request authorization failure — thrown before any
+ * grant/intent machinery runs, the same "fail before doing unnecessary
+ * work" shape `ProviderRevalidationError` uses for a failed revalidation.
+ */
+export class ProviderDisabledError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderDisabledError';
+  }
 }
 
 /**
@@ -52,14 +68,15 @@ export interface DispatchProviderRequestParams {
  * Section 11's real dispatch path, replacing a bare simulator call:
  * resolve the registered adapter (Section 11.6's routing, reduced to its
  * first constraint since only one adapter is ever registered per
- * capability today) -> issue a fresh, time-bound authorization grant ->
- * persist the operation intent *before* dispatch (Section 11.5) ->
- * revalidate the grant immediately before the external call, failing
- * closed on any mismatch -> dispatch -> record the real outcome on the
- * intent, classifying a synthetic transient failure as `OUTCOME_UNKNOWN`
- * (Section 11.5: "after an ambiguous timeout, the state becomes
- * OUTCOME_UNKNOWN" — this codebase's own analog of that ambiguity) and a
- * terminal one as `FAILED_FINAL`.
+ * capability today) -> check the kill switch (Section 11.4, M4-006) ->
+ * issue a fresh, time-bound authorization grant -> persist the operation
+ * intent *before* dispatch (Section 11.5) -> revalidate the grant
+ * immediately before the external call, failing closed on any mismatch ->
+ * dispatch -> record the real outcome on the intent, classifying a
+ * synthetic transient failure as `OUTCOME_UNKNOWN` (Section 11.5: "after
+ * an ambiguous timeout, the state becomes OUTCOME_UNKNOWN" — this
+ * codebase's own analog of that ambiguity) and a terminal one as
+ * `FAILED_FINAL`.
  *
  * Every current adapter is synchronous (see `SynchronousProviderReceipt`'s
  * own comment), so this helper unwraps `receipt.payload` before calling
@@ -73,6 +90,17 @@ export async function dispatchProviderRequest<TFinding>(
 ): Promise<TFinding> {
   const mode = params.mode ?? 'SIMULATOR';
   const adapter = deps.registry.resolve(params.capability, mode);
+
+  const active = await deps.killSwitchService.isActive(
+    adapter.providerId,
+    params.capability,
+    mode,
+  );
+  if (!active) {
+    throw new ProviderDisabledError(
+      `provider ${adapter.providerId} capability=${params.capability} mode=${mode} is disabled — see provider_adapter_status for the reason`,
+    );
+  }
 
   // M5-005: attach the case's own active consent record (if any) to the
   // grant being issued, so revalidate() can later confirm it's still

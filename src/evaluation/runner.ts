@@ -28,6 +28,7 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
 import { ConsentService } from '../consent/consent.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import {
@@ -43,6 +44,7 @@ export interface EvaluationRunnerDeps {
   providerRegistry: ProviderRegistryService;
   providerAuthorizationService: ProviderAuthorizationService;
   providerOperationIntentService: ProviderOperationIntentService;
+  providerKillSwitchService: ProviderKillSwitchService;
   consentService: ConsentService;
   messageService: CommunicationMessageService;
   outboxSigningSecret: string;
@@ -353,6 +355,7 @@ export async function runCorpus(
     providerRegistry: deps.providerRegistry,
     providerAuthorizationService: deps.providerAuthorizationService,
     providerOperationIntentService: deps.providerOperationIntentService,
+    providerKillSwitchService: deps.providerKillSwitchService,
     consentService: deps.consentService,
     messageService: deps.messageService,
     outboxSigningSecret: deps.outboxSigningSecret,

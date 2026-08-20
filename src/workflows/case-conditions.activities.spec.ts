@@ -31,6 +31,7 @@ import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import { CommunicationTemplate } from '../database/entities/communication-template.entity';
@@ -49,6 +50,8 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
+import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
+import { ProviderCapability } from '../provider-platform/types';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
@@ -112,6 +115,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let evaluationManifestService: EvaluationManifestService;
   let providerAuthorizationService: ProviderAuthorizationService;
   let providerOperationIntentService: ProviderOperationIntentService;
+  let providerKillSwitchService: ProviderKillSwitchService;
   let consentService: ConsentService;
   let messageService: CommunicationMessageService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
@@ -143,6 +147,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ToolAttempt,
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
+        ProviderAdapterStatus,
         ConsentRecord,
         CommunicationMessage,
         CommunicationTemplate,
@@ -173,6 +178,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
     providerOperationIntentService = new ProviderOperationIntentService(
       dataSource,
     );
+    providerKillSwitchService = new ProviderKillSwitchService(dataSource);
     messageService = new CommunicationMessageService(dataSource);
 
     const plaidService = { getIncomeData: jest.fn() } as any;
@@ -183,6 +189,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       evaluationManifestService,
       providerAuthorizationService,
       providerOperationIntentService,
+      providerKillSwitchService,
       consentService,
       messageService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
@@ -374,6 +381,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       evaluationManifestService,
       providerAuthorizationService,
       providerOperationIntentService,
+      providerKillSwitchService,
       consentService,
       messageService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
@@ -689,6 +697,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         evaluationManifestService,
         providerAuthorizationService,
         providerOperationIntentService,
+        providerKillSwitchService,
         consentService,
         messageService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
@@ -764,6 +773,43 @@ describeOrSkip('createCaseConditionsActivities', () => {
       expect(facts).toHaveLength(0);
     });
 
+    it('classifies a kill-switch-disabled provider dispatch as non-retryable (Section 11.4, M4-006)', async () => {
+      await providerKillSwitchService.disable(
+        'plaid-simulator',
+        ProviderCapability.INCOME,
+        'SIMULATOR',
+        'activities-spec: simulating an operational incident',
+        'activities-spec-operator',
+      );
+
+      try {
+        const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+
+        await expect(
+          realActivities.fetchIncomeEvidence({
+            tenantId,
+            caseId,
+            borrowerId: 'activities-spec-kill-switch-borrower',
+          }),
+        ).rejects.toMatchObject({
+          nonRetryable: true,
+          type: 'ProviderDisabled',
+        });
+
+        const facts = await dataSource
+          .getRepository(EvidenceFact)
+          .find({ where: { caseId } });
+        expect(facts).toHaveLength(0);
+      } finally {
+        await providerKillSwitchService.enable(
+          'plaid-simulator',
+          ProviderCapability.INCOME,
+          'SIMULATOR',
+          'activities-spec-operator',
+        );
+      }
+    });
+
     it('leaves an unrecognized error unclassified (propagated as-is)', async () => {
       const caseId = await makeCase({ statedMonthlyIncome: 9000 });
       const brokenPlaid = {
@@ -780,6 +826,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         evaluationManifestService,
         providerAuthorizationService,
         providerOperationIntentService,
+        providerKillSwitchService,
         consentService,
         messageService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
