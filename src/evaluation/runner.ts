@@ -31,6 +31,7 @@ import { ProviderOperationIntentService } from '../provider-platform/provider-op
 import { ProviderKillSwitchService } from '../provider-platform/provider-kill-switch.service';
 import { ConsentService } from '../consent/consent.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
+import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
 import {
   EvaluationCaseFixture,
   EvaluationCaseResult,
@@ -47,6 +48,7 @@ export interface EvaluationRunnerDeps {
   providerKillSwitchService: ProviderKillSwitchService;
   consentService: ConsentService;
   messageService: CommunicationMessageService;
+  communicationDeliveryService: CommunicationDeliveryService;
   outboxSigningSecret: string;
 }
 
@@ -358,6 +360,7 @@ export async function runCorpus(
     providerKillSwitchService: deps.providerKillSwitchService,
     consentService: deps.consentService,
     messageService: deps.messageService,
+    communicationDeliveryService: deps.communicationDeliveryService,
     outboxSigningSecret: deps.outboxSigningSecret,
   });
 

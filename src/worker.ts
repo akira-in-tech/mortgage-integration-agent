@@ -14,6 +14,7 @@ import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals'
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
 import { ConsentService } from './consent/consent.service';
 import { CommunicationMessageService } from './communications/communication-message.service';
+import { CommunicationDeliveryService } from './communications/communication-delivery.service';
 
 async function bootstrap(): Promise<void> {
   // A plain Nest application context, not createApplicationContext + an
@@ -34,6 +35,7 @@ async function bootstrap(): Promise<void> {
     providerKillSwitchService: appContext.get(ProviderKillSwitchService),
     consentService: appContext.get(ConsentService),
     messageService: appContext.get(CommunicationMessageService),
+    communicationDeliveryService: appContext.get(CommunicationDeliveryService),
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',

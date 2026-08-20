@@ -34,6 +34,11 @@ import { ProviderOperationIntent } from '../database/entities/provider-operation
 import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
+import { CommunicationTemplateStatus } from '../database/enums/communication.enum';
+import {
+  READY_FOR_UNDERWRITING_TEMPLATE_KEY,
+  READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
+} from '../communications/well-known-templates';
 import { CommunicationTemplate } from '../database/entities/communication-template.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
@@ -56,6 +61,9 @@ import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { CommunicationMessageService } from '../communications/communication-message.service';
+import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
+import { CommunicationDeliverySimulator } from '../communications/communication-delivery-simulator';
+import { ConfigService } from '@nestjs/config';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
@@ -118,6 +126,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
   let providerKillSwitchService: ProviderKillSwitchService;
   let consentService: ConsentService;
   let messageService: CommunicationMessageService;
+  let communicationDeliveryService: CommunicationDeliveryService;
   let activities: ReturnType<typeof createCaseConditionsActivities>;
   let tenantId: string;
   let caseIds: string[] = [];
@@ -180,6 +189,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
     );
     providerKillSwitchService = new ProviderKillSwitchService(dataSource);
     messageService = new CommunicationMessageService(dataSource);
+    communicationDeliveryService = new CommunicationDeliveryService(
+      dataSource,
+      new CommunicationDeliverySimulator(),
+      new ConfigService({ OUTBOX_SIGNING_SECRET }),
+    );
 
     const plaidService = { getIncomeData: jest.fn() } as any;
     activities = createCaseConditionsActivities({
@@ -192,6 +206,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerKillSwitchService,
       consentService,
       messageService,
+      communicationDeliveryService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -384,6 +399,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       providerKillSwitchService,
       consentService,
       messageService,
+      communicationDeliveryService,
       outboxSigningSecret: OUTBOX_SIGNING_SECRET,
     });
 
@@ -439,6 +455,80 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(events[0].payload).toMatchObject({
       caseId,
       finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
+    });
+  });
+
+  describe('READY_FOR_UNDERWRITING routine notification (Section 9.4 send_information_request, M3-024)', () => {
+    it('creates no CommunicationMessage at all for a tenant that never seeded the well-known template (opt-in, no noise)', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await seedEvidence(caseId, 9000);
+
+      const result = await activities.evaluateConditions({
+        tenantId,
+        caseId,
+        workflowRunId: 'activities-spec-run-ready-unseeded',
+      });
+      expect(result).toEqual({ outcome: 'READY' });
+
+      const messages = await dataSource
+        .getRepository(CommunicationMessage)
+        .find({ where: { caseId } });
+      expect(messages).toHaveLength(0);
+    });
+
+    it('drafts and really sends a ROUTINE notice when the tenant has an APPROVED template at the well-known key', async () => {
+      const templateRepo = dataSource.getRepository(CommunicationTemplate);
+      const template = await templateRepo.save(
+        templateRepo.create({
+          tenantId,
+          templateKey: READY_FOR_UNDERWRITING_TEMPLATE_KEY,
+          version: READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
+          channel: 'EMAIL',
+          locale: 'en-US',
+          recipientRelationship: 'BORROWER',
+          bodyTemplate:
+            'Your case {{caseId}} has moved into underwriting review.',
+          allowedVariables: ['caseId'],
+          attachmentsAllowed: false,
+          status: CommunicationTemplateStatus.APPROVED,
+          approvedBy: 'activities-spec-operator',
+          approvedAt: new Date(),
+        }),
+      );
+
+      try {
+        const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+        await seedEvidence(caseId, 9000);
+
+        const result = await activities.evaluateConditions({
+          tenantId,
+          caseId,
+          workflowRunId: 'activities-spec-run-ready-seeded',
+        });
+        expect(result).toEqual({ outcome: 'READY' });
+
+        const messages = await dataSource
+          .getRepository(CommunicationMessage)
+          .find({ where: { caseId } });
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toMatchObject({
+          classification: 'ROUTINE',
+          status: 'SENT',
+          templateId: template.id,
+          renderedContent: `Your case ${caseId} has moved into underwriting review.`,
+        });
+        expect(messages[0].deliveryReference).toBeTruthy();
+        expect(messages[0].sentAt).not.toBeNull();
+      } finally {
+        // Messages referencing this template must go first (RESTRICT FK,
+        // FK_f07e0f283fe4267365c909aa0ea) — afterAll's own tenant-wide
+        // CommunicationMessage cleanup runs later, after this test's own
+        // finally, so it's still too late to rely on here.
+        await dataSource
+          .getRepository(CommunicationMessage)
+          .delete({ templateId: template.id });
+        await templateRepo.delete({ id: template.id });
+      }
     });
   });
 
@@ -700,6 +790,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerKillSwitchService,
         consentService,
         messageService,
+        communicationDeliveryService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
     });
@@ -829,6 +920,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         providerKillSwitchService,
         consentService,
         messageService,
+        communicationDeliveryService,
         outboxSigningSecret: OUTBOX_SIGNING_SECRET,
       });
 

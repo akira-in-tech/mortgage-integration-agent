@@ -40,6 +40,25 @@ import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
 import { ConsentService } from '../consent/consent.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
+import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
+import { CommunicationTemplate } from '../database/entities/communication-template.entity';
+import { CommunicationTemplateStatus } from '../database/enums/communication.enum';
+import {
+  draftInformationRequestTool,
+  DraftInformationRequestResult,
+} from '../agent-runtime/tools/draft-information-request.tool';
+import {
+  sendInformationRequestTool,
+  SendInformationRequestArgs,
+} from '../agent-runtime/tools/send-information-request.tool';
+import {
+  buildToolRegistry,
+  invokeTool,
+} from '../agent-runtime/agent-tool.types';
+import {
+  READY_FOR_UNDERWRITING_TEMPLATE_KEY,
+  READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
+} from '../communications/well-known-templates';
 
 export interface CaseConditionsActivitiesDeps {
   dataSource: DataSource;
@@ -51,6 +70,7 @@ export interface CaseConditionsActivitiesDeps {
   providerKillSwitchService: ProviderKillSwitchService;
   consentService: ConsentService;
   messageService: CommunicationMessageService;
+  communicationDeliveryService: CommunicationDeliveryService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
 }
@@ -211,6 +231,7 @@ export function createCaseConditionsActivities(
     providerKillSwitchService,
     consentService,
     messageService,
+    communicationDeliveryService,
     outboxSigningSecret,
   } = deps;
   const providerDispatchDeps = {
@@ -220,6 +241,93 @@ export function createCaseConditionsActivities(
     killSwitchService: providerKillSwitchService,
     consentService,
   };
+
+  // M3-024: the real, registered-tool-invoking (not a bypass) path
+  // `finalizeReadyForUnderwriting` below uses to draft-then-send a
+  // ROUTINE "your case reached underwriting review" notice — opt-in per
+  // tenant (see sendReadyForUnderwritingNotification's own up-front
+  // template check) and never blocks the case's own real
+  // READY_FOR_UNDERWRITING transition even when something here fails.
+  const readyNotificationTools = buildToolRegistry([
+    draftInformationRequestTool({ messageService }),
+    sendInformationRequestTool({ communicationDeliveryService }),
+  ]);
+
+  async function sendReadyForUnderwritingNotification(
+    tenantId: string,
+    caseId: string,
+  ): Promise<void> {
+    try {
+      // Checked up front, not just left to classifyCommunication's own
+      // fail-closed default: a tenant that never ran `npm run
+      // seed-communication-template` shouldn't get a permanent, empty,
+      // never-approvable CommunicationMessage row for every single case
+      // that reaches READY — this mechanism is opt-in per tenant, and an
+      // unseeded tenant should see zero trace of it, not silent noise.
+      const hasApprovedTemplate = await runInTenantContext(
+        dataSource,
+        tenantId,
+        (manager) =>
+          manager.getRepository(CommunicationTemplate).findOneBy({
+            tenantId,
+            templateKey: READY_FOR_UNDERWRITING_TEMPLATE_KEY,
+            version: READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
+            status: CommunicationTemplateStatus.APPROVED,
+          }),
+      );
+      if (!hasApprovedTemplate) {
+        return;
+      }
+
+      const draftInvocation = await invokeTool(
+        readyNotificationTools,
+        'draft_information_request',
+        { tenantId, caseId },
+        {
+          recipientRelationship: 'BORROWER',
+          channel: 'EMAIL',
+          locale: 'en-US',
+          templateKey: READY_FOR_UNDERWRITING_TEMPLATE_KEY,
+          templateVersion: READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
+          variables: { caseId },
+          hasAttachments: false,
+        },
+      );
+      if (draftInvocation.outcome === 'FAILURE') {
+        console.error(
+          `readyForUnderwriting notification draft failed [caseId=${caseId}]: ${draftInvocation.error}`,
+        );
+        return;
+      }
+      const drafted = draftInvocation.result as DraftInformationRequestResult;
+      const sendInvocation = await invokeTool(
+        readyNotificationTools,
+        'send_information_request',
+        { tenantId, caseId },
+        {
+          communicationMessageId: drafted.communicationMessageId,
+        } satisfies SendInformationRequestArgs,
+      );
+      if (sendInvocation.outcome === 'FAILURE') {
+        console.error(
+          `readyForUnderwriting notification send failed [caseId=${caseId}]: ${sendInvocation.error}`,
+        );
+      }
+      // NOT_READY here (rather than a FAILURE) would mean
+      // classifyCommunication found some other real reason to stay
+      // PROTECTED despite the approved template existing (e.g. Section
+      // 6.4's negative-implication guard) — not logged as an error,
+      // since that's the classifier correctly doing its job, not a bug.
+    } catch (error) {
+      // A routine notification's own failure must never block the case's
+      // real, already-committed READY_FOR_UNDERWRITING transition — the
+      // same "audit logging can't break the action it describes"
+      // reasoning AuditEventService.record() already uses.
+      console.error(
+        `readyForUnderwriting notification threw [caseId=${caseId}]: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   const agentRuntime = createLendingOperationsAgentRuntime({
     dataSource,
@@ -499,6 +607,7 @@ export function createCaseConditionsActivities(
               expectedCaseVersion: initialState.caseVersion,
             }),
           );
+          await sendReadyForUnderwritingNotification(tenantId, caseId);
           return { outcome: 'READY' };
         }
         case 'ROUTED_TO_MANUAL_REVIEW':
@@ -580,6 +689,7 @@ export function createCaseConditionsActivities(
       await runInTenantContext(dataSource, tenantId, (manager) =>
         finalizeReadyForUnderwriting(manager, { tenantId, caseId }),
       );
+      await sendReadyForUnderwritingNotification(tenantId, caseId);
     },
 
     /**

@@ -221,12 +221,18 @@ function consentInvalid(
  * execute) a condition transition — and, when a condition was genuinely
  * opened, draft a remediation request to the borrower explaining what it
  * needs (M5-012; `draft_information_request` only ever persists a
- * `CommunicationMessage`, it never sends anything — that remains a
- * separate, still-manual step, since no communication template is
- * seeded anywhere in this codebase, so the drafted message is always
- * classified `PROTECTED` and requires human approval before
- * `send_information_request` — itself still not wired into this graph —
- * could ever deliver it). `allowedTools` is enforced by only registering
+ * `CommunicationMessage`, it never sends anything here — that remains a
+ * separate, still-manual step for this specific condition-remediation
+ * draft, since it is always free-form (Section 6.4: "free-form material
+ * text" forces `PROTECTED`), so it always requires human approval
+ * before `send_information_request` — itself still not wired into
+ * *this graph* — could ever deliver it. M3-024 gave
+ * `send_information_request` its first real, automatic caller anyway,
+ * but outside this graph entirely: `finalizeReadyForUnderwriting`
+ * (`case-conditions.activities.ts`) drafts-then-sends a *template*-based
+ * `ROUTINE` notice when a case reaches `READY_FOR_UNDERWRITING`, a
+ * genuinely different trigger this graph has no node for. `allowedTools`
+ * is enforced by only registering
  * the subset of tools it names — an unlisted tool is simply not in the
  * registry `invokeTool` looks up, so it fails the same tested way an
  * unregistered name always does (agent-tool.types.spec.ts), rather than

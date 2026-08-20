@@ -7413,3 +7413,94 @@ the same worker process running throughout all three runs below:
 ### Next safe step
 
 Awaiting direction: M5's remaining large items (OIDC/FAPI 2.0, `legal_holds`, encrypted field/object boundaries) and the rest of M4's provider-promotion governance chain still lack a concrete closable shape without a second real provider mode; M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.
+
+## M3-024: send_information_request's first automatic caller — a real ROUTINE readiness notice (Section 9.4/6.4)
+
+### Status
+
+Implemented and verified, including a real live proof under `NODE_ENV=production`: a tenant that ran `npm run seed-communication-template` gets a real `ROUTINE`, auto-sent notice the moment its case reaches `READY_FOR_UNDERWRITING`; a tenant that never ran it gets zero behavior change, not a silent unsent draft. Closes the root cause this session identified for why `send_information_request` had never been wired anywhere: every communication message in this codebase was always `PROTECTED` because no `ROUTINE`-eligible template had ever existed. This slice supplies the missing half — a real way to create one (`npm run seed-communication-template`) and a real, structural trigger point that uses it (`finalizeReadyForUnderwriting`) — rather than fabricating a scenario around the existing gap.
+
+### Acceptance criterion
+
+`case-conditions.activities.ts`'s `finalizeReadyForUnderwriting` — the one real place a case genuinely, successfully reaches `READY_FOR_UNDERWRITING` (both the straight-through path and the post-condition-resolution path) — now attempts a real `draft_information_request` + `send_information_request` tool invocation for a well-known template key (`READY_FOR_UNDERWRITING_NOTICE`), through the actual registered-tool registry (`invokeTool`/`buildToolRegistry`), not a bypass. Gated on the tenant actually having an `APPROVED` template at that key first — a tenant that never seeded one gets no `CommunicationMessage` row at all, not a permanent empty `PROTECTED` draft. Live-verified: a seeded tenant's case reaches `READY_FOR_UNDERWRITING` with a real `ROUTINE`, `SENT` message (real substituted content, real `deliveryReference`); an unseeded tenant's case reaches the identical status with zero `ROUTINE` messages, only whatever the pre-existing (M5-012) condition-remediation mechanism independently produces.
+
+### Implementation
+
+- `src/communications/well-known-templates.ts` (new) — `READY_FOR_UNDERWRITING_TEMPLATE_KEY`/`_VERSION` constants, the one place `case-conditions.activities.ts` and the new seed script both need to agree.
+- `src/seed-communication-template.ts` (new script) — `npm run seed-communication-template -- <tenantId> <templateKey> <version> <channel> <locale> <recipientRelationship> <approvedBy> <bodyTemplate>`. Creates the template already `APPROVED` (the script *is* the approval act, matching this codebase's other administrative scripts' single-step trust). `allowedVariables` is derived from `bodyTemplate`'s own `{{variableName}}` placeholders via the same `PLACEHOLDER_PATTERN` regex `communication-render.ts` uses, not a separately supplied list that could drift from the template body. Refuses to overwrite an existing `(tenantId, templateKey, version)` row (templates are immutable once created) rather than silently upserting.
+- `src/workflows/case-conditions.activities.ts` — new `CommunicationDeliveryService` dependency; a small local `readyNotificationTools` registry (`draft_information_request` + `send_information_request`); `sendReadyForUnderwritingNotification(tenantId, caseId)` — checks for the approved template first (returns immediately, no draft attempt, if absent), then drafts and sends, logging (never throwing) any failure so a routine notification's own trouble can never block the case's already-committed `READY_FOR_UNDERWRITING` transition. Called from both real call sites of `finalizeReadyForUnderwriting` (the straight-through-ready branch in `evaluateConditions`, and `markReadyForUnderwriting` after a condition resolves).
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` — updated its own top-comment to note the new, separate (non-graph) real caller, without overstating that `send_information_request` is now wired into the `StateGraph` itself (it isn't, and still can't be — see M5-023's own entry for why the condition-remediation draft stays permanently `PROTECTED`).
+- Threaded `communicationDeliveryService` through every `CaseConditionsActivitiesDeps`/`EvaluationRunnerDeps` construction site: `worker.ts`, `evaluation-report.ts` (raw-constructed: `new CommunicationDeliveryService(dataSource, new CommunicationDeliverySimulator(), new ConfigService({OUTBOX_SIGNING_SECRET: outboxSigningSecret}))`, matching `ProviderAuthorizationService`'s own existing raw-construction precedent in that same script), and both files' own `.spec.ts` fixtures.
+
+### Affected files
+
+- `src/communications/well-known-templates.ts` (new), `src/seed-communication-template.ts` (new), `package.json`
+- `src/workflows/case-conditions.activities.ts` (+`.spec.ts`)
+- `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`
+- `src/worker.ts`, `src/evaluation/runner.ts` (+`.spec.ts`), `src/evaluation-report.ts`
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **The trigger point is `finalizeReadyForUnderwriting` (the activities layer), not a new node inside `lending-operations-agent-runtime.ts`'s own `StateGraph`.** `finalizeReadyForUnderwriting` is called from *two* real places — the graph's own straight-through "no condition matched" branch, and the workflow's post-condition-resolution path — and only the activities layer sees both. Putting the notification here covers a case that reaches READY either way with one code path; putting it inside the graph's own `resolveOutcomeNode` would have missed the condition-resolution path entirely.
+- **Still goes through `invokeTool`/`buildToolRegistry`, not the underlying services directly** — the identical reasoning M5-023 already established: costs nothing extra, and gives `send_information_request` its first genuine registered-tool invocation, regardless of which layer the call site lives in.
+- **Opt-in per tenant via an up-front template-existence check, not a fail-closed-after-drafting default.** Considered letting `classifyCommunication`'s own existing "template not found -> PROTECTED" fail-closed path handle an unseeded tenant (simpler code, one fewer query) — rejected once weighing the real cost: every case reaching READY for every tenant, forever, would get a permanent, empty-content, never-approvable `CommunicationMessage` row it never asked for. Checking first avoids that noise entirely for the common case (a tenant that hasn't opted in) at the cost of one extra tenant-scoped read.
+- **A script, not a REST endpoint, for template seeding** — matches `create-api-client.ts`/`set-tenant-agent-budget.ts`/`set-provider-status.ts`'s own established convention exactly: no admin RBAC tier exists for this class of platform-configuration action, and Section 6.4's own approval requirement for this specific content class is a human, out-of-band decision regardless.
+
+### Errors and fixes
+
+- **A real bug in this slice's own first draft**: `sendReadyForUnderwritingNotification` read `drafted.id` from the `draft_information_request` tool's result — but `DraftInformationRequestResult`'s actual field is `communicationMessageId`, not `id`. The typo passed `undefined` through to `send_information_request`, which silently found and "delivered" a message via a coincidental empty-`WHERE`-clause read (only one message existed for the test tenant) but then failed to actually persist the `SENT` status update the same way — caught by the unit test's own exact status assertion (`DRAFTED` instead of `SENT`), not a live-verification-only bug. Fixed by reading the correct field and typing it against `DraftInformationRequestResult` instead of an inline `{ id: string }` shape that let the typo through unchecked.
+- **Live-verify script found a real environmental gotcha, not a product bug**: the Plaid simulator's income is deterministically hash-derived *per borrowerId string*, not fixed — a hardcoded verify-script borrowerId could coincidentally land outside the seeded rule's 10% discrepancy threshold and open a real condition instead of reaching `READY_FOR_UNDERWRITING` directly. Fixed the verify script (not the product) to detect and resolve an opened condition via the real `POST .../reviews` endpoint before continuing to poll — which, incidentally, ended up exercising *both* real code paths this slice touches (the straight-through path and the post-resolution path) across its two tenant runs.
+- A stale `communication_templates` row from an earlier failed verification attempt (before the fix above) briefly caused a real `FK violation` on cleanup (`communication_messages.templateId` is `RESTRICT`) — fixed the test's own cleanup ordering (delete referencing messages before the template), not a product-code issue.
+
+### Verification
+
+```text
+npm run build / npx tsc --noEmit / npm run lint / npm run lint:check
+  all passed clean (tsc's only remaining errors are the same 3
+  pre-existing, unrelated loan.service.spec.ts errors noted in M4-006)
+
+Fresh scratch stack (m3024verify, ports 5443/7234), fully migrated
+(no new migration — no schema change in this slice):
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm test -- --runInBand --no-cache
+  --silent
+    76 suites / 561 tests passed (559 -> 561: +2 new
+    case-conditions.activities.spec.ts tests — the opt-in/no-noise case
+    and the real seeded-template draft-then-send case)
+
+  DATABASE_URL=... TEMPORAL_ADDRESS=... npm run test:e2e
+    4 suites / 39 tests passed, unchanged (no REST surface changed)
+
+Manual live verification — real API + real Temporal worker under
+NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
+  - ran npm run seed-communication-template for real against one tenant
+    (the real script, real process)
+  - seeded tenant: a real case driven through the real workflow via the
+    real REST API reached READY_FOR_UNDERWRITING with exactly one real
+    communication_messages row: classification ROUTINE, status SENT,
+    renderedContent the real substituted template text, a real
+    deliveryReference
+  - unseeded tenant: the identical scenario reached the identical
+    status with zero ROUTINE messages (one incidental PROTECTED
+    condition-remediation draft did appear, from the pre-existing
+    M5-012 mechanism unrelated to this slice, confirming this slice
+    adds nothing extra for a tenant that never opted in)
+
+  live processes terminated, scratch stack torn down (docker compose
+  down -v), one-off verification script deleted after use
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real "this tool has never been invoked anywhere, ever" gap for the last of Section 9.4's seven real tools, without weakening Section 6.4's human-approval requirement anywhere: the notice can only ever be `ROUTINE` (auto-sendable) if it passes `classifyCommunication`'s own unchanged, deterministic guard against a real `APPROVED` template — the exact same gate every other communication in this codebase has always gone through.
+- No new secrets, no new external dependencies, no migrations, no behavioral change for any tenant that never runs the new seed script.
+
+### Known gaps
+
+- **Only one well-known template key exists** (`READY_FOR_UNDERWRITING_NOTICE`) — the mechanism is generic (any tenant can seed any template via the script), but only this one specific trigger point (`finalizeReadyForUnderwriting`) is wired to look one up. A future real trigger (e.g. "case created" acknowledgment) would need its own well-known key and its own call site.
+- **The seed script has no update/versioning helper beyond "use a new version manually"** — matches the entity's own immutability discipline but is genuinely more friction than a dedicated `--supersede` flag would be; not built since no real operational need for frequent template revision has come up yet.
+- Every other M5/M4/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Continuing directly to the other gap named alongside this one: `legal_holds` and a real deletion/anonymization/verification executor for `data_disposition_tasks`, closing the second of the two gaps identified as buildable without any external dependency.

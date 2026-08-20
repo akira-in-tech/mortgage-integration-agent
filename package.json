@@ -40,6 +40,7 @@
     "create-api-client": "ts-node -r tsconfig-paths/register src/create-api-client.ts",
     "set-tenant-agent-budget": "ts-node -r tsconfig-paths/register src/set-tenant-agent-budget.ts",
     "set-provider-status": "ts-node -r tsconfig-paths/register src/set-provider-status.ts",
+    "seed-communication-template": "ts-node -r tsconfig-paths/register src/seed-communication-template.ts",
     "generate:client": "openapi-typescript openapi/openapi.json -o client/generated/schema.d.ts",
     "quickstart": "ts-node -r tsconfig-paths/register client/quickstart.ts",
     "webhook-inspector": "ts-node -r tsconfig-paths/register client/webhook-inspector.ts",

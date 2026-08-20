@@ -39,7 +39,10 @@ import { ProviderKillSwitchService } from './provider-platform/provider-kill-swi
 import { ConsentService } from './consent/consent.service';
 import { DataDispositionService } from './data-disposition/data-disposition.service';
 import { DataDispositionTask } from './database/entities/data-disposition-task.entity';
+import { ConfigService } from '@nestjs/config';
 import { CommunicationMessageService } from './communications/communication-message.service';
+import { CommunicationDeliveryService } from './communications/communication-delivery.service';
+import { CommunicationDeliverySimulator } from './communications/communication-delivery-simulator';
 import { PlaidService } from './integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from './integrations/plaid/plaid-income.adapter';
 import { CreditService } from './integrations/credit/credit.service';
@@ -135,6 +138,11 @@ async function main(): Promise<void> {
   );
   const providerKillSwitchService = new ProviderKillSwitchService(dataSource);
   const messageService = new CommunicationMessageService(dataSource);
+  const communicationDeliveryService = new CommunicationDeliveryService(
+    dataSource,
+    new CommunicationDeliverySimulator(),
+    new ConfigService({ OUTBOX_SIGNING_SECRET: outboxSigningSecret }),
+  );
 
   const tenantRepo = dataSource.getRepository(Tenant);
   const tenant = await tenantRepo.save(
@@ -159,6 +167,7 @@ async function main(): Promise<void> {
         providerKillSwitchService,
         consentService,
         messageService,
+        communicationDeliveryService,
         outboxSigningSecret,
       },
       tenant.id,

@@ -35,6 +35,9 @@ import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { CommunicationMessageService } from '../communications/communication-message.service';
+import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
+import { CommunicationDeliverySimulator } from '../communications/communication-delivery-simulator';
+import { ConfigService } from '@nestjs/config';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditService } from '../integrations/credit/credit.service';
@@ -138,6 +141,13 @@ describeOrSkip('runCorpus', () => {
     );
     const providerKillSwitchService = new ProviderKillSwitchService(dataSource);
     const messageService = new CommunicationMessageService(dataSource);
+    const communicationDeliveryService = new CommunicationDeliveryService(
+      dataSource,
+      new CommunicationDeliverySimulator(),
+      new ConfigService({
+        OUTBOX_SIGNING_SECRET: 'runner-spec-signing-secret-32-characters',
+      }),
+    );
     return {
       dataSource,
       policyEvaluationService,
@@ -148,6 +158,7 @@ describeOrSkip('runCorpus', () => {
       providerKillSwitchService,
       consentService,
       messageService,
+      communicationDeliveryService,
       outboxSigningSecret: 'runner-spec-signing-secret-32-characters',
     };
   }
