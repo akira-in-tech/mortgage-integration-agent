@@ -147,6 +147,20 @@ export class EnvironmentVariables {
   @Min(100)
   WEBHOOK_DISPATCH_INTERVAL_MS: number = 5000;
 
+  // ── Provider reconciliation (src/provider-platform, src/worker.ts) ──────
+  // Section 11.5's reconciliation sweep (M5-027): how often the Worker
+  // service scans for OUTCOME_UNKNOWN intents, and how long one must sit
+  // in that state before being flagged RECONCILING for human review.
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  PROVIDER_RECONCILIATION_INTERVAL_MS: number = 60_000;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1000)
+  PROVIDER_RECONCILIATION_STALE_AFTER_MS: number = 300_000;
+
   // ── OIDC (src/auth/oidc.*, M5-024) ───────────────────────────────────────
   // Section 16.1: "OIDC/OAuth 2.0 for people" — a real OIDC issuer (this
   // codebase's own docker-compose.yml ships self-hosted Keycloak for local

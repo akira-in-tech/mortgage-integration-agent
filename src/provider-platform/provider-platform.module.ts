@@ -12,6 +12,7 @@ import { ProviderOperationIntentService } from './provider-operation-intent.serv
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-promotion.service';
+import { ProviderReconciliationService } from './provider-reconciliation.service';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { ProviderPromotionService } from './provider-promotion.service';
     ProviderOperationIntentService,
     ProviderKillSwitchService,
     ProviderPromotionService,
+    ProviderReconciliationService,
   ],
   exports: [
     ProviderRegistryService,
@@ -38,6 +40,7 @@ import { ProviderPromotionService } from './provider-promotion.service';
     ProviderOperationIntentService,
     ProviderKillSwitchService,
     ProviderPromotionService,
+    ProviderReconciliationService,
   ],
 })
 export class ProviderPlatformModule {}

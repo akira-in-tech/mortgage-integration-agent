@@ -56,6 +56,13 @@ export class ProviderOperationIntent {
   })
   state!: ProviderOperationIntentStatus;
 
+  /** Set only by a real, human, out-of-band manual resolution (M5-027) — an operator investigating a `RECONCILING`/`OUTCOME_UNKNOWN` intent and recording what actually happened. */
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  resolvedBy!: string | null;
+
+  @Column({ type: 'varchar', length: 2000, nullable: true })
+  resolutionNote!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

@@ -460,4 +460,55 @@ describeOrSkip('dispatchProviderRequest', () => {
       expect(finding).toEqual({ ok: true });
     });
   });
+
+  describe('real (non-synthetic) failure classification (Section 11.5, M5-027)', () => {
+    // A real adapter failure — a network error, a real provider's own
+    // non-2xx response, anything this codebase's own synthetic-fault
+    // injection never anticipated (M4-007's real AUTHORIZED_SANDBOX
+    // Plaid adapter can throw exactly this kind of error). Before M5-027
+    // this fell through dispatchProviderRequest's catch block
+    // unclassified, leaving the intent silently stuck at DISPATCHED.
+    const realFailureAdapter: AnyProviderAdapter = {
+      providerId: 'real-failure-spec-provider',
+      capability: ProviderCapability.CREDIT,
+      mode: 'SIMULATOR',
+      operation: {
+        effectClass: 'REUSABLE_LOOKUP',
+        supportsStatusLookup: false,
+        supportsCancellation: false,
+        fallbackPolicy: 'PROHIBITED',
+      },
+      submit: async () => {
+        throw new Error('real-failure-spec: simulated network error');
+      },
+      normalize: (payload) => payload,
+      healthCheck: async () => ({
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+      }),
+    };
+
+    beforeAll(() => {
+      registry.register(realFailureAdapter);
+    });
+
+    it('classifies an unrecognized real thrown error as OUTCOME_UNKNOWN, not silence', async () => {
+      const tenantId = newTenantId();
+
+      await expect(
+        dispatchProviderRequest(deps(), {
+          tenantId,
+          caseId: randomUUID(),
+          borrowerSubjectId: 'real-failure-borrower',
+          capability: ProviderCapability.CREDIT,
+          request: {},
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['CREDIT'],
+        }),
+      ).rejects.toThrow('real-failure-spec: simulated network error');
+
+      const intent = await intentFor(tenantId);
+      expect(intent.state).toBe('OUTCOME_UNKNOWN');
+    });
+  });
 });

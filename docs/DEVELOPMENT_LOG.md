@@ -7992,3 +7992,82 @@ Fresh scratch stack (Postgres 5548, Temporal 7248, Keycloak 8092):
 ### Next safe step
 
 Continuing the pre-M5 gap-closure pass: the provider reconciliation worker (`OUTCOME_UNKNOWN` intents have no automatic resolution path — first named M4-001, restated unchanged through M4-007) is next.
+
+## M5-027: Provider reconciliation — real error classification and a real (human) resolution path (Section 11.5)
+
+### Status
+
+Implemented and verified, including a real live proof: a real synthetic-timeout dispatch produced a real `OUTCOME_UNKNOWN` intent; a real reconciliation sweep moved it to `RECONCILING`; the real `resolve-provider-operation-intent` CLI resolved it to `FAILED_FINAL` with a real `resolvedBy`/`resolutionNote`, confirmed with a direct `psql` read. Closes the reconciliation-worker gap first named at M4-001 and restated unchanged through every M4 entry since ("no reconciliation worker... an `OUTCOME_UNKNOWN` intent has no automatic resolution path today") — honestly, not by pretending automatic polling exists when it structurally can't yet (see Decisions).
+
+### Acceptance criterion
+
+Two real fixes, not one: (1) `dispatch-provider-request.ts`'s own catch block previously classified only `SyntheticProviderRejectionError`/`SyntheticProviderTimeoutError` — any other thrown error (including a real one from M4-007's real `AUTHORIZED_SANDBOX` Plaid adapter) fell through unclassified, leaving its intent silently stuck at `DISPATCHED` forever. It now classifies every non-`SyntheticProviderRejectionError` failure as `OUTCOME_UNKNOWN`, the same conservative "we don't actually know what happened" state Section 11.5 already names for an ambiguous timeout. (2) `ProviderReconciliationService.reconcilePendingIntents(staleAfterMs)` — run on a plain interval by `worker.ts` (`PROVIDER_RECONCILIATION_INTERVAL_MS`/`PROVIDER_RECONCILIATION_STALE_AFTER_MS`) — finds every tenant's `OUTCOME_UNKNOWN` intents older than the threshold and moves them to `RECONCILING`; `npm run resolve-provider-operation-intent` is the real, human, out-of-band path from there to a real terminal outcome (`SUCCEEDED`/`FAILED_FINAL`/`CANCELLED`), recording who resolved it and why. Live-verified end to end (see Verification).
+
+### Implementation
+
+- `src/provider-platform/dispatch-provider-request.ts` — the catch block's `else if (SyntheticProviderTimeoutError)` branch became a plain `else`, covering every unrecognized error the same way. New test in `dispatch-provider-request.spec.ts` proves it with a synthetic adapter that throws a plain `Error` (not any recognized synthetic-fault type) and confirms the resulting intent is `OUTCOME_UNKNOWN`.
+- `src/database/entities/provider-operation-intent.entity.ts` — new nullable `resolvedBy`/`resolutionNote` columns (migration `1787178000000-ProviderOperationIntentReconciliation.ts`), mirroring `DataDispositionTask`'s own `resolvedBy` precedent (M5-025) for the identical "a human investigated an ambiguous state out of band and is recording the real outcome" shape.
+- `src/provider-platform/provider-operation-intent.service.ts` — new `markReconciling()` and `resolveManually()` (rejects resolving anything not currently `OUTCOME_UNKNOWN`/`RECONCILING` — a `SUCCEEDED`/`FAILED_FINAL` intent already has its own real outcome).
+- `src/provider-platform/provider-reconciliation.service.ts` (new, +`.spec.ts`) — `reconcilePendingIntents(staleAfterMs)`: a genuinely cross-tenant sweep (`runWithRlsBypass`, the identical precedent `WebhookDispatchService`'s own due-event/due-delivery scans already established) for `OUTCOME_UNKNOWN` intents past the threshold, moved to `RECONCILING`. **Deliberately does not attempt automatic polling** — see Decisions for why that would be dead code today, not a missing feature.
+- `src/worker.ts` — a new plain `setInterval` (matching `WebhookDispatchService`'s own "not a Temporal workflow, an intent row already is the durable record" reasoning), alongside the existing webhook-dispatch timer.
+- `src/resolve-provider-operation-intent.ts` (new script) — matches `resolve-data-disposition-task.ts`'s established convention exactly (no REST endpoint — this is squarely a human, out-of-band decision).
+- `src/config/env.validation.ts` — `PROVIDER_RECONCILIATION_INTERVAL_MS` (default 60s), `PROVIDER_RECONCILIATION_STALE_AFTER_MS` (default 5min), both optional.
+- `test/negative-authorization.e2e-spec.ts` — no change needed this slice (already corrected the provider-promotion coverage entries in M5-026).
+
+### Affected files
+
+- `src/provider-platform/dispatch-provider-request.ts` (+`.spec.ts`)
+- `src/database/entities/provider-operation-intent.entity.ts`, `src/database/migrations/1787178000000-ProviderOperationIntentReconciliation.ts` (new), `schema-migrations.spec.ts`
+- `src/provider-platform/provider-operation-intent.service.ts` (+`.spec.ts`), `provider-reconciliation.service.ts` (new, +`.spec.ts`), `provider-platform.module.ts`
+- `src/worker.ts`, `src/config/env.validation.ts`
+- `src/resolve-provider-operation-intent.ts` (new), `package.json`
+
+### Decisions and alternatives
+
+- **No `poll()`-calling branch in `ProviderReconciliationService`.** Section 11.5's fuller design assumes an adapter can be asked "what actually happened" — but no adapter in this codebase implements `poll()` (every one is synchronous; see `types.ts`'s own comment), *and* no receipt from `submit()` is ever persisted anywhere for a later poll to use even if one did. A branch calling a method nothing implements, against data nothing stores, would be untested dead code creating a false impression of automatic reconciliation — the exact fabricated-coverage pattern this codebase's conventions exist to prevent. The honest scope is exactly what got built: detect, flag, let a human resolve.
+- **`RECONCILING` as a real, distinct state a human must act on, not an automatic retry.** Matches Section 11.5's own state machine (`OUTCOME_UNKNOWN -> RECONCILING`) and the "don't guess at what an unclassified real provider error means" reasoning `callProviderWithRetryClassification`'s own comment already established for the Temporal-activity layer.
+- **The real-error classification fix (dispatch-provider-request.ts) matters independently of the reconciliation worker** — even without `ProviderReconciliationService` existing at all, leaving a real error's intent silently stuck at `DISPATCHED` (the pre-slice behavior) is strictly worse than `OUTCOME_UNKNOWN`, since the latter at least signals genuine ambiguity a human or a future mechanism could act on.
+
+### Errors and fixes
+
+None functionally — every new test passed on the first full run.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+Fresh scratch stack (Postgres 5548, Temporal 7248, Keycloak 8092):
+  npm test -- --runInBand — 86 of 88 suites passed (2 pre-existing
+    skips), 634 passed / 13 skipped / 647 total
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged
+
+Manual live verification — a one-off scratch script against the same
+stack, deleted after use:
+  - real dispatchProviderRequest() to a real registered adapter with a
+    SYNTHETIC-TRANSIENT-FAILURE-* borrower id -> real thrown
+    SyntheticProviderTimeoutError -> real intent row, state=OUTCOME_UNKNOWN
+  - real reconcilePendingIntents(0ms threshold) -> real state=RECONCILING
+  - npm run resolve-provider-operation-intent -- <tenantId> <intentId>
+    FAILED_FINAL scratch-verify-operator "Confirmed via real
+    investigation: ..." -> real state=FAILED_FINAL
+  - direct psql read confirmed the real resolvedBy/resolutionNote values
+    persisted exactly as passed
+
+  scratch stack torn down (docker rm -f + network rm) after verification
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real correctness gap, not just a documentation one: before this slice, any unclassified real provider error (reachable today only via direct `AUTHORIZED_SANDBOX` dispatch calls, not the live default workflow path) left its intent silently stuck with no signal anything was wrong.
+- No new secrets, no new external dependency. `RECONCILING` intents are the only new operational surface an operator needs to watch — genuinely rare today (SIMULATOR adapters essentially never throw outside synthetic-fault injection; the real Plaid AUTHORIZED_SANDBOX adapter isn't wired into any live case's dispatch path per M4-007's own scope decision).
+
+### Known gaps
+
+- **No automatic `poll()`-based resolution** — see Decisions; this is a real, structural limitation (no adapter implements it, no receipt is persisted), not an oversight, and is the concrete precondition a future reader should check before assuming this is closeable without more work.
+- **No REST/GraphQL surface listing `RECONCILING` intents for an operator to find** — `resolve-provider-operation-intent.ts` requires already knowing the `tenantId`/`intentId` (from logs or a direct `psql` query today). M6's Operations UI is the natural home for a real worklist view.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Continuing the pre-M5 gap-closure pass: `permittedFields` field-level provider authorization (M0-010/M4-001/M4-007 — `ProviderAuthorizationGrant.permittedFields` has stayed permanently null since no provider capability exposes a field-addressable contract) is next.

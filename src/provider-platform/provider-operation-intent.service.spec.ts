@@ -106,4 +106,49 @@ describeOrSkip('ProviderOperationIntentService', () => {
     await service.markOutcomeUnknown(baseInput.tenantId, outcomeUnknown.id);
     expect(await stateOf(outcomeUnknown.id)).toBe('OUTCOME_UNKNOWN');
   });
+
+  it('markReconciling() persists the RECONCILING state', async () => {
+    const repo = dataSource.getRepository(ProviderOperationIntent);
+    const intent = await service.prepare(baseInput);
+    intentIds.push(intent.id);
+    await service.markOutcomeUnknown(baseInput.tenantId, intent.id);
+
+    await service.markReconciling(baseInput.tenantId, intent.id);
+
+    expect((await repo.findOneByOrFail({ id: intent.id })).state).toBe(
+      'RECONCILING',
+    );
+  });
+
+  it('resolveManually() records a real human resolution from OUTCOME_UNKNOWN, and rejects resolving an intent that already has a real terminal outcome', async () => {
+    const repo = dataSource.getRepository(ProviderOperationIntent);
+    const intent = await service.prepare(baseInput);
+    intentIds.push(intent.id);
+    await service.markOutcomeUnknown(baseInput.tenantId, intent.id);
+
+    await service.resolveManually(
+      baseInput.tenantId,
+      intent.id,
+      'SUCCEEDED' as never,
+      'spec-operator',
+      'Confirmed via provider dashboard: the real operation succeeded.',
+    );
+
+    const resolved = await repo.findOneByOrFail({ id: intent.id });
+    expect(resolved.state).toBe('SUCCEEDED');
+    expect(resolved.resolvedBy).toBe('spec-operator');
+    expect(resolved.resolutionNote).toBe(
+      'Confirmed via provider dashboard: the real operation succeeded.',
+    );
+
+    await expect(
+      service.resolveManually(
+        baseInput.tenantId,
+        intent.id,
+        'FAILED_FINAL' as never,
+        'spec-operator-2',
+        'trying to resolve an already-resolved intent',
+      ),
+    ).rejects.toThrow(/not in a reconcilable state/);
+  });
 });

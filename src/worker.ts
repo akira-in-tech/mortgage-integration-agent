@@ -10,6 +10,7 @@ import { ProviderAuthorizationService } from './provider-platform/provider-autho
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
 import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
+import { ProviderReconciliationService } from './provider-platform/provider-reconciliation.service';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
@@ -60,6 +61,27 @@ async function bootstrap(): Promise<void> {
     });
   }, webhookDispatchIntervalMs);
 
+  // Section 11.5's reconciliation sweep (M5-027) — same "plain interval,
+  // not a Temporal workflow" reasoning as webhook dispatch above.
+  const providerReconciliationService = appContext.get(
+    ProviderReconciliationService,
+  );
+  const providerReconciliationIntervalMs = configService.get<number>(
+    'PROVIDER_RECONCILIATION_INTERVAL_MS',
+    60_000,
+  );
+  const providerReconciliationStaleAfterMs = configService.get<number>(
+    'PROVIDER_RECONCILIATION_STALE_AFTER_MS',
+    300_000,
+  );
+  const providerReconciliationTimer = setInterval(() => {
+    providerReconciliationService
+      .reconcilePendingIntents(providerReconciliationStaleAfterMs)
+      .catch((error) => {
+        console.error('Provider reconciliation tick failed:', error);
+      });
+  }, providerReconciliationIntervalMs);
+
   const connection = await NativeConnection.connect({
     address: configService.get<string>('TEMPORAL_ADDRESS', 'localhost:7233'),
   });
@@ -93,6 +115,7 @@ async function bootstrap(): Promise<void> {
     await worker.run();
   } finally {
     clearInterval(webhookDispatchTimer);
+    clearInterval(providerReconciliationTimer);
     await connection.close();
     await appContext.close();
   }

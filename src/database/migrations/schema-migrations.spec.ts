@@ -198,6 +198,30 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the provider operation intent reconciliation migration, dropping the two new columns', async () => {
+    const beforeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+           AND column_name IN ('resolvedBy', 'resolutionNote')
+         ORDER BY column_name`,
+      );
+    expect(beforeColumns).toEqual([
+      { column_name: 'resolutionNote' },
+      { column_name: 'resolvedBy' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    const afterColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+           AND column_name IN ('resolvedBy', 'resolutionNote')`,
+      );
+    expect(afterColumns).toEqual([]);
+  });
+
   it('reverts the users and tenant memberships migration, dropping both new tables', async () => {
     expect(await tableNames()).toEqual(
       expect.arrayContaining(['users', 'tenant_memberships']),

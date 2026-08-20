@@ -8,10 +8,7 @@ import {
   ProviderMode,
   SynchronousProviderReceipt,
 } from './types';
-import {
-  SyntheticProviderRejectionError,
-  SyntheticProviderTimeoutError,
-} from '../integrations/synthetic-provider-failures';
+import { SyntheticProviderRejectionError } from '../integrations/synthetic-provider-failures';
 import { ConsentService } from '../consent/consent.service';
 
 export interface DispatchProviderRequestDeps {
@@ -192,7 +189,19 @@ export async function dispatchProviderRequest<TFinding>(
   } catch (error) {
     if (error instanceof SyntheticProviderRejectionError) {
       await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
-    } else if (error instanceof SyntheticProviderTimeoutError) {
+    } else {
+      // M5-027: any other failure — including a real one from a real
+      // adapter (M4-007's AUTHORIZED_SANDBOX Plaid integration can throw
+      // a genuine network/HTTP error this synthetic-only classification
+      // never anticipated) — is classified the same conservative way
+      // `SyntheticProviderTimeoutError` already was: Section 11.5's own
+      // "after an ambiguous timeout, the state becomes OUTCOME_UNKNOWN."
+      // Leaving an intent silently stuck at DISPATCHED with an
+      // unclassified thrown error, its previous behavior for anything
+      // that wasn't a recognized synthetic fault, is strictly worse: it
+      // doesn't even signal that the real outcome is unknown.
+      // ProviderReconciliationService is what eventually notices an
+      // intent stuck here and flags it for a human.
       await deps.intentService.markOutcomeUnknown(intent.tenantId, intent.id);
     }
     throw error;

@@ -46,10 +46,12 @@ function toIntentValue(
  * Section 11.5: "The platform persists the operation intent before
  * dispatch." One row per real attempt — `prepare()` is called before the
  * adapter's `submit()` runs; the `mark*()` methods record the real
- * outcome once known. `RECONCILING`/`CANCELLED` are declared (matching
- * the charter's full state enum) but nothing in this codebase transitions
- * an intent into either yet — no reconciliation worker or cancellation
- * caller exists (Known gap, honestly undriven rather than faked).
+ * outcome once known. `CANCELLED` is declared (matching the charter's
+ * full state enum) but nothing in this codebase transitions an intent
+ * into it yet — no cancellation caller exists (Known gap, honestly
+ * undriven rather than faked; `cancel()` is optional on `ProviderAdapter`
+ * and no current adapter implements it). `RECONCILING` is real as of
+ * M5-027 — see `ProviderReconciliationService`.
  */
 @Injectable()
 export class ProviderOperationIntentService {
@@ -119,5 +121,48 @@ export class ProviderOperationIntentService {
       id,
       ProviderOperationIntentStatus.OUTCOME_UNKNOWN,
     );
+  }
+
+  /** `ProviderReconciliationService`'s own transition — an `OUTCOME_UNKNOWN` intent old enough that automatic resolution (this codebase has none — see that service's own comment) won't come; flagged for a human to investigate out of band. */
+  async markReconciling(tenantId: string, id: string): Promise<void> {
+    await this.setState(
+      tenantId,
+      id,
+      ProviderOperationIntentStatus.RECONCILING,
+    );
+  }
+
+  /**
+   * A real, human, out-of-band manual resolution — an operator
+   * investigated a `RECONCILING`/`OUTCOME_UNKNOWN` intent against the
+   * real provider's own records (outside this codebase, e.g. a
+   * provider's own dashboard) and is now recording what actually
+   * happened. Only callable from those two states — a `SUCCEEDED`/
+   * `FAILED_FINAL` intent already has its own real outcome and does not
+   * need a second, conflicting one.
+   */
+  async resolveManually(
+    tenantId: string,
+    id: string,
+    outcome:
+      | ProviderOperationIntentStatus.SUCCEEDED
+      | ProviderOperationIntentStatus.FAILED_FINAL
+      | ProviderOperationIntentStatus.CANCELLED,
+    resolvedBy: string,
+    resolutionNote: string,
+  ): Promise<void> {
+    await runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const repo = manager.getRepository(ProviderOperationIntentEntity);
+      const current = await repo.findOneByOrFail({ id, tenantId });
+      if (
+        current.state !== ProviderOperationIntentStatus.OUTCOME_UNKNOWN &&
+        current.state !== ProviderOperationIntentStatus.RECONCILING
+      ) {
+        throw new Error(
+          `intent ${id} is not in a reconcilable state (current: ${current.state})`,
+        );
+      }
+      await repo.update({ id }, { state: outcome, resolvedBy, resolutionNote });
+    });
   }
 }
