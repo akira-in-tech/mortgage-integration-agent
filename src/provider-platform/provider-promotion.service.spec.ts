@@ -290,6 +290,85 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
     ).toBe(false);
   });
 
+  it('re-activating a deactivated tuple with a NEW manifest still requires its own fresh certification and approval — deactivate() has no "quick re-enable" bypass of the dual-control gate', async () => {
+    const providerId = uniqueProviderId();
+    const firstManifest = await proposeManifest(providerId);
+    await service.certify(
+      firstManifest.id,
+      'sandbox',
+      'certifier-1',
+      ProviderCertificationDecision.PASSED,
+      'evidence://spec-run-1',
+    );
+    await service.approve(
+      firstManifest.id,
+      'compliance',
+      'approver-1',
+      ProviderApprovalDecision.APPROVED,
+    );
+    await service.activate(firstManifest.id, 'sandbox', 'activator', null);
+    await service.deactivate(
+      providerId,
+      ProviderCapability.INCOME,
+      'AUTHORIZED_SANDBOX',
+      'emergency-operator',
+    );
+
+    // A second, real-world "we fixed the incident, bring it back with a
+    // corrected build" manifest — re-enabling is not exempt from the
+    // exact same propose -> certify -> approve chain the original
+    // activation needed. Section 11.4's own "governed re-enable"
+    // requirement is this: activate() never succeeds without a CURRENT
+    // valid certification and approval, whether it's the first
+    // activation of a tuple or a re-activation after an emergency stop.
+    const secondManifest = await proposeManifest(providerId);
+    await expect(
+      service.activate(
+        secondManifest.id,
+        'sandbox',
+        'activator',
+        firstManifest.version,
+      ),
+    ).rejects.toThrow(/no current PASSED, unexpired certification/);
+
+    await service.certify(
+      secondManifest.id,
+      'sandbox',
+      'certifier-2',
+      ProviderCertificationDecision.PASSED,
+      'evidence://spec-run-2-post-incident',
+    );
+    await expect(
+      service.activate(
+        secondManifest.id,
+        'sandbox',
+        'activator',
+        firstManifest.version,
+      ),
+    ).rejects.toThrow(/no current APPROVED, unexpired approval/);
+
+    await service.approve(
+      secondManifest.id,
+      'compliance',
+      'approver-2',
+      ProviderApprovalDecision.APPROVED,
+    );
+    const reactivated = await service.activate(
+      secondManifest.id,
+      'sandbox',
+      'activator',
+      firstManifest.version,
+    );
+    expect(reactivated.state).toBe('ACTIVE');
+    expect(
+      await service.isActivated(
+        providerId,
+        ProviderCapability.INCOME,
+        'AUTHORIZED_SANDBOX',
+      ),
+    ).toBe(true);
+  });
+
   it('isActivated() is false (fail closed) for a tuple that has never been activated', async () => {
     const providerId = uniqueProviderId();
     expect(

@@ -7406,7 +7406,7 @@ the same worker process running throughout all three runs below:
 ### Known gaps
 
 - **Current-state-only, no history of past disable/enable cycles** (see Decisions) — a future real need for "who disabled this and when, across every past incident" would need a dedicated event-sourced table, not a retrofit of this one.
-- **No dual-approval re-enable path** — matches Section 11.4's own single-action emergency-disable language, but a governed `PRODUCTION_BYOC` re-enable (requiring the fuller approval chain) remains unbuilt, tied to the same missing second provider mode as the rest of Section 11.4/11.8's governance chain.
+- **No dual-approval re-enable path** — matches Section 11.4's own single-action emergency-disable language, but a governed `PRODUCTION_BYOC` re-enable (requiring the fuller approval chain) remains unbuilt, tied to the same missing second provider mode as the rest of Section 11.4/11.8's governance chain. **Closed by M4-007/M5-029**: `ProviderPromotionService.activate()` never succeeds without a current valid certification and approval, whether it's a tuple's first activation or a re-activation after `deactivate()` — there is no "quick re-enable" bypass, proven by a real test (M5-029).
 - The full `ProviderPromotionManifest`/`ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation` chain remains unbuilt — still blocked on there being no second real provider mode to promote to or certify against.
 - Every other M4/M5/M3 Known gap is unchanged by this slice.
 
@@ -7717,7 +7717,7 @@ Manual live verification against the first scratch stack:
 - **`PART_TIME` employment status is never actually producible** from this real data source — Plaid's Bank Income categories don't distinguish it from `FULL_TIME`'s `SALARY` category. Left in the type for interface parity with the `SIMULATOR` adapter, not fabricated.
 - **`ProviderActivation` is current-state-only**, same tradeoff `ProviderAdapterStatus` already made — no full history of past activate/deactivate cycles.
 - **No dispatch-time wiring into the live underwriting workflow** — by design (see Decisions), tracked here as the concrete next step if real Plaid-sourced income ever needs to reach a real case.
-- **No approval-role RBAC** — `approvalRole` is a free-text string, the same honest scoping `PolicyTransitionApproval` already uses instead of a real role system.
+- **No approval-role RBAC** — `approvalRole` is a free-text string, the same honest scoping `PolicyTransitionApproval` already uses instead of a real role system. **Re-confirmed still open at M5-029**: closing this for real would mean building a REST/GraphQL surface for provider-promotion actions plus an admin RBAC tier this codebase's two-role (`PARTNER`/`REVIEWER`) model has no room for — genuinely new user-facing infrastructure nobody has asked for, not a gap closable by extending an existing mechanism the way M5-026/M5-027/M5-028 each were. Left open deliberately, not attempted.
 - Every other M4/M5/M3 Known gap is unchanged by this slice.
 
 ### Next safe step
@@ -8137,3 +8137,57 @@ Fresh scratch stack (Postgres 5549, Temporal 7249):
 ### Next safe step
 
 Continuing the pre-M5 gap-closure pass: M4's own remaining named gaps — no dual-approval re-enable path for a deactivated provider promotion, and `approvalRole` being a free-text string with no real RBAC behind it (both M4-006/M4-007) — are next, followed by an OpenAPI-coverage pass over Section 15.1's still-undocumented partner-API routes.
+
+## M5-029: Confirmed the provider-promotion dual-control re-enable gate is real; approval-role RBAC investigated and left honestly open (Section 11.4)
+
+### Status
+
+Investigated both M4-006/M4-007 Known Gaps items named as still open. One was already closed by M4-007's own design and just needed a real test proving it; the other genuinely cannot be closed without building new, unrequested admin infrastructure, and is left open with that reasoning recorded rather than attempted.
+
+### Acceptance criterion
+
+**Dual-approval re-enable — CLOSED, proven, not built new.** `ProviderPromotionService.activate()` has no "quick re-enable" path: calling it again for a `{providerId, capability, mode}` tuple that was previously `deactivate()`d requires a *current*, valid `PASSED` certification and `APPROVED` approval exactly as the original activation did — there is no code path that skips this. A new test proves the realistic sequence directly: activate a manifest, `deactivate()` it (the kill switch's own single-actor emergency stop), propose a *second*, corrected manifest, and show `activate()` on it fails closed with no certification, fails closed with certification but no approval, then succeeds only once both exist fresh. Section 11.4's own "governed re-enable" requirement was already satisfied by M4-007's design — this slice's real contribution is the proof, not new code.
+
+**Approval-role RBAC — investigated, left open.** Closing this for real needs a REST/GraphQL surface for provider-promotion actions (none exists — it's script-only, `manage-provider-promotion.ts`, the same honest administrative-action gap `create-api-client.ts` already has) *and* an admin RBAC tier this codebase's two-role (`PARTNER`/`REVIEWER`) model has no room for. Both are genuinely new, unrequested user-facing infrastructure, not a gap closable by extending something that already exists the way M5-026 (denylist)/M5-027 (reconciliation)/M5-028 (field authorization) each were. Recorded as a deliberate non-attempt, not silently dropped.
+
+### Implementation
+
+- `src/provider-platform/provider-promotion.service.spec.ts` — one new test: activate -> deactivate -> propose a second manifest -> activate fails closed twice (no cert, then no approval) -> succeeds once both are fresh, and confirms `isActivated()` reports `true` again afterward.
+- `docs/DEVELOPMENT_LOG.md` — annotated the original M4-006 "No dual-approval re-enable path" and M4-007 "No approval-role RBAC" Known Gaps entries in place with forward pointers to this slice's real findings, rather than silently rewriting history.
+
+### Affected files
+
+- `src/provider-platform/provider-promotion.service.spec.ts`
+- `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **Annotated the original Known Gaps entries in place rather than leaving them to silently go stale.** Matches this same slice's own broader theme (and M5-026's own fix to the negative-authorization coverage index): a Known Gap that gets closed by a later slice should say so, not require a future reader to cross-reference every subsequent entry to find out.
+- **Declined to build a REST/GraphQL admin surface for provider promotion just to make `approvalRole` RBAC closable.** That would be building real, permanent user-facing infrastructure (routes, RBAC gating, tests, documentation) as a side effect of a gap-closure pass, not because anyone asked for provider-promotion administration over HTTP — the same "don't invent scope nobody requested" discipline this whole session's gap-closure work has followed for the genuinely-external-dependency gaps (official policy-source connector, downstream decision-status ingestion).
+
+### Errors and fixes
+
+None.
+
+### Verification
+
+```text
+npm run build — clean
+
+Fresh scratch stack (Postgres 5550):
+  npx jest provider-promotion.service.spec.ts — 8 passed (7 -> 8: +1 new
+    re-activation test)
+```
+
+### Security, privacy, cost, and compatibility
+
+No behavior change — this slice is a real test plus documentation corrections, not new production code.
+
+### Known gaps
+
+- **Approval-role RBAC remains genuinely open** — see Acceptance criterion. The concrete precondition for closing it: a real decision to build administrative REST/GraphQL routes for provider-promotion actions, which nothing in this codebase's own scope has asked for yet.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+An OpenAPI-coverage pass over Section 15.1's still-undocumented partner-API routes (M4-003's own named gap: only `CasesController`'s endpoints are documented; webhook, communication-message, and consent routes added since aren't).
