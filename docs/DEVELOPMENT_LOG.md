@@ -4670,9 +4670,9 @@ Manual live verification (real REST API + real Temporal worker):
 
 ### Known gaps
 
-- Only `CasesController`'s 6 endpoints are documented — the rest of Section 15.1's target partner API (consents, documents, conditions/evidence listing, policy snapshots, provider operations, audit export, webhook endpoints) doesn't exist in this codebase yet, so it isn't represented in the OpenAPI artifact either. The artifact's own `description` field says this explicitly rather than silently looking complete.
+- Only `CasesController`'s 6 endpoints are documented — the rest of Section 15.1's target partner API (consents, documents, conditions/evidence listing, policy snapshots, provider operations, audit export, webhook endpoints) doesn't exist in this codebase yet, so it isn't represented in the OpenAPI artifact either. The artifact's own `description` field says this explicitly rather than silently looking complete. **Partially closed by normal development, confirmed at M5-030**: every real controller built since this slice (`WebhookEndpointsController`/`WebhookDeliveriesController` at M4-004, `CommunicationMessagesController` at M5-022) was written *with* `@ApiTags`/`@ApiOperation` decoration from the start, not left undocumented — `npm run generate:openapi` covers 100% of this codebase's real routes today (14 documented operations across 4 controllers, confirmed via a real regeneration producing zero diff against the checked-in artifact). What's still true: consents, documents, policy snapshots, provider operations, and audit export still have no REST surface at all — an OpenAPI *documentation* gap this specific bullet named, but really a "these routes were never built" gap, the same category as M4-007/M5-029's own "no admin RBAC surface" finding.
 - No RFC 9457 problem-details error format, no request/trace identifiers on responses, no pagination, no rate-limit headers, no API version/deprecation policy, no contract tests for backward compatibility — all named in Section 15.3, none built yet.
-- No authentication on this REST surface at all (unchanged, long-standing gap since M2).
+- No authentication on this REST surface at all (unchanged, long-standing gap since M2). **Closed by M5-001 through M5-024** — every real route has required a real credential (`TenantAuthGuard`: machine `api_clients` or OIDC) since M5-001, and this bullet was never updated to say so.
 - A Python generated client (Section 15.1: "may follow after the OpenAPI contract stabilizes") is explicitly out of scope — not attempted.
 
 ### Next safe step
@@ -8191,3 +8191,40 @@ No behavior change — this slice is a real test plus documentation corrections,
 ### Next safe step
 
 An OpenAPI-coverage pass over Section 15.1's still-undocumented partner-API routes (M4-003's own named gap: only `CasesController`'s endpoints are documented; webhook, communication-message, and consent routes added since aren't).
+
+## M5-030: OpenAPI-coverage gap confirmed already closed by normal development; two stale Known Gaps entries corrected (Section 15.3)
+
+### Status
+
+Investigated M4-003's own "only `CasesController` is documented" gap before attempting anything. Found it was already closed — every controller built since (`WebhookEndpointsController`/`WebhookDeliveriesController`, `CommunicationMessagesController`) was written with real `@ApiTags`/`@ApiOperation` Swagger decoration from the start, a convention that stuck without ever needing a dedicated "catch up the docs" slice. Verified, not assumed: `npm run generate:openapi` (real regeneration) produces zero diff against the checked-in `openapi/openapi.json`, and a direct count confirms 14 real documented operations across all 4 real controllers — 100% of this codebase's actual REST surface.
+
+### Acceptance criterion
+
+No code change needed or made. Two stale `docs/DEVELOPMENT_LOG.md` Known Gaps entries (M4-003's "no authentication on this REST surface at all," false since M5-001; same entry's "only `CasesController`... is documented," false since M4-004/M5-022) annotated in place with what's actually true today and a pointer to the real evidence.
+
+### Implementation
+
+- No production code, no tests — a verification pass confirmed nothing needed building, and a documentation-accuracy pass corrected two stale claims found along the way.
+- `docs/DEVELOPMENT_LOG.md` — M4-003's own Known Gaps entries annotated.
+
+### Decisions and alternatives
+
+- **Verified before writing anything** — the exact discipline this whole gap-closure pass (M5-026 through M5-030) has followed throughout: `grep`-check real decoration coverage, `diff`-check the real generated artifact, count real operations, rather than assuming a gap named months ago is still accurate today. Two separate M4-006/M0-009-era gaps (dual-approval re-enable, budget ledger) already turned out to be either closed-by-design or honestly-inapplicable on the same kind of check.
+- **What remains real**: Section 15.1's own fuller target partner API (consents-listing, documents, policy snapshots, provider operations, audit export) still has no REST surface at all — not an OpenAPI-documentation problem, a "these routes were never built" one, in the same category as approval-role RBAC (M5-029): each would mean building genuinely new, unrequested REST surface, not extending or correcting something that already exists.
+
+### Verification
+
+```text
+npm run generate:openapi against a real running app — zero diff against
+  the committed openapi/openapi.json
+grep -c '@ApiOperation' across all 4 real controllers — 9+1+1+3 = 14,
+  matching the artifact's own real route count exactly
+```
+
+### Known gaps
+
+Unchanged by this slice (a documentation-accuracy correction, not new work) — see the annotated M4-003 entry itself for the real, current state of the OpenAPI/auth gaps it originally named.
+
+### Next safe step
+
+This closes the pre-M5 gap-closure pass's own reasonably-scoped items (M5-026 through M5-030). What remains, per the earlier audit: gaps needing real external dependencies (official federal/state policy-source connector, downstream decision-status ingestion) or a real business/user decision (approval-role RBAC's admin surface, the rest of Section 15.1's partner API) or a large net-new subsystem (document OCR/inspection, calculation tools, most of Section 9.4's remaining Agent tools) — none closable by extending existing code the way this whole pass's items were.
