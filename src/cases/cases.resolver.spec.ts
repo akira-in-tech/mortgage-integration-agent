@@ -13,6 +13,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     listProviderOperationIntents: jest.Mock;
     listAuditEvents: jest.Mock;
     getPolicySnapshot: jest.Mock;
+    listCases: jest.Mock;
   };
   let resolver: CasesResolver;
 
@@ -45,6 +46,10 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       listProviderOperationIntents: jest.fn().mockResolvedValue([]),
       listAuditEvents: jest.fn().mockResolvedValue([]),
       getPolicySnapshot: jest.fn().mockResolvedValue(null),
+      listCases: jest.fn().mockResolvedValue({
+        edges: [],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      }),
     };
     resolver = new CasesResolver(
       casesService as never,
@@ -77,6 +82,32 @@ describe('CasesResolver (Section 15.2, M6)', () => {
   it('timeline() field resolver delegates to the same CaseTimelineService the REST route already uses', async () => {
     await resolver.timeline(CASE);
     expect(casesService.getTimeline).toHaveBeenCalledWith(TENANT_ID, CASE_ID);
+  });
+
+  it('cases() resolves via CaseQueryService.listCases() using the authenticated tenantId and passes filter/pagination args through unchanged', async () => {
+    await resolver.cases(
+      TENANT_ID,
+      CaseStatus.DRAFT,
+      'borrower-1',
+      10,
+      'some-cursor',
+    );
+    expect(caseQueryService.listCases).toHaveBeenCalledWith(TENANT_ID, {
+      status: CaseStatus.DRAFT,
+      borrowerId: 'borrower-1',
+      first: 10,
+      after: 'some-cursor',
+    });
+  });
+
+  it('cases() works with no optional filter/pagination args at all', async () => {
+    await resolver.cases(TENANT_ID);
+    expect(caseQueryService.listCases).toHaveBeenCalledWith(TENANT_ID, {
+      status: undefined,
+      borrowerId: undefined,
+      first: undefined,
+      after: undefined,
+    });
   });
 
   it('policyBinding() field resolver scopes by the parent case’s own tenantId/id', async () => {

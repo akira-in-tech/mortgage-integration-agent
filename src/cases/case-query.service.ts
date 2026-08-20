@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull } from 'typeorm';
+import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { EvidenceFact } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
@@ -8,6 +9,18 @@ import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.en
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { runInTenantContext } from '../database/tenant-context';
+import { CaseConnection } from './case-connection.model';
+import { encodeCaseCursor, decodeCaseCursor } from './case-cursor';
+
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
+
+export interface ListCasesOptions {
+  status?: CaseStatus;
+  borrowerId?: string;
+  first?: number;
+  after?: string;
+}
 
 /**
  * Section 15.2/20 M6's GraphQL operations-query surface: real evidence and
@@ -24,6 +37,58 @@ export class CaseQueryService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
+
+  /** `cases(status?, borrowerId?, first?, after?)` (Section 15.2/15.3) — keyset-paginated over `(createdAt, id)` DESC (newest first), not `OFFSET`: stable under concurrent inserts and doesn't degrade as the offset grows. Fetches one extra row to determine `hasNextPage` without a separate `COUNT` query. */
+  async listCases(
+    tenantId: string,
+    options: ListCasesOptions = {},
+  ): Promise<CaseConnection> {
+    const pageSize = Math.min(
+      Math.max(options.first ?? DEFAULT_PAGE_SIZE, 1),
+      MAX_PAGE_SIZE,
+    );
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const qb = manager
+        .getRepository(LoanCase)
+        .createQueryBuilder('c')
+        .where('c.tenantId = :tenantId', { tenantId })
+        .orderBy('c.createdAt', 'DESC')
+        .addOrderBy('c.id', 'DESC')
+        .take(pageSize + 1);
+
+      if (options.status) {
+        qb.andWhere('c.status = :status', { status: options.status });
+      }
+      if (options.borrowerId) {
+        qb.andWhere('c.borrowerId = :borrowerId', {
+          borrowerId: options.borrowerId,
+        });
+      }
+      if (options.after) {
+        const cursor = decodeCaseCursor(options.after);
+        qb.andWhere(
+          '(c."createdAt" < :cursorCreatedAt OR (c."createdAt" = :cursorCreatedAt AND c.id < :cursorId))',
+          { cursorCreatedAt: cursor.createdAt, cursorId: cursor.id },
+        );
+      }
+
+      const rows = await qb.getMany();
+      const hasNextPage = rows.length > pageSize;
+      const page = hasNextPage ? rows.slice(0, pageSize) : rows;
+      const edges = page.map((node) => ({
+        node,
+        cursor: encodeCaseCursor({ createdAt: node.createdAt, id: node.id }),
+      }));
+
+      return {
+        edges,
+        pageInfo: {
+          hasNextPage,
+          endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
+        },
+      };
+    });
+  }
 
   async listEvidenceFacts(
     tenantId: string,

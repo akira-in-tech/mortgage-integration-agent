@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { Tenant } from '../database/entities/tenant.entity';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
-import { LoanCase } from '../database/entities/loan-case.entity';
+import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import {
   EvidenceFact,
   EvidenceType,
@@ -303,6 +303,112 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
     );
     expect(intents).toHaveLength(1);
     expect(intents[0].providerId).toBe('asset-verification-simulator');
+  });
+
+  describe('listCases()', () => {
+    async function setCaseFields(
+      caseId: string,
+      fields: Partial<Pick<LoanCase, 'borrowerId' | 'status' | 'createdAt'>>,
+    ): Promise<void> {
+      await dataSource.getRepository(LoanCase).update(caseId, fields);
+    }
+
+    it('returns the tenant’s own cases newest first, with a real hasNextPage/endCursor', async () => {
+      const tenantId = randomUUID();
+      const caseA = await makeCase(tenantId);
+      const caseB = await makeCase(tenantId);
+      const caseC = await makeCase(tenantId);
+      await setCaseFields(caseA, {
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      });
+      await setCaseFields(caseB, {
+        createdAt: new Date('2026-01-02T00:00:00Z'),
+      });
+      await setCaseFields(caseC, {
+        createdAt: new Date('2026-01-03T00:00:00Z'),
+      });
+
+      const page = await service.listCases(tenantId, { first: 2 });
+
+      expect(page.edges.map((e) => e.node.id)).toEqual([caseC, caseB]);
+      expect(page.pageInfo.hasNextPage).toBe(true);
+      expect(page.pageInfo.endCursor).toBe(page.edges[1].cursor);
+    });
+
+    it('paginates via cursor with no gaps or duplicates across pages', async () => {
+      const tenantId = randomUUID();
+      const caseIds: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const caseId = await makeCase(tenantId);
+        await setCaseFields(caseId, {
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)),
+        });
+        caseIds.push(caseId);
+      }
+
+      const seen: string[] = [];
+      let after: string | undefined;
+      for (let i = 0; i < 3; i++) {
+        const page = await service.listCases(tenantId, { first: 2, after });
+        seen.push(...page.edges.map((e) => e.node.id));
+        after = page.pageInfo.endCursor ?? undefined;
+        if (!page.pageInfo.hasNextPage) {
+          break;
+        }
+      }
+
+      expect(seen).toEqual([...caseIds].reverse());
+    });
+
+    it('filters by status', async () => {
+      const tenantId = randomUUID();
+      const draftCase = await makeCase(tenantId);
+      const reviewCase = await makeCase(tenantId);
+      await setCaseFields(reviewCase, { status: CaseStatus.MANUAL_REVIEW });
+
+      const page = await service.listCases(tenantId, {
+        status: CaseStatus.MANUAL_REVIEW,
+      });
+
+      expect(page.edges).toHaveLength(1);
+      expect(page.edges[0].node.id).toBe(reviewCase);
+      void draftCase;
+    });
+
+    it('filters by borrowerId', async () => {
+      const tenantId = randomUUID();
+      const caseA = await makeCase(tenantId);
+      await makeCase(tenantId);
+      await setCaseFields(caseA, { borrowerId: 'unique-borrower-xyz' });
+
+      const page = await service.listCases(tenantId, {
+        borrowerId: 'unique-borrower-xyz',
+      });
+
+      expect(page.edges).toHaveLength(1);
+      expect(page.edges[0].node.id).toBe(caseA);
+    });
+
+    it('never returns another tenant’s cases', async () => {
+      const tenantA = randomUUID();
+      const tenantB = randomUUID();
+      await makeCase(tenantA);
+      await makeCase(tenantB);
+
+      const page = await service.listCases(tenantB);
+
+      expect(page.edges).toHaveLength(1);
+      expect(page.edges[0].node.tenantId).toBe(tenantB);
+    });
+
+    it('rejects a malformed "after" cursor', async () => {
+      const tenantId = randomUUID();
+      await makeCase(tenantId);
+
+      await expect(
+        service.listCases(tenantId, { after: 'not-a-real-cursor' }),
+      ).rejects.toThrow(/Malformed "after" cursor/);
+    });
   });
 
   it('listAuditEvents() returns only events recorded with this exact caseId as their resourceId', async () => {

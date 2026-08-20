@@ -8324,3 +8324,88 @@ Real live-server verification (not just spec-level):
 ### Next safe step
 
 Section 15.1/15.2's closable read-surface gaps are now closed. What remains is unchanged from M5-030's own framing: real external dependencies, a real business/user decision for admin RBAC, or a large net-new subsystem (documents) — none closable by extending existing code the way this slice and M5-026 through M5-030 were.
+
+## M6-002: A real, cursor-paginated `cases` GraphQL list/search query (Section 15.2/15.3)
+
+### Status
+
+Implemented and verified. `case(caseId)` was the only way to reach a `LoanCase` through GraphQL — no route, REST or GraphQL, could list or search cases at all. A console can't have a case list screen without one, so this is the concrete next step after M6-001/M5-031's own single-case read surface.
+
+### Acceptance criterion
+
+`query { cases(status: DRAFT, borrowerId: "...", first: 20, after: "...") { edges { node { ...LoanCase } cursor } pageInfo { hasNextPage endCursor } } }` — a real, keyset-paginated (`createdAt`, `id`) DESC query over the caller's own tenant, newest first, matching Section 15.3's "cursor pagination and explicit filtering" API standard (until now only ever honored on the REST side, and only implicitly). `status`/`borrowerId` are both optional, independent, exact-match filters. `first` defaults to 20 and is clamped to [1, 100] — an unbounded list query over a tenant's entire case history was never a real option once case volume grows. A cursor is opaque (base64 of `createdAt|id`) and a malformed one fails with a clean `BadRequestException`/`BAD_REQUEST` GraphQL error, not a raw 500. Proven end to end against a real running app: created 5 real cases via the REST API, paged through them 2-at-a-time via 3 real GraphQL round trips with no gaps or duplicates, confirmed newest-first ordering, confirmed `status`/`borrowerId` filtering each return exactly the matching case, and confirmed a garbage `after` value produces a clean GraphQL error instead of a crash.
+
+### Implementation
+
+- `src/cases/case-cursor.ts` (new, +`.spec.ts`) — `encodeCaseCursor()`/`decodeCaseCursor()`: base64 of `${createdAt.toISOString()}|${id}`, matching the query's own `(createdAt, id)` DESC ordering so the `id` half breaks ties between same-millisecond timestamps. `decodeCaseCursor()` throws `BadRequestException` on anything that doesn't parse to a real id and a real date, rather than letting a malformed client-supplied string reach the query as `NaN`/`Invalid Date`.
+- `src/cases/case-connection.model.ts` (new) — `CaseEdge`/`CasePageInfo`/`CaseConnection`: a concrete, non-generic connection type (the only paginated query in this codebase so far, so a shared `Connection<T>` would be abstraction for a second use case that doesn't exist yet).
+- `src/cases/case-query.service.ts` — new `listCases(tenantId, {status?, borrowerId?, first?, after?})`: a `createQueryBuilder` keyset query (not `OFFSET`, which degrades as the offset grows and isn't stable under concurrent inserts), fetching `pageSize + 1` rows to derive `hasNextPage` without a separate `COUNT` query.
+- `src/cases/cases.resolver.ts` — new top-level `@Query(() => CaseConnection, { name: 'cases' })`, gated by the same `TenantAuthGuard` every other query/resolver already uses.
+
+### Affected files
+
+- `src/cases/case-cursor.ts` (+`.spec.ts`, new)
+- `src/cases/case-connection.model.ts` (new)
+- `src/cases/case-query.service.ts` (+`.spec.ts`)
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+- `README.md`
+
+### Decisions and alternatives
+
+- **Cursor (keyset) pagination, not `OFFSET`/`LIMIT`** — the charter's own Section 15.3 API standard names cursor pagination explicitly, and it's the objectively better mechanism here regardless: `OFFSET` re-scans and discards N rows on every page (real cost that grows with page depth) and silently skips or duplicates rows when the underlying set changes between page fetches (a case created between two page loads shifts every later `OFFSET`). Keyset pagination on `(createdAt, id)` has neither problem.
+- **A concrete `CaseConnection` type, not a generic `Connection<T>`.** `@nestjs/graphql`'s code-first generics for Relay-style connections need real extra machinery (`ObjectType({isAbstract: true})`, a factory function per node type) that's worth it once there's a second paginated list — building it now for a single caller would be premature abstraction this codebase's own conventions explicitly avoid.
+- **`first`/`after` only — no `last`/`before` backward pagination.** No real client need for it yet (a console's case list scrolls forward), and backward keyset pagination needs its own separate query shape (ordering flips, comparison operators flip) — real, non-trivial added surface for a capability nothing asks for.
+- **No `totalCount` on the connection.** A console list view can show "N results" without it (a "Load more" affordance only needs `hasNextPage`), and an exact count would mean a second, separate `COUNT` query on every single page fetch — real added cost for a value not established as needed yet, matching this slice's own `first + 1` trick (get `hasNextPage` from the same query, not a second one).
+- **`status`/`borrowerId` exact-match filters only — no free-text search.** Nothing in this codebase's read surfaces does free-text search anywhere yet (data-disposition tasks, provider operations, audit events all filter by exact case scope only); building a search index or `ILIKE` pattern matching for a capability not yet requested would be scope invention.
+
+### Errors and fixes
+
+None — built, booted, and live-verified clean on the first full pass. (The `UndefinedTypeError`-class nullable-field bug hit three separate times across M6-001/M5-031 didn't recur here: `CasePageInfo.endCursor` used the by-then-established explicit `@Field(() => String, { nullable: true })` form from the start.)
+
+### Verification
+
+```text
+npm run build / npm run lint — clean
+
+Real running app (Postgres 5553): boots clean, GraphQL schema generates
+  with no UndefinedTypeError — confirms the CaseConnection/CaseEdge/
+  CasePageInfo types are all well-formed.
+
+Real live-server verification (not spec-level):
+  created 5 real cases via POST /v1/loan-cases; queried
+  cases(first: 2) three times, following pageInfo.endCursor each time —
+  10 total edges returned across 3 pages with zero gaps or duplicates,
+  correct newest-first order (borrower-5, 4, 3, 2, 1), hasNextPage
+  correctly false only on the final (1-item) page; cases(borrowerId:
+  "borrower-3") and cases(status: DRAFT) each returned exactly the
+  matching case(s); cases(after: "not-a-real-cursor") returned a clean
+  BAD_REQUEST GraphQL error, not a 500
+
+Fresh scratch stack (Postgres 5553, Temporal 7251):
+  npx jest src/cases/ — 5 suites / 59 passed (case-cursor.spec.ts: 5 pure
+    tests; case-query.service.spec.ts: +6 new listCases() tests — newest-
+    first ordering, cross-page pagination with no gaps/dupes, status
+    filter, borrowerId filter, tenant isolation, malformed-cursor
+    rejection; cases.resolver.spec.ts: +2 new mocked tests)
+  npm test -- --runInBand — 85 suites / 658 tests passed (4 suites / 17
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (no REST
+    surface touched)
+  npm run generate:openapi — zero diff (no REST route added or changed)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Tenant-scoped through the caller's own authenticated identity (`AuthTenantId()`), never a client-suppliable tenantId, matching every other query/resolver in this codebase.
+- `first` is clamped to [1, 100] regardless of what a caller requests — a real, enforced bound against an unbounded-result-set query, not just a documented convention.
+- No behavioral change to any existing route, resolver, or REST response — purely additive.
+
+### Known gaps
+
+- **No `last`/`before` backward pagination, no `totalCount`, no free-text search** — see Decisions; none are closable-by-extension gaps, each is a real, separate capability nothing has asked for yet.
+- **No console/React frontend consumes this yet** — M6's own larger scope, unchanged.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+The GraphQL read layer now supports both single-case lookup and tenant-wide list/search — the two query shapes a real console needs before it can show anything. The remaining M6 gap is the mutation half (review/consent/escalate actions are REST-only; GraphQL has no mutations at all yet) and the actual React console itself, which is the larger, separately-scoped M6 UI milestone.

@@ -6,14 +6,16 @@ import {
   Parent,
   Args,
   ID,
+  Int,
 } from '@nestjs/graphql';
-import { LoanCase } from '../database/entities/loan-case.entity';
+import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { EvidenceFact } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { AuditEvent } from '../database/entities/audit-event.entity';
+import { CaseConnection } from './case-connection.model';
 import { CasesService } from './cases.service';
 import { CaseQueryService } from './case-query.service';
 import { TimelineEntry } from './case-timeline.service';
@@ -52,6 +54,27 @@ export class CasesResolver {
     @Args('caseId', { type: () => ID }) caseId: string,
   ): Promise<LoanCase> {
     return this.casesService.getCase(tenantId, caseId);
+  }
+
+  @Query(() => CaseConnection, {
+    name: 'cases',
+    description:
+      "The tenant's own cases, cursor-paginated newest first, with optional status/borrowerId filtering (Section 15.2/15.3).",
+  })
+  async cases(
+    @AuthTenantId() tenantId: string,
+    @Args('status', { type: () => CaseStatus, nullable: true })
+    status?: CaseStatus,
+    @Args('borrowerId', { nullable: true }) borrowerId?: string,
+    @Args('first', { type: () => Int, nullable: true }) first?: number,
+    @Args('after', { nullable: true }) after?: string,
+  ): Promise<CaseConnection> {
+    return this.caseQueryService.listCases(tenantId, {
+      status,
+      borrowerId,
+      first,
+      after,
+    });
   }
 
   @ResolveField(() => [EvidenceFact], {
