@@ -1,3 +1,8 @@
+import {
+  assertNotStructurallyExcluded,
+  StructurallyExcludedCommandClass,
+} from '../common/structural-exclusions';
+
 /**
  * Section 9.4's registered-tools table columns, typed. Only a small,
  * genuinely-implemented subset of that table exists yet (see
@@ -35,6 +40,8 @@ export interface AgentTool<TArgs, TResult> {
   sideEffect: ToolSideEffect;
   /** Section 9.4's "Approval boundary" column, free text for now — no formal approval-policy engine exists yet. */
   approvalBoundary: string;
+  /** Section 16.4's permanent capability denylist (`structural-exclusions.ts`) — absent on every real tool today; exists only so a future tool declaring one gets rejected at `buildToolRegistry()` time, not discovered in production. */
+  structurallyExcludedCommandClass?: StructurallyExcludedCommandClass;
   execute(context: AgentToolContext, args: TArgs): Promise<TResult>;
 }
 
@@ -83,6 +90,11 @@ export function buildToolRegistry(tools: AnyAgentTool[]): AgentToolRegistry {
     if (registry.has(tool.name)) {
       throw new Error(`duplicate tool registration: "${tool.name}"`);
     }
+    assertNotStructurallyExcluded({
+      kind: 'agent_tool',
+      identifier: tool.name,
+      declaredCommandClass: tool.structurallyExcludedCommandClass,
+    });
     registry.set(tool.name, tool);
   }
   return registry;

@@ -81,6 +81,16 @@ import { CommunicationMessage } from '../src/database/entities/communication-mes
  *   ReAct-style "model decides what to call" loop exists) — there is no
  *   caller-suppliable tool-argument surface at all today, so this is
  *   structurally closed rather than defended by a dedicated test.
+ * - provider certification/promotion misread as authority to move funds
+ *   or perform another structurally excluded action (Section 16.4's own
+ *   named mitigation: "Enforce a permanent capability denylist across
+ *   registries, manifests, routers, and Agent tools") — COVERED:
+ *   `src/common/structural-exclusions.spec.ts` plus real registration-
+ *   time rejection tests in `agent-tool.types.spec.ts` and
+ *   `provider-registry.service.spec.ts` — every real tool/adapter today
+ *   declares no command class at all (structurally closed by omission),
+ *   and the denylist itself is proven to reject a synthetic tool/adapter
+ *   that does declare one of Section 7.5's excluded classes.
  * - SSRF through provider or webhook configuration — COVERED:
  *   `src/webhooks/webhook-url-guard.spec.ts` (M5-011), 42 tests.
  * - raw PII in logs, traces, model requests, or error messages — KNOWN
@@ -95,8 +105,9 @@ import { CommunicationMessage } from '../src/database/entities/communication-mes
  * - early activation, jurisdiction mismatch, unresolved policy
  *   conflict, missed source update — COVERED for policy activation:
  *   `policy-activation.service.spec.ts` (self-approval rejection, stale
- *   activation). NOT APPLICABLE for provider activation — no provider-
- *   promotion governance subsystem exists (see below).
+ *   activation). COVERED for provider activation too, as of M4-007 —
+ *   see below (this entry was NOT APPLICABLE when first written; the
+ *   provider-promotion governance subsystem now exists).
  * - missed parent-layer, new-overlay, coverage, resolver, or relevant-
  *   fact-selector invalidation — COVERED: the policy-applicability
  *   resolver's own cache-invalidation test suite (M3 era).
@@ -110,14 +121,22 @@ import { CommunicationMessage } from '../src/database/entities/communication-mes
  *   tests, and `scenario-catalog.ts`'s own
  *   `transient-provider-failure`/`terminal-provider-failure` scenarios
  *   (M5-016) proving the real retry-vs-no-retry distinction end to end.
- * - self-approval, stale activation race, artifact mismatch, cross-
- *   provider fallback reuse, duplicate provider callbacks after
- *   cancellation (Section 11.8's provider-promotion governance
- *   scenarios) — NOT APPLICABLE: no provider-promotion-manifest/
- *   certification/activation subsystem exists anywhere in this
- *   codebase (confirmed by a fresh audit before M5-017; `ProviderMode`
- *   only ever has a real `SIMULATOR` implementation). Named, not
- *   silently assumed covered.
+ * - self-approval, stale activation race (Section 11.8's provider-
+ *   promotion governance scenarios) — COVERED as of M4-007:
+ *   `provider-promotion.service.spec.ts`'s "rejects self-approval" and
+ *   "rejects a stale expected-version" tests, plus
+ *   `dispatch-provider-request.spec.ts`'s own promotion-gate suite
+ *   proving a real dispatch fails closed before activation and
+ *   succeeds after. NOT APPLICABLE, still: artifact mismatch (nothing
+ *   re-verifies a manifest's own `contentHash` against a live-computed
+ *   hash of the running adapter at dispatch time — the hash is only
+ *   ever computed once, at `propose()`), cross-provider fallback reuse
+ *   (`dispatch-provider-request.ts` resolves exactly one adapter and
+ *   never falls back to a different one — `fallbackPolicy` is declared
+ *   per-adapter but no routing code reads it), and duplicate provider
+ *   callbacks after cancellation (`cancel()` is optional and never
+ *   implemented by any real adapter — nothing to duplicate-callback
+ *   against). Each named individually, not folded into one blanket N/A.
  * - malicious file content or decompression abuse — NOT APPLICABLE: no
  *   file/document upload subsystem exists; `DocumentService` is a
  *   verification-result simulator, never handles real file bytes.

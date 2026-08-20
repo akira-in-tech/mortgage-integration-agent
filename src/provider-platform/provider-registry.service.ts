@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AnyProviderAdapter, ProviderCapability, ProviderMode } from './types';
+import { assertNotStructurallyExcluded } from '../common/structural-exclusions';
 
 function key(capability: ProviderCapability, mode: ProviderMode): string {
   return `${capability}|${mode}`;
@@ -27,6 +28,11 @@ export class ProviderRegistryService {
         `a provider adapter for capability=${adapter.capability} mode=${adapter.mode} is already registered`,
       );
     }
+    assertNotStructurallyExcluded({
+      kind: 'provider_adapter',
+      identifier: `${adapter.providerId}/${adapter.capability}/${adapter.mode}`,
+      declaredCommandClass: adapter.structurallyExcludedCommandClass,
+    });
     this.adapters.set(k, adapter);
   }
 

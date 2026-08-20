@@ -7926,3 +7926,69 @@ Manual live verification — a real API server (NODE_ENV=development):
 ### Next safe step
 
 The GraphQL query layer this slice built is real and ready to build a React screen against. Concretely: a case-detail/timeline view, real login via the OIDC/Keycloak stack M5-024 already built, is the natural next slice — the smallest real vertical slice of M6's own user-visible outcome, not the whole console at once.
+
+## M5-026: A permanent structural capability denylist (Section 2/7.5/16.4)
+
+### Status
+
+Implemented and verified. Closes a real, previously-untested Section 16.4 threat scenario: "Provider certification is misread as authority to move funds or perform another structurally excluded action" — the charter's own named mitigation is "Enforce a permanent capability denylist across registries, manifests, routers, and Agent tools" (16.4's own words), and until this slice nothing in this codebase actually enforced that; the boundary held only because no tool or adapter had ever tried to cross it, not because anything would have stopped one that did.
+
+### Acceptance criterion
+
+`assertNotStructurallyExcluded()` (`src/common/structural-exclusions.ts`) is called at both of this codebase's genuinely independent registration choke points — `buildToolRegistry()` (Agent tools) and `ProviderRegistryService.register()` (provider adapters) — and throws, permanently and unconditionally, if a tool or adapter ever declares one of Section 7.5's nine named excluded command classes (`FUNDS_MOVEMENT`, `RATE_LOCK`, `LEGAL_DISCLOSURE`, `FORMAL_DECISION`, `CLEAR_TO_CLOSE`, `SETTLEMENT`, `FUNDING`, `SERVICING_PAYMENT`, `CAPITAL_DELIVERY`). Proven with a real, synthetic test tool/adapter declaring each of the nine classes in turn (18 parameterized tests) — every one rejected; every real tool/adapter in this codebase today declares none, so registration is unaffected.
+
+### Implementation
+
+- **First, real investigation before writing anything**, to avoid the exact anti-pattern this codebase's own conventions warn against: read `LendingOperationsAgentState`'s existing budget fields (`remainingTokenBudget`/`remainingProviderCallBudget`/`remainingCostBudgetMinorUnits`) and confirmed they are correctly, honestly hardcoded to `0` with real justifying comments (`case-conditions.activities.ts`: "this graph makes no model calls," "its tools make no outbound provider calls... evidence was already fetched by earlier workflow activities," "all providers are synthetic; no real cost is ever incurred") — confirmed by reading `lending-operations-agent-runtime.ts` end to end (zero model/Ollama calls anywhere in the graph) and the graph's own topology (`StateGraph`: `verifyConsent -> checkCompleteness -> evaluatePolicy -> resolveOutcome`, a strictly linear chain, no `Send()`/parallel fan-out — no real race condition on `remainingStepBudget` exists for a ledger to guard against either). **Conclusion: M0-009's own "budget ledger" gap (token/cost/provider-call dimensions, currency normalization, unknown-cost reserve, ledger-conflict test) has no real subject matter to enforce in this codebase as built — every dimension it names is either honestly, permanently `0`, or a race that cannot occur given the graph's own linear topology.** Building a ledger for values that are always `0` would itself be the fabricated-coverage anti-pattern this codebase's own standing conventions exist to prevent — so this slice does not attempt one, and instead closes the one M0-009-adjacent gap that *does* have real substance: the structural capability denylist.
+- `src/common/structural-exclusions.ts` (new, +`.spec.ts`) — `STRUCTURALLY_EXCLUDED_COMMAND_CLASSES` (Section 7.5's own nine named classes, verbatim) and `assertNotStructurallyExcluded()`.
+- `AgentTool<TArgs, TResult>` (`agent-runtime/agent-tool.types.ts`) gains an optional `structurallyExcludedCommandClass` field; `buildToolRegistry()` calls the assertion for every tool.
+- `ProviderAdapter<TRequest, TReceipt, TFinding>` (`provider-platform/types.ts`) gains the identical optional field; `ProviderRegistryService.register()` calls the same assertion.
+- **Not re-checked at `dispatch-provider-request.ts`/`ProviderPromotionService.propose()`** — `ProviderRegistryService.resolve()` can only ever return an adapter that already passed `register()`'s own check, and adapters are re-registered fresh on every process boot (never persisted), so there is no stale-registration state for a second check to catch that the first one didn't.
+- `test/negative-authorization.e2e-spec.ts` — added this scenario to the Section 16.4 coverage index (it was missing entirely); while there, fixed two now-stale entries the same file's own comment had gotten wrong: "early activation... — NOT APPLICABLE for provider activation, no provider-promotion governance subsystem exists" and the whole "self-approval, stale activation race, artifact mismatch..." block, both written before M4-007 built the real promotion-governance chain. Corrected to COVERED (self-approval, stale-activation-race — real M4-007 tests) with the three still-genuinely-N/A sub-scenarios (artifact mismatch, cross-provider fallback reuse, duplicate callbacks after cancellation) named individually with the real reason each still doesn't apply, rather than left under one blanket stale N/A.
+
+### Affected files
+
+- `src/common/structural-exclusions.ts` (new, +`.spec.ts`)
+- `src/agent-runtime/agent-tool.types.ts` (+`.spec.ts`)
+- `src/provider-platform/types.ts`, `provider-registry.service.ts` (+`.spec.ts`)
+- `test/negative-authorization.e2e-spec.ts`
+
+### Decisions and alternatives
+
+- **Investigated and explicitly declined to build a token/cost/provider-call budget ledger** — see Implementation. Recording this as a real, evidence-based decision (not silence) matters: a future reader should not re-open this gap without first checking whether a real model call or real billed provider call has since been added to Section 9's Agent runtime loop, since that is the actual precondition that would make a ledger real rather than ceremonial.
+- **An optional field on the existing `AgentTool`/`ProviderAdapter` interfaces, not a parallel manifest/config file.** A denylist that lived in a separate config a developer could simply forget to update would be weaker than one baked into the same interface every tool/adapter must already implement to be registered at all — the same "the type system is the enforcement" reasoning `ProviderOperationDescriptor.effectClass` already established for providers.
+- **Checked at registration, not at dispatch/invocation time.** Registration is the one place every tool/adapter must pass through exactly once, at boot; checking again at every dispatch would be redundant runtime cost enforcing an invariant that registration-time already guarantees for the lifetime of the process.
+
+### Errors and fixes
+
+None — built clean, tests passed on the first full run.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+npx jest structural-exclusions agent-tool.types provider-registry.service
+  33 passed (18 of them the parameterized one-per-excluded-class tests)
+
+Fresh scratch stack (Postgres 5548, Temporal 7248, Keycloak 8092):
+  npm test -- --runInBand — 85 of 87 suites passed (2 pre-existing
+    skips), 627 passed / 13 skipped / 640 total
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged
+```
+
+### Security, privacy, cost, and compatibility
+
+- Closes a real, previously-open Section 16.4 threat scenario with a permanent, structural (not policy-configurable) control — no tenant, provider certification, or Agent configuration can ever disable or narrow it, matching Section 7.5's own "cannot expand it" language.
+- Zero behavioral change for any real tool or adapter today — every one declares no command class, so every one continues registering exactly as before.
+- No new dependencies, no runtime cost beyond one cheap Set lookup per registration (once, at boot).
+
+### Known gaps
+
+- **No enforcement at the `ProviderPromotionManifest`/`ProviderPromotionService.propose()` layer directly** — relies transitively on the registry-level gate (a manifest can only ever reference a `providerId` whose adapter already passed `register()`). Documented as a deliberate design choice, not an oversight (see Decisions), but a future reader should confirm that reasoning still holds if the promotion chain's own relationship to the registry ever changes.
+- **Budget ledger (M0-009) remains genuinely unbuilt** — investigated and explicitly declined this slice; see Implementation and Decisions for the real evidence.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Continuing the pre-M5 gap-closure pass: the provider reconciliation worker (`OUTCOME_UNKNOWN` intents have no automatic resolution path — first named M4-001, restated unchanged through M4-007) is next.

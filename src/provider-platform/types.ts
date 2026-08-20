@@ -1,3 +1,5 @@
+import { StructurallyExcludedCommandClass } from '../common/structural-exclusions';
+
 /**
  * Section 11's provider platform, honestly scoped to what this codebase
  * can back today: five real simulator adapters (income/credit/document/
@@ -136,6 +138,8 @@ export interface ProviderAdapter<TRequest, TReceipt, TFinding> {
   readonly capability: ProviderCapability;
   readonly mode: ProviderMode;
   readonly operation: ProviderOperationDescriptor;
+  /** Section 16.4's permanent capability denylist (`common/structural-exclusions.ts`) — absent on every real adapter today; exists only so a future adapter declaring one gets rejected at `ProviderRegistryService.register()` time. */
+  readonly structurallyExcludedCommandClass?: StructurallyExcludedCommandClass;
   submit(
     request: TRequest,
     intent: ProviderOperationIntent,

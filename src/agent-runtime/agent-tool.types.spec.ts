@@ -33,6 +33,16 @@ describe('buildToolRegistry', () => {
       ]),
     ).toThrow(/duplicate tool registration/);
   });
+
+  it("throws on a tool declaring a Section 16.4 structurally excluded command class — this codebase's permanent capability denylist, not just a naming convention", () => {
+    const excludedTool: AnyAgentTool = {
+      ...makeTool('synthetic_move_funds_tool', async () => 'result'),
+      structurallyExcludedCommandClass: 'FUNDS_MOVEMENT',
+    };
+    expect(() => buildToolRegistry([excludedTool])).toThrow(
+      /structurally excluded/,
+    );
+  });
 });
 
 describe('invokeTool', () => {

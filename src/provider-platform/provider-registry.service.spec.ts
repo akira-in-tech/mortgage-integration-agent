@@ -58,6 +58,22 @@ describe('ProviderRegistryService', () => {
     ).toThrow(/already registered/);
   });
 
+  it("throws when registering an adapter declaring a Section 16.4 structurally excluded command class — this codebase's permanent capability denylist", () => {
+    const registry = new ProviderRegistryService();
+    const excludedAdapter: AnyProviderAdapter = {
+      ...fakeAdapter(
+        ProviderCapability.INCOME,
+        'SIMULATOR',
+        'synthetic-test-provider',
+      ),
+      structurallyExcludedCommandClass: 'FUNDS_MOVEMENT',
+    };
+
+    expect(() => registry.register(excludedAdapter)).toThrow(
+      /structurally excluded/,
+    );
+  });
+
   it('treats the same capability under a different mode as a distinct registration', () => {
     const registry = new ProviderRegistryService();
     const simulator = fakeAdapter(
