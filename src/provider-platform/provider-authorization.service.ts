@@ -15,6 +15,8 @@ export interface IssueGrantInput {
   capability: ProviderCapability;
   purposeCode: string;
   permittedDataClasses: string[];
+  /** Section 11.5: "field-... bound" (M5-028). Optional — when unset, `dispatch-provider-request.ts` returns a provider's normalized finding unfiltered, exactly as before this field existed. When set, only these top-level keys of the finding survive `dispatchProviderRequest()`'s own post-`normalize()` filtering. */
+  permittedFields?: string[];
   /** Defaults to a short-lived grant (Section 11.5: authorization is "... and time-bound") — long enough for one Agent-run/activity attempt, not a standing credential. */
   ttlMs?: number;
   /** The case's own consent record(s) authorizing this dispatch (M5-005) — empty when the caller has none to attach (e.g. a direct `issue()` call outside `dispatchProviderRequest`), which `revalidate()` treats as "no consent constraint to check," not a failure. */
@@ -81,7 +83,7 @@ export class ProviderAuthorizationService {
             capability: input.capability as unknown as ProviderCapabilityStatus,
             purposeCode: input.purposeCode,
             permittedDataClasses: input.permittedDataClasses,
-            permittedFields: null,
+            permittedFields: input.permittedFields ?? null,
             consentRecordIds: input.consentRecordIds ?? [],
             permissiblePurposeDecisionId: null,
             expiresAt: new Date(

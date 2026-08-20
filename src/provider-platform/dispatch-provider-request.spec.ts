@@ -23,6 +23,7 @@ import { DataDispositionService } from '../data-disposition/data-disposition.ser
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import {
   dispatchProviderRequest,
+  filterToPermittedFields,
   ProviderDisabledError,
   ProviderNotActivatedError,
 } from './dispatch-provider-request';
@@ -42,6 +43,34 @@ import { IdentityVerificationAdapter } from '../integrations/identity/identity-v
 // no workflow integration to piggyback on.
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
+
+describe('filterToPermittedFields (Section 11.5, M5-028)', () => {
+  it('returns the finding unchanged when permittedFields is unset — every pre-M5-028 caller keeps its exact existing behavior', () => {
+    const finding = { monthlyIncome: 9000, employmentStatus: 'FULL_TIME' };
+    expect(filterToPermittedFields(finding, undefined)).toBe(finding);
+  });
+
+  it('restricts a plain-object finding to exactly the permitted top-level keys', () => {
+    const finding = {
+      monthlyIncome: 9000,
+      employmentStatus: 'FULL_TIME',
+      bankAccountAge: 24,
+    };
+    expect(filterToPermittedFields(finding, ['monthlyIncome'])).toEqual({
+      monthlyIncome: 9000,
+    });
+  });
+
+  it('produces an empty object when none of the permitted fields exist on the finding', () => {
+    const finding = { monthlyIncome: 9000 };
+    expect(filterToPermittedFields(finding, ['notARealField'])).toEqual({});
+  });
+
+  it('leaves a non-object finding (or null) unchanged regardless of permittedFields — nothing to key-filter', () => {
+    expect(filterToPermittedFields(42, ['x'])).toBe(42);
+    expect(filterToPermittedFields(null, ['x'])).toBeNull();
+  });
+});
 
 describeOrSkip('dispatchProviderRequest', () => {
   let dataSource: DataSource;
@@ -199,6 +228,29 @@ describeOrSkip('dispatchProviderRequest', () => {
     expect(intent.state).toBe('SUCCEEDED');
     expect(intent.providerId).toBe('asset-verification-simulator');
     expect(intent.authorizationGrantId).toBe(grants[0].id);
+  });
+
+  it('restricts a real dispatch to only the granted permittedFields end to end (Section 11.5, M5-028)', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+
+    const finding = await dispatchProviderRequest(deps(), {
+      tenantId,
+      caseId,
+      borrowerSubjectId: 'dispatch-spec-field-scoped-borrower',
+      capability: ProviderCapability.ASSET,
+      request: { borrowerId: 'dispatch-spec-field-scoped-borrower' },
+      purposeCode: 'UNDERWRITING_EVIDENCE',
+      permittedDataClasses: ['ASSET'],
+      permittedFields: ['liquidAssets'],
+    });
+
+    expect(finding).toEqual({ liquidAssets: expect.any(Number) });
+
+    const grants = await dataSource
+      .getRepository(ProviderAuthorizationGrant)
+      .find({ where: { tenantId, caseId } });
+    expect(grants[0].permittedFields).toEqual(['liquidAssets']);
   });
 
   it('dispatches a real identity-verification request the same way', async () => {

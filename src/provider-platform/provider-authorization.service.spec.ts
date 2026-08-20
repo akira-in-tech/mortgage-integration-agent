@@ -74,7 +74,7 @@ describeOrSkip('ProviderAuthorizationService', () => {
     }
   });
 
-  it('issues a grant with the honest-null fields this codebase has no backing subsystem for', async () => {
+  it('issues a grant with the honest-null fields this codebase has no backing subsystem for, and permittedFields unset when the caller does not request field-scoping', async () => {
     const grant = await service.issue(baseInput);
     grantIds.push(grant.id);
 
@@ -94,6 +94,26 @@ describeOrSkip('ProviderAuthorizationService', () => {
     expect(new Date(grant.expiresAt).getTime()).toBeGreaterThan(
       new Date(grant.issuedAt).getTime(),
     );
+  });
+
+  it('issues and revalidates a grant with real permittedFields (Section 11.5, M5-028) when the caller requests field-scoping', async () => {
+    const grant = await service.issue({
+      ...baseInput,
+      permittedFields: ['monthlyIncome'],
+    });
+    grantIds.push(grant.id);
+    expect(grant.permittedFields).toEqual(['monthlyIncome']);
+
+    const result = await service.revalidate(grant.id, {
+      tenantId: baseInput.tenantId,
+      caseId: baseInput.caseId,
+      providerId: baseInput.providerId,
+      capability: ProviderCapability.INCOME,
+    });
+    expect(result.valid).toBe(true);
+    expect(result.valid && result.grant.permittedFields).toEqual([
+      'monthlyIncome',
+    ]);
   });
 
   it('revalidate() succeeds for a fresh grant whose expected fields all match', async () => {

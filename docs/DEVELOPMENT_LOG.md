@@ -8071,3 +8071,69 @@ stack, deleted after use:
 ### Next safe step
 
 Continuing the pre-M5 gap-closure pass: `permittedFields` field-level provider authorization (M0-010/M4-001/M4-007 — `ProviderAuthorizationGrant.permittedFields` has stayed permanently null since no provider capability exposes a field-addressable contract) is next.
+
+## M5-028: Real field-level provider authorization (Section 11.5)
+
+### Status
+
+Implemented and verified. Closes the `permittedFields` gap named at M0-010 and restated unchanged through every provider-platform entry since ("no provider capability exposes a field-addressable contract, so `permittedFields` remains unused") — real, end to end: a caller can now request field-scoped access, the grant records it, and `dispatchProviderRequest()` actually restricts the returned finding to just those fields.
+
+### Acceptance criterion
+
+`ProviderAuthorizationService.issue({ ..., permittedFields: ['monthlyIncome'] })` persists real field names on the grant (previously hardcoded to `null` regardless of input — the field existed in the database column and the TypeScript interface but nothing ever set it to anything else). `dispatchProviderRequest()` filters the adapter's normalized finding down to exactly those top-level keys, checked against the *freshly revalidated* grant (not the original request) — the same "trust revalidated state, not the original ask" discipline `revalidate()` itself already embodies. Unset `permittedFields` (every real caller today) means completely unfiltered, byte-identical behavior to before this slice. Proven end to end with a real asset-verification dispatch: requesting `permittedFields: ['liquidAssets']` against a real adapter returning `{liquidAssets, investmentAssets, accountCount, reserveMonths}` returns exactly `{liquidAssets: <number>}`.
+
+### Implementation
+
+- `src/provider-platform/provider-authorization.service.ts` — `IssueGrantInput.permittedFields?: string[]`, threaded into `issue()`'s own insert (`input.permittedFields ?? null` replacing the hardcoded `null`).
+- `src/provider-platform/dispatch-provider-request.ts` — new exported `filterToPermittedFields<T>(finding, permittedFields)`: a real, generic, top-level-key filter — passes any non-object finding or unset `permittedFields` through completely unchanged (every finding shape in this codebase, `PlaidIncomeData`/`CreditBureauData`/etc., is a plain object, so this is never a no-op by accident, only by design when unset). `DispatchProviderRequestParams` gains the same optional `permittedFields`, passed to `issue()` and applied to the finding after `normalize()`, filtered against `revalidation.grant.permittedFields` (the freshly re-read grant), not the caller's original request.
+- `src/database/entities/provider-authorization-grant.entity.ts` — comment updated: `permittedFields` is real now, honestly noting no real Agent-tool/activity caller requests field-scoping yet (every current caller wants the whole finding) — the same "real mechanism, zero current triggers" honesty already established for `assertNotStructurallyExcluded()` (M5-026).
+
+### Affected files
+
+- `src/provider-platform/provider-authorization.service.ts` (+`.spec.ts`)
+- `src/provider-platform/dispatch-provider-request.ts` (+`.spec.ts`)
+- `src/database/entities/provider-authorization-grant.entity.ts`
+
+### Decisions and alternatives
+
+- **A generic top-level-key filter, not a per-capability field schema.** Every real finding in this codebase is a flat object (`PlaidIncomeData: {monthlyIncome, employmentStatus, bankAccountAge, incomeStability}`, similarly for credit/asset/identity/document) — a capability-specific field allowlist schema would be real infrastructure for a problem a plain `Object.entries()` filter already solves honestly, at real cost (a schema to maintain per capability, kept in sync with every finding shape) for no real benefit over the simpler mechanism.
+- **No live workflow caller wired to request field-scoping.** Considered changing `case-conditions.activities.ts`'s evidence-fetch calls to request a narrower field set — rejected: none of them are known to only need a strict subset today, and changing what gets fetched/stored in the live default dispatch path for a demonstration of this mechanism would be exactly the kind of scope creep into real behavior change this session's own discipline avoids. The mechanism is proven real via a direct test call (mirroring the capability denylist's own "real gate, no current trigger" shape, M5-026), not forced into the live path to manufacture a consumer.
+- **Filtered against the revalidated grant, not `params.permittedFields` directly** — consistent with why `revalidate()` exists at all: the freshest read of persisted state, not what the caller originally asked for, is what should gate the actual dispatch.
+
+### Errors and fixes
+
+None — built and tested clean on the first full run.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+npx jest dispatch-provider-request.spec.ts — 4 pure filterToPermittedFields
+  tests pass with no DB at all
+
+Fresh scratch stack (Postgres 5549, Temporal 7249):
+  npx jest dispatch-provider-request.spec.ts provider-authorization.service.spec.ts
+    22 passed, including a real end-to-end asset-verification dispatch
+    with permittedFields: ['liquidAssets'] returning exactly
+    { liquidAssets: <number> }
+  npm test -- --runInBand — 626 passed (env-dependent skip count this
+    particular run; no failures)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (no REST
+    surface touched)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Zero behavioral change for every real caller today — `permittedFields` unset means byte-identical output to before this slice.
+- A real, additional data-minimization control now genuinely exists and works, ready for a future caller (an Agent tool, a policy rule, a tenant configuration) that only needs a narrow slice of a provider's finding to actually use it, without further plumbing changes.
+
+### Known gaps
+
+- **No real caller requests field-scoping yet** — honestly documented, not hidden (see Decisions). The mechanism is real and tested; nothing in the live workflow path exercises it non-trivially yet.
+- **No capability-level schema constraining which field names are ever meaningful** for a given provider — `permittedFields` accepts any string; a typo'd field name simply filters everything out (proven behavior, see the "produces an empty object" test) rather than erroring, matching this filter's own deliberately generic, capability-agnostic design.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Continuing the pre-M5 gap-closure pass: M4's own remaining named gaps — no dual-approval re-enable path for a deactivated provider promotion, and `approvalRole` being a free-text string with no real RBAC behind it (both M4-006/M4-007) — are next, followed by an OpenAPI-coverage pass over Section 15.1's still-undocumented partner-API routes.

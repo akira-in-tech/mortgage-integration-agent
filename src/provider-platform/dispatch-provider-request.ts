@@ -76,6 +76,41 @@ export interface DispatchProviderRequestParams {
   request: Record<string, unknown>;
   purposeCode: string;
   permittedDataClasses: string[];
+  /** Section 11.5's field-bound authorization (M5-028) — see `ProviderAuthorizationGrant`'s own entity comment. Unset means every current caller's existing behavior: the normalized finding returns unfiltered. */
+  permittedFields?: string[];
+}
+
+/**
+ * Section 11.5's field-bound authorization (M5-028), applied after
+ * `normalize()`: restricts a normalized finding to exactly the granted
+ * top-level keys. Only ever filters a plain object finding — every real
+ * finding shape in this codebase (`PlaidIncomeData`, `CreditBureauData`,
+ * etc.) is one, but a non-object finding (or `permittedFields` left
+ * unset) passes through completely unchanged, preserving every existing
+ * caller's behavior exactly.
+ */
+export function filterToPermittedFields<T>(
+  finding: T,
+  permittedFields: string[] | undefined,
+): T {
+  if (
+    !permittedFields ||
+    finding === null ||
+    typeof finding !== 'object' ||
+    Array.isArray(finding)
+  ) {
+    return finding;
+  }
+  const allowed = new Set(permittedFields);
+  const filtered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(
+    finding as Record<string, unknown>,
+  )) {
+    if (allowed.has(key)) {
+      filtered[key] = value;
+    }
+  }
+  return filtered as T;
 }
 
 /**
@@ -149,6 +184,7 @@ export async function dispatchProviderRequest<TFinding>(
     capability: params.capability,
     purposeCode: params.purposeCode,
     permittedDataClasses: params.permittedDataClasses,
+    permittedFields: params.permittedFields,
     consentRecordIds: consentRecordId ? [consentRecordId] : [],
   });
 
@@ -182,10 +218,16 @@ export async function dispatchProviderRequest<TFinding>(
       { tenantId: params.tenantId, caseId: params.caseId },
     )) as SynchronousProviderReceipt<unknown>;
     await deps.intentService.markSucceeded(intent.tenantId, intent.id);
-    return adapter.normalize(receipt.payload, {
+    const finding = adapter.normalize(receipt.payload, {
       tenantId: params.tenantId,
       caseId: params.caseId,
     }) as TFinding;
+    // Section 11.5's field-bound authorization (M5-028) — filtered
+    // against the freshly revalidated grant's own permittedFields, not
+    // params.permittedFields directly, the same "trust the revalidated
+    // state, not the original request" discipline revalidate() itself
+    // exists for.
+    return filterToPermittedFields(finding, revalidation.grant.permittedFields);
   } catch (error) {
     if (error instanceof SyntheticProviderRejectionError) {
       await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
