@@ -8228,3 +8228,99 @@ Unchanged by this slice (a documentation-accuracy correction, not new work) — 
 ### Next safe step
 
 This closes the pre-M5 gap-closure pass's own reasonably-scoped items (M5-026 through M5-030). What remains, per the earlier audit: gaps needing real external dependencies (official federal/state policy-source connector, downstream decision-status ingestion) or a real business/user decision (approval-role RBAC's admin surface, the rest of Section 15.1's partner API) or a large net-new subsystem (document OCR/inspection, calculation tools, most of Section 9.4's remaining Agent tools) — none closable by extending existing code the way this whole pass's items were.
+
+## M5-031: Real REST + GraphQL read surfaces for consents, policy binding, provider operations, and audit events (Section 15.1/15.2)
+
+### Status
+
+Implemented and verified. Closes the closable part of M5-030's own "consents-listing, policy snapshots, provider operations, audit export" gap: a real REST `GET .../consents` route, and real GraphQL `policyBinding`/`providerOperations`/`auditEvents` fields (plus a nested `policyBinding.policySnapshot`) on the `case` query built at M6-001. `documents` (Section 15.1's own list) and approval-role RBAC are explicitly not attempted here — see Decisions.
+
+### Acceptance criterion
+
+`GET /v1/loan-cases/:caseId/consents` returns a tenant-scoped case's own full `ConsentRecord` history, newest first, 404 for a case the caller's tenant doesn't own — the same ownership check every other `CasesController` route already uses (`getCase()` first). The GraphQL `case` query gains four ways to read what was previously only visible via direct database access or was entirely unexposed: `policyBinding` (the currently active, non-invalidated `CasePolicyBinding`, nullable), `policyBinding.policySnapshot` (the immutable resolved-policy snapshot it points to), `providerOperations` (the case's own `ProviderOperationIntent` history), and `auditEvents` (append-only `AuditEvent` rows recorded with this case as `resourceId`). All four are lazy `@ResolveField()`s, tenant-scoped through the caller's own authenticated tenantId exactly like every existing resolver field — never a client-suppliable argument. Proven end to end against a real running app: a real consent `REVOKE` action produces a real `CONSENT_REVOKE` audit event, and that event is then visible through the new `auditEvents` GraphQL field — the full real stack, not just the query shape.
+
+### Implementation
+
+- `src/consent/consent.service.ts` — new `listForCase(tenantId, caseId)`, same `runInTenantContext` pattern as `getStatus()`, ordered `grantedAt: 'DESC'`.
+- `src/cases/cases.service.ts` — new `listConsents(tenantId, caseId)`: calls `getCase()` first (ownership check), then delegates.
+- `src/cases/cases.controller.ts` — new `GET :caseId/consents` route, placed directly after the existing `POST :caseId/consents` route.
+- `src/database/entities/case-policy-snapshot.entity.ts` — `@ObjectType()`, `registerEnumType(PolicyResolutionStatus, ...)`, `@Field()` on every column except `tenantId` (deliberately not exposed, matching every other dual-decorated entity's own convention). This table's first GraphQL exposure of any kind — no REST route to dual-decorate against.
+- `src/database/entities/case-policy-binding.entity.ts` — `@ObjectType()`, `@Field()` on every column; `invalidatedAt` needed the explicit `@Field(() => Date, { nullable: true })` form (see Errors and fixes).
+- `src/database/entities/provider-operation-intent.entity.ts` — `@ObjectType()`, `registerEnumType()` for both `ProviderCapabilityStatus` and `ProviderOperationIntentStatus`, `@Field()` on every column; `resolvedBy`/`resolutionNote` needed the explicit nullable-`String` form.
+- `src/database/entities/audit-event.entity.ts` — `@ObjectType()`, `@Field()` on every column; `resourceId`/`reason` needed the explicit nullable-`String` form; `metadata` uses `GraphQLJSON`.
+- `src/cases/case-query.service.ts` — four new methods: `getActivePolicyBinding()` (filters `invalidatedAt: IsNull()`), `getPolicySnapshot(tenantId, snapshotId)`, `listProviderOperationIntents()` (ordered `createdAt: 'ASC'`), `listAuditEvents()` (filtered by `resourceId: caseId` — the only join key `AuditEvent` actually has back to a case, since it's a generic cross-resource table, not case-specific).
+- `src/cases/cases.resolver.ts` — three new `@ResolveField()`s on `CasesResolver` (`policyBinding`, `providerOperations`, `auditEvents`), and a new exported `CasePolicyBindingResolver` class (`@Resolver(() => CasePolicyBinding)`) for the nested `policySnapshot` field — a separate resolver class since the parent type differs from `LoanCase`, matching this codebase's own established pattern for cross-type nested resolution.
+- `src/cases/cases.module.ts` — registers `CasePolicyBindingResolver`; adds `CasePolicyBinding`/`CasePolicySnapshot`/`ProviderOperationIntent`/`AuditEvent` to `TypeOrmModule.forFeature()`.
+
+### Affected files
+
+- `src/consent/consent.service.ts`
+- `src/cases/cases.service.ts`
+- `src/cases/cases.controller.ts`
+- `src/database/entities/case-policy-snapshot.entity.ts`
+- `src/database/entities/case-policy-binding.entity.ts`
+- `src/database/entities/provider-operation-intent.entity.ts`
+- `src/database/entities/audit-event.entity.ts`
+- `src/cases/case-query.service.ts` (+`.spec.ts`)
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+- `src/cases/cases.module.ts`
+- `openapi/openapi.json` (regenerated)
+- `README.md`
+
+### Decisions and alternatives
+
+- **`documents` and approval-role RBAC stay explicitly out of scope**, reaffirming M5-029/M5-030's own reasoning rather than re-litigating it: `documents` has no backing table or subsystem at all in this codebase (Section 14.1's own `documents` entity was never built — `DocumentService` only ever verifies a caller-declared package shape, it doesn't store or list real document records), and building one now would be the same "large net-new subsystem" category as document OCR/inspection, not a read-surface gap on something that already exists. Approval-role RBAC still needs new admin infrastructure this codebase's two-role model has no room for (M5-029's own finding, unchanged).
+- **`listAuditEvents()` filters by `resourceId`, not a dedicated case-audit join table.** `AuditEvent` is Section 14.1's generic, cross-resource append-only log (`resourceType`/`resourceId` free-text pair) — the same shape used for provider-promotion, webhook, and consent events alike. Filtering by `resourceId: caseId` is honest about what the table actually guarantees: it returns exactly the events recorded *against this case specifically*, not every event that happens to reference the case indirectly (e.g. a `resourceType: 'provider_authorization_grant'` row for a grant this case's dispatch used). No broader join was built, since no code in this codebase currently records audit events with any indirect linkage back to a caseId that would make one meaningful.
+- **`CasePolicySnapshot` gets GraphQL exposure with no REST precedent to dual-decorate against** — the first entity this session added `@ObjectType()` to without an existing REST route already returning it. Followed the same field-selection discipline anyway (`tenantId` omitted, matching every other entity).
+- **A separate `CasePolicyBindingResolver` class for the nested `policySnapshot` field**, not a method on `CasesResolver` — `@ResolveField()` binds to the class's own `@Resolver(() => X)` parent type, and the parent here is `CasePolicyBinding`, not `LoanCase`. This mirrors the existing lazy-resolution discipline: a client reading `case { policyBinding { boundAt } }` never triggers a `policySnapshot` read unless it's actually asked for.
+
+### Errors and fixes
+
+- **`UndefinedTypeError` for nullable fields, same class of bug as M6-001's `EvidenceFact.validThrough`, hit twice more in this slice**: `CasePolicyBinding.invalidatedAt` (a nullable `Date`) and `ProviderOperationIntent.resolvedBy`/`resolutionNote` plus `AuditEvent.resourceId`/`reason` (nullable `string`s) all threw `Make sure you are providing an explicit type for the "<field>" of the "<Class>" class` at real app boot when declared as plain `@Field({ nullable: true })`. Only surfaced by actually booting the real app, not by `tsc`/lint. Fixed with the explicit form (`@Field(() => Date, { nullable: true })` / `@Field(() => String, { nullable: true })`) established at M6-001 — now confirmed to apply to nullable `string` fields as well as nullable `Date` fields, not just the one case originally found.
+- **`QueryFailedError: audit_events is append-only: DELETE is not permitted`** from `case-query.service.spec.ts`'s own `afterAll` cleanup, once `AuditEvent` fixture rows were added for the new `listAuditEvents()` test. Fixed by removing the delete call for that one entity and adding an explanatory comment, matching `audit-event.service.spec.ts`'s own already-established precedent verbatim in spirit (grepped and confirmed before fixing).
+
+### Verification
+
+```text
+npm run build / npm run lint — clean
+
+Fresh scratch stack (Postgres 5551, Temporal 7249):
+  npx jest cases.resolver.spec.ts case-query.service.spec.ts — 2 suites,
+    15 passed (8 resolver + 7 query-service, incl. 4 new query-service
+    tests for getActivePolicyBinding/getPolicySnapshot/
+    listProviderOperationIntents/listAuditEvents, and 4 new resolver
+    tests for policyBinding/providerOperations/auditEvents/policySnapshot)
+  npm test -- --runInBand — 83 suites / 635 tests passed (5 suites / 27
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (no existing
+    REST route's behavior changed)
+  npm run generate:openapi — real regeneration against the running app;
+    diff against the committed artifact is exactly the new listConsents
+    operation (44 lines added, nothing else touched)
+
+Real live-server verification (not just spec-level):
+  a real POST .../consents GRANT then REVOKE, followed by a real
+  GET .../consents confirming both rows in newest-first order; a real
+  GraphQL `case { policyBinding { policySnapshot { resolutionStatus } }
+  providerOperations { providerId state } auditEvents { action } }`
+  query against a real case with a real active policy binding and a
+  real provider dispatch; the REVOKE's own real CONSENT_REVOKE audit
+  event independently confirmed visible through the new auditEvents
+  GraphQL field
+```
+
+### Security, privacy, cost, and compatibility
+
+- Every new read is tenant-scoped through the caller's own authenticated identity (`AuthTenantId()`/`getCase()`'s own ownership check), never a client-suppliable tenantId — the same guarantee every existing route/resolver in this codebase already provides.
+- `CasePolicySnapshot`/`CasePolicyBinding`/`ProviderOperationIntent`/`AuditEvent` all omit `tenantId` from their GraphQL surface, consistent with every other dual-decorated entity.
+- No behavioral change to any existing route or resolver — purely additive.
+
+### Known gaps
+
+- **`documents` and approval-role RBAC remain genuinely open**, unchanged from M5-029/M5-030's own findings — see Decisions.
+- **No audit-event export/pagination** — `listAuditEvents()` returns a case's full history unpaginated, matching every other `list*` method in `CaseQueryService` today (none of them paginate yet); acceptable at current real data volumes, not yet a real gap until a case accumulates enough audit events for it to matter.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Section 15.1/15.2's closable read-surface gaps are now closed. What remains is unchanged from M5-030's own framing: real external dependencies, a real business/user decision for admin RBAC, or a large net-new subsystem (documents) — none closable by extending existing code the way this slice and M5-026 through M5-030 were.

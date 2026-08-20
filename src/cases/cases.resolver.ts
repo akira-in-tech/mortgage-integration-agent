@@ -10,6 +10,10 @@ import {
 import { LoanCase } from '../database/entities/loan-case.entity';
 import { EvidenceFact } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
+import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
+import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { CasesService } from './cases.service';
 import { CaseQueryService } from './case-query.service';
 import { TimelineEntry } from './case-timeline.service';
@@ -73,5 +77,70 @@ export class CasesResolver {
   })
   async timeline(@Parent() loanCase: LoanCase): Promise<TimelineEntry[]> {
     return this.casesService.getTimeline(loanCase.tenantId, loanCase.id);
+  }
+
+  @ResolveField(() => CasePolicyBinding, {
+    nullable: true,
+    description:
+      "The case's currently active policy binding (Section 10.4), if any.",
+  })
+  async policyBinding(
+    @Parent() loanCase: LoanCase,
+  ): Promise<CasePolicyBinding | null> {
+    return this.caseQueryService.getActivePolicyBinding(
+      loanCase.tenantId,
+      loanCase.id,
+    );
+  }
+
+  @ResolveField(() => [ProviderOperationIntent], {
+    description:
+      "The case's own provider-operation-intent history (Section 11.5).",
+  })
+  async providerOperations(
+    @Parent() loanCase: LoanCase,
+  ): Promise<ProviderOperationIntent[]> {
+    return this.caseQueryService.listProviderOperationIntents(
+      loanCase.tenantId,
+      loanCase.id,
+    );
+  }
+
+  @ResolveField(() => [AuditEvent], {
+    description:
+      "The case's own append-only audit-event history (Section 14.1, M5-019).",
+  })
+  async auditEvents(@Parent() loanCase: LoanCase): Promise<AuditEvent[]> {
+    return this.caseQueryService.listAuditEvents(
+      loanCase.tenantId,
+      loanCase.id,
+    );
+  }
+}
+
+/**
+ * `CasePolicyBinding.policySnapshot` — a lazy nested read, not an eager
+ * join, matching every field resolver above's own reasoning. A separate
+ * `@Resolver()` class since the parent type differs from `CasesResolver`'s
+ * own `LoanCase`; `TenantAuthGuard` still applies (this is only ever
+ * reached as a nested field under an already-guarded `case` query).
+ */
+@Resolver(() => CasePolicyBinding)
+@UseGuards(TenantAuthGuard)
+export class CasePolicyBindingResolver {
+  constructor(private readonly caseQueryService: CaseQueryService) {}
+
+  @ResolveField(() => CasePolicySnapshot, {
+    nullable: true,
+    description:
+      'The immutable resolved-policy snapshot this binding points to.',
+  })
+  async policySnapshot(
+    @Parent() binding: CasePolicyBinding,
+  ): Promise<CasePolicySnapshot | null> {
+    return this.caseQueryService.getPolicySnapshot(
+      binding.tenantId,
+      binding.policySnapshotId,
+    );
   }
 }

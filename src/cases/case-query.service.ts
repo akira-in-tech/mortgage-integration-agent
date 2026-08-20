@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import { EvidenceFact } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
+import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
+import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { runInTenantContext } from '../database/tenant-context';
 
 /**
@@ -40,6 +44,55 @@ export class CaseQueryService {
     return runInTenantContext(this.dataSource, tenantId, (manager) =>
       manager.getRepository(LoanCondition).find({
         where: { tenantId, caseId },
+        order: { createdAt: 'ASC' },
+      }),
+    );
+  }
+
+  /** The case's currently active policy binding (Section 10.4), if any — a plain read, no re-evaluation triggered (unlike `PolicyEvaluationService.evaluate()`). */
+  async getActivePolicyBinding(
+    tenantId: string,
+    caseId: string,
+  ): Promise<CasePolicyBinding | null> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(CasePolicyBinding).findOne({
+        where: { tenantId, caseId, invalidatedAt: IsNull() },
+      }),
+    );
+  }
+
+  /** Backs `CasePolicyBinding.policySnapshot`'s own `@ResolveField()` — a lazy, nested read, not an eager join. */
+  async getPolicySnapshot(
+    tenantId: string,
+    snapshotId: string,
+  ): Promise<CasePolicySnapshot | null> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager
+        .getRepository(CasePolicySnapshot)
+        .findOneBy({ tenantId, id: snapshotId }),
+    );
+  }
+
+  async listProviderOperationIntents(
+    tenantId: string,
+    caseId: string,
+  ): Promise<ProviderOperationIntent[]> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(ProviderOperationIntent).find({
+        where: { tenantId, caseId },
+        order: { createdAt: 'ASC' },
+      }),
+    );
+  }
+
+  /** `AuditEvent.resourceId` isn't always a caseId (an RBAC_REJECTED event's own resourceId is a route name) — this only ever returns events actually recorded against this exact case (Section 14.1's own append-only history, real per M5-019). */
+  async listAuditEvents(
+    tenantId: string,
+    caseId: string,
+  ): Promise<AuditEvent[]> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(AuditEvent).find({
+        where: { tenantId, resourceId: caseId },
         order: { createdAt: 'ASC' },
       }),
     );

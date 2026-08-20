@@ -10,6 +10,12 @@ import {
   EvidenceSourceKind,
 } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
+import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
+import { PolicyResolutionStatus } from '../database/enums/policy-resolution-status.enum';
+import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import { ProviderCapabilityStatus } from '../database/enums/provider-platform.enum';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseQueryService } from './case-query.service';
 import { runInTenantContext } from '../database/tenant-context';
@@ -33,7 +39,17 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [Tenant, Jurisdiction, LoanCase, EvidenceFact, LoanCondition],
+      entities: [
+        Tenant,
+        Jurisdiction,
+        LoanCase,
+        EvidenceFact,
+        LoanCondition,
+        CasePolicyBinding,
+        CasePolicySnapshot,
+        ProviderOperationIntent,
+        AuditEvent,
+      ],
     });
     await dataSource.initialize();
     service = new CaseQueryService(dataSource);
@@ -60,6 +76,31 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
           .delete()
           .where('"tenantId" IN (:...ids)', { ids: tenantIds })
           .execute();
+        await dataSource
+          .getRepository(CasePolicyBinding)
+          .createQueryBuilder()
+          .delete()
+          .where('"tenantId" IN (:...ids)', { ids: tenantIds })
+          .execute();
+        await dataSource
+          .getRepository(CasePolicySnapshot)
+          .createQueryBuilder()
+          .delete()
+          .where('"tenantId" IN (:...ids)', { ids: tenantIds })
+          .execute();
+        await dataSource
+          .getRepository(ProviderOperationIntent)
+          .createQueryBuilder()
+          .delete()
+          .where('"tenantId" IN (:...ids)', { ids: tenantIds })
+          .execute();
+        // audit_events is append-only by design (its own migration's
+        // trigger rejects UPDATE/DELETE unconditionally, even under
+        // app.bypass_rls) — no cleanup query here could remove this
+        // spec's own fixture rows even if one were written; a fresh
+        // scratch database per verification run is how this codebase's
+        // own convention already handles that (audit-event.service.spec.ts
+        // has the identical comment).
         await dataSource
           .getRepository(LoanCase)
           .createQueryBuilder()
@@ -166,5 +207,130 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
 
     const factsForB = await service.listEvidenceFacts(tenantB, caseA);
     expect(factsForB).toHaveLength(0);
+  });
+
+  it('getActivePolicyBinding() returns only the currently-active (non-invalidated) binding', async () => {
+    const tenantId = randomUUID();
+    const caseId = await makeCase(tenantId);
+    const snapshotRepo = dataSource.getRepository(CasePolicySnapshot);
+    const snapshot = await snapshotRepo.save(
+      snapshotRepo.create({
+        tenantId,
+        caseId,
+        contextHash: 'a'.repeat(64),
+        resolverVersion: '1',
+        resolutionStatus: PolicyResolutionStatus.RESOLVED,
+        versions: [],
+        unresolvedReasons: [],
+      }),
+    );
+    const bindingRepo = dataSource.getRepository(CasePolicyBinding);
+    const invalidated = await bindingRepo.save(
+      bindingRepo.create({
+        tenantId,
+        caseId,
+        dependencyDigest: 'b'.repeat(64),
+        observedCatalogGeneration: 0,
+        contextKey: 'US-CA|CONVENTIONAL|CASE_CREATED',
+        policySnapshotId: snapshot.id,
+        revalidateAfter: new Date(Date.now() + 60_000),
+        invalidatedAt: new Date(),
+      }),
+    );
+    const active = await bindingRepo.save(
+      bindingRepo.create({
+        tenantId,
+        caseId,
+        dependencyDigest: 'c'.repeat(64),
+        observedCatalogGeneration: 1,
+        contextKey: 'US-CA|CONVENTIONAL|CASE_CREATED',
+        policySnapshotId: snapshot.id,
+        revalidateAfter: new Date(Date.now() + 60_000),
+      }),
+    );
+
+    const result = await service.getActivePolicyBinding(tenantId, caseId);
+    expect(result?.id).toBe(active.id);
+    expect(result?.id).not.toBe(invalidated.id);
+  });
+
+  it('getPolicySnapshot() reads a snapshot by id, tenant-scoped', async () => {
+    const tenantId = randomUUID();
+    const caseId = await makeCase(tenantId);
+    const snapshotRepo = dataSource.getRepository(CasePolicySnapshot);
+    const snapshot = await snapshotRepo.save(
+      snapshotRepo.create({
+        tenantId,
+        caseId,
+        contextHash: 'd'.repeat(64),
+        resolverVersion: '1',
+        resolutionStatus: PolicyResolutionStatus.RESOLVED,
+        versions: [],
+        unresolvedReasons: [],
+      }),
+    );
+
+    const result = await service.getPolicySnapshot(tenantId, snapshot.id);
+    expect(result?.id).toBe(snapshot.id);
+
+    const wrongTenant = await service.getPolicySnapshot(
+      randomUUID(),
+      snapshot.id,
+    );
+    expect(wrongTenant).toBeNull();
+  });
+
+  it('listProviderOperationIntents() returns only the requested case’s own intents', async () => {
+    const tenantId = randomUUID();
+    const caseId = await makeCase(tenantId);
+    const repo = dataSource.getRepository(ProviderOperationIntent);
+    await repo.save(
+      repo.create({
+        tenantId,
+        caseId,
+        providerId: 'asset-verification-simulator',
+        capability: ProviderCapabilityStatus.ASSET,
+        effectClass: 'REUSABLE_LOOKUP',
+        requestFingerprint: 'e'.repeat(64),
+        idempotencyKey: randomUUID(),
+        authorizationGrantId: randomUUID(),
+      }),
+    );
+
+    const intents = await service.listProviderOperationIntents(
+      tenantId,
+      caseId,
+    );
+    expect(intents).toHaveLength(1);
+    expect(intents[0].providerId).toBe('asset-verification-simulator');
+  });
+
+  it('listAuditEvents() returns only events recorded with this exact caseId as their resourceId', async () => {
+    const tenantId = randomUUID();
+    const caseId = await makeCase(tenantId);
+    const otherCaseId = await makeCase(tenantId);
+    const repo = dataSource.getRepository(AuditEvent);
+    await repo.save(
+      repo.create({
+        tenantId,
+        actorId: 'case-query-spec-actor',
+        action: 'CASE_ESCALATED',
+        resourceType: 'loan_case',
+        resourceId: caseId,
+      }),
+    );
+    await repo.save(
+      repo.create({
+        tenantId,
+        actorId: 'case-query-spec-actor',
+        action: 'CASE_ESCALATED',
+        resourceType: 'loan_case',
+        resourceId: otherCaseId,
+      }),
+    );
+
+    const events = await service.listAuditEvents(tenantId, caseId);
+    expect(events).toHaveLength(1);
+    expect(events[0].resourceId).toBe(caseId);
   });
 });

@@ -288,6 +288,15 @@ export class CasesService {
     return this.consentService.grantForCase(tenantId, caseId);
   }
 
+  /** `GET .../consents` (M5-031) — the case's own full consent history, newest first. */
+  async listConsents(
+    tenantId: string,
+    caseId: string,
+  ): Promise<ConsentRecord[]> {
+    await this.getCase(tenantId, caseId);
+    return this.consentService.listForCase(tenantId, caseId);
+  }
+
   /**
    * `POST .../escalate` (M5-023) — `escalate_to_reviewer`'s (Section 9.4)
    * first real caller: a human reviewer's own judgment call, since this

@@ -7,6 +7,7 @@ import {
   CreateDateColumn,
   Index,
 } from 'typeorm';
+import { ObjectType, Field, ID, Int } from '@nestjs/graphql';
 import { CasePolicySnapshot } from './case-policy-snapshot.entity';
 
 /**
@@ -31,6 +32,7 @@ import { CasePolicySnapshot } from './case-policy-snapshot.entity';
  * of when a case's policy binding changed and why.
  */
 @Entity('case_policy_bindings')
+@ObjectType()
 @Index('IDX_case_policy_bindings_case_active', [
   'tenantId',
   'caseId',
@@ -50,19 +52,23 @@ import { CasePolicySnapshot } from './case-policy-snapshot.entity';
   where: '"invalidatedAt" IS NULL',
 })
 export class CasePolicyBinding {
+  @Field(() => ID)
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   @Column({ type: 'uuid' })
   tenantId!: string;
 
+  @Field(() => ID)
   @Column({ type: 'uuid' })
   caseId!: string;
 
+  @Field()
   @Column({ type: 'varchar', length: 64 })
   dependencyDigest!: string;
 
   /** Global `PolicyCatalogGeneration.generation` observed when this binding was created or last refreshed — the fast-path comparison key. */
+  @Field(() => Int)
   @Column({ type: 'integer' })
   observedCatalogGeneration!: number;
 
@@ -74,9 +80,11 @@ export class CasePolicyBinding {
    * about a different jurisdiction for the same case without any catalog
    * change at all).
    */
+  @Field()
   @Column({ type: 'varchar', length: 300 })
   contextKey!: string;
 
+  @Field(() => ID)
   @Column({ type: 'uuid' })
   policySnapshotId!: string;
 
@@ -84,13 +92,16 @@ export class CasePolicyBinding {
   @JoinColumn({ name: 'policySnapshotId' })
   policySnapshot?: CasePolicySnapshot;
 
+  @Field()
   @CreateDateColumn({ type: 'timestamptz' })
   boundAt!: Date;
 
   /** Earliest time this binding must be re-validated even if nothing else changed. */
+  @Field()
   @Column({ type: 'timestamptz' })
   revalidateAfter!: Date;
 
+  @Field(() => Date, { nullable: true })
   @Column({ type: 'timestamptz', nullable: true })
   invalidatedAt!: Date | null;
 }

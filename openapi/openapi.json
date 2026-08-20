@@ -368,6 +368,50 @@
         "tags": [
           "loan-cases"
         ]
+      },
+      "get": {
+        "operationId": "listConsents",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConsentRecord"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List a case's consent history",
+        "tags": [
+          "loan-cases"
+        ]
       }
     },
     "/v1/loan-cases/{caseId}/escalate": {

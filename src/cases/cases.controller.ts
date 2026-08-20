@@ -288,6 +288,28 @@ export class CasesController {
     return record;
   }
 
+  // Section 15.1's `GET .../consents` (M5-031) — the case's own full
+  // consent history, newest first, the read half of the POST route above.
+  @ApiOperation({
+    operationId: 'listConsents',
+    summary: "List a case's consent history",
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiOkResponse({ type: ConsentRecord, isArray: true })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid API credentials.',
+  })
+  @ApiNotFoundResponse({
+    description: 'No case with this id owned by the authenticated tenant.',
+  })
+  @Get(':caseId/consents')
+  async listConsents(
+    @AuthTenantId() tenantId: string,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+  ): Promise<ConsentRecord[]> {
+    return this.casesService.listConsents(tenantId, caseId);
+  }
+
   // `escalate_to_reviewer`'s (Section 9.4) first real caller (M5-023) —
   // a human reviewer's own judgment call, since this codebase has no
   // real automatic detector to hand the decision to instead (see that

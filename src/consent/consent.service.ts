@@ -140,6 +140,19 @@ export class ConsentService {
     return record?.id ?? null;
   }
 
+  /** Section 15.1's `GET .../consents` (M5-031) — the full history for a case, newest first, matching `getStatus()`'s own ordering: a case can have more than one row over time (a revoke followed by a fresh grant), and every one stays a real, permanent record. */
+  async listForCase(
+    tenantId: string,
+    caseId: string,
+  ): Promise<ConsentRecord[]> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(ConsentRecord).find({
+        where: { tenantId, caseId },
+        order: { grantedAt: 'DESC' },
+      }),
+    );
+  }
+
   private mostRecentRecord(
     tenantId: string,
     caseId: string,
