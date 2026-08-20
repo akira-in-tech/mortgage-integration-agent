@@ -16,13 +16,13 @@ import {
 } from '@nestjs/swagger';
 import { WebhookDeliveryService } from './webhook-delivery.service';
 import { WebhookDelivery } from '../database/entities/webhook-delivery.entity';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
 
 /** Section 15.1's `GET /v1/webhook-deliveries/{deliveryId}` — the same id sent as every attempt's `X-Webhook-Id` header. */
 @ApiTags('webhooks')
 @ApiBearerAuth()
-@UseGuards(ApiKeyGuard)
+@UseGuards(TenantAuthGuard)
 @Controller('v1/webhook-deliveries')
 export class WebhookDeliveriesController {
   constructor(private readonly deliveryService: WebhookDeliveryService) {}

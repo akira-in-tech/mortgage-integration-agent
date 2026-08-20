@@ -146,6 +146,27 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(100)
   WEBHOOK_DISPATCH_INTERVAL_MS: number = 5000;
+
+  // ── OIDC (src/auth/oidc.*, M5-024) ───────────────────────────────────────
+  // Section 16.1: "OIDC/OAuth 2.0 for people" — a real OIDC issuer (this
+  // codebase's own docker-compose.yml ships self-hosted Keycloak for local
+  // use). Both unset means OidcGuard always fails closed with a clean 401;
+  // ApiKeyGuard's machine-credential path is completely unaffected either
+  // way, so a deployment that never needs human OIDC login can leave both
+  // unset rather than being forced to stand up an identity provider.
+  @IsOptional()
+  @IsString()
+  @Matches(/^https?:\/\/\S+$/, {
+    message: 'OIDC_ISSUER_URL must be an http(s) URL',
+  })
+  OIDC_ISSUER_URL?: string;
+
+  // The `aud` claim OidcService requires every verified token to carry —
+  // this codebase's own Keycloak client id in the standard case.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OIDC_AUDIENCE?: string;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

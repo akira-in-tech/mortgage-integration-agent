@@ -39,7 +39,7 @@ import { CheckPolicyChangeImpactDto } from './dto/check-policy-change-impact.dto
 import { LoanCase } from '../database/entities/loan-case.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { TimelineEntry } from './case-timeline.service';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { RoleGuard } from '../auth/role.guard';
 import { RequireRole } from '../auth/require-role.decorator';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
@@ -59,8 +59,8 @@ import { CheckPolicyChangeImpactResult } from '../agent-runtime/tools/check-poli
  * generation") rather than left to NestJS Swagger's route-derived default,
  * which changes if a route path is ever refactored.
  *
- * `ApiKeyGuard` (Section 20 M5) resolves every request's tenant from its
- * bearer credential, never from a caller-suppliable field — `caseId`
+ * `TenantAuthGuard` (Section 20 M5) resolves every request's tenant from
+ * its bearer credential, never from a caller-suppliable field — `caseId`
  * lookups additionally verify the found case actually belongs to that
  * tenant (`CasesService` does this, returning 404 rather than a
  * tenant-revealing 403 on a mismatch). `CreateCaseDto` has no `tenantId`
@@ -69,7 +69,7 @@ import { CheckPolicyChangeImpactResult } from '../agent-runtime/tools/check-poli
  */
 @ApiTags('loan-cases')
 @ApiBearerAuth()
-@UseGuards(ApiKeyGuard)
+@UseGuards(TenantAuthGuard)
 @Controller('v1/loan-cases')
 export class CasesController {
   constructor(
@@ -240,7 +240,10 @@ export class CasesController {
       resourceId: caseId,
       correlationId: auth.correlationId,
       reason: dto.reason ?? null,
-      metadata: { apiClientId: auth.apiClientId, resolution: dto.resolution },
+      metadata: {
+        authenticatedActorId: auth.actorId,
+        resolution: dto.resolution,
+      },
     });
   }
 
@@ -274,7 +277,7 @@ export class CasesController {
     );
     await this.auditEventService.record({
       tenantId: auth.tenantId,
-      actorId: auth.apiClientId,
+      actorId: auth.actorId,
       action: `CONSENT_${dto.action}`,
       resourceType: 'loan_case',
       resourceId: caseId,
@@ -324,7 +327,7 @@ export class CasesController {
       resourceId: caseId,
       correlationId: auth.correlationId,
       reason: dto.reason,
-      metadata: { apiClientId: auth.apiClientId },
+      metadata: { authenticatedActorId: auth.actorId },
     });
   }
 

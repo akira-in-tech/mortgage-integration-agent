@@ -7723,3 +7723,116 @@ Manual live verification against the first scratch stack:
 ### Next safe step
 
 The provider-promotion governance chain named in every prior "remaining gaps" list is now closed. What's left: OIDC/FAPI 2.0 (still awaiting the user's go-ahead to self-host Keycloak), encrypted field/object boundaries (now unblocked in principle — a second real provider mode exists — but still a large, separate slice), and wiring `AUTHORIZED_SANDBOX` into a real case's live dispatch path if that's ever wanted. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project.
+
+## M5-024: Real OIDC for human identity — self-hosted Keycloak, `users`/`tenant_memberships`, and `TenantAuthGuard` (Section 14.1/16.1)
+
+### Status
+
+Implemented and verified, including a real live proof: a real running API server accepted a real Keycloak-issued OIDC access token, resolved it to a real, previously-provisioned `User`/`TenantMembership`, and created a real loan case through the unmodified `CasesController` — the identical route machine `api_clients` already used, now genuinely reachable by a human credential too. Closes the second half of Section 20 M5's own "OIDC and scoped API-client authentication" line — M5-001's own entry named this as "a genuinely separate, larger effort" deferred at the time; this slice is that effort.
+
+### Acceptance criterion
+
+`TenantAuthGuard` (`src/auth/`) is now what every tenant-scoped controller uses (`@UseGuards(TenantAuthGuard)`, replacing the bare `ApiKeyGuard` reference everywhere it appeared) — it composes `ApiKeyGuard` (unchanged) and a new `OidcGuard` as *alternatives*: a request authenticates if either a machine `{clientId}.{secret}` bearer token or a real OIDC access token (plus an `X-Tenant-Id` header, since one human can hold `tenant_memberships` in more than one tenant) checks out. Both resolve to the identical `AuthContext` shape every existing consumer already reads. `OidcService` does real OpenID Connect Discovery against a configured `OIDC_ISSUER_URL`, then real remote-JWKS signature/issuer/audience/expiry verification via `jose`. Live-verified end to end against a real, freshly-imported Keycloak realm: a real `POST /v1/loan-cases` with a real OIDC bearer token and no `X-Tenant-Id` header got a real `401`; the same request with a real, granted tenant got a real `201` with a real persisted case; the same token against a different, never-granted tenant got a real `401` again.
+
+### Implementation
+
+- `src/auth/auth-context.ts` — `AuthContext.apiClientId` renamed to `actorId` (a machine `ApiClient.id` or a human `User.id` depending on which guard populated it) — audit-event call sites already called this field `actorId`; this interface now matches that name honestly instead of overclaiming a single credential type. Propagated through `api-key.guard.ts`, `role.guard.ts`, `current-auth.decorator.ts`, `auth-tenant-id.decorator.ts`, and every controller/DTO/spec that referenced the old name (6 non-spec files, 3 spec files).
+- `src/database/entities/user.entity.ts` (new) — Section 14.1's `users`: global, not tenant-scoped, unique `subject` (the OIDC `sub` claim).
+- `src/database/entities/tenant-membership.entity.ts` (new) — Section 14.1's `tenant_memberships`: `(tenantId, userId)` unique, `role` reusing `ApiClientRole` (no second, parallel role vocabulary for a distinction that means the same real thing either way).
+- `src/database/migrations/1787177900000-UsersAndTenantMemberships.ts` (new) — both tables, no RLS (see Decisions).
+- `src/auth/oidc.service.ts` (new, +`.spec.ts`) — real OIDC Discovery (`/.well-known/openid-configuration`) to find the issuer's own `jwks_uri` rather than hardcoding Keycloak's URL convention; `jose`'s `createRemoteJWKSet`+`jwtVerify` does the real signature/issuer/audience/expiry check. Every failure (unconfigured, unreachable, bad signature, wrong audience, expired) throws the same generic `UnauthorizedException`, matching `ApiKeyGuard`'s own "don't leak which part failed" discipline.
+- `src/auth/oidc.guard.ts` (new, +`.spec.ts`) — parses the bearer token and `X-Tenant-Id` header, verifies via `OidcService`, looks up `User` by `subject` then `TenantMembership` by `(tenantId, userId)`, attaches `AuthContext`.
+- `src/auth/tenant-auth.guard.ts` (new, +`.spec.ts`) — the OR-composition: try `ApiKeyGuard`, fall back to `OidcGuard` on any failure. NestJS's own `@UseGuards(...)` only composes with AND, so this is hand-written, not framework-provided.
+- `src/auth/auth.module.ts` — registers `User`/`TenantMembership`/`OidcService`/`OidcGuard`/`TenantAuthGuard`.
+- 4 controllers (`CasesController`, `WebhookEndpointsController`, `WebhookDeliveriesController`, `CommunicationMessagesController`) — `@UseGuards(ApiKeyGuard)` → `@UseGuards(TenantAuthGuard)`; zero other changes, since both guards populate the identical `AuthContext` shape.
+- `src/config/env.validation.ts` — `OIDC_ISSUER_URL`/`OIDC_AUDIENCE`, both optional (unset means `OidcGuard` always fails closed; the machine-credential path is completely unaffected).
+- `src/manage-user.ts` (new script: `create-user`/`grant-membership`/`revoke-membership`) — matches `create-api-client.ts`'s established script-not-endpoint convention.
+- `docker-compose.yml` — new `keycloak` service (`start-dev --import-realm`, its own embedded dev database — a local-only convenience service, not a production deployment target).
+- `keycloak/realm-export.json` (new) — a real, importable realm: public client `mortgage-agent-app` with an audience protocol mapper (so `aud` actually carries the client id — Keycloak's own default omits it), one real seeded test user.
+- `package.json` — `jose` dependency, `manage-user` script entry.
+- `.env.example` — documents `OIDC_ISSUER_URL`/`OIDC_AUDIENCE`.
+
+### Affected files
+
+- `src/auth/auth-context.ts`, `api-key.guard.ts` (+`.spec.ts`), `role.guard.ts` (+`.spec.ts`), `current-auth.decorator.ts`, `auth-tenant-id.decorator.ts`, `auth.module.ts`
+- `src/auth/oidc.service.ts` (new, +`.spec.ts`), `oidc.guard.ts` (new, +`.spec.ts`), `tenant-auth.guard.ts` (new, +`.spec.ts`)
+- `src/database/entities/user.entity.ts`, `tenant-membership.entity.ts` (both new), `api-client.entity.ts` (comment only)
+- `src/database/enums/api-client.enum.ts` (comment only — no longer claims `users`/`tenant_memberships` don't exist)
+- `src/database/migrations/1787177900000-UsersAndTenantMemberships.ts` (new), `schema-migrations.spec.ts`
+- `src/config/env.validation.ts`
+- `src/cases/cases.controller.ts` (+`.spec.ts`), `src/webhooks/webhook-endpoints.controller.ts`, `webhook-deliveries.controller.ts`, `src/communications/communication-messages.controller.ts`
+- `src/manage-user.ts` (new), `package.json`, `.env.example`
+- `docker-compose.yml`, `keycloak/realm-export.json` (new)
+- `test/negative-authorization.e2e-spec.ts` (comment only)
+- `README.md`, `docs/DEVELOPMENT_LOG.md`
+
+### Decisions and alternatives
+
+- **`jose@4`, not `jose@6`.** `jose@6` is pure ESM (`"type": "module"`, no CJS entry) — this codebase compiles to CommonJS, so a static `import` of it compiles to a `require()` that fails at real Node runtime, not just under Jest. Found this by actually running the test suite after adding the dependency, not by reading changelogs first. `jose@4` has a real CJS build and the identical `createRemoteJWKSet`/`jwtVerify`/`decodeJwt` API this slice needs — a real compatibility constraint, not a downgrade taken lightly.
+- **`TenantAuthGuard` composes two existing guards rather than merging OIDC detection into `ApiKeyGuard` directly.** Considered extending `ApiKeyGuard` in place (cheaper — zero new call sites to update) — rejected: a class named `ApiKeyGuard` that also verifies OIDC JWTs would be a real, misleading name, and NestJS's own `@UseGuards(...)` has no built-in OR composition, so *something* has to do it explicitly regardless. A small, honestly-named composing class was worth the 4-controller mechanical update.
+- **No RLS on `users`/`tenant_memberships`** — the identical bootstrap reasoning `api_clients` itself already established (no RLS either): `OidcGuard` looks `tenant_memberships` up using a caller-supplied, not-yet-trusted `tenantId` specifically to determine whether the request may act in that tenant at all — tenant context cannot already be established before that lookup runs.
+- **One shared `ApiClientRole` enum for both credential models**, not a second `UserRole`. A `PARTNER`/`REVIEWER` distinction means the same real thing regardless of which credential authenticated the request; a parallel enum would be unbacked duplication, the same reasoning `ProviderActivationState` already applied to avoid an unbacked third value (M4-007).
+- **Membership required by `(tenantId, userId)` lookup, not auto-provisioned on first successful login.** A real, valid OIDC token alone proves *who* someone is, never *what tenant they may act in* — auto-granting tenant access to any authenticated Keycloak user would be a real self-service privilege-escalation path this codebase's existing "no self-service credential minting" convention (`create-api-client.ts`) already avoids for machine credentials. `manage-user.ts`'s `grant-membership` is a deliberate, separate, human-operated step.
+- **Keycloak's own default access token doesn't carry the requesting client in `aud`** (it defaults to `["account"]`; the client id only appears in `azp`) — found this the hard way (an early `jwtVerify(..., { audience })` call failed against a real token before the mapper was added) and fixed it the standard, correct way: a real `oidc-audience-mapper` protocol mapper in the realm config, not a code-side fallback to checking `azp` instead.
+- **Keycloak's realm-export needed `firstName`/`lastName` on the seeded user** — a real, reproducible finding: Keycloak 26's declarative User Profile feature requires those attributes by default, and a user missing them fails the Direct Grant (password) flow with a generic, unhelpful `"Account is not fully set up"` / `resolve_required_actions` error that names no specific missing field. Diagnosed via the real Keycloak server's own event log (`docker logs`), not by guessing.
+
+### Errors and fixes
+
+- `jose@6`'s ESM-only build breaking the actual test runtime (not just a lint/type issue) — see Decisions.
+- Keycloak's default token `aud` omitting the requesting client — see Decisions (audience mapper).
+- Keycloak's Direct Grant flow rejecting a user missing `firstName`/`lastName` under the User Profile feature — see Decisions.
+- A self-inflicted `sed`/sequential-edit slip during the `apiClientId` → `actorId` rename left the file consistent (build and lint both passed clean before this was ever committed), but is worth naming as a reminder: a wide rename across many files is exactly the kind of change worth re-grepping in full after, not just spot-checking — done here before moving on.
+
+### Verification
+
+```text
+npm run build / npm run lint / npm run lint:check — all clean
+
+Fresh scratch stack (Postgres 5546, Temporal 7246, Keycloak 8090 —
+imported from the real keycloak/realm-export.json), fully migrated:
+  npm test -- --runInBand
+    81 of 83 suites passed (2 pre-existing skips: PLAID_SANDBOX_* not
+    sourced in this shell, TEMPORAL_ADDRESS-gated workflow spec run
+    separately) — 595 passed / 13 skipped / 608 total, including all
+    new auth specs (oidc.service, oidc.guard, tenant-auth.guard —
+    every one making real network calls to the real Keycloak container)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged (every
+    existing e2e test still authenticates via ApiKeyGuard's own
+    unchanged path, proving TenantAuthGuard's fallback is fully
+    transparent to every pre-existing machine-credential caller)
+
+Manual live verification — a real API server (NODE_ENV=development,
+against the same scratch Postgres) plus real curl calls:
+  - npm run manage-user -- create-user <realSubjectFromARealToken>
+    reviewer@example.com
+  - npm run manage-user -- grant-membership <userId> <tenantId> REVIEWER
+  - POST /v1/loan-cases with a real Keycloak access token, no
+    X-Tenant-Id header -> real 401
+  - the same request + X-Tenant-Id: <granted tenant> -> real 201,
+    a real loan_cases row, through the completely unmodified
+    CasesController/CasesService
+  - the same token against a different, never-granted tenantId -> 401
+
+  live API server stopped, both scratch stacks (Postgres+Temporal,
+  separately verified Keycloak-only container) torn down
+  (docker rm -f + network rm)
+```
+
+### Security, privacy, cost, and compatibility
+
+- `OidcGuard` fails closed by default: unset `OIDC_ISSUER_URL`/`OIDC_AUDIENCE` means every OIDC request is rejected, with zero effect on the pre-existing machine-credential path — a deployment that never needs human login pays no cost for this slice existing.
+- Real cryptographic verification throughout: no token is ever trusted without a real signature check against the issuer's own live, remotely-fetched JWKS.
+- `X-Tenant-Id` is caller-supplied but never trusted on its own — it only selects *which* `tenant_memberships` row (if any) to check; a request can never act in a tenant it has no real, admin-granted membership in, regardless of what it claims.
+- No new secrets beyond `OIDC_AUDIENCE` (not secret) and whatever the deployment's own OIDC provider needs — this codebase itself holds no OIDC client secret (the seeded Keycloak client is public, appropriate for a first-party confidential-client-free local setup).
+
+### Known gaps
+
+- **FAPI 2.0 profile compliance is not attempted** — Section 20 M5 names it as "where required by the provider or customer ecosystem," and this slice's own Keycloak client is a plain public OAuth2/OIDC client (Authorization Code + Direct Grant), not a FAPI 2.0-profiled one (mTLS/DPoP-bound tokens, PAR, JARM). A real FAPI 2.0 deployment is a substantially larger, separately-scoped effort this slice doesn't claim.
+- **No membership-change audit trail** — `manage-user.ts`'s `grant-membership`/`revoke-membership` don't write `audit_events` (the script has no real per-request actor/correlationId context an HTTP-layer caller would have); a membership row's own `createdAt` is the only real history.
+- **`tenant_memberships` is current-state-only** — one row per `(tenantId, userId)`, updated in place by a re-grant; no history of past role changes, the same simplicity tradeoff `ProviderAdapterStatus` already made.
+- **No browser-based login flow anywhere in this codebase** — every real verification used the Direct Grant (password) flow via `curl`, appropriate for this slice's own scope (a real relying party exists and works) but not a full interactive login UI, which is M6 Operations UI scope.
+- Every other M5/M4/M3 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Both credential models Section 20 M5 names ("OIDC and scoped API-client authentication") are now real. What's left of M5's own scope: encrypted field/object boundaries (unblocked in principle since M4-007, still a large separate slice) and a FAPI 2.0-profiled client configuration if a real ecosystem partner ever requires it. M6 (Operations UI) remains entirely unbuilt and is the largest single gap in the whole project — and now has a real human-identity system to actually build a login flow against.

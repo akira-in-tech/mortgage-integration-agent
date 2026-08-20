@@ -10,14 +10,14 @@ import {
 import { WebhookEndpointService } from './webhook-endpoint.service';
 import { CreateWebhookEndpointDto } from './dto/create-webhook-endpoint.dto';
 import { WebhookEndpoint } from '../database/entities/webhook-endpoint.entity';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { AuthContext } from '../auth/auth-context';
 import { AuditEventService } from '../audit/audit-event.service';
 
 /**
- * Section 15.1's `POST /v1/webhook-endpoints`. `ApiKeyGuard` (Section 20
- * M5) resolves the tenant from the caller's own bearer credential — a
+ * Section 15.1's `POST /v1/webhook-endpoints`. `TenantAuthGuard` (Section
+ * 20 M5) resolves the tenant from the caller's own bearer credential — a
  * caller cannot register an endpoint under a different tenant than the
  * one its own credential belongs to, closing what would otherwise be a
  * real cross-tenant vulnerability (registering an endpoint under a
@@ -26,7 +26,7 @@ import { AuditEventService } from '../audit/audit-event.service';
  */
 @ApiTags('webhooks')
 @ApiBearerAuth()
-@UseGuards(ApiKeyGuard)
+@UseGuards(TenantAuthGuard)
 @Controller('v1/webhook-endpoints')
 export class WebhookEndpointsController {
   constructor(
@@ -55,7 +55,7 @@ export class WebhookEndpointsController {
     const endpoint = await this.endpointService.create(auth.tenantId, dto);
     await this.auditEventService.record({
       tenantId: auth.tenantId,
-      actorId: auth.apiClientId,
+      actorId: auth.actorId,
       action: 'WEBHOOK_ENDPOINT_CREATED',
       resourceType: 'webhook_endpoint',
       resourceId: endpoint.id,

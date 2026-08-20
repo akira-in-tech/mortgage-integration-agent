@@ -76,7 +76,7 @@ describeOrSkip('ApiKeyGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
     expect(request.authContext).toEqual({
       tenantId,
-      apiClientId: client.id,
+      actorId: client.id,
       role: 'PARTNER',
       correlationId: expect.stringMatching(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,

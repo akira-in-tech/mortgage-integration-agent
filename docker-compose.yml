@@ -31,6 +31,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # Self-hosted OIDC issuer (Section 16.1: "OIDC/OAuth 2.0 for people",
+  # M5-024) — start-dev's own embedded dev database, not the app's
+  # Postgres server: this is a local-only convenience service (Section 19's
+  # real target is a managed OIDC provider), so provisioning a second
+  # persistent datastore for it would be ceremony with no real deployment
+  # counterpart. --import-realm loads keycloak/realm-export.json on first
+  # boot: a real realm, a public client (`mortgage-agent-app`, direct
+  # access grants enabled for curl-based local testing without a browser),
+  # and one real test user.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ['start-dev', '--import-realm']
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+
   app:
     build: .
     ports:
@@ -42,11 +62,15 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
       OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-60000}
       TEMPORAL_ADDRESS: temporal:7233
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/mortgage-agent
+      OIDC_AUDIENCE: mortgage-agent-app
       NODE_ENV: development
     depends_on:
       postgres:
         condition: service_healthy
       temporal:
+        condition: service_started
+      keycloak:
         condition: service_started
 
   worker:

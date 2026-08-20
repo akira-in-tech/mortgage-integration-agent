@@ -46,7 +46,7 @@ describe('RoleGuard', () => {
     const context = contextFor(
       {
         tenantId: 'x',
-        apiClientId: 'y',
+        actorId: 'y',
         role: ApiClientRole.REVIEWER,
         correlationId: 'c',
       },
@@ -60,7 +60,7 @@ describe('RoleGuard', () => {
     const context = contextFor(
       {
         tenantId: 'tenant-x',
-        apiClientId: 'client-y',
+        actorId: 'client-y',
         role: ApiClientRole.PARTNER,
         correlationId: 'corr-1',
       },
@@ -87,7 +87,7 @@ describe('RoleGuard', () => {
     const context = contextFor(
       {
         tenantId: 'x',
-        apiClientId: 'y',
+        actorId: 'y',
         role: ApiClientRole.PARTNER,
         correlationId: 'c',
       },
@@ -100,7 +100,7 @@ describe('RoleGuard', () => {
     const context = contextFor(
       {
         tenantId: 'x',
-        apiClientId: 'y',
+        actorId: 'y',
         role: ApiClientRole.PARTNER,
         correlationId: 'c',
       },
@@ -109,10 +109,10 @@ describe('RoleGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(true);
   });
 
-  it('throws a plain programming-error Error, not a caller-facing exception, if used without ApiKeyGuard populating authContext first', async () => {
+  it('throws a plain programming-error Error, not a caller-facing exception, if used without TenantAuthGuard populating authContext first', async () => {
     const context = contextFor(undefined, fixture.reviewerOnly);
     await expect(guard.canActivate(context)).rejects.toThrow(
-      'RoleGuard used without ApiKeyGuard',
+      'RoleGuard used without TenantAuthGuard',
     );
   });
 });

@@ -31,7 +31,7 @@ import {
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import { CommunicationApproval } from '../database/entities/communication-approval.entity';
 import { ApproveCommunicationMessageDto } from './dto/approve-communication-message.dto';
-import { ApiKeyGuard } from '../auth/api-key.guard';
+import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { RoleGuard } from '../auth/role.guard';
 import { RequireRole } from '../auth/require-role.decorator';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
@@ -58,7 +58,7 @@ import { AuditEventService } from '../audit/audit-event.service';
  */
 @ApiTags('communication-messages')
 @ApiBearerAuth()
-@UseGuards(ApiKeyGuard)
+@UseGuards(TenantAuthGuard)
 @Controller('v1/loan-cases/:caseId/communication-messages')
 export class CommunicationMessagesController {
   constructor(
@@ -155,7 +155,7 @@ export class CommunicationMessagesController {
     }
     await this.auditEventService.record({
       tenantId: auth.tenantId,
-      actorId: auth.apiClientId,
+      actorId: auth.actorId,
       action: 'COMMUNICATION_SENT',
       resourceType: 'communication_message',
       resourceId: messageId,

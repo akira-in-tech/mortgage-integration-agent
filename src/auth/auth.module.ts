@@ -1,14 +1,19 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApiClient } from '../database/entities/api-client.entity';
+import { User } from '../database/entities/user.entity';
+import { TenantMembership } from '../database/entities/tenant-membership.entity';
 import { ApiClientService } from './api-client.service';
 import { ApiKeyGuard } from './api-key.guard';
+import { OidcService } from './oidc.service';
+import { OidcGuard } from './oidc.guard';
+import { TenantAuthGuard } from './tenant-auth.guard';
 import { RoleGuard } from './role.guard';
 import { AuditModule } from '../audit/audit.module';
 
 /**
- * `@Global()`: `ApiKeyGuard` is applied via `@UseGuards(ApiKeyGuard)` (a
- * raw class reference) on every tenant-scoped controller — `CasesModule`,
+ * `@Global()`: `TenantAuthGuard` is applied via `@UseGuards(TenantAuthGuard)`
+ * (a raw class reference) on every tenant-scoped controller — `CasesModule`,
  * `WebhooksModule`, and any future one. Making the module global means
  * every consumer resolves the exact same guard/service instances without
  * each one separately importing `AuthModule`, and avoids a real
@@ -18,8 +23,25 @@ import { AuditModule } from '../audit/audit.module';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([ApiClient]), AuditModule],
-  providers: [ApiClientService, ApiKeyGuard, RoleGuard],
-  exports: [ApiClientService, ApiKeyGuard, RoleGuard],
+  imports: [
+    TypeOrmModule.forFeature([ApiClient, User, TenantMembership]),
+    AuditModule,
+  ],
+  providers: [
+    ApiClientService,
+    ApiKeyGuard,
+    OidcService,
+    OidcGuard,
+    TenantAuthGuard,
+    RoleGuard,
+  ],
+  exports: [
+    ApiClientService,
+    ApiKeyGuard,
+    OidcService,
+    OidcGuard,
+    TenantAuthGuard,
+    RoleGuard,
+  ],
 })
 export class AuthModule {}

@@ -20,7 +20,7 @@ const UUID_PATTERN =
  * Section 20 M5's own exit evidence: "cross-tenant tests fail closed at
  * API, service, and database layers." This is the API layer — every
  * route it guards resolves a real, checked `AuthContext` (tenantId +
- * apiClientId) or the request never reaches the controller at all.
+ * actorId) or the request never reaches the controller at all.
  * Deliberately generic on every failure path (missing header, malformed
  * token, unknown client, wrong secret, revoked client all return the
  * same 401 with the same message) — the same "don't leak which part
@@ -64,7 +64,7 @@ export class ApiKeyGuard implements CanActivate {
 
     request.authContext = {
       tenantId: client.tenantId,
-      apiClientId: client.id,
+      actorId: client.id,
       role: client.role,
       correlationId: randomUUID(),
     };

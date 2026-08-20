@@ -21,13 +21,13 @@ describe('CasesController', () => {
   const TENANT_ID = '11111111-1111-1111-1111-111111111111';
   const AUTH: AuthContext = {
     tenantId: TENANT_ID,
-    apiClientId: 'client-1',
+    actorId: 'client-1',
     role: ApiClientRole.REVIEWER,
     correlationId: 'correlation-1',
   };
 
   // No tenantId — Section 20 M5: the request body never carries a tenant
-  // field to get right or wrong; ApiKeyGuard/AuthTenantId() supplies it.
+  // field to get right or wrong; TenantAuthGuard/AuthTenantId() supplies it.
   const dto: CreateCaseDto = {
     borrowerId: 'borrower-1',
     requestedAmount: 300_000,

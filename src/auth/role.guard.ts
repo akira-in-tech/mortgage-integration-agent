@@ -46,15 +46,14 @@ export class RoleGuard implements CanActivate {
     if (!request.authContext) {
       // Programming error, not a caller-triggerable state — see
       // AuthTenantId's identical reasoning.
-      throw new Error('RoleGuard used without ApiKeyGuard');
+      throw new Error('RoleGuard used without TenantAuthGuard');
     }
 
     if (!required.includes(request.authContext.role)) {
-      const { tenantId, apiClientId, correlationId, role } =
-        request.authContext;
+      const { tenantId, actorId, correlationId, role } = request.authContext;
       await this.auditEventService.record({
         tenantId,
-        actorId: apiClientId,
+        actorId,
         action: 'RBAC_REJECTED',
         resourceType: 'route',
         resourceId: `${context.getClass().name}.${context.getHandler().name}`,

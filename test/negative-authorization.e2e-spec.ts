@@ -86,8 +86,9 @@ import { CommunicationMessage } from '../src/database/entities/communication-mes
  * - raw PII in logs, traces, model requests, or error messages — KNOWN
  *   GAP: no dedicated log-scanning/redaction test exists. Structurally
  *   reduced (evidence facts store computed/typed values, not raw
- *   documents; `ApiKeyGuard`'s own error messages are deliberately
- *   generic on every failure path) but not verified by a real test.
+ *   documents; `ApiKeyGuard`/`OidcGuard`'s own error messages are
+ *   deliberately generic on every failure path) but not verified by a
+ *   real test.
  * - stale policy or model version execution — COVERED:
  *   `EvaluationInputManifest`'s own immutability and exact-version
  *   binding tests (M3-014 area).

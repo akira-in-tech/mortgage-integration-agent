@@ -14,10 +14,12 @@ import { ApiClientRole, ApiClientStatus } from '../enums/api-client.enum';
  * `hashedSecret` is a salted scrypt digest (`{salt}:{digest}`, both hex) —
  * the raw secret is generated once, returned exactly once in the creation
  * response/CLI output, and never stored or re-derivable from this row.
- * Full OIDC/FAPI 2.0 (Section 20 M5's other named target) is not
- * attempted here — this codebase has no external identity provider
- * integration and building a compliant OIDC authorization server from
- * scratch is its own, much larger, separately-scoped effort.
+ * Section 20 M5's other named target — real OIDC for human identity —
+ * is `User`/`TenantMembership` (M5-024): a deliberately separate
+ * credential model, not a variant of this one. This codebase never
+ * implements its own OIDC *authorization server* (an out-of-scope, much
+ * larger effort) — `OidcGuard` is a real *relying party* against a real,
+ * self-hosted issuer (Keycloak, this codebase's own docker-compose.yml).
  */
 @Entity('api_clients')
 @Index('IDX_api_clients_tenant', ['tenantId'])
