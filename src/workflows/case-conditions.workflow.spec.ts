@@ -382,6 +382,13 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markManualReview).not.toHaveBeenCalled();
   });
 
+  // Two sequential 500ms settle-waits plus three real evaluateConditions
+  // round trips make this the heaviest real-Temporal-round-trip test in
+  // the file — the bare 5000ms Jest default has been observed to time out
+  // under real CI load (a Worker left running by a timed-out test then
+  // makes env.teardown() itself throw in afterAll, hanging the whole
+  // process indefinitely with no --forceExit); every sibling test here
+  // does at most one such wait.
   it('supports multiple interrupt cycles before the evaluation finally resolves', async () => {
     const evaluateConditions = jest
       .fn()
@@ -421,7 +428,7 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(result).toEqual({ finalStatus: CaseStatus.READY_FOR_UNDERWRITING });
     expect(evaluateConditions).toHaveBeenCalledTimes(3);
     expect(activities.markWaitingForReview).toHaveBeenCalledTimes(2);
-  });
+  }, 20_000);
 
   it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {
     const fetchIncomeEvidence = jest

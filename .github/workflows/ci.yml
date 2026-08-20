@@ -124,6 +124,14 @@ jobs:
       # and the Temporal workflow/activities tests
       # (src/workflows/*.spec.ts) — all of which create and clean up their
       # own disposable state, never touching the service's own databases.
-      - run: npm test -- --ci --runInBand
+      # --forceExit: a real Temporal Worker/connection left open by a test
+      # that failed or timed out mid-flight (case-conditions.workflow.spec.ts
+      # talks to a real server) otherwise keeps the whole Jest process alive
+      # indefinitely with no further output — a single flaky real-service
+      # test turning into a job that silently runs until this workflow's
+      # own multi-hour ceiling, instead of failing fast. Local `npm test`
+      # deliberately keeps Jest's own open-handle warning instead, since a
+      # developer investigating a hang wants to see it, not have it hidden.
+      - run: npm test -- --ci --runInBand --forceExit
 
       - run: npm run test:e2e
