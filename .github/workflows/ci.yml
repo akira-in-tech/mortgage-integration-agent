@@ -69,11 +69,18 @@ jobs:
             -e POSTGRES_PWD=mortgage_demo \
             -e POSTGRES_SEEDS=localhost \
             temporalio/auto-setup:1.29.7
-          for i in $(seq 1 30); do
+          # auto-setup runs its own schema migration and search-attribute
+          # setup on first boot before it ever opens 7233 — a runner under
+          # load can genuinely take longer than the previous 60s budget,
+          # not just hang, so this polls for up to 3 minutes. `docker logs`
+          # on failure/timeout means the next real problem here is visible
+          # instead of another silent "did not become ready" guess.
+          for i in $(seq 1 90); do
             (echo > /dev/tcp/127.0.0.1/7233) 2>/dev/null && exit 0
             sleep 2
           done
           echo "Temporal server did not become ready in time" >&2
+          docker logs temporal
           exit 1
 
       # DATABASE_URL and TEMPORAL_ADDRESS are set above, so this also runs
