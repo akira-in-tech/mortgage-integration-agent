@@ -8661,3 +8661,133 @@ None new — this was itself the closure of a previously-named gap.
 ### Next safe step
 
 Build the React operations console (M6's own larger scope) against this now-complete GraphQL surface, starting with the Triage Queue view (case list + detail pane with tabs) — the concrete UI direction chosen after comparing four mockup concepts.
+
+## M6-006: worker.module.ts couldn't boot standalone — missing AuthModule
+
+### Status
+
+Implemented and verified. A real, previously-undiscovered production bug, found as a side effect of standing up a full local stack (API + worker) to build and test the console against.
+
+### Acceptance criterion
+
+`node dist/worker.js` boots to a running Temporal worker with no `UnknownDependenciesException`, on a scratch stack it has never touched before (no reliance on state left behind by an earlier `docker-compose` boot).
+
+### Implementation
+
+`WorkerModule` imports `WebhooksModule` (for `WebhookDispatchService`), but `WebhooksModule`'s controllers carry `@UseGuards(TenantAuthGuard)`, which needs `ApiKeyGuard`/`OidcGuard` from `AuthModule`. `AuthModule` is `@Global()`, but `@Global()` only reaches providers within the module tree of the specific `NestFactory` call that imports it (directly or transitively) — `WorkerModule` is bootstrapped through its own separate `NestFactory.createApplicationContext()` call in `src/worker.ts`, which never imports `AuthModule` anywhere in its tree, so it got none of `AppModule`'s global registrations. `createApplicationContext()` still eagerly instantiates controllers and their guards during `InstanceLoader` even though it never binds HTTP routes for them, so the missing dependency surfaced at boot, not at request time. Fixed by adding `AuthModule` directly to `WorkerModule`'s own `imports`.
+
+### Affected files
+
+- `src/worker.module.ts`
+
+### Decisions and alternatives
+
+Considered making `WorkerModule` avoid importing `WebhooksModule` at all and importing only the narrower provider it needs, but `WebhookDispatchService` is `WebhooksModule`'s exported surface for this — trimming the guarded controllers back out would mean forking the module. Importing `AuthModule` directly is the same fix every other non-HTTP or cross-context bootstrap in this codebase would need under the same NestJS behavior, and keeps `WorkerModule`'s own module graph self-sufficient rather than relying on `@Global()` registration it can't actually inherit.
+
+### Errors and fixes
+
+`node dist/worker.js` threw `UnknownDependenciesException` on `ApiKeyGuard` inside `WebhooksModule` at `InstanceLoader` time. Root-caused to the `@Global()`-only-within-its-own-bootstrap-tree behavior described above; fixed by adding `AuthModule` to `WorkerModule`'s imports. Re-verified: worker boots clean and runs the Temporal workflow bundle correctly.
+
+### Verification
+
+```text
+Fresh scratch stack (m6006-scratch-postgres :5558, m6006-scratch-temporal :7255):
+  npm run migration:run — clean
+  npm run build — clean
+  npm run lint:check — clean
+  npm test -- --runInBand — 86 suites / 667 tests passed (4 suites / 17
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed
+  npm run generate:openapi — zero diff (no REST route touched)
+  node dist/worker.js — boots clean, no UnknownDependenciesException,
+    processes real Temporal workflow tasks
+```
+
+### Security, privacy, cost, and compatibility
+
+No behavioral change to any resolver, route, or guard's own logic — `AuthModule`'s providers were already active for every HTTP-bound bootstrap; this only makes them available where the worker process's own guarded dependencies already needed them. No new attack surface.
+
+### Known gaps
+
+None new.
+
+### Next safe step
+
+Continue the React operations console build (M6-007) — this fix was required to get a real worker running locally to verify the console's mutations against genuine Temporal-driven state transitions, not just the API in isolation.
+
+## M6-007: Triage Queue — a real React operations console for the GraphQL API
+
+### Status
+
+Implemented and verified against a real running API + worker + Temporal + Postgres stack, including a genuine headless-browser click-through of the primary mutation flow. Scoped to one screen (Triage Queue: case list + detail) per an explicit decision to build the single highest-value view against the real backend rather than a multi-page shell around mock data.
+
+### Acceptance criterion
+
+A standalone React app (`console/`) that: authenticates with a real bearer token against the real GraphQL API; lists cases with cursor pagination and single-status filtering; shows a case's full detail (overview, evidence, conditions, timeline, communications, audit) from real data; and can actually drive two real mutations end to end — resolving an open condition (`submitReview`) and escalating a case (`escalateCase`) — with the UI correctly reflecting the resulting state change, not just firing the mutation.
+
+### Implementation
+
+New `console/` app: Vite + React 18 + TypeScript + Apollo Client 3, bearer-token auth (localStorage, no OIDC yet — matches the credential shape `create-api-client.ts` already issues), hand-written GraphQL types/queries/mutations read directly from a real generated `src/schema.gql` (no codegen). Visual design is the Stripe-referenced direction approved after three rounds of iteration comparing four initial concepts, a dark-navy/gradient revision, and a Google Material revision — the approved version combines the first concept's calm structure with a real violet-blue accent (`#635bff`), Manrope type, moderate radii, and soft two-part shadows, expressed as a CSS custom-property token set (`console/src/styles/tokens.css`).
+
+Key components: `CaseList` (status-chip filters mapped to the real single-status `cases()` query — the mockup's synthetic multi-status "Needs action" grouping was deliberately dropped since the real query doesn't support it — plus `fetchMore` cursor pagination and client-side substring search over loaded rows); `CaseDetail` (six tabs, inline escalate form, key-stat header); `StatusPill` (all 8 real `CaseStatus` values mapped to a semantic gray/blue/amber/red/green system); `useCaseMutations` (see Errors and fixes below for why this needed a second look).
+
+### Affected files
+
+- `console/` — new directory, ~30 files (package.json, vite/tsconfig, `src/styles/`, `src/graphql/`, `src/components/`, `src/components/tabs/`, `src/{auth,apollo-client,format,useCaseMutations}.ts`, `App.tsx`, `main.tsx`)
+- `src/worker.module.ts` — see M6-006 (found while standing up this slice's own verification stack)
+- `tsconfig.json`, `tsconfig.build.json` — added `console` to `exclude`; the root configs previously had no `include`/`exclude` at all, so with no exclude the root backend build attempted to compile `console/`'s JSX too (see Errors and fixes)
+
+### Decisions and alternatives
+
+Scoped to Triage Queue only, not the other three mocked-up concepts (Ops Dashboard, Case Dossier, Live Stream) — explicit user choice after an `AskUserQuestion` on scope, to get one real, backend-connected screen rather than a wider shell over placeholder data. No GraphQL codegen — types are hand-written against a real schema dump and independently verified via direct `curl` against a live server for every query/mutation the app uses; a real MVP simplification, disclosed rather than silently skipped. No OIDC login — bearer-token-only, matching existing internal tooling patterns (`client/webhook-inspector.ts`, `client/scenario-catalog.ts`); named explicitly as the obvious next real step, not treated as done.
+
+### Errors and fixes
+
+- **`worker.module.ts` couldn't boot** — see M6-006; discovered only because this slice needed a real worker process running locally (not docker-compose) to verify mutations against genuine Temporal state transitions.
+- **Root backend build silently polluted `console/` with stray compiled output.** With no `exclude` in the root `tsconfig.json`/`tsconfig.build.json`, TypeScript's default project scope is everything under the root, so `npm run build` tried to compile `console/`'s `.tsx` files too. It failed on `TS17004` (no `--jsx` flag at the root), but `noEmitOnError` defaults to `false`, so tsc still emitted `.js`/`.d.ts`/`.js.map` next to every individually-valid source file in `console/src`. This left stale compiled `.js` files that Vite's dev server preferred over the real `.tsx` sources, breaking the dev server with a `loader is currently set to "js"` error. Fixed by adding `console` to both root tsconfigs' `exclude`, deleting the stray generated files, and re-confirming both the root build and the console's own `tsc --noEmit`/`vite build` were clean afterward.
+- **Real UI bug: evidence values overflowed the page horizontally.** `JSON.stringify(fact.value)` rendered inline with no wrapping in both the Overview evidence-summary card and the Evidence tab's table, confirmed visually via a real headless-Chrome screenshot showing content spilling past the right edge. Fixed with a `summarizeEvidenceValue()` formatter (human-readable per fact type on Overview) plus `wordBreak: 'break-word'`/`maxWidth` on the Evidence tab's raw JSON cell, and `overflow-x` containment on `DataTable` and `CaseDetail`'s scroll region as defense in depth. Re-verified clean via a follow-up screenshot.
+- **Real eventual-consistency bug in the resolve-condition flow.** Clicking "Mark satisfied" correctly fired `submitReview` (a new `condition.satisfied` timeline entry appeared), but the case's own status pill and list entry kept showing the pre-resolution status — because `submitReview` only confirms a Temporal *signal* was delivered, not that the workflow has processed it and advanced the case's `status` (the same asynchrony an earlier direct-curl test against this same mutation needed an explicit delay to observe). An immediate Apollo refetch genuinely lands in that transitional window; this is a real property of the system, not a UI logic bug, but the console gave no indication anything was still in flight. Fixed by having `useCaseMutations`'s `resolveCondition` schedule a second `refetchQueries` call ~2s after the first, keeping the action buttons disabled through the settle window. Re-verified with a fresh case: after the fix, the full transition to "Ready" (with `workflow_run.completed` appearing in Recent Activity) shows correctly once the window elapses. `escalateCase` needed no such handling — it's a real synchronous compare-and-swap.
+
+### Verification
+
+```text
+Schema/query/mutation shape: every query and mutation the console uses
+  verified via direct curl against a live server before/alongside
+  building the UI — zero shape mismatches against the hand-written types.
+
+Headless-Chrome + raw Chrome DevTools Protocol (no puppeteer/playwright
+  installed) against a real running API + worker + Temporal + Postgres
+  stack:
+  - Connect screen, full case list with pagination and status-chip
+    filtering (including a real "0 shown" empty-filter result),
+    all six detail tabs with real data — screenshotted and reviewed.
+  - Live click-through: clicked "Mark satisfied" on a real open
+    condition in the browser, observed the timeline update immediately
+    and the status pill/list entry catch up to "Ready" after the
+    settle window — confirms the UI actually drives the API and
+    reflects the real resulting state, not just that the API works
+    in isolation.
+
+Backend re-verification (this slice's own changes — worker.module.ts,
+  tsconfig excludes) on a fresh scratch stack, see M6-006's Verification
+  block (build/lint/unit/e2e/openapi-diff all clean).
+
+console/ itself: `tsc --noEmit` and `vite build` both clean; confirmed
+  the root backend build no longer touches console/ at all post-fix.
+```
+
+### Security, privacy, cost, and compatibility
+
+Bearer token stored in `localStorage`, sent only as an `Authorization` header to the configured `VITE_GRAPHQL_URL` — no new backend attack surface, since every query/mutation the console calls already existed and enforces its own tenant/auth scoping server-side. No change to CI: the root ESLint config's `files` glob and the root `package.json` lint script are scoped to `{src,test,client}/**/*.ts` and don't reach `console/`, and the root tsconfig excludes now confirm `console/` is fully outside the backend's own build.
+
+### Known gaps
+
+- No OIDC login — bearer-token-only, a real, larger, not-yet-attempted next step.
+- No GraphQL codegen — hand-written types, kept honest only by manual verification against the real schema; a schema change with no corresponding console update would silently drift.
+- Triage Queue only — the other three mocked-up concepts (Ops Dashboard, Case Dossier, Live Stream) were designed but not built; an explicit scope decision, not an oversight.
+- Client-side-only search (substring match over currently-loaded rows, not a server-side search query).
+- No automated tests for the console itself yet (no component or integration test files) — the real end-to-end verification this slice relied on was manual (curl + live headless-browser click-through), not automated; a real gap worth closing before the console grows further.
+
+### Next safe step
+
+Either close the console's own test gap (component tests for the mutation-driving flows, at minimum) or extend the console to a second real view (Ops Dashboard is the next-most-designed concept) — both are real, disclosed gaps rather than silent scope cuts.

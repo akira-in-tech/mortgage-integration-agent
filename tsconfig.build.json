@@ -10,5 +10,5 @@
     // project's size.
     "incremental": false
   },
-  "exclude": ["node_modules", "dist", "test", "client", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "test", "client", "console", "**/*.spec.ts"]
 }

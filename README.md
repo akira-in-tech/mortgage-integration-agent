@@ -257,6 +257,14 @@ M6-004 closes the rest: `startWorkflowRun(caseId): StartWorkflowRunResult!` and 
 
 `case.communicationMessages` (M6-005) closes the one GraphQL read field M6-004 named as deferred — a lazy `@ResolveField()` backed by the same `CommunicationMessageService.listForCase()` the REST route already uses.
 
+### Operations console (`console/`, M6-007)
+
+A real React operations console lives in `console/` — Vite + React 18 + TypeScript + Apollo Client 3, built against the GraphQL surface above, not a mockup. Scoped to one real screen, the Triage Queue (case list with cursor pagination and status filtering, plus a six-tab case detail pane: overview, evidence, conditions, timeline, communications, audit), a deliberate scope decision over building a wider shell around the other three mocked-up concepts. It can drive real mutations end to end — resolving an open condition and escalating a case — verified with a real running API, worker, Temporal, and Postgres stack, including a headless-browser click-through confirming the UI reflects the resulting real state change (see `docs/DEVELOPMENT_LOG.md`'s M6-007 entry for the two real bugs that verification pass found: `worker.module.ts` missing `AuthModule` for a standalone boot, M6-006; and an eventual-consistency race between `submitReview`'s async signal-delivery confirmation and the case's own status catching up, fixed with a settle-and-refetch delay).
+
+To run it: `cd console && npm install && npm run dev` (serves on port 5173). It needs a real bearer token from the main app's `create-api-client.ts` — the console has no login flow of its own yet (bearer-only, matching `client/webhook-inspector.ts`'s existing pattern), entered once on its connect screen and kept in `localStorage`. Set `VITE_GRAPHQL_URL` if the API isn't at the default `http://localhost:3000/graphql`.
+
+Known gaps, honestly scoped rather than silently cut: no OIDC login, no GraphQL codegen (hand-written types verified by hand against a real schema dump), Triage Queue only (no Dashboard/Dossier/Stream views), client-side-only search, and no automated tests for the console itself yet — this slice's own verification was real but manual (curl plus a live headless-browser session), not yet automated.
+
 ### Transactional outbox
 
 Every domain state change that matters externally (`loan_case.created`, `workflow_run.started`/`waiting_for_review`/`completed`/`failed`, `evidence.updated`, `condition.opened`/`satisfied`/`waived`) is written to the `outbox_events` table in the same database transaction as the change itself, HMAC-signed with `OUTBOX_SIGNING_SECRET`. This is the transactional-outbox pattern: a committed domain change and its event can never diverge, because they're the same transaction. `WebhookDispatchService` (M4-004, below) is the real dispatcher that reads from it — `publishedAt` now genuinely gets set once an event has been handed off to that subsystem.
