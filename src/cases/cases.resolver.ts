@@ -2,6 +2,7 @@ import { UseGuards } from '@nestjs/common';
 import {
   Resolver,
   Query,
+  Mutation,
   ResolveField,
   Parent,
   Args,
@@ -15,12 +16,22 @@ import { CasePolicyBinding } from '../database/entities/case-policy-binding.enti
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { AuditEvent } from '../database/entities/audit-event.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CaseConnection } from './case-connection.model';
 import { CasesService } from './cases.service';
 import { CaseQueryService } from './case-query.service';
 import { TimelineEntry } from './case-timeline.service';
+import { ReviewDto } from './dto/review.dto';
+import { ConsentActionDto } from './dto/consent-action.dto';
+import { EscalateDto } from './dto/escalate.dto';
 import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
+import { CurrentAuth } from '../auth/current-auth.decorator';
+import { AuthContext } from '../auth/auth-context';
+import { RoleGuard } from '../auth/role.guard';
+import { RequireRole } from '../auth/require-role.decorator';
+import { ApiClientRole } from '../database/enums/api-client.enum';
+import { AuditEventService } from '../audit/audit-event.service';
 
 /**
  * Section 15.2's "GraphQL serves... flexible case, evidence, and timeline
@@ -43,6 +54,7 @@ export class CasesResolver {
   constructor(
     private readonly casesService: CasesService,
     private readonly caseQueryService: CaseQueryService,
+    private readonly auditEventService: AuditEventService,
   ) {}
 
   @Query(() => LoanCase, {
@@ -75,6 +87,104 @@ export class CasesResolver {
       first,
       after,
     });
+  }
+
+  /**
+   * Mirrors `CasesController.submitReview()` exactly — same service call,
+   * same audit-event shape, same `RoleGuard`/`RequireRole(REVIEWER)` gate
+   * (Section 6.3, M5-017) on top of the class-level `TenantAuthGuard`.
+   * Returns `Boolean` rather than the case: the underlying action is a
+   * Temporal signal the workflow applies asynchronously (same as REST's
+   * own 202-and-poll), so returning `LoanCase` here would misleadingly
+   * imply the review is already reflected in it.
+   */
+  @Mutation(() => Boolean, {
+    name: 'submitReview',
+    description:
+      'Submit a reviewer decision (condition resolution or evaluation resume). Delivers a signal the workflow applies asynchronously (Section 15.1/9.5).',
+  })
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async submitReview(
+    @CurrentAuth() auth: AuthContext,
+    @Args('caseId', { type: () => ID }) caseId: string,
+    @Args('input', { type: () => ReviewDto }) input: ReviewDto,
+  ): Promise<boolean> {
+    await this.casesService.submitReview(auth.tenantId, caseId, input);
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: input.actorId,
+      action: `REVIEW_${input.reviewType}`,
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: input.reason ?? null,
+      metadata: {
+        authenticatedActorId: auth.actorId,
+        resolution: input.resolution,
+      },
+    });
+    return true;
+  }
+
+  /** Mirrors `CasesController.submitConsentAction()` exactly — same service call, same audit-event shape, synchronous like its REST counterpart. */
+  @Mutation(() => ConsentRecord, {
+    name: 'submitConsentAction',
+    description: 'Grant or revoke consent for a case (Section 15.1/14.2).',
+  })
+  async submitConsentAction(
+    @CurrentAuth() auth: AuthContext,
+    @Args('caseId', { type: () => ID }) caseId: string,
+    @Args('input', { type: () => ConsentActionDto }) input: ConsentActionDto,
+  ): Promise<ConsentRecord> {
+    const record = await this.casesService.submitConsentAction(
+      auth.tenantId,
+      caseId,
+      input,
+    );
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: auth.actorId,
+      action: `CONSENT_${input.action}`,
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: input.reason ?? null,
+      metadata: { consentRecordId: record.id },
+    });
+    return record;
+  }
+
+  /**
+   * Mirrors `CasesController.escalate()` — same service call, same
+   * audit-event shape. Unlike `submitReview`, escalation is a real
+   * synchronous compare-and-swap on the case itself (the REST route's
+   * own 200, not 202), so returning the freshly re-read `LoanCase` here
+   * is accurate, not a promise of an async outcome — and saves the
+   * caller an immediate follow-up `case(caseId)` round trip.
+   */
+  @Mutation(() => LoanCase, {
+    name: 'escalateCase',
+    description:
+      'Pause a case for human review (escalate_to_reviewer, Section 9.4).',
+  })
+  async escalateCase(
+    @CurrentAuth() auth: AuthContext,
+    @Args('caseId', { type: () => ID }) caseId: string,
+    @Args('input', { type: () => EscalateDto }) input: EscalateDto,
+  ): Promise<LoanCase> {
+    await this.casesService.escalate(auth.tenantId, caseId, input);
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: input.actorId,
+      action: 'CASE_ESCALATED',
+      resourceType: 'loan_case',
+      resourceId: caseId,
+      correlationId: auth.correlationId,
+      reason: input.reason,
+      metadata: { authenticatedActorId: auth.actorId },
+    });
+    return this.casesService.getCase(auth.tenantId, caseId);
   }
 
   @ResolveField(() => [EvidenceFact], {

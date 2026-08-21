@@ -1,5 +1,6 @@
 import { IsIn, IsOptional, Length } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { InputType, Field } from '@nestjs/graphql';
 
 export type ConsentActionType = 'GRANT' | 'REVOKE';
 
@@ -12,9 +13,15 @@ export type ConsentActionType = 'GRANT' | 'REVOKE';
  * yet — see `ConsentRecord`'s own comment). `REVOKE` is the new real
  * capability this slice adds: Section 14.2, "Consent revocation...
  * stops new processing immediately."
+ *
+ * `@InputType()`/`@Field()` (M6-003) — reused as-is for
+ * `submitConsentAction`'s GraphQL mutation input; see `ReviewDto`'s own
+ * comment for why `action` stays a plain `String`, not a GraphQL enum.
  */
+@InputType()
 export class ConsentActionDto {
   @ApiProperty({ enum: ['GRANT', 'REVOKE'] })
+  @Field()
   @IsIn(['GRANT', 'REVOKE'])
   action!: ConsentActionType;
 
@@ -23,6 +30,7 @@ export class ConsentActionDto {
     maxLength: 2000,
     description: 'Only meaningful for REVOKE — the revocation reason.',
   })
+  @Field(() => String, { nullable: true })
   @IsOptional()
   @Length(1, 2000)
   reason?: string;

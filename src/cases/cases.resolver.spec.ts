@@ -3,9 +3,18 @@ import { CasesResolver, CasePolicyBindingResolver } from './cases.resolver';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { AuthContext } from '../auth/auth-context';
+import { ApiClientRole } from '../database/enums/api-client.enum';
 
 describe('CasesResolver (Section 15.2, M6)', () => {
-  let casesService: { getCase: jest.Mock; getTimeline: jest.Mock };
+  let casesService: {
+    getCase: jest.Mock;
+    getTimeline: jest.Mock;
+    submitReview: jest.Mock;
+    submitConsentAction: jest.Mock;
+    escalate: jest.Mock;
+  };
   let caseQueryService: {
     listEvidenceFacts: jest.Mock;
     listConditions: jest.Mock;
@@ -15,6 +24,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     getPolicySnapshot: jest.Mock;
     listCases: jest.Mock;
   };
+  let auditEventService: { record: jest.Mock };
   let resolver: CasesResolver;
 
   const TENANT_ID = '11111111-1111-1111-1111-111111111111';
@@ -33,11 +43,20 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     createdAt: new Date(),
     updatedAt: new Date(),
   };
+  const AUTH: AuthContext = {
+    tenantId: TENANT_ID,
+    actorId: 'client-1',
+    role: ApiClientRole.REVIEWER,
+    correlationId: 'correlation-1',
+  };
 
   beforeEach(() => {
     casesService = {
       getCase: jest.fn().mockResolvedValue(CASE),
       getTimeline: jest.fn().mockResolvedValue([]),
+      submitReview: jest.fn().mockResolvedValue(undefined),
+      submitConsentAction: jest.fn(),
+      escalate: jest.fn().mockResolvedValue(undefined),
     };
     caseQueryService = {
       listEvidenceFacts: jest.fn().mockResolvedValue([]),
@@ -51,9 +70,11 @@ describe('CasesResolver (Section 15.2, M6)', () => {
         pageInfo: { hasNextPage: false, endCursor: null },
       }),
     };
+    auditEventService = { record: jest.fn().mockResolvedValue(undefined) };
     resolver = new CasesResolver(
       casesService as never,
       caseQueryService as never,
+      auditEventService as never,
     );
   });
 
@@ -108,6 +129,103 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       first: undefined,
       after: undefined,
     });
+  });
+
+  it('submitReview() delegates to CasesService.submitReview() using the authenticated tenantId, records a matching audit event, and returns true', async () => {
+    const input = {
+      reviewType: 'CONDITION_RESOLUTION' as const,
+      actorId: 'reviewer-1',
+      resolution: 'SATISFIED' as const,
+      reason: 'verified',
+    };
+
+    const result = await resolver.submitReview(AUTH, CASE_ID, input);
+
+    expect(result).toBe(true);
+    expect(casesService.submitReview).toHaveBeenCalledWith(
+      TENANT_ID,
+      CASE_ID,
+      input,
+    );
+    expect(auditEventService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        actorId: 'reviewer-1',
+        action: 'REVIEW_CONDITION_RESOLUTION',
+        resourceType: 'loan_case',
+        resourceId: CASE_ID,
+        correlationId: AUTH.correlationId,
+        reason: 'verified',
+        metadata: {
+          authenticatedActorId: AUTH.actorId,
+          resolution: 'SATISFIED',
+        },
+      }),
+    );
+  });
+
+  it('submitConsentAction() delegates to CasesService.submitConsentAction(), records a matching audit event, and returns the resulting record', async () => {
+    const record: ConsentRecord = {
+      id: 'consent-1',
+      tenantId: TENANT_ID,
+      caseId: CASE_ID,
+      purpose: 'underwriting',
+      scope: 'case',
+      grantedAt: new Date(),
+      expiresAt: null,
+      revokedAt: new Date(),
+      revocationReason: 'borrower withdrew',
+      createdAt: new Date(),
+    };
+    casesService.submitConsentAction.mockResolvedValue(record);
+    const input = { action: 'REVOKE' as const, reason: 'borrower withdrew' };
+
+    const result = await resolver.submitConsentAction(AUTH, CASE_ID, input);
+
+    expect(result).toBe(record);
+    expect(casesService.submitConsentAction).toHaveBeenCalledWith(
+      TENANT_ID,
+      CASE_ID,
+      input,
+    );
+    expect(auditEventService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        actorId: AUTH.actorId,
+        action: 'CONSENT_REVOKE',
+        resourceType: 'loan_case',
+        resourceId: CASE_ID,
+        correlationId: AUTH.correlationId,
+        reason: 'borrower withdrew',
+        metadata: { consentRecordId: 'consent-1' },
+      }),
+    );
+  });
+
+  it('escalateCase() delegates to CasesService.escalate(), records a matching audit event, and returns the freshly re-read case', async () => {
+    const input = { actorId: 'reviewer-1', reason: 'needs manual look' };
+
+    const result = await resolver.escalateCase(AUTH, CASE_ID, input);
+
+    expect(result).toBe(CASE);
+    expect(casesService.escalate).toHaveBeenCalledWith(
+      TENANT_ID,
+      CASE_ID,
+      input,
+    );
+    expect(casesService.getCase).toHaveBeenCalledWith(TENANT_ID, CASE_ID);
+    expect(auditEventService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: TENANT_ID,
+        actorId: 'reviewer-1',
+        action: 'CASE_ESCALATED',
+        resourceType: 'loan_case',
+        resourceId: CASE_ID,
+        correlationId: AUTH.correlationId,
+        reason: 'needs manual look',
+        metadata: { authenticatedActorId: AUTH.actorId },
+      }),
+    );
   });
 
   it('policyBinding() field resolver scopes by the parent case’s own tenantId/id', async () => {

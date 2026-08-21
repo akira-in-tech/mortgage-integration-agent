@@ -6,6 +6,7 @@ import {
   Index,
 } from 'typeorm';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ObjectType, Field, ID } from '@nestjs/graphql';
 
 /**
  * Section 14.1's `consent_records`: "Purpose, scope, policy version,
@@ -25,11 +26,18 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * real, permanent record of what happened and why, matching the
  * append-only reasoning `ConditionTransition` already uses for condition
  * history.
+ *
+ * `@ObjectType()`/`@Field()` (M6-003) — this table's first GraphQL
+ * exposure, backing `submitConsentAction`'s mutation return type;
+ * `tenantId` stays off the GraphQL surface, matching every other
+ * dual-decorated entity's own convention.
  */
 @Entity('consent_records')
+@ObjectType()
 @Index('IDX_consent_records_tenant_case', ['tenantId', 'caseId'])
 export class ConsentRecord {
   @ApiProperty({ format: 'uuid' })
+  @Field(() => ID)
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -38,35 +46,43 @@ export class ConsentRecord {
   tenantId!: string;
 
   @ApiProperty({ format: 'uuid' })
+  @Field(() => ID)
   @Column({ type: 'uuid' })
   caseId!: string;
 
   @ApiProperty()
+  @Field()
   @Column({ type: 'varchar', length: 100 })
   purpose!: string;
 
   @ApiProperty()
+  @Field()
   @Column({ type: 'varchar', length: 100 })
   scope!: string;
 
   @ApiProperty()
+  @Field()
   @Column({ type: 'timestamptz' })
   grantedAt!: Date;
 
   /** Null means no fixed expiration — most consent this codebase issues today, since case processing itself is the bounding event. */
   @ApiPropertyOptional()
+  @Field(() => Date, { nullable: true })
   @Column({ type: 'timestamptz', nullable: true })
   expiresAt!: Date | null;
 
   @ApiPropertyOptional()
+  @Field(() => Date, { nullable: true })
   @Column({ type: 'timestamptz', nullable: true })
   revokedAt!: Date | null;
 
   @ApiPropertyOptional()
+  @Field(() => String, { nullable: true })
   @Column({ type: 'varchar', length: 2000, nullable: true })
   revocationReason!: string | null;
 
   @ApiProperty()
+  @Field()
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 }

@@ -8409,3 +8409,95 @@ Fresh scratch stack (Postgres 5553, Temporal 7251):
 ### Next safe step
 
 The GraphQL read layer now supports both single-case lookup and tenant-wide list/search — the two query shapes a real console needs before it can show anything. The remaining M6 gap is the mutation half (review/consent/escalate actions are REST-only; GraphQL has no mutations at all yet) and the actual React console itself, which is the larger, separately-scoped M6 UI milestone.
+
+## M6-003: GraphQL mutations for review, consent, and escalation (Section 15.1/15.2)
+
+### Status
+
+Implemented and verified. `case`/`cases` covered the read half of the GraphQL surface; every write action (`submitReview`, `submitConsentAction`, `escalateCase`) was REST-only until this slice. GraphQL now has real mutations for all three, not new business logic — each one calls the exact same `CasesService` method and records the exact same audit event its REST counterpart already does.
+
+### Acceptance criterion
+
+Three new mutations on `CasesResolver`, each mirroring its `CasesController` counterpart's own service call, audit-event shape, and guard:
+
+- `submitReview(caseId, input: ReviewDto): Boolean!` — `RoleGuard`/`@RequireRole(REVIEWER)`-gated (Section 6.3, M5-017), same as REST. Returns `Boolean`, not `LoanCase`: the underlying action is a Temporal signal the workflow applies asynchronously, so returning the case here would falsely imply the review is already reflected in it — the same honesty REST's own `202 Accepted`/no-body response already carries.
+- `submitConsentAction(caseId, input: ConsentActionDto): ConsentRecord!` — synchronous, returns the resulting `ConsentRecord`, matching REST's `201 Created` body exactly.
+- `escalateCase(caseId, input: EscalateDto): LoanCase!` — synchronous compare-and-swap on the case itself (matching REST's own `200 OK`, not `202`), so returning the freshly re-read `LoanCase` here is accurate and saves the caller an immediate follow-up `case(caseId)` round trip.
+
+`ReviewDto`/`ConsentActionDto`/`EscalateDto` are dual-decorated `@InputType()`s reusing the exact same `class-validator` rules REST already enforces — the global `ValidationPipe` (`main.ts`) runs on GraphQL resolver arguments the same way it runs on REST bodies, so this is the same validation, not a reimplementation. Proven end to end against a real running app: `submitConsentAction` REVOKE returned a real `ConsentRecord` with `revokedAt`/`revocationReason` set; `escalateCase` moved a real case from `DRAFT` to `WAITING_FOR_REVIEW` (version incremented) and returned it; `submitReview` with a `PARTNER` token was rejected with the identical `FORBIDDEN`/"requires one of these roles: REVIEWER" error REST produces, while a `REVIEWER` token passed the guard and only failed downstream on a real gRPC connection error (no Temporal server stood up for this quick check — proving the guard chain and service delegation, not the signal delivery itself, which is already covered by the existing e2e suite); a syntactically-invalid `reviewType` and an empty `actorId` both failed with a clean `BAD_REQUEST` GraphQL error from the same `class-validator` rules REST uses.
+
+### Implementation
+
+- `src/cases/dto/review.dto.ts`, `consent-action.dto.ts`, `escalate.dto.ts` — each gains `@InputType()` plus `@Field()` on every property, reusing the identical class instead of a parallel GraphQL-only input. `reviewType`/`resolution`/`action` stay plain `String` fields, not GraphQL enums — all three are TypeScript string-literal unions, not real `enum`s, and `registerEnumType()` needs one; `@IsIn()` is what actually enforces the allowed values regardless of transport.
+- `src/database/entities/consent-record.entity.ts` — `@ObjectType()`/`@Field()` added (this table's first GraphQL exposure of any kind), `tenantId` omitted from the GraphQL surface matching every other dual-decorated entity.
+- `src/cases/cases.resolver.ts` — `CasesResolver` gains an injected `AuditEventService` and three `@Mutation()`s, each a direct mirror of its `CasesController` counterpart: same `CasesService` call, same audit-event fields, same extra guard where REST has one (`submitReview`'s `RoleGuard`/`RequireRole`).
+
+### Affected files
+
+- `src/cases/dto/review.dto.ts`
+- `src/cases/dto/consent-action.dto.ts`
+- `src/cases/dto/escalate.dto.ts`
+- `src/database/entities/consent-record.entity.ts`
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+- `README.md`
+
+### Decisions and alternatives
+
+- **Reused the REST DTOs as GraphQL input types (dual decoration), not parallel GraphQL-only input classes.** The identical pattern this codebase already uses for every entity (`LoanCase`, `EvidenceFact`, etc.) — one class, one set of validation rules, multiple transports. A parallel input type would mean two places to keep a field list and its validation rules in sync, with real risk of the two silently drifting (a REST-only validation rule that GraphQL's copy forgets to carry over).
+- **`submitReview` returns `Boolean`, not `LoanCase`.** Considered returning the case for symmetry with `escalateCase` — rejected: `submitReview` only ever delivers a Temporal signal; the workflow applies it asynchronously, so the case's actual status at the moment this mutation returns is not yet the outcome of the review. Returning it would look like a completed-review case shape while actually being a stale pre-review one — a real, misleading result shape, not just an unhelpful one.
+- **`escalateCase` returns `LoanCase`, refetched after the mutation.** Unlike `submitReview`, `escalate()` is a real synchronous state change (Section 9.4's `escalate_to_reviewer` compare-and-swap) — the REST route's own `200 OK` already implies "done, not pending." Returning the case saves the obvious immediate follow-up query a real caller would otherwise make.
+- **No new business logic anywhere in this slice** — every mutation is a thin resolver wrapper around the exact `CasesService` method and `AuditEventService.record()` call its REST counterpart already uses. Two independent, behaviorally-identical entry points to the same real logic, not two implementations of the same idea that could drift.
+
+### Errors and fixes
+
+None — built, booted, and live-verified clean on the first full pass (including the `RoleGuard`/`CurrentAuth` GraphQL-context handling, already fixed generically at M6-001's `get-request-from-context.ts`, so no new context-plumbing bug to find here).
+
+### Verification
+
+```text
+npm run build / npm run lint — clean
+
+Real running app (Postgres 5554): boots clean, GraphQL schema generates
+  with no UndefinedTypeError.
+
+Real live-server verification (not spec-level):
+  submitConsentAction(REVOKE) returned a real ConsentRecord with
+    revokedAt/revocationReason set
+  escalateCase moved a real case DRAFT -> WAITING_FOR_REVIEW
+    (version 1 -> 2) and returned it
+  submitReview with a PARTNER token: FORBIDDEN, identical message to
+    REST's RoleGuard rejection
+  submitReview with a REVIEWER token: passed the guard, failed only on
+    a real gRPC connect timeout (no Temporal server running for this
+    check) — proves the guard chain and CasesService delegation, not
+    signal delivery itself (already covered by the e2e suite)
+  submitReview with an invalid reviewType, and again with an empty
+    actorId: both a clean BAD_REQUEST GraphQL error from the same
+    class-validator rules REST already enforces — confirms the global
+    ValidationPipe genuinely runs on GraphQL mutation args
+
+Fresh scratch stack (Postgres 5554, Temporal 7252):
+  npx jest src/cases/ — 5 suites / 62 passed (+3 new mutation tests in
+    cases.resolver.spec.ts)
+  npm test -- --runInBand — 85 suites / 661 tests passed (4 suites / 17
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged
+  npm run generate:openapi — zero diff (GraphQL-only change; no REST
+    route or response shape touched)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Every mutation is gated by the same `TenantAuthGuard` the resolver class already requires, plus the identical extra `RoleGuard`/`RequireRole` REST uses where applicable (`submitReview`) — no mutation is reachable with weaker authorization than its REST counterpart.
+- Every mutation records the identical audit event its REST counterpart does — GraphQL callers leave the same security-history trail REST callers already do, not a gap in `audit_events` coverage for this new transport.
+- No behavioral change to any existing route, resolver, or REST response — purely additive.
+
+### Known gaps
+
+- **No `startWorkflowRun`/`checkPolicyChangeImpact`/communication-message mutations yet** — this slice scoped to review/consent/escalate specifically (the three named as REST-only when this slice started); the remaining REST-only write routes are a real, separate, similarly-mechanical follow-up, not attempted here to keep this slice's own diff reviewable.
+- **No console/React frontend consumes any of this yet** — M6's own larger scope, unchanged.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+GraphQL now has a real query and mutation surface for the core review/consent/escalate loop. What's left before a console could be built entirely against GraphQL: the remaining REST-only mutations (workflow-run start, policy-change-impact check, communication-message approve/send) — each the same mechanical "wrap the existing service call" pattern this slice used — or, alternatively, starting the actual React console now against the surface that already exists and adding the rest as the console needs them.
