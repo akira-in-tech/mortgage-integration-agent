@@ -9,6 +9,7 @@ import { CommunicationApprovalService } from './communication-approval.service';
 import { CommunicationDeliverySimulator } from './communication-delivery-simulator';
 import { CommunicationDeliveryService } from './communication-delivery.service';
 import { CommunicationMessagesController } from './communication-messages.controller';
+import { CommunicationMessagesResolver } from './communication-messages.resolver';
 import { AuditModule } from '../audit/audit.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { AuditModule } from '../audit/audit.module';
     CommunicationApprovalService,
     CommunicationDeliverySimulator,
     CommunicationDeliveryService,
+    CommunicationMessagesResolver,
   ],
   exports: [
     CommunicationMessageService,

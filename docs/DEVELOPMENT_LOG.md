@@ -8501,3 +8501,109 @@ Fresh scratch stack (Postgres 5554, Temporal 7252):
 ### Next safe step
 
 GraphQL now has a real query and mutation surface for the core review/consent/escalate loop. What's left before a console could be built entirely against GraphQL: the remaining REST-only mutations (workflow-run start, policy-change-impact check, communication-message approve/send) — each the same mechanical "wrap the existing service call" pattern this slice used — or, alternatively, starting the actual React console now against the surface that already exists and adding the rest as the console needs them.
+
+## M6-004: GraphQL mutations for workflow-run start, policy-change-impact, and communication-message approve/send (Section 15.1/15.2/6.4)
+
+### Status
+
+Implemented and verified. Closes M6-003's own named gap: the remaining REST-only mutations (`startWorkflowRun`, `checkPolicyChangeImpact`, `approveCommunicationMessage`, `sendCommunicationMessage`) now have real GraphQL counterparts, each the same "thin wrapper around the exact existing service call" pattern M6-003 established. Every REST write route this codebase has is now also reachable through GraphQL.
+
+### Acceptance criterion
+
+Four new mutations, two on `CasesResolver` and two on a new `CommunicationMessagesResolver`:
+
+- `startWorkflowRun(caseId): StartWorkflowRunResult!` — mirrors `CasesController.startWorkflow()` exactly; idempotent per case, no RBAC gate (REST has none), no audit event (REST's own route doesn't record one for this action either).
+- `checkPolicyChangeImpact(caseId, input): PolicyChangeImpactResult!` — mirrors `CasesController.checkPolicyChangeImpact()`; advisory only, no RBAC gate, no audit event, matching REST exactly. `PolicyChangeImpactResult` is a new flattened GraphQL type for `CheckPolicyChangeImpactResult`'s own TypeScript discriminated union (`{assessed:true, impact, details, assessmentId} | {assessed:false, reason}`) — GraphQL has no algebraic-type equivalent, so every non-`assessed` field is nullable on one concrete type, with `assessed` itself telling a client which half is actually populated.
+- `approveCommunicationMessage(messageId, input): CommunicationApproval!` (new `CommunicationMessagesResolver`, in `src/communications/`, not nested under `case` — mirrors `CommunicationMessagesController.approve()`, `RoleGuard`/`RequireRole(REVIEWER)`-gated exactly like REST (Section 6.4).
+- `sendCommunicationMessage(messageId): CommunicationDeliveryResult!` — mirrors `CommunicationMessagesController.send()`: no RBAC gate (REST's own reasoning stands unchanged — `deliver()`'s state-based readiness check already fails closed regardless of role), throws the identical `ConflictException` for a `NOT_READY` message, records the identical `COMMUNICATION_SENT` audit event on success.
+
+Proven end to end against a real running app: `checkPolicyChangeImpact` against a case with no live policy binding returned the real `{assessed: false, reason: "case has no live policy binding to compare against"}` shape; `approveCommunicationMessage` with a `PARTNER` token was rejected with the identical `FORBIDDEN` error REST produces, a `REVIEWER` token succeeded and returned a real `CommunicationApproval` with `approvedRenderedContentHash` bound to the message's own real hash; `sendCommunicationMessage` on that now-approved message returned a real `DELIVERED` result with a real `deliveryReference`, and calling it again on the now-`SENT` message threw a real `ConflictException` — the real `409`/`"Conflict"` status is preserved in the GraphQL error's own `extensions.originalError`/`extensions.status`, even though Apollo's default `extensions.code` mapping only covers a handful of well-known statuses (400/401/403/404) and falls back to `INTERNAL_SERVER_ERROR` for 409 specifically — a real, honest Apollo/`@nestjs/graphql` framework behavior, not something this slice's code controls or should paper over. `startWorkflowRun` was proven to reach the real `TemporalClientService` call (a real gRPC connection attempt against a deliberately-absent Temporal server in that quick check, the identical proof shape M6-003 already used for `submitReview`) — the actual workflow-execution path itself is unchanged code, already covered by the existing e2e suite and `case-conditions.workflow.spec.ts`'s own real-Temporal-backed tests.
+
+### Implementation
+
+- `src/cases/cases.service.ts` — `StartWorkflowRunResult` gains `@ObjectType()`/`@Field()`.
+- `src/cases/dto/check-policy-change-impact.dto.ts` — gains `@InputType()`/`@Field()`.
+- `src/cases/policy-change-impact-result.model.ts` (new) — `PolicyChangeImpactResult`, registers `PolicyChangeImpactKind` for GraphQL (its first exposure of any kind).
+- `src/cases/cases.resolver.ts` — two new `@Mutation()`s (`startWorkflowRun`, `checkPolicyChangeImpact`), same placement/ordering discipline as the REST controller's own route order.
+- `src/database/entities/communication-message.entity.ts` — `@ObjectType()`/`@Field()` added (this table's first GraphQL exposure), registers `CommunicationClassification`/`CommunicationMessageStatus`; `variables` (a real JSONB map) uses the `graphql-type-json` scalar, matching every other genuinely-JSON column's own convention; `template` relation stays id-only (`templateId`), no `@ResolveField()` — nothing has asked to traverse it from here yet.
+- `src/database/entities/communication-approval.entity.ts` — `@ObjectType()`/`@Field()` added.
+- `src/communications/dto/approve-communication-message.dto.ts` — gains `@InputType()`/`@Field()`.
+- `src/communications/communication-delivery-result.model.ts` (new) — `CommunicationDeliveryResult`, the `outcome: 'DELIVERED'` half of `DeliverCommunicationResult`'s own discriminated union; the `NOT_READY` half never reaches a GraphQL type at all, since the resolver throws for it instead, matching REST.
+- `src/communications/communication-messages.resolver.ts` (new, +`.spec.ts`) — `CommunicationMessagesResolver`, a bare `@Resolver()` (no parent object type — both mutations are argument-driven, not field resolvers off any entity), gated by the same `TenantAuthGuard`/`RoleGuard` pattern every other resolver in this codebase uses.
+- `src/communications/communications.module.ts` — registers `CommunicationMessagesResolver`.
+
+### Affected files
+
+- `src/cases/cases.service.ts`
+- `src/cases/dto/check-policy-change-impact.dto.ts`
+- `src/cases/policy-change-impact-result.model.ts` (new)
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+- `src/database/entities/communication-message.entity.ts`
+- `src/database/entities/communication-approval.entity.ts`
+- `src/communications/dto/approve-communication-message.dto.ts`
+- `src/communications/communication-delivery-result.model.ts` (new)
+- `src/communications/communication-messages.resolver.ts` (+`.spec.ts`, new)
+- `src/communications/communications.module.ts`
+- `README.md`
+
+### Decisions and alternatives
+
+- **`PolicyChangeImpactResult`/`CommunicationDeliveryResult` both flatten a TypeScript discriminated union into one nullable-fields object type**, the same resolution for the identical problem shape in both cases: GraphQL's type system has no direct equivalent to a TS discriminated union without building a real `createUnionType()` (which needs each member to be its own named `@ObjectType()` plus a runtime type-resolver function) — real added machinery for a two-variant result that a flattened type already represents completely honestly (every field that can be null already is, and the discriminant field itself, `assessed`/`outcome`, tells a client which half is populated). `createUnionType()` was considered and rejected for being real complexity spent on a problem the simpler shape already solves without loss of information.
+- **`CommunicationMessagesResolver` lives in `src/communications/`, not nested as more of `CasesResolver`.** Matches this codebase's own established "resolver lives with its owning module" boundary (`CasesResolver` in `cases/`) — `CommunicationsModule` already owns every service these mutations call; nesting them under `CasesResolver` would mean `CasesModule` reaching into `CommunicationsModule`'s own domain instead of the reverse (which is what `CasesModule` importing `CommunicationsModule` transitively would require anyway, and doesn't currently do).
+- **No `caseId` argument on either communication-message mutation**, even though REST nests both routes under a case's own URL path. Neither underlying service call (`approve()`, `deliver()`) ever uses `caseId` — only `messageId`/`tenantId` — so the REST URL's nesting is purely a routing convenience, not a real authorization boundary; omitting it from the GraphQL args is a faithful mirror of what REST actually enforces, not a weakening of it.
+- **Declined to build a `case { communicationMessages }` list `@ResolveField()`** even though `CommunicationMessageService.listForCase()` already exists (REST's own `GET .../communication-messages`) — this slice's own scope was named explicitly as the four write mutations; adding a fifth, unrelated read field would be scope creep past what was asked, not a natural extension of it. A real, separately-scoped follow-up if a console needs it.
+
+### Errors and fixes
+
+None — built, booted, and live-verified clean on the first full pass.
+
+### Verification
+
+```text
+npm run build / npm run lint — clean
+
+Real running app (Postgres 5555, later + Temporal 7253): boots clean,
+  GraphQL schema generates with no UndefinedTypeError.
+
+Real live-server verification (not spec-level):
+  checkPolicyChangeImpact against a case with no live binding returned
+    the real {assessed:false, reason:"case has no live policy binding
+    to compare against"} shape
+  approveCommunicationMessage with a PARTNER token: FORBIDDEN, identical
+    message to REST's RoleGuard rejection; with a REVIEWER token:
+    succeeded, returned a real CommunicationApproval with
+    approvedRenderedContentHash matching the message's own real hash
+  sendCommunicationMessage on the now-approved message: real DELIVERED
+    result with a real deliveryReference; calling it again on the now-
+    SENT message: real ConflictException, 409/"Conflict" preserved in
+    extensions.originalError/extensions.status (Apollo's own default
+    extensions.code mapping falls back to INTERNAL_SERVER_ERROR for 409
+    specifically — confirmed as expected framework behavior, not a bug)
+  startWorkflowRun: reached the real TemporalClientService call (a real
+    gRPC connect-timeout against a deliberately-absent Temporal server)
+
+Fresh scratch stack (Postgres 5555, Temporal 7253):
+  npx jest src/cases/cases.resolver.spec.ts src/communications/ —
+    8 suites / 56 passed (+2 new CasesResolver mutation tests, +3 new
+    CommunicationMessagesResolver tests)
+  npm test -- --runInBand — 86 suites / 666 tests passed (4 suites / 17
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed, unchanged
+  npm run generate:openapi — zero diff (GraphQL-only change)
+```
+
+### Security, privacy, cost, and compatibility
+
+- Every mutation carries the identical authorization boundary its REST counterpart already has — no RBAC gate where REST has none (`startWorkflowRun`, `checkPolicyChangeImpact`, `sendCommunicationMessage`), the identical `RoleGuard`/`REVIEWER` gate where REST has one (`approveCommunicationMessage`).
+- `sendCommunicationMessage` records the identical `COMMUNICATION_SENT` audit event REST already does — no gap in `audit_events` coverage for this new transport.
+- No behavioral change to any existing route, resolver, or REST response — purely additive.
+
+### Known gaps
+
+- **No `case.communicationMessages` GraphQL read field** — see Decisions; a real, separate follow-up if a console needs it, not attempted here.
+- **No console/React frontend consumes any of this yet** — M6's own larger scope, unchanged.
+- Every other M0/M3/M4/M5/M6 Known gap is unchanged by this slice.
+
+### Next safe step
+
+Every REST write route this codebase has now has a GraphQL counterpart, and the read layer covers single-case lookup, list/search, and every case-scoped relation named so far. The GraphQL API surface for a real console to be built against is now essentially complete for the M2+ target case aggregate — the remaining M6 work is the console itself (React, Apollo Client, the actual UI), not further backend surface area.

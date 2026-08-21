@@ -18,12 +18,14 @@ import { ProviderOperationIntent } from '../database/entities/provider-operation
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CaseConnection } from './case-connection.model';
-import { CasesService } from './cases.service';
+import { PolicyChangeImpactResult } from './policy-change-impact-result.model';
+import { CasesService, StartWorkflowRunResult } from './cases.service';
 import { CaseQueryService } from './case-query.service';
 import { TimelineEntry } from './case-timeline.service';
 import { ReviewDto } from './dto/review.dto';
 import { ConsentActionDto } from './dto/consent-action.dto';
 import { EscalateDto } from './dto/escalate.dto';
+import { CheckPolicyChangeImpactDto } from './dto/check-policy-change-impact.dto';
 import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { AuthTenantId } from '../auth/auth-tenant-id.decorator';
 import { CurrentAuth } from '../auth/current-auth.decorator';
@@ -87,6 +89,25 @@ export class CasesResolver {
       first,
       after,
     });
+  }
+
+  /**
+   * Mirrors `CasesController.startWorkflow()` exactly — same service
+   * call, idempotent per case (a case with a workflow already running
+   * returns that same run rather than starting a second one). No extra
+   * audit event: REST's own route doesn't record one for this action
+   * either.
+   */
+  @Mutation(() => StartWorkflowRunResult, {
+    name: 'startWorkflowRun',
+    description:
+      'Start the case-conditions workflow for a case, idempotent per case (Section 15.1).',
+  })
+  async startWorkflowRun(
+    @AuthTenantId() tenantId: string,
+    @Args('caseId', { type: () => ID }) caseId: string,
+  ): Promise<StartWorkflowRunResult> {
+    return this.casesService.startWorkflow(tenantId, caseId);
   }
 
   /**
@@ -185,6 +206,28 @@ export class CasesResolver {
       metadata: { authenticatedActorId: auth.actorId },
     });
     return this.casesService.getCase(auth.tenantId, caseId);
+  }
+
+  /**
+   * Mirrors `CasesController.checkPolicyChangeImpact()` exactly — same
+   * service call. Advisory only (`check_policy_change_impact`'s own
+   * approval boundary: "cannot change case applicability"), so no RBAC
+   * restriction, matching REST. Still a `Mutation`, not a `Query`: a real
+   * `PolicyChangeImpactAssessment` row is persisted as a side effect,
+   * the same reason the REST route is a `POST`, not a `GET`.
+   */
+  @Mutation(() => PolicyChangeImpactResult, {
+    name: 'checkPolicyChangeImpact',
+    description:
+      "Check whether a policy version affects this case's own live binding (Section 9.4/10.6).",
+  })
+  async checkPolicyChangeImpact(
+    @AuthTenantId() tenantId: string,
+    @Args('caseId', { type: () => ID }) caseId: string,
+    @Args('input', { type: () => CheckPolicyChangeImpactDto })
+    input: CheckPolicyChangeImpactDto,
+  ): Promise<PolicyChangeImpactResult> {
+    return this.casesService.checkPolicyChangeImpact(tenantId, caseId, input);
   }
 
   @ResolveField(() => [EvidenceFact], {

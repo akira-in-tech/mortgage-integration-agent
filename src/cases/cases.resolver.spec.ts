@@ -14,6 +14,8 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     submitReview: jest.Mock;
     submitConsentAction: jest.Mock;
     escalate: jest.Mock;
+    startWorkflow: jest.Mock;
+    checkPolicyChangeImpact: jest.Mock;
   };
   let caseQueryService: {
     listEvidenceFacts: jest.Mock;
@@ -57,6 +59,8 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       submitReview: jest.fn().mockResolvedValue(undefined),
       submitConsentAction: jest.fn(),
       escalate: jest.fn().mockResolvedValue(undefined),
+      startWorkflow: jest.fn(),
+      checkPolicyChangeImpact: jest.fn(),
     };
     caseQueryService = {
       listEvidenceFacts: jest.fn().mockResolvedValue([]),
@@ -129,6 +133,17 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       first: undefined,
       after: undefined,
     });
+  });
+
+  it('startWorkflowRun() delegates to CasesService.startWorkflow() using the authenticated tenantId, records no audit event', async () => {
+    const result = { workflowId: 'wf-1', runId: 'run-1' };
+    casesService.startWorkflow.mockResolvedValue(result);
+
+    const returned = await resolver.startWorkflowRun(TENANT_ID, CASE_ID);
+
+    expect(returned).toBe(result);
+    expect(casesService.startWorkflow).toHaveBeenCalledWith(TENANT_ID, CASE_ID);
+    expect(auditEventService.record).not.toHaveBeenCalled();
   });
 
   it('submitReview() delegates to CasesService.submitReview() using the authenticated tenantId, records a matching audit event, and returns true', async () => {
@@ -226,6 +241,26 @@ describe('CasesResolver (Section 15.2, M6)', () => {
         metadata: { authenticatedActorId: AUTH.actorId },
       }),
     );
+  });
+
+  it('checkPolicyChangeImpact() delegates to CasesService.checkPolicyChangeImpact() using the authenticated tenantId, records no audit event', async () => {
+    const result = { assessed: false as const, reason: 'no live binding' };
+    casesService.checkPolicyChangeImpact.mockResolvedValue(result);
+    const input = { policyVersionId: 'policy-version-1' };
+
+    const returned = await resolver.checkPolicyChangeImpact(
+      TENANT_ID,
+      CASE_ID,
+      input,
+    );
+
+    expect(returned).toBe(result);
+    expect(casesService.checkPolicyChangeImpact).toHaveBeenCalledWith(
+      TENANT_ID,
+      CASE_ID,
+      input,
+    );
+    expect(auditEventService.record).not.toHaveBeenCalled();
   });
 
   it('policyBinding() field resolver scopes by the parent case’s own tenantId/id', async () => {

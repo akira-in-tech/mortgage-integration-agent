@@ -7,6 +7,7 @@ import {
   CreateDateColumn,
   Index,
 } from 'typeorm';
+import { ObjectType, Field, ID } from '@nestjs/graphql';
 import { CommunicationMessage } from './communication-message.entity';
 
 /**
@@ -19,13 +20,19 @@ import { CommunicationMessage } from './communication-message.entity';
  * a `CommunicationMessage` after creation, so that mismatch cannot
  * currently occur, but the binding is still recorded explicitly rather
  * than assumed).
+ *
+ * `@ObjectType()`/`@Field()` (M6-004) — `approveCommunicationMessage`'s
+ * GraphQL mutation return type.
  */
 @Entity('communication_approvals')
+@ObjectType()
 @Index('IDX_communication_approvals_message', ['communicationMessageId'])
 export class CommunicationApproval {
+  @Field(() => ID)
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Field(() => ID)
   @Column({ type: 'uuid' })
   communicationMessageId!: string;
 
@@ -33,15 +40,19 @@ export class CommunicationApproval {
   @JoinColumn({ name: 'communicationMessageId' })
   communicationMessage?: CommunicationMessage;
 
+  @Field()
   @Column({ type: 'varchar', length: 200 })
   actorId!: string;
 
+  @Field()
   @Column({ type: 'varchar', length: 64 })
   approvedRenderedContentHash!: string;
 
+  @Field(() => String, { nullable: true })
   @Column({ type: 'text', nullable: true })
   reason!: string | null;
 
+  @Field()
   @CreateDateColumn({ type: 'timestamptz' })
   approvedAt!: Date;
 }

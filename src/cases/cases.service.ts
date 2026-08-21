@@ -8,6 +8,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { WorkflowNotFoundError } from '@temporalio/client';
 import { ApiProperty } from '@nestjs/swagger';
+import { ObjectType, Field } from '@nestjs/graphql';
 import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
@@ -38,12 +39,15 @@ import {
   CheckPolicyChangeImpactResult,
 } from '../agent-runtime/tools/check-policy-change-impact.tool';
 
-/** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. */
+/** Classes, not interfaces — `CasesController`'s methods return these directly, and `@nestjs/swagger`'s `DocumentBuilder` (main.ts) introspects a controller's return-type class via `@ApiProperty()`, which an interface has no runtime representation to carry. Object literals still satisfy these structurally; no constructor or `implements` clause needed. `@ObjectType()`/`@Field()` (M6-004) reuse the same class as `startWorkflowRun`'s GraphQL mutation return type. */
+@ObjectType()
 export class StartWorkflowRunResult {
   @ApiProperty()
+  @Field()
   workflowId!: string;
 
   @ApiProperty()
+  @Field()
   runId!: string;
 }
 

@@ -1,5 +1,6 @@
 import { IsOptional, Length } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { InputType, Field } from '@nestjs/graphql';
 
 /**
  * `POST .../communication-messages/:messageId/approve` (M5-022) —
@@ -10,13 +11,19 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * made the decision — that identity is a distinct field a shared
  * REVIEWER credential's caller supplies explicitly, same as reviewer
  * decisions on `/reviews`.
+ *
+ * `@InputType()`/`@Field()` (M6-004) — reused as-is for
+ * `approveCommunicationMessage`'s GraphQL mutation input.
  */
+@InputType()
 export class ApproveCommunicationMessageDto {
   @ApiProperty({ minLength: 1, maxLength: 200 })
+  @Field()
   @Length(1, 200)
   actorId!: string;
 
   @ApiPropertyOptional({ minLength: 1, maxLength: 2000 })
+  @Field(() => String, { nullable: true })
   @IsOptional()
   @Length(1, 2000)
   reason?: string;
