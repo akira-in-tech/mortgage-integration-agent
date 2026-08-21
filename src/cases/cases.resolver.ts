@@ -34,6 +34,8 @@ import { RoleGuard } from '../auth/role.guard';
 import { RequireRole } from '../auth/require-role.decorator';
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { AuditEventService } from '../audit/audit-event.service';
+import { CommunicationMessage } from '../database/entities/communication-message.entity';
+import { CommunicationMessageService } from '../communications/communication-message.service';
 
 /**
  * Section 15.2's "GraphQL serves... flexible case, evidence, and timeline
@@ -57,6 +59,7 @@ export class CasesResolver {
     private readonly casesService: CasesService,
     private readonly caseQueryService: CaseQueryService,
     private readonly auditEventService: AuditEventService,
+    private readonly communicationMessageService: CommunicationMessageService,
   ) {}
 
   @Query(() => LoanCase, {
@@ -288,6 +291,19 @@ export class CasesResolver {
   })
   async auditEvents(@Parent() loanCase: LoanCase): Promise<AuditEvent[]> {
     return this.caseQueryService.listAuditEvents(
+      loanCase.tenantId,
+      loanCase.id,
+    );
+  }
+
+  /** `GET .../communication-messages`'s (M5-022) GraphQL counterpart — deferred as a Known gap at M6-004 pending a real console needing it; the console now does. */
+  @ResolveField(() => [CommunicationMessage], {
+    description: "The case's own communication messages (Section 9.4, M5-022).",
+  })
+  async communicationMessages(
+    @Parent() loanCase: LoanCase,
+  ): Promise<CommunicationMessage[]> {
+    return this.communicationMessageService.listForCase(
       loanCase.tenantId,
       loanCase.id,
     );

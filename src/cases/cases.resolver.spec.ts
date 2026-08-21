@@ -27,6 +27,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     listCases: jest.Mock;
   };
   let auditEventService: { record: jest.Mock };
+  let communicationMessageService: { listForCase: jest.Mock };
   let resolver: CasesResolver;
 
   const TENANT_ID = '11111111-1111-1111-1111-111111111111';
@@ -75,10 +76,14 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       }),
     };
     auditEventService = { record: jest.fn().mockResolvedValue(undefined) };
+    communicationMessageService = {
+      listForCase: jest.fn().mockResolvedValue([]),
+    };
     resolver = new CasesResolver(
       casesService as never,
       caseQueryService as never,
       auditEventService as never,
+      communicationMessageService as never,
     );
   });
 
@@ -282,6 +287,14 @@ describe('CasesResolver (Section 15.2, M6)', () => {
   it('auditEvents() field resolver scopes by the parent case’s own tenantId/id', async () => {
     await resolver.auditEvents(CASE);
     expect(caseQueryService.listAuditEvents).toHaveBeenCalledWith(
+      TENANT_ID,
+      CASE_ID,
+    );
+  });
+
+  it('communicationMessages() field resolver scopes by the parent case’s own tenantId/id', async () => {
+    await resolver.communicationMessages(CASE);
+    expect(communicationMessageService.listForCase).toHaveBeenCalledWith(
       TENANT_ID,
       CASE_ID,
     );

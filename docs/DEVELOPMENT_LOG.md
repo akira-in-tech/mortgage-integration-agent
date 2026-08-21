@@ -8607,3 +8607,57 @@ Fresh scratch stack (Postgres 5555, Temporal 7253):
 ### Next safe step
 
 Every REST write route this codebase has now has a GraphQL counterpart, and the read layer covers single-case lookup, list/search, and every case-scoped relation named so far. The GraphQL API surface for a real console to be built against is now essentially complete for the M2+ target case aggregate — the remaining M6 work is the console itself (React, Apollo Client, the actual UI), not further backend surface area.
+
+## M6-005: case.communicationMessages closes the last GraphQL read gap named at M6-004
+
+### Status
+
+Implemented and verified. M6-004's own Known Gaps entry named this explicitly: "No `case.communicationMessages` GraphQL read field... a real, separate follow-up if a console needs it." The console build starting this slice needs it (a Communications tab), so it's built now — the exact trigger condition that entry was written for.
+
+### Acceptance criterion
+
+`case { communicationMessages { ... } }` — a new `@ResolveField()` on `CasesResolver`, lazy like every other relation on this type, backed by the already-existing `CommunicationMessageService.listForCase()` (the same method `GET .../communication-messages` already uses), tenant/case-scoped through the parent `LoanCase`'s own fields, never a client-suppliable argument. No new business logic — a thin wrapper around an existing, already-tested service method, the same pattern every prior M6 GraphQL slice used.
+
+### Implementation
+
+- `src/cases/cases.module.ts` — imports `CommunicationsModule` (new dependency; no circular risk, `CommunicationsModule` doesn't import `CasesModule`).
+- `src/cases/cases.resolver.ts` — `CasesResolver` gains an injected `CommunicationMessageService` and one new `@ResolveField(() => [CommunicationMessage])`.
+
+### Affected files
+
+- `src/cases/cases.module.ts`
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+
+### Decisions and alternatives
+
+None beyond what M6-004's own Known Gaps entry already reasoned through — this is exactly the deferred, small, well-scoped follow-up that entry predicted, not a new decision.
+
+### Errors and fixes
+
+None — built and booted clean on the first pass (no circular-module error, no `UndefinedTypeError`).
+
+### Verification
+
+```text
+npm run build / npm run lint — clean
+Real running app (Postgres 5556) — boots clean, GraphQL schema generates
+  with no circular-dependency or UndefinedTypeError issue
+
+Fresh scratch stack (Postgres 5556):
+  npx jest src/cases/ — 5 suites / 65 passed (+1 new resolver test)
+  npm test -- --runInBand — 85 suites / 657 tests passed (5 suites / 27
+    tests skipped, pre-existing env-gated skips)
+  npm run generate:openapi — zero diff (GraphQL-only change)
+```
+
+### Security, privacy, cost, and compatibility
+
+Tenant-scoped through the parent case's own fields, identical guarantee to every other field on this resolver. No behavioral change to any existing route or resolver — purely additive.
+
+### Known gaps
+
+None new — this was itself the closure of a previously-named gap.
+
+### Next safe step
+
+Build the React operations console (M6's own larger scope) against this now-complete GraphQL surface, starting with the Triage Queue view (case list + detail pane with tabs) — the concrete UI direction chosen after comparing four mockup concepts.

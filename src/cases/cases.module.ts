@@ -21,6 +21,7 @@ import { ApiClient } from '../database/entities/api-client.entity';
 import { TemporalModule } from '../workflows/temporal.module';
 import { AuditModule } from '../audit/audit.module';
 import { PolicyModule } from '../policy/policy.module';
+import { CommunicationsModule } from '../communications/communications.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { PolicyModule } from '../policy/policy.module';
     TemporalModule,
     AuditModule,
     PolicyModule,
+    CommunicationsModule,
   ],
   controllers: [CasesController],
   providers: [
