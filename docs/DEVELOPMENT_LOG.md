@@ -9777,3 +9777,61 @@ The validator can prove that the two connection strings differ, but only a live 
 ### Next safe step
 
 Create the authoritative Agent budget ledger and reservation boundary before any cost-bearing or provider-calling tool is enabled in the graph.
+
+## M7-002: authoritative Agent budget ledger and reservation primitive
+
+### Status
+
+Implemented and verified against isolated PostgreSQL. The database now owns per-workflow step, token, provider-call, cost, currency, and deadline capacity; graph-state numbers alone cannot create or expand capacity. Runtime tool-boundary integration remains the next explicitly separate slice.
+
+### Acceptance criterion
+
+A workflow retry loads rather than resets an existing budget; concurrent callers cannot reserve the same final capacity; reservation replay is idempotent only for identical units; expired, closed, stale-version, and exhausted requests fail closed; actual cost cannot exceed remaining authority; and an outcome-unknown provider operation continues to hold conservative capacity until reconciliation.
+
+### Implementation
+
+- Added `agent_budget_ledgers` with immutable workflow identity and configured limits, independently tracked used and reserved capacity, a trusted start/deadline, optimistic version, currency, and close state.
+- Added `agent_budget_reservations` with a per-ledger idempotency key and `RESERVED`, `COMMITTED`, `RELEASED`, and `UNKNOWN` states. A composite foreign key includes `tenantId`, preventing a reservation from referencing another tenant's ledger even through direct SQL.
+- Enabled and forced tenant row-level security on both tables. Service access always establishes transaction-local tenant context.
+- Added one atomic conditional `UPDATE` for reservation. It checks expected version, deadline, close state, and all four capacity dimensions before increasing reserved amounts; a failed predicate changes nothing.
+- Added idempotent create/load semantics. Retries may present a newly computed activity start/deadline, but the service retains the original trusted database times and rejects changes to case, limits, or currency, so retries cannot extend time or replenish capacity.
+- Added commit, release, and outcome-unknown reconciliation. Commit moves reserved units to used units in one locked transaction; actual provider cost may exceed the estimate only when unreserved capacity remains. Failed overage commits roll back and preserve the reservation.
+- Added bounded integer and currency validation and explicit typed failure codes for exhaustion, expiry, stale versions, closed ledgers, and reservation conflicts.
+- Extended cumulative migration verification to include both the previously added OIDC session migration and the new budget migration, including ordered rollback and enum cleanup.
+
+### Decisions and alternatives
+
+- PostgreSQL is the budget authority because the workflow, idempotency, and tenant data are already durable there. An in-process counter or graph-state reducer cannot protect multiple workers or retries after a process restart.
+- Outcome-unknown work retains capacity. Automatically releasing it would improve apparent utilization while allowing a retry to double-spend against an external operation whose result is unresolved.
+- Start and deadline are immutable once a workflow ledger exists, but they are deliberately not compared against recomputed retry input. The existing row is authoritative; requiring identical wall-clock values would turn safe Temporal activity retry into a false conflict.
+- Limits use nonnegative 32-bit integers and three-letter uppercase currency codes. Monetary units are integer minor units, avoiding floating-point accounting.
+
+### Verification
+
+```text
+npm run lint — passed with zero warnings
+npm run build — passed
+AgentBudgetLedgerService isolated PostgreSQL suite — 5 tests passed
+  retry/no-reset, idempotency mismatch, concurrent final-capacity race,
+  outcome-unknown reconciliation, deadline and actual-cost overage
+40-migration cumulative apply/revert suite — 41 tests passed
+git diff --check — passed
+```
+
+### Errors and fixes
+
+- `localhost:5432` resolved to an existing macOS PostgreSQL listener rather than the repository Docker mapping and rejected the repository role. Verification moved to the already isolated PostgreSQL 16 container on port 55432; the unrelated local database was not changed.
+- TypeORM's PostgreSQL driver returns `UPDATE ... RETURNING` as `[rows, affectedCount]`, unlike `INSERT` and `SELECT`. The first real integration run exposed the shape mismatch; update results are now explicitly unpacked before building receipts.
+- The cumulative migration test had not incorporated the earlier OIDC-session migration, so adding a new last migration shifted every ordered rollback assertion. The table/FK baseline and a dedicated OIDC rollback case were added before validating the new budget rollback.
+
+### Security, privacy, cost, and compatibility
+
+All verification uses random tenant/case/workflow identifiers and no borrower or provider data. The feature makes no paid call. It adds tables without changing existing runtime behavior; cost-bearing tools remain prohibited from claiming this control until the graph integration commit is complete.
+
+### Known gap
+
+The ledger service is authoritative and concurrency-tested, but the current LangGraph nodes have not yet been wrapped in reserve/commit/unknown handling. Tenant-level aggregate cost caps and operational reconciliation UI are also not implemented.
+
+### Next safe step
+
+Integrate the ledger with the LangGraph runtime so every tool boundary consumes one authoritative step reservation, copies only returned snapshots into graph state, and routes stale, expired, exhausted, or unknown outcomes to mandatory human review.

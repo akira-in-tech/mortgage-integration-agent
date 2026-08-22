@@ -87,6 +87,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     await scratchDataSource.runMigrations();
 
     expect(await tableNames()).toEqual([
+      'agent_budget_ledgers',
+      'agent_budget_reservations',
       'agent_runs',
       'api_clients',
       'audit_events',
@@ -105,6 +107,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_applications',
       'loan_cases',
       'loan_conditions',
+      'oidc_sessions',
       'outbox_events',
       'policy_applicability',
       'policy_catalog_generation',
@@ -173,8 +176,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // policy_versions, communication_messages -> communication_templates,
     // communication_approvals -> communication_messages, tool_attempts ->
     // agent_runs, webhook_deliveries -> webhook_endpoints,
-    // webhook_deliveries -> outbox_events
-    expect(foreignKeys).toHaveLength(17);
+    // webhook_deliveries -> outbox_events, OIDC sessions -> users, agent
+    // budget reservations -> the tenant-matching authoritative budget ledger
+    expect(foreignKeys).toHaveLength(19);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -196,6 +200,41 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the authoritative Agent budget migration without leaving its enum behind', async () => {
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining([
+        'agent_budget_ledgers',
+        'agent_budget_reservations',
+      ]),
+    );
+
+    await scratchDataSource.undoLastMigration();
+
+    const afterTables = await tableNames();
+    expect(afterTables).not.toEqual(
+      expect.arrayContaining([
+        'agent_budget_ledgers',
+        'agent_budget_reservations',
+      ]),
+    );
+    const enumRows: Array<{ typname: string }> = await scratchDataSource.query(
+      `SELECT typname FROM pg_type
+       WHERE typname = 'agent_budget_reservations_status_enum'`,
+    );
+    expect(enumRows).toEqual([]);
+  });
+
+  it('reverts the OIDC session migration without touching user identity tables', async () => {
+    expect(await tableNames()).toContain('oidc_sessions');
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('oidc_sessions');
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['users', 'tenant_memberships']),
+    );
   });
 
   it('reverts the provider operation intent reconciliation migration, dropping the two new columns', async () => {
