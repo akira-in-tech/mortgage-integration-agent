@@ -10181,3 +10181,44 @@ No external connector currently polls authoritative policy sources or authors ca
 ### Next safe step
 
 Expose the existing Agent-budget reconciliation and aggregate usage APIs in the operations console, then add OpenTelemetry telemetry and downloadable evaluation evidence.
+
+## M7-011: Agent Budget Operations usage and reconciliation console
+
+### Status
+
+Implemented and verified. Operators can now see current tenant aggregate authority and reviewers can close outcome-unknown capacity from the React console without a database shell or CLI.
+
+### Acceptance criterion
+
+The authenticated tenant can read its current UTC-month provider-call and monetary limits plus used/reserved/remaining counters; disabled configuration is visibly disabled rather than rendered as available capacity; only REVIEWER authority can list or resolve `UNKNOWN` reservations; commit/release requires reviewer evidence; OIDC browser actions include the BFF tenant and CSRF headers; machine credentials retain the existing bearer path; and each successful disposition immediately refreshes both the queue and aggregate counters.
+
+### Implementation
+
+- Added `AgentBudgetLedgerService.observeAggregateUsage()`, reading the tenant configuration and matching `tenant_agent_budget_usage` row in one tenant-scoped transaction. It returns historical counters even after authority is disabled but leaves remaining capacity null.
+- Added authenticated `GET /v1/agent-budget-reservations/aggregate-usage`, its Swagger DTO, checked OpenAPI operation, and regenerated TypeScript client. The existing `unknown` and `reconcile` routes retain their REVIEWER guard.
+- Added a shared console REST helper that mirrors Apollo's security boundary: opaque HttpOnly BFF cookie plus `X-Tenant-Id`/`X-CSRF-Token` for OIDC, or the established machine bearer credential. Error bodies are surfaced without assuming every failure is JSON.
+- Added the Agent Budget Operations nav view with provider-call/cost cards, independent aggregate and protected-queue failure states, 30-second refresh, an accessible UNKNOWN table, and evidence-bound commit/release controls. Actual cost is accepted only for commit and must be a nonnegative integer.
+- A successful action removes the resolved row only after the server confirms disposition, then reloads authoritative counters; the UI never performs an optimistic capacity release.
+
+### Verification
+
+```text
+npm run build — passed
+real PostgreSQL aggregate service + controller — 2 suites / 15 tests passed
+console Vitest + Testing Library — 10 files / 44 tests passed
+tracked-source-only console ESLint — passed
+tracked-source-only TypeScript + Vite production build — passed
+OpenAPI regeneration + generated-client operation check — passed
+```
+
+### Security, privacy, cost, and compatibility
+
+The aggregate response contains only the tenant's configured integer limits and counters. Queue rows expose operational identifiers and reserved units, not borrower or provider payloads. RLS remains the service-level tenant boundary, REVIEWER remains the mutation/list authority, and the authenticated actor plus evidence note continue to be persisted and audited by the existing controller path. Tests use synthetic data and make no provider calls.
+
+### Known gaps
+
+Provider-operation intent is not yet foreign-key-linked to the budget reservation, so one-click provider evidence correlation remains open. Aggregate token, storage, and concurrency quotas are not implemented. Provider reconciliation/promotion, data-disposition, and policy-impact administration are not yet all exposed through the console.
+
+### Next safe step
+
+Add OpenTelemetry traces/metrics, SLO definitions, and downloadable evaluation/release evidence before moving to infrastructure-as-code staging.

@@ -4,9 +4,45 @@ import {
   AgentBudgetReservationStatus,
 } from '../../database/entities/agent-budget-reservation.entity';
 import {
+  AgentBudgetAggregateUsageSnapshot,
   AgentBudgetReservationReceipt,
   AgentBudgetSnapshot,
 } from '../agent-budget-ledger.service';
+
+export class AgentBudgetAggregateUsageDto implements AgentBudgetAggregateUsageSnapshot {
+  @ApiProperty({ format: 'date' })
+  windowStart!: string;
+
+  @ApiProperty()
+  enabled!: boolean;
+
+  @ApiPropertyOptional({ nullable: true, example: 'USD' })
+  currency!: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  providerCallLimit!: number | null;
+
+  @ApiProperty()
+  providerCallUsed!: number;
+
+  @ApiProperty()
+  providerCallReserved!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  remainingProviderCalls!: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  costLimitMinorUnits!: number | null;
+
+  @ApiProperty()
+  costUsedMinorUnits!: number;
+
+  @ApiProperty()
+  costReservedMinorUnits!: number;
+
+  @ApiPropertyOptional({ nullable: true })
+  remainingCostMinorUnits!: number | null;
+}
 
 export class AgentBudgetUnitsDto {
   @ApiProperty()

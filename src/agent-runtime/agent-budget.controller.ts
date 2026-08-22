@@ -25,6 +25,7 @@ import {
 } from '@nestjs/swagger';
 import { AgentBudgetLedgerService } from './agent-budget-ledger.service';
 import {
+  AgentBudgetAggregateUsageDto,
   AgentBudgetReservationQueueItemDto,
   AgentBudgetReservationReceiptDto,
 } from './dto/agent-budget-response.dto';
@@ -50,6 +51,23 @@ export class AgentBudgetController {
     private readonly budgetService: AgentBudgetLedgerService,
     private readonly auditEventService: AuditEventService,
   ) {}
+
+  @ApiOperation({
+    operationId: 'getAgentBudgetAggregateUsage',
+    summary: 'Get current UTC-month Agent aggregate usage',
+  })
+  @ApiOkResponse({
+    description:
+      'Current tenant limits and used/reserved capacity. Null limits mean cost-bearing Agent work is disabled.',
+    type: AgentBudgetAggregateUsageDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid credentials.' })
+  @Get('aggregate-usage')
+  async aggregateUsage(
+    @CurrentAuth() auth: AuthContext,
+  ): Promise<AgentBudgetAggregateUsageDto> {
+    return this.budgetService.observeAggregateUsage(auth.tenantId);
+  }
 
   @ApiOperation({
     operationId: 'listUnknownAgentBudgetReservations',

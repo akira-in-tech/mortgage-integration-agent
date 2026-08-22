@@ -59,7 +59,7 @@ The repository currently contains verified local vertical slices for:
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks, deterministic failure scenarios, and a generated TypeScript client;
 - API-client and OIDC authentication, two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
-- a React operations console with case queue, dashboard, dossier, communications review, live activity polling, and a same-origin Authorization Code + PKCE backend-for-frontend session;
+- a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, live activity polling, and a same-origin Authorization Code + PKCE backend-for-frontend session;
 - no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
 
 The following release boundaries remain open and are not represented as implemented:
@@ -1961,7 +1961,7 @@ The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Ea
 
 1. Enforce console lint, tests, build, and GraphQL-codegen drift in CI; add dependency, secret, and container scanning without inventing a green result.
 2. Add browser end-to-end and accessibility coverage for login, triage, review, communication approval, and disconnected/degraded states.
-3. Add least-privilege provider reconciliation, provider promotion, data-disposition, policy-impact, and Agent-budget operations surfaces.
+3. Add least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces.
 4. Add external policy-source monitoring/ingestion and reviewed jurisdiction packs before policy coverage expands.
 5. Add OpenTelemetry traces/metrics, SLOs, alerts, runbooks, and downloadable evaluation/release evidence.
 6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.

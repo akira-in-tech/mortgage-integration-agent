@@ -7,6 +7,8 @@ import {
   AgentBudgetReservation,
   AgentBudgetReservationStatus,
 } from '../database/entities/agent-budget-reservation.entity';
+import { TenantAgentBudgetUsage } from '../database/entities/tenant-agent-budget-usage.entity';
+import { Tenant } from '../database/entities/tenant.entity';
 
 export type AgentBudgetFailureCode =
   | 'BUDGET_EXHAUSTED'
@@ -69,6 +71,20 @@ export interface AgentBudgetReservationReceipt {
   ledger: AgentBudgetSnapshot;
 }
 
+export interface AgentBudgetAggregateUsageSnapshot {
+  windowStart: string;
+  enabled: boolean;
+  currency: string | null;
+  providerCallLimit: number | null;
+  providerCallUsed: number;
+  providerCallReserved: number;
+  remainingProviderCalls: number | null;
+  costLimitMinorUnits: number | null;
+  costUsedMinorUnits: number;
+  costReservedMinorUnits: number;
+  remainingCostMinorUnits: number | null;
+}
+
 /**
  * PostgreSQL authority for Agent budgets. Every reservation is one atomic
  * conditional ledger update plus an idempotency record in the same tenant
@@ -98,6 +114,64 @@ export class AgentBudgetLedgerService {
         take: limit,
       }),
     );
+  }
+
+  /**
+   * Read-only UTC-month authority view for operators. A disabled tenant still
+   * returns historical used/reserved counters, but remaining authority stays
+   * null so a dashboard cannot mistake disabled configuration for zero spend.
+   */
+  async observeAggregateUsage(
+    tenantId: string,
+    at = new Date(),
+  ): Promise<AgentBudgetAggregateUsageSnapshot> {
+    const windowStart = `${at.getUTCFullYear()}-${String(
+      at.getUTCMonth() + 1,
+    ).padStart(2, '0')}-01`;
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const tenant = await manager
+        .getRepository(Tenant)
+        .findOneByOrFail({ id: tenantId });
+      const usage = await manager
+        .getRepository(TenantAgentBudgetUsage)
+        .findOneBy({ tenantId, windowStart });
+      const enabled =
+        tenant.agentMonthlyProviderCallLimit !== null &&
+        tenant.agentMonthlyCostLimitMinorUnits !== null &&
+        tenant.agentBudgetCurrency !== null;
+      const providerCallUsed = usage?.providerCallUsed ?? 0;
+      const providerCallReserved = usage?.providerCallReserved ?? 0;
+      const costUsedMinorUnits = usage?.costUsedMinorUnits ?? 0;
+      const costReservedMinorUnits = usage?.costReservedMinorUnits ?? 0;
+      return {
+        windowStart,
+        enabled,
+        currency:
+          tenant.agentBudgetCurrency?.trim() ?? usage?.currency.trim() ?? null,
+        providerCallLimit: tenant.agentMonthlyProviderCallLimit,
+        providerCallUsed,
+        providerCallReserved,
+        remainingProviderCalls: enabled
+          ? Math.max(
+              0,
+              tenant.agentMonthlyProviderCallLimit! -
+                providerCallUsed -
+                providerCallReserved,
+            )
+          : null,
+        costLimitMinorUnits: tenant.agentMonthlyCostLimitMinorUnits,
+        costUsedMinorUnits,
+        costReservedMinorUnits,
+        remainingCostMinorUnits: enabled
+          ? Math.max(
+              0,
+              tenant.agentMonthlyCostLimitMinorUnits! -
+                costUsedMinorUnits -
+                costReservedMinorUnits,
+            )
+          : null,
+      };
+    });
   }
 
   async createOrLoad(

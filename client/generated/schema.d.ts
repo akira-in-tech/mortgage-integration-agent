@@ -121,6 +121,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent-budget-reservations/aggregate-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current UTC-month Agent aggregate usage */
+        get: operations["getAgentBudgetAggregateUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agent-budget-reservations/unknown": {
         parameters: {
             query?: never;
@@ -415,6 +432,21 @@ export interface components {
         };
         OidcLogoutResultDto: {
             logoutUrl?: Record<string, never>;
+        };
+        AgentBudgetAggregateUsageDto: {
+            /** Format: date */
+            windowStart: string;
+            enabled: boolean;
+            /** @example USD */
+            currency?: Record<string, never> | null;
+            providerCallLimit?: Record<string, never> | null;
+            providerCallUsed: number;
+            providerCallReserved: number;
+            remainingProviderCalls?: Record<string, never> | null;
+            costLimitMinorUnits?: Record<string, never> | null;
+            costUsedMinorUnits: number;
+            costReservedMinorUnits: number;
+            remainingCostMinorUnits?: Record<string, never> | null;
         };
         AgentBudgetUnitsDto: {
             stepUnits: number;
@@ -751,6 +783,33 @@ export interface operations {
                 };
             };
             /** @description Missing, invalid, or unprovisioned OIDC identity. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getAgentBudgetAggregateUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current tenant limits and used/reserved capacity. Null limits mean cost-bearing Agent work is disabled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentBudgetAggregateUsageDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
             401: {
                 headers: {
                     [name: string]: unknown;

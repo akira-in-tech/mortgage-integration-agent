@@ -1,6 +1,6 @@
 import { BrandMark, GridIcon, FolderIcon, ChartIcon, GearIcon } from './icons';
 
-export type ConsoleView = 'dashboard' | 'queue' | 'stream';
+export type ConsoleView = 'dashboard' | 'queue' | 'stream' | 'budgets';
 
 interface NavRailProps {
   initials: string;
@@ -96,12 +96,22 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
         </button>
         <button
           type="button"
-          aria-label="Settings (not available)"
+          aria-label="Agent Budget Operations"
+          aria-pressed={activeView === 'budgets'}
           className="navicon"
-          disabled
-          style={{ border: 'none', background: 'none' }}
+          style={{
+            border: 'none',
+            cursor: 'pointer',
+            background:
+              activeView === 'budgets' ? 'var(--accent-wash)' : 'none',
+          }}
+          onClick={() => onNavigate('budgets')}
         >
-          <GearIcon color="var(--ink-muted)" />
+          <GearIcon
+            color={
+              activeView === 'budgets' ? 'var(--accent)' : 'var(--ink-muted)'
+            }
+          />
         </button>
       </div>
       <div style={{ flex: 1 }} />

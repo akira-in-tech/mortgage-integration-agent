@@ -6,6 +6,8 @@ import {
   AgentBudgetReservation,
   AgentBudgetReservationStatus,
 } from '../database/entities/agent-budget-reservation.entity';
+import { TenantAgentBudgetUsage } from '../database/entities/tenant-agent-budget-usage.entity';
+import { Tenant } from '../database/entities/tenant.entity';
 import {
   AgentBudgetError,
   AgentBudgetLedgerInput,
@@ -28,7 +30,12 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [AgentBudgetLedger, AgentBudgetReservation],
+      entities: [
+        AgentBudgetLedger,
+        AgentBudgetReservation,
+        TenantAgentBudgetUsage,
+        Tenant,
+      ],
     });
     await dataSource.initialize();
     service = new AgentBudgetLedgerService(dataSource);
@@ -494,5 +501,64 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     expect(
       await service.observe(ledgerInput.tenantId, ledger.ledgerId),
     ).toMatchObject({ remainingCostMinorUnits: 10 });
+  });
+
+  it('reports current aggregate limits and conservatively held capacity', async () => {
+    const ledgerInput = input();
+    await authorizeCostBearingWork(ledgerInput.tenantId, 10, 1_000);
+    const ledger = await service.createOrLoad(ledgerInput);
+    await service.reserve({
+      tenantId: ledgerInput.tenantId,
+      ledgerId: ledger.ledgerId,
+      idempotencyKey: 'aggregate-observation',
+      expectedVersion: ledger.version,
+      units: {
+        stepUnits: 1,
+        tokenUnits: 0,
+        providerCallUnits: 1,
+        costMinorUnits: 20,
+      },
+    });
+
+    const now = new Date();
+    const windowStart = `${now.getUTCFullYear()}-${String(
+      now.getUTCMonth() + 1,
+    ).padStart(2, '0')}-01`;
+    await expect(
+      service.observeAggregateUsage(ledgerInput.tenantId, now),
+    ).resolves.toEqual({
+      windowStart,
+      enabled: true,
+      currency: 'USD',
+      providerCallLimit: 10,
+      providerCallUsed: 0,
+      providerCallReserved: 1,
+      remainingProviderCalls: 9,
+      costLimitMinorUnits: 1_000,
+      costUsedMinorUnits: 0,
+      costReservedMinorUnits: 20,
+      remainingCostMinorUnits: 980,
+    });
+  });
+
+  it('does not present disabled aggregate configuration as remaining authority', async () => {
+    const tenantId = randomUUID();
+    tenantIds.push(tenantId);
+    await dataSource.query(
+      `INSERT INTO "tenants" ("id", "name") VALUES ($1, 'Disabled budget spec')`,
+      [tenantId],
+    );
+
+    await expect(
+      service.observeAggregateUsage(tenantId, new Date('2026-08-22T12:00:00Z')),
+    ).resolves.toMatchObject({
+      windowStart: '2026-08-01',
+      enabled: false,
+      currency: null,
+      providerCallLimit: null,
+      remainingProviderCalls: null,
+      costLimitMinorUnits: null,
+      remainingCostMinorUnits: null,
+    });
   });
 });

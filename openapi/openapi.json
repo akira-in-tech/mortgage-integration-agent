@@ -175,6 +175,36 @@
         ]
       }
     },
+    "/v1/agent-budget-reservations/aggregate-usage": {
+      "get": {
+        "operationId": "getAgentBudgetAggregateUsage",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Current tenant limits and used/reserved capacity. Null limits mean cost-bearing Agent work is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentBudgetAggregateUsageDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current UTC-month Agent aggregate usage",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
     "/v1/agent-budget-reservations/unknown": {
       "get": {
         "operationId": "listUnknownAgentBudgetReservations",
@@ -1091,6 +1121,59 @@
             "type": "object"
           }
         }
+      },
+      "AgentBudgetAggregateUsageDto": {
+        "type": "object",
+        "properties": {
+          "windowStart": {
+            "type": "string",
+            "format": "date"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "currency": {
+            "type": "object",
+            "nullable": true,
+            "example": "USD"
+          },
+          "providerCallLimit": {
+            "type": "object",
+            "nullable": true
+          },
+          "providerCallUsed": {
+            "type": "number"
+          },
+          "providerCallReserved": {
+            "type": "number"
+          },
+          "remainingProviderCalls": {
+            "type": "object",
+            "nullable": true
+          },
+          "costLimitMinorUnits": {
+            "type": "object",
+            "nullable": true
+          },
+          "costUsedMinorUnits": {
+            "type": "number"
+          },
+          "costReservedMinorUnits": {
+            "type": "number"
+          },
+          "remainingCostMinorUnits": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "windowStart",
+          "enabled",
+          "providerCallUsed",
+          "providerCallReserved",
+          "costUsedMinorUnits",
+          "costReservedMinorUnits"
+        ]
       },
       "AgentBudgetUnitsDto": {
         "type": "object",

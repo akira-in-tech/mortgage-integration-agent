@@ -29,6 +29,7 @@ describe('AgentBudgetController', () => {
     ledger: { version: 4 },
   };
   let budgetService: {
+    observeAggregateUsage: jest.Mock;
     listUnknown: jest.Mock;
     commit: jest.Mock;
     release: jest.Mock;
@@ -38,6 +39,10 @@ describe('AgentBudgetController', () => {
 
   beforeEach(() => {
     budgetService = {
+      observeAggregateUsage: jest.fn().mockResolvedValue({
+        windowStart: '2026-08-01',
+        enabled: true,
+      }),
       listUnknown: jest.fn().mockResolvedValue([]),
       commit: jest.fn().mockResolvedValue(receipt),
       release: jest.fn().mockResolvedValue({
@@ -50,6 +55,13 @@ describe('AgentBudgetController', () => {
     controller = new AgentBudgetController(
       budgetService as unknown as AgentBudgetLedgerService,
       auditEventService as unknown as AuditEventService,
+    );
+  });
+
+  it('reads aggregate usage only for the authenticated tenant', async () => {
+    await controller.aggregateUsage(AUTH);
+    expect(budgetService.observeAggregateUsage).toHaveBeenCalledWith(
+      AUTH.tenantId,
     );
   });
 
