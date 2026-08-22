@@ -10,6 +10,7 @@ import { ProviderOperationIntent } from '../database/entities/provider-operation
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { runInTenantContext } from '../database/tenant-context';
 import { CaseConnection } from './case-connection.model';
+import { CaseStatusCount } from './case-status-count.model';
 import { encodeCaseCursor, decodeCaseCursor } from './case-cursor';
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -87,6 +88,25 @@ export class CaseQueryService {
           endCursor: edges.length > 0 ? edges[edges.length - 1].cursor : null,
         },
       };
+    });
+  }
+
+  /** `caseStatusCounts` (Section 15.2, M6) — the tenant's real case count per status, via a `GROUP BY` rather than one `COUNT` query per status. A status with zero real cases is simply absent, not a fabricated `{status, count: 0}` row. */
+  async countCasesByStatus(tenantId: string): Promise<CaseStatusCount[]> {
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const rows = await manager
+        .getRepository(LoanCase)
+        .createQueryBuilder('c')
+        .select('c.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where('c.tenantId = :tenantId', { tenantId })
+        .groupBy('c.status')
+        .getRawMany<{ status: CaseStatus; count: string }>();
+
+      return rows.map((row) => ({
+        status: row.status,
+        count: Number(row.count),
+      }));
     });
   }
 

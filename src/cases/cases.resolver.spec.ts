@@ -25,6 +25,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     listAuditEvents: jest.Mock;
     getPolicySnapshot: jest.Mock;
     listCases: jest.Mock;
+    countCasesByStatus: jest.Mock;
   };
   let auditEventService: { record: jest.Mock };
   let communicationMessageService: { listForCase: jest.Mock };
@@ -74,6 +75,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
         edges: [],
         pageInfo: { hasNextPage: false, endCursor: null },
       }),
+      countCasesByStatus: jest.fn().mockResolvedValue([]),
     };
     auditEventService = { record: jest.fn().mockResolvedValue(undefined) };
     communicationMessageService = {
@@ -138,6 +140,16 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       first: undefined,
       after: undefined,
     });
+  });
+
+  it('caseStatusCounts() resolves via CaseQueryService.countCasesByStatus() using the authenticated tenantId', async () => {
+    const counts = [{ status: CaseStatus.DRAFT, count: 3 }];
+    caseQueryService.countCasesByStatus.mockResolvedValue(counts);
+
+    const result = await resolver.caseStatusCounts(TENANT_ID);
+
+    expect(result).toBe(counts);
+    expect(caseQueryService.countCasesByStatus).toHaveBeenCalledWith(TENANT_ID);
   });
 
   it('startWorkflowRun() delegates to CasesService.startWorkflow() using the authenticated tenantId, records no audit event', async () => {

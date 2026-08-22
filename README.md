@@ -257,6 +257,8 @@ M6-004 closes the rest: `startWorkflowRun(caseId): StartWorkflowRunResult!` and 
 
 `case.communicationMessages` (M6-005) closes the one GraphQL read field M6-004 named as deferred — a lazy `@ResolveField()` backed by the same `CommunicationMessageService.listForCase()` the REST route already uses.
 
+`caseStatusCounts { status count }` (M6-008) is the first real aggregate GraphQL query — a `GROUP BY` over the tenant's own cases, built specifically to back the Ops Dashboard honestly rather than approximating a total by paging through cases client-side. A status with no real cases is simply absent, never a fabricated zero row.
+
 ### Operations console (`console/`, M6-007)
 
 A real React operations console lives in `console/` — Vite + React 18 + TypeScript + Apollo Client 3, built against the GraphQL surface above, not a mockup. Scoped to one real screen, the Triage Queue (case list with cursor pagination and status filtering, plus a six-tab case detail pane: overview, evidence, conditions, timeline, communications, audit), a deliberate scope decision over building a wider shell around the other three mocked-up concepts. It can drive real mutations end to end — resolving an open condition and escalating a case — verified with a real running API, worker, Temporal, and Postgres stack, including a headless-browser click-through confirming the UI reflects the resulting real state change (see `docs/DEVELOPMENT_LOG.md`'s M6-007 entry for the two real bugs that verification pass found: `worker.module.ts` missing `AuthModule` for a standalone boot, M6-006; and an eventual-consistency race between `submitReview`'s async signal-delivery confirmation and the case's own status catching up, fixed with a settle-and-refetch delay).

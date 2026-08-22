@@ -411,6 +411,56 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
     });
   });
 
+  describe('countCasesByStatus()', () => {
+    async function setStatus(
+      caseId: string,
+      status: CaseStatus,
+    ): Promise<void> {
+      await dataSource.getRepository(LoanCase).update(caseId, { status });
+    }
+
+    it('groups the tenant’s own cases by status with a real count each', async () => {
+      const tenantId = randomUUID();
+      const draftA = await makeCase(tenantId);
+      const draftB = await makeCase(tenantId);
+      const reviewCase = await makeCase(tenantId);
+      void draftA;
+      void draftB;
+      await setStatus(reviewCase, CaseStatus.MANUAL_REVIEW);
+
+      const counts = await service.countCasesByStatus(tenantId);
+
+      expect(counts).toEqual(
+        expect.arrayContaining([
+          { status: CaseStatus.DRAFT, count: 2 },
+          { status: CaseStatus.MANUAL_REVIEW, count: 1 },
+        ]),
+      );
+      expect(counts).toHaveLength(2);
+    });
+
+    it('omits a status with zero real cases entirely, rather than a fabricated zero row', async () => {
+      const tenantId = randomUUID();
+      await makeCase(tenantId);
+
+      const counts = await service.countCasesByStatus(tenantId);
+
+      expect(counts).toEqual([{ status: CaseStatus.DRAFT, count: 1 }]);
+    });
+
+    it('never counts another tenant’s cases', async () => {
+      const tenantA = randomUUID();
+      const tenantB = randomUUID();
+      await makeCase(tenantA);
+      await makeCase(tenantA);
+      await makeCase(tenantB);
+
+      const counts = await service.countCasesByStatus(tenantB);
+
+      expect(counts).toEqual([{ status: CaseStatus.DRAFT, count: 1 }]);
+    });
+  });
+
   it('listAuditEvents() returns only events recorded with this exact caseId as their resourceId', async () => {
     const tenantId = randomUUID();
     const caseId = await makeCase(tenantId);

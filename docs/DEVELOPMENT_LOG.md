@@ -8791,3 +8791,66 @@ Bearer token stored in `localStorage`, sent only as an `Authorization` header to
 ### Next safe step
 
 Either close the console's own test gap (component tests for the mutation-driving flows, at minimum) or extend the console to a second real view (Ops Dashboard is the next-most-designed concept) — both are real, disclosed gaps rather than silent scope cuts.
+
+## M6-008: caseStatusCounts — a real aggregate GraphQL query for the Ops Dashboard
+
+### Status
+
+Implemented and verified. Built specifically to back the console's second real view (M6-009) honestly: the Ops Dashboard mockup called for a status-breakdown chart across all of a tenant's cases, and `cases(...)`'s own cursor pagination has no way to answer "how many, by status" without paging through every case client-side — an approach that would silently truncate or misrepresent the real total on any tenant with more cases than a reasonable page size.
+
+### Acceptance criterion
+
+`query { caseStatusCounts { status count } }` returns the tenant's real per-status case counts via a real `GROUP BY` in the database, tenant-scoped identically to every other query on `CasesResolver`. A status with zero real cases is simply absent from the result — never a fabricated `{status, count: 0}` row.
+
+### Implementation
+
+- `src/cases/case-status-count.model.ts` (new): `@ObjectType() CaseStatusCount { status: CaseStatus!, count: Int! }`.
+- `src/cases/case-query.service.ts`: `countCasesByStatus(tenantId)` — a single `SELECT status, COUNT(*) ... GROUP BY status` query builder call inside `runInTenantContext`, the same RLS-scoped pattern every other method on this service already uses. Postgres returns `COUNT(*)` as a string (bigint precision safety); the method converts it back to a real `number` before returning.
+- `src/cases/cases.resolver.ts`: `caseStatusCounts` query, delegating straight through with no additional logic, matching the same thin-wrapper pattern `cases()` and every other query on this resolver already use.
+
+### Affected files
+
+- `src/cases/case-status-count.model.ts` (new)
+- `src/cases/case-query.service.ts` (+`.spec.ts`)
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+
+### Decisions and alternatives
+
+Considered having the console fetch every case (a large `first`) and count client-side; rejected outright — it would either silently cap at whatever page size was chosen (a tenant with more cases than that would show a wrong total) or require paging through everything just to render a dashboard, defeating the point of an aggregate view. A real server-side `GROUP BY` is the only honest way to answer this question. Considered returning a fixed-shape object with one field per `CaseStatus` (always all 8 keys present, zero-filled); rejected in favor of a list that only contains statuses with real rows — a zero-count status is not a fact the database asserts, and synthesizing one would be exactly the kind of fabricated-coverage pattern this codebase's own standing convention avoids elsewhere.
+
+### Errors and fixes
+
+None — built and verified clean on the first pass.
+
+### Verification
+
+```text
+npm run build / npm run lint:check — clean
+
+Fresh scratch stack (Postgres 5559, Temporal 7256):
+  npx jest src/cases/cases.resolver.spec.ts — 18 suites / 18 passed (+1 new)
+  npx jest src/cases/case-query.service.spec.ts — 16 passed (+3 new:
+    grouped counts, zero-row omission, tenant isolation)
+  npm test -- --runInBand — 86 suites / 671 tests passed (4 suites / 17
+    tests skipped, pre-existing env-gated skips)
+  npm run test:e2e — 4 suites / 39 tests passed
+  npm run generate:openapi — zero diff (GraphQL-only change)
+
+Live end to end: seeded 4 real DRAFT cases via `npm run scenario-catalog`,
+  minted a real bearer token via `create-api-client`, queried
+  `caseStatusCounts` against the running server — returned exactly
+  `[{status: DRAFT, count: 4}]`, matching a direct `psql` count of the
+  same table.
+```
+
+### Security, privacy, cost, and compatibility
+
+Tenant-scoped through `runInTenantContext`/RLS identically to every other query this resolver exposes — no new authorization surface. No behavioral change to any existing route or resolver.
+
+### Known gaps
+
+None new.
+
+### Next safe step
+
+Build the console's Ops Dashboard view (M6-009) against this query, alongside closing the console's own automated-test gap named in M6-007.

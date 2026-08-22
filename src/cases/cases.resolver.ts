@@ -18,6 +18,7 @@ import { ProviderOperationIntent } from '../database/entities/provider-operation
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { CaseConnection } from './case-connection.model';
+import { CaseStatusCount } from './case-status-count.model';
 import { PolicyChangeImpactResult } from './policy-change-impact-result.model';
 import { CasesService, StartWorkflowRunResult } from './cases.service';
 import { CaseQueryService } from './case-query.service';
@@ -92,6 +93,17 @@ export class CasesResolver {
       first,
       after,
     });
+  }
+
+  @Query(() => [CaseStatusCount], {
+    name: 'caseStatusCounts',
+    description:
+      "The tenant's real case count per status, for an ops dashboard (Section 15.2, M6) — a status with no cases is simply absent, never a fabricated zero row.",
+  })
+  async caseStatusCounts(
+    @AuthTenantId() tenantId: string,
+  ): Promise<CaseStatusCount[]> {
+    return this.caseQueryService.countCasesByStatus(tenantId);
   }
 
   /**
