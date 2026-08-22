@@ -26,6 +26,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
     getPolicySnapshot: jest.Mock;
     listCases: jest.Mock;
     countCasesByStatus: jest.Mock;
+    listRecentActivity: jest.Mock;
   };
   let auditEventService: { record: jest.Mock };
   let communicationMessageService: { listForCase: jest.Mock };
@@ -76,6 +77,7 @@ describe('CasesResolver (Section 15.2, M6)', () => {
         pageInfo: { hasNextPage: false, endCursor: null },
       }),
       countCasesByStatus: jest.fn().mockResolvedValue([]),
+      listRecentActivity: jest.fn().mockResolvedValue([]),
     };
     auditEventService = { record: jest.fn().mockResolvedValue(undefined) };
     communicationMessageService = {
@@ -150,6 +152,27 @@ describe('CasesResolver (Section 15.2, M6)', () => {
 
     expect(result).toBe(counts);
     expect(caseQueryService.countCasesByStatus).toHaveBeenCalledWith(TENANT_ID);
+  });
+
+  it('recentActivity() resolves via CaseQueryService.listRecentActivity() using the authenticated tenantId and passes limit through unchanged', async () => {
+    const events = [{ id: 'audit-1' }];
+    caseQueryService.listRecentActivity.mockResolvedValue(events);
+
+    const result = await resolver.recentActivity(TENANT_ID, 10);
+
+    expect(result).toBe(events);
+    expect(caseQueryService.listRecentActivity).toHaveBeenCalledWith(
+      TENANT_ID,
+      10,
+    );
+  });
+
+  it('recentActivity() works with no limit arg at all', async () => {
+    await resolver.recentActivity(TENANT_ID);
+    expect(caseQueryService.listRecentActivity).toHaveBeenCalledWith(
+      TENANT_ID,
+      undefined,
+    );
   });
 
   it('startWorkflowRun() delegates to CasesService.startWorkflow() using the authenticated tenantId, records no audit event', async () => {

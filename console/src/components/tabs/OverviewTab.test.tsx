@@ -53,7 +53,12 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
           query: SUBMIT_REVIEW_MUTATION,
           variables: {
             caseId: CASE_ID,
-            input: { reviewType: 'CONDITION_RESOLUTION', actorId: 'reviewer-1', resolution: 'SATISFIED', reason: undefined },
+            input: {
+              reviewType: 'CONDITION_RESOLUTION',
+              actorId: 'reviewer-1',
+              resolution: 'SATISFIED',
+              reason: undefined,
+            },
           },
         },
         result: { data: { submitReview: true } },
@@ -70,7 +75,9 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
       </MockedProvider>,
     );
 
-    const markSatisfiedButton = screen.getByRole('button', { name: 'Mark satisfied' });
+    const markSatisfiedButton = screen.getByRole('button', {
+      name: 'Mark satisfied',
+    });
     const waiveButton = screen.getByRole('button', { name: 'Waive' });
     expect(markSatisfiedButton).not.toBeDisabled();
 
@@ -93,6 +100,8 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     );
 
     expect(screen.queryByText('Open condition')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Mark satisfied' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Mark satisfied' }),
+    ).not.toBeInTheDocument();
   });
 });

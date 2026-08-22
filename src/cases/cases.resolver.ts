@@ -106,6 +106,18 @@ export class CasesResolver {
     return this.caseQueryService.countCasesByStatus(tenantId);
   }
 
+  @Query(() => [AuditEvent], {
+    name: 'recentActivity',
+    description:
+      "The tenant's own audit events across every case, newest first, for a console activity feed (Section 14.1/15.2, M6). Defaults to 20, clamped to [1, 100].",
+  })
+  async recentActivity(
+    @AuthTenantId() tenantId: string,
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number,
+  ): Promise<AuditEvent[]> {
+    return this.caseQueryService.listRecentActivity(tenantId, limit);
+  }
+
   /**
    * Mirrors `CasesController.startWorkflow()` exactly — same service
    * call, idempotent per case (a case with a workflow already running

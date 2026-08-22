@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@apollo/client';
 import { CASES_QUERY } from '../graphql/queries';
-import type { CaseConnection, CaseEdge, CaseStatus } from '../graphql/types';
+import type { CaseEdge, CaseStatus } from '../graphql/types';
 import { StatusPill } from './StatusPill';
 import { SearchIcon } from './icons';
 import { formatCurrency, formatRelativeTime } from '../format';
@@ -25,16 +25,13 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
   const [statusFilter, setStatusFilter] = useState<CaseStatus | null>(null);
   const [search, setSearch] = useState('');
 
-  const { data, loading, error, fetchMore } = useQuery<{ cases: CaseConnection }>(
-    CASES_QUERY,
-    {
-      variables: { status: statusFilter, first: PAGE_SIZE },
-      notifyOnNetworkStatusChange: true,
-    },
-  );
+  const { data, loading, error, fetchMore } = useQuery(CASES_QUERY, {
+    variables: { status: statusFilter, first: PAGE_SIZE },
+    notifyOnNetworkStatusChange: true,
+  });
 
-  const edges = data?.cases.edges ?? [];
   const filteredEdges = useMemo(() => {
+    const edges = data?.cases.edges ?? [];
     if (!search.trim()) return edges;
     const needle = search.trim().toLowerCase();
     return edges.filter(
@@ -42,12 +39,16 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
         edge.node.borrowerId.toLowerCase().includes(needle) ||
         edge.node.id.toLowerCase().includes(needle),
     );
-  }, [edges, search]);
+  }, [data, search]);
 
   function loadMore() {
     if (!data?.cases.pageInfo.hasNextPage) return;
     fetchMore({
-      variables: { after: data.cases.pageInfo.endCursor, status: statusFilter, first: PAGE_SIZE },
+      variables: {
+        after: data.cases.pageInfo.endCursor,
+        status: statusFilter,
+        first: PAGE_SIZE,
+      },
       updateQuery: (prev, { fetchMoreResult }) => {
         if (!fetchMoreResult) return prev;
         return {
@@ -73,9 +74,23 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
       }}
     >
       <div style={{ padding: '18px 18px 12px', flex: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.01em' }}>Cases</div>
-          <div className="mono" style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 14,
+          }}
+        >
+          <div
+            style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.01em' }}
+          >
+            Cases
+          </div>
+          <div
+            className="mono"
+            style={{ fontSize: 12, color: 'var(--ink-muted)' }}
+          >
             {data ? `${filteredEdges.length} shown` : '…'}
           </div>
         </div>
@@ -134,9 +149,17 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', borderTop: '1px solid var(--gridline)' }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          borderTop: '1px solid var(--gridline)',
+        }}
+      >
         {loading && !data && (
-          <div style={{ padding: 20, fontSize: 13, color: 'var(--ink-muted)' }}>Loading cases…</div>
+          <div style={{ padding: 20, fontSize: 13, color: 'var(--ink-muted)' }}>
+            Loading cases…
+          </div>
         )}
         {error && (
           <div style={{ padding: 20, fontSize: 13, color: 'var(--critical)' }}>
@@ -144,7 +167,9 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
           </div>
         )}
         {!loading && !error && filteredEdges.length === 0 && (
-          <div style={{ padding: 20, fontSize: 13, color: 'var(--ink-muted)' }}>No cases match.</div>
+          <div style={{ padding: 20, fontSize: 13, color: 'var(--ink-muted)' }}>
+            No cases match.
+          </div>
         )}
         {filteredEdges.map((edge: CaseEdge) => (
           <CaseRow
@@ -155,8 +180,18 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
           />
         ))}
         {data?.cases.pageInfo.hasNextPage && (
-          <div style={{ padding: '16px 18px', display: 'flex', justifyContent: 'center' }}>
-            <button className="btn" style={{ fontSize: 12, padding: '7px 14px' }} onClick={loadMore}>
+          <div
+            style={{
+              padding: '16px 18px',
+              display: 'flex',
+              justifyContent: 'center',
+            }}
+          >
+            <button
+              className="btn"
+              style={{ fontSize: 12, padding: '7px 14px' }}
+              onClick={loadMore}
+            >
               Load more
             </button>
           </div>
@@ -187,17 +222,35 @@ function CaseRow({
         cursor: 'pointer',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          marginBottom: 5,
+        }}
+      >
         <div style={{ fontSize: 14, fontWeight: 600 }}>{node.borrowerId}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>{formatRelativeTime(node.createdAt)}</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+          {formatRelativeTime(node.createdAt)}
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <StatusPill status={node.status} />
         <div className="mono" style={{ fontSize: 12, color: 'var(--ink-2)' }}>
           {formatCurrency(node.requestedAmount)}
         </div>
       </div>
-      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}>
+      <div
+        className="mono"
+        style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}
+      >
         {node.id.slice(0, 8)}
       </div>
     </div>

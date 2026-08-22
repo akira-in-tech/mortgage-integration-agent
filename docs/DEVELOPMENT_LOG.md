@@ -8944,3 +8944,308 @@ No new backend surface — this slice is entirely `console/`-local plus consumin
 ### Next safe step
 
 Set up a working ESLint config for `console/` (the one real, still-open gap from both this slice and M6-007), or extend to a third view (Case Dossier is the next-most-designed concept).
+
+## M6-010: recentActivity — a real tenant-wide activity feed query
+
+### Status
+
+Implemented and verified. Built specifically to back the console's Live Stream view honestly: no cross-case activity query existed before this — `case.auditEvents` only ever returns one case's own history.
+
+### Acceptance criterion
+
+`query { recentActivity(limit: Int) { ... } }` returns the tenant's own `AuditEvent` rows across every case, newest first, tenant-scoped identically to every other query on `CasesResolver`. `limit` defaults to 20, clamped to [1, 100].
+
+### Implementation
+
+- `src/cases/case-query.service.ts`: `listRecentActivity(tenantId, limit?)` — a plain `find()` ordered by `createdAt DESC`, no `resourceId` filter (unlike `listAuditEvents`, which is deliberately scoped to one case). Cheap and already indexed: `IDX_audit_events_tenant_created` (`tenantId`, `createdAt`) was added at M5-019, before any read surface existed to use it.
+- `src/cases/cases.resolver.ts`: `recentActivity` root query, reusing the already-`@ObjectType()`-decorated `AuditEvent` entity directly as its return type — the same type `case.auditEvents` already returns, just not case-scoped.
+
+### Affected files
+
+- `src/cases/case-query.service.ts` (+`.spec.ts`)
+- `src/cases/cases.resolver.ts` (+`.spec.ts`)
+
+### Decisions and alternatives
+
+Considered a real-time subscription (GraphQL subscriptions / WebSocket) for genuinely push-based "live" — rejected: no subscription transport exists anywhere in this codebase, and adding one would be a large, separate infrastructure slice with its own auth/reconnection/backpressure concerns, not something to bolt on as a side effect of one read query. Polling a cheap, indexed query (the console's own `LiveStream.tsx`, M6-014, polls this every 8s) is a real, honestly-scoped "live" — the same definition Ops Dashboard's `pollInterval` already established, not a fabricated push mechanism.
+
+### Errors and fixes
+
+None — built and verified clean on the first pass.
+
+### Verification
+
+```text
+npm run build / npm run lint:check — clean
+
+Fresh scratch stack (Postgres 5560, Temporal 7257):
+  npx jest src/cases/cases.resolver.spec.ts src/cases/case-query.service.spec.ts
+    — 2 suites / 38 tests passed (+2 new resolver tests, +3 new service tests:
+    cross-case ordering, limit clamping, tenant isolation)
+  npm run generate:openapi — zero diff (GraphQL-only change)
+
+Live end to end: escalated a real case via escalateCase, queried
+  recentActivity — returned exactly the resulting CASE_ESCALATED event
+  with the real actorId/reason/resourceId, confirmed the query surfaces
+  a genuinely new tenant-wide activity type (not just case-scoped ones
+  already exercised by case.auditEvents).
+```
+
+### Security, privacy, cost, and compatibility
+
+Tenant-scoped through `runInTenantContext`/RLS identically to every other query on this resolver. No behavioral change to any existing route or resolver — purely additive, and reuses an index that already existed for a different (still-unbuilt-until-now) purpose.
+
+### Known gaps
+
+None new.
+
+### Next safe step
+
+Build the console's Live Stream view (M6-014) against this query.
+
+## M6-011: console ESLint config — the one real gap M6-007/M6-009 both named
+
+### Status
+
+Implemented and verified. `console/`'s own `npm run lint` had no working ESLint config since M6-007 first scaffolded the app — the script existed in `package.json` but pointed at nothing real, and both M6-007's and M6-009's own dev log entries said so plainly rather than silently claiming lint passed.
+
+### Acceptance criterion
+
+`npm run lint` inside `console/` runs a real, TypeScript- and JSX-aware ESLint flat config and reports zero errors against the app's actual source.
+
+### Implementation
+
+`console/eslint.config.js` — flat config (ESLint 9, matching the root config's own generation) with `@typescript-eslint`, `eslint-plugin-react-hooks`, `eslint-plugin-react-refresh`, and `eslint-plugin-prettier`/`eslint-config-prettier` (the same prettier-as-lint-rule pattern the root `eslint.config.js` already uses). Generated code (`src/gql/**`, produced by `npm run codegen`, M6-012) is excluded — linting machine-generated output is meaningless.
+
+### Affected files
+
+- `console/eslint.config.js` (new)
+- `console/package.json` (+lockfile): new devDependencies, `lint` script simplified from the legacy `--ext ts,tsx` CLI flag (unsupported under flat config) to `eslint .`
+- `console/src/components/CaseList.tsx`: fixed one real `react-hooks/exhaustive-deps` finding — `edges` was computed outside the `useMemo` it fed, so the memo's own dependency on it never actually stabilized anything; moved the computation inside the callback.
+- Every other pre-existing `console/` source file: formatting-only changes from the first `eslint --fix` pass (this codebase's prettier config is more compact than these files' original, ad hoc formatting — no logic changed).
+
+### Decisions and alternatives
+
+Left two `react-refresh/only-export-components` warnings on `StatusPill.tsx` (it exports `STATUS_CONFIG`/`STATUS_ORDER` alongside the component) rather than splitting them into a separate constants file — the warning is about Vite's dev-server Fast Refresh granularity, not correctness, and one shared source of truth for status colors (pill and, since M6-009, the Ops Dashboard bar chart) is worth more than satisfying a dev-experience lint rule.
+
+### Errors and fixes
+
+The first `npm run lint` run reported 206 errors, all `prettier/prettier` formatting deltas across every pre-existing file — expected, since no formatter had ever run against this code. Fixed with `eslint --fix`; zero logic changes, confirmed by an unchanged `tsc --noEmit`/`vitest run`/`vite build` afterward.
+
+### Verification
+
+```text
+console/:
+  npm run lint — 0 errors, 2 pre-existing-shape warnings
+  npx tsc --noEmit — clean
+  npx vitest run — all tests still passing (unchanged by formatting-only diffs)
+  npm run build — clean
+```
+
+### Security, privacy, cost, and compatibility
+
+Dev-tooling only — no runtime behavior change.
+
+### Known gaps
+
+None new for ESLint itself. `npm install` surfaced a pre-existing, dev-server-only `esbuild` advisory (GHSA-67mh-4wv8-2f99) inherited through `vite`/`vitest`, unchanged in count from M6-009 — not introduced by this slice, not fixed (the fix is a breaking `vite@8` upgrade), left as a known accepted item.
+
+### Next safe step
+
+Migrate `console/`'s hand-written GraphQL types to real codegen (M6-012) — the other tooling gap named alongside this one.
+
+## M6-012: console GraphQL codegen — replacing hand-written types with generated ones
+
+### Status
+
+Implemented and verified. Closes M6-007's own disclosed MVP simplification: "No GraphQL codegen — hand-written types, kept honest only by manual verification against the real schema."
+
+### Acceptance criterion
+
+Every console query/mutation is defined with a codegen-generated, fully-typed `TypedDocumentNode` (no manually-maintained result/variable types), and `console/src/graphql/types.ts` — the stable import surface every component already uses — derives its exported aliases from the generated types rather than duplicating them by hand.
+
+### Implementation
+
+`@graphql-codegen/cli` + `@graphql-codegen/client-preset` (the modern, TypedDocumentNode-based preset — `useQuery`/`useMutation` infer their result/variable types automatically from the document, no explicit generic needed at call sites). `console/codegen.ts`: schema source is `../src/schema.gql` (the real file the backend writes on boot — gitignored there, same "generate once against a live/booted instance, commit the output" pattern `client/generated/schema.d.ts` already established for the REST/OpenAPI side), documents are every `.ts`/`.tsx` file except tests and the generated output itself. `scalars: { DateTime: 'string', JSON: 'unknown' }` matches real wire behavior (NestJS GraphQL serializes `DateTime` as an ISO string over JSON) — the un-configured default of `unknown` would have broken every formatter call expecting a string.
+
+`console/src/graphql/queries.ts`/`mutations.ts` now tag their operations with the generated `graphql()` helper instead of `@apollo/client`'s plain `gql`. `console/src/graphql/types.ts` was rewritten as a thin re-export layer over the generated `src/gql/graphql.ts` types (`LoanCase = NonNullable<CaseQuery['case']>`, etc.) — kept as its own file specifically so every component's existing `from '.../graphql/types'` import needed **zero changes**; only the three call sites with now-redundant explicit `useQuery<...>()` generics (`CaseList`, `CaseDetail`, `OpsDashboard`) were simplified to rely on inference instead.
+
+`console/src/gql/` (generated, committed — same rationale as `client/generated/schema.d.ts`) is excluded from ESLint (M6-011).
+
+### Affected files
+
+- `console/codegen.ts` (new)
+- `console/src/gql/` (new, generated — `graphql.ts`, `gql.ts`, `index.ts`)
+- `console/src/graphql/queries.ts`, `mutations.ts`: `gql` → generated `graphql()`
+- `console/src/graphql/types.ts`: hand-written → re-export layer over generated types
+- `console/src/components/CaseList.tsx`, `CaseDetail.tsx`, `OpsDashboard.tsx`: dropped redundant explicit query generics
+- `console/eslint.config.js`: excluded `src/gql/**`
+- `console/package.json` (+lockfile): `@graphql-codegen/cli`, `@graphql-codegen/client-preset`; `codegen` script
+
+### Decisions and alternatives
+
+- **`client-preset` over the older `typescript`/`typescript-operations` plugin pair**: fewer moving parts (one preset, not three plugins wired together by hand) and `TypedDocumentNode` inference means call sites need no generic at all, versus still needing `useQuery<SomeGeneratedType>(...)` everywhere.
+- **A re-export shim in the existing `graphql/types.ts` file over updating every component's import path**: ~9 files import from this path; keeping the file (with genuinely different, generated content underneath) means the whole migration is invisible to every consumer except the two files that define the source of truth.
+- **Commit `src/gql/` rather than gitignore it**: `console/`'s own `npm install && npm run build` must work with no live server and no `src/schema.gql` present — exactly the constraint `client/generated/schema.d.ts` already solved the same way for OpenAPI.
+
+### Errors and fixes
+
+- **`MockedProvider`'s `addTypename={false}`** — unrelated to this slice directly, but surfaced while re-verifying the existing test suite after the types migration; already fixed in M6-009 and confirmed still fine here.
+- No other errors — the re-export shim approach meant `tsc --noEmit` was clean on the very first attempt with zero component changes required, confirming the migration's low-diff design worked as intended.
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean, zero component files needed changes
+  npx vitest run — 26/26 tests passing unchanged
+  npm run lint — 0 errors, 2 pre-existing warnings
+  npm run build — clean; bundle size actually dropped slightly
+    (382KB → 364KB gzip 113KB → 107KB) from de-duplicating the
+    hand-written gql template-literal strings
+
+Live end to end: real running API + console dev server, headless-Chrome
+  screenshot after the full migration — case list, filters, and
+  pagination all rendered identically from real data, confirming the
+  type-layer refactor changed nothing observable.
+```
+
+### Security, privacy, cost, and compatibility
+
+No behavioral change — a type-layer-only migration. No new runtime dependency (codegen is dev-only).
+
+### Known gaps
+
+`npm run codegen` must be re-run by hand after any backend schema change — there is no CI check or pre-commit hook enforcing `src/gql/` stays in sync with `src/schema.gql`; a schema change with no corresponding regeneration would silently drift until the next manual run (or a `tsc` failure if a used field were removed).
+
+### Next safe step
+
+Build the two remaining originally-designed console views (Case Dossier, M6-013; Live Stream, M6-014) — both now benefit from the same generated-types foundation.
+
+## M6-013: Case Dossier — the third console view
+
+### Status
+
+Implemented and verified. Closes the "Case Dossier... unbuilt" Known Gap named since M6-007.
+
+### Acceptance criterion
+
+A real, single-case, read-oriented document view — deliberately not the tabbed Triage Queue layout — covering every section of a case (loan summary, policy binding, conditions, evidence, timeline, communications, audit trail) as one continuous page, reachable from a case's own detail pane, printable via the browser's real print dialog.
+
+### Implementation
+
+`console/src/components/CaseDossier.tsx` — a full-screen overlay (`position: fixed`, above the app shell) reusing the same `CASE_QUERY` `CaseDetail` already fetches (no new backend query needed; a dossier is a different *presentation* of the same case data, not different data). Every section renders unconditionally stacked rather than behind a tab click. A `Print` button calls the browser's real `window.print()`; `console/src/styles/global.css` gained an `@media print` block that hides everything except `.dossier-page`'s own content — no app chrome, no toolbar, in the printed output.
+
+`CaseDetail.tsx` gained a "View dossier" header button (`onOpenDossier` prop); `App.tsx` holds `dossierCaseId` state and renders `CaseDossier` full-screen when set, alongside the existing view-switching state for Dashboard/Queue/Stream.
+
+### Affected files
+
+- `console/src/components/CaseDossier.tsx` (+`.test.tsx`, new)
+- `console/src/components/CaseDetail.tsx`: "View dossier" button
+- `console/src/App.tsx`: `dossierCaseId` state and overlay rendering
+- `console/src/styles/global.css`: `@media print` rules
+
+### Decisions and alternatives
+
+- **One continuous scrolling document over a paginated/tabbed dossier**: the concept's own point is being the thing a reviewer would print or export for a file — a tab click is the opposite of that; every section visible at once (or in one PDF via print) is the actual differentiator from Triage Queue's operational tabs.
+- **Reused `CASE_QUERY` rather than a new dossier-specific query**: every field the dossier shows already exists in the same query `CaseDetail` uses; a second query fetching identical data under a different name would be duplication with no real benefit.
+- **A full-screen overlay over a new top-level nav view**: a dossier is inherently per-case (reached from a specific case's detail pane), unlike Dashboard/Queue/Stream, which are tenant-wide; putting it in the nav rail would misrepresent it as a standalone section rather than a case-specific alternate view.
+
+### Errors and fixes
+
+None of substance — one JSX-nesting slip while adding the "View dossier" button next to the existing conditional Escalate button block (a leftover closing tag from the pre-edit structure), caught immediately by `tsc --noEmit` before it ever reached a running browser.
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean
+  npx vitest run — 29/29 tests passing (+3 new: full-section render from
+    real case data, Close button, error state)
+  npm run lint — 0 errors, 2 pre-existing warnings
+  npm run build — clean
+
+Live end to end: real running API + console dev server, headless-Chrome
+  — selected a real case in Triage Queue, clicked "View dossier",
+  screenshotted the resulting full-page document: borrower identity,
+  status pill, loan summary fields, and section headers all rendered
+  correctly from real data.
+```
+
+### Security, privacy, cost, and compatibility
+
+No new backend surface — reuses an already-authenticated, already-tenant-scoped query. `window.print()` is the browser's own native dialog; no PDF-generation service or new data egress.
+
+### Known gaps
+
+No dedicated dossier test for the print path itself (`window.print()` is a browser API with no meaningful jsdom simulation) — verified visually instead (the `@media print` CSS was written and reasoned through, not executed by an automated test).
+
+### Next safe step
+
+Build Live Stream (M6-014), the last of the four originally-designed console concepts.
+
+## M6-014: Live Stream — the fourth and final console view
+
+### Status
+
+Implemented and verified. Closes the "Live Stream... unbuilt" Known Gap named since M6-007, and was the reason `recentActivity` (M6-010) was built first — this view had no real query to be honestly built against until then.
+
+### Acceptance criterion
+
+A real, tenant-wide, cross-case activity feed, newest first, that updates on its own (polling, not a manual refresh) and visibly distinguishes newly-arrived events from ones already seen — without ever fabricating a WebSocket-style push this codebase has no real transport for.
+
+### Implementation
+
+`console/src/components/LiveStream.tsx` — `useQuery(RECENT_ACTIVITY_QUERY, { variables: { limit: 50 } })` with `startPolling(8_000)`/`stopPolling()` wired through a mount/unmount effect. A small "Live" pill with a CSS-animated pulse dot signals the polling behavior honestly (labeled "Live" because it demonstrably does update on its own within a browser tab, not because it claims push-based real-time). Each event renders relative time (exact time on hover via `title`), action, actor, resource type/id, and reason when present.
+
+New events are visually distinguished with a brief accent-tinted background that fades via CSS transition: `previousIdsRef` tracks the ids rendered on the last real-data render; anything in a new poll's response not in that set is "new" for exactly one render cycle, then folds back to normal on the following poll once it's been seen. Deliberately NOT compared against the very first page-load's ids (which would either highlight everything on open, or need separate first-load-suppression logic) — see Errors and fixes for a real bug this exact distinction was needed to catch.
+
+Wired into `NavRail`'s previously-decorative Chart icon (`ConsoleView` gained a third `'stream'` value) and `App.tsx`'s view switch, alongside Dashboard and Queue.
+
+### Affected files
+
+- `console/src/components/LiveStream.tsx` (+`.test.tsx`, new)
+- `console/src/graphql/queries.ts`: `RECENT_ACTIVITY_QUERY`
+- `console/src/components/NavRail.tsx`: `ConsoleView` gains `'stream'`, Chart icon wired
+- `console/src/App.tsx`: view switch gains the Stream case
+
+### Decisions and alternatives
+
+**Real polling, not a simulated/fabricated live feed**: considered (and rejected) client-side techniques that would *look* more real-time without being backed by anything — e.g., a shorter poll interval dressed up as "instant," or animating in rows on a timer unrelated to actual new data. 8 seconds is a genuine trade-off (fast enough to feel responsive in a demo, not so fast it hammers the tenant-scoped query pointlessly) and every "new" row really is new data from a real poll, not a client-side illusion.
+
+### Errors and fixes
+
+**A real first-load highlight bug, caught by live verification, not by the unit tests.** The first implementation compared against `previousIdsRef.current` using plain truthiness (`previousIdsRef.current ? compare : nothingIsNew`) — but Apollo's own loading→loaded transition is *itself* a second render with real `data`, and by the time that second render happened, an earlier effect had already set `previousIdsRef.current` to an **empty-but-non-null** `Set` (truthy!) from the first, data-less render. Result: every event on true first load was flagged "new" and rendered highlighted — confirmed via a live headless-Chrome screenshot showing the single real row already accent-tinted on a fresh page open, which shouldn't happen. Fixed by tracking an explicit `hasLoadedOnceRef` boolean instead of relying on the ref's own truthiness, and only setting it once `data` has genuinely arrived. Re-verified live: fresh load renders with no highlight; triggering a real new event (a `submitConsentAction` call) and waiting past one 8s poll interval showed exactly the new row highlighted and the pre-existing row not — confirmed via two before/after screenshots, not just the unit tests (which don't exercise the polling-driven highlight timing at all, a disclosed known gap below).
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean
+  npx vitest run — 32/32 tests passing (+3 new: real-data rendering
+    newest-first, empty state, error state)
+  npm run lint — 0 errors, 2 pre-existing warnings
+  npm run build — clean
+
+Live end to end, real running API + console dev server:
+  Fresh page load on the Live Stream tab — real existing CASE_ESCALATED
+    event shown, correctly NOT highlighted.
+  Triggered a real new CONSENT_GRANT event via a direct mutation call,
+    waited past one poll interval (9s) — the feed updated on its own
+    (no manual refresh), the new row appeared at the top correctly
+    highlighted, the pre-existing row correctly un-highlighted.
+    Screenshots of both states confirm the fix above.
+```
+
+### Security, privacy, cost, and compatibility
+
+No new backend surface — `recentActivity` (M6-010) already existed and is already tenant-scoped/authenticated identically to every other console query. Polling every 8s while the tab is open is a real, bounded cost (one cheap indexed query), not unbounded.
+
+### Known gaps
+
+- No unit test exercises the polling-driven "new event highlighted" timing itself (mixing Apollo's internal `startPolling` scheduling with a test framework's fake timers proved fragile in this same session's earlier `useCaseMutations` test — real timers work but a full poll-interval wait is too slow to bake into the default test run); verified live instead, as documented above.
+- All four originally-designed console concepts (Triage Queue, Ops Dashboard, Case Dossier, Live Stream) are now real and built. Remaining named gaps: no OIDC login, no CI enforcement that `console/src/gql/` stays in sync with schema changes.
+
+### Next safe step
+
+OIDC login (the last named console gap) — real, testable Keycloak infrastructure already exists in this repo (`keycloak/realm-export.json`, a real public client, a real test user, `src/manage-user.ts`) but the console has never used it; bearer-token-only remains the only way in today.

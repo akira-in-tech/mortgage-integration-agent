@@ -103,3 +103,34 @@ a:hover {
   justify-content: center;
   cursor: pointer;
 }
+
+/* Case Dossier print: keep only the dossier page's own content — no
+   toolbar, no browser-chrome-adjacent overlay background, no page-break
+   splitting a section's own table mid-row. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .dossier-page,
+  .dossier-page * {
+    visibility: visible;
+  }
+  .dossier-overlay {
+    position: static;
+    background: #fff;
+  }
+  .dossier-toolbar {
+    display: none;
+  }
+  .dossier-page {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+  }
+  .dossier-page .card {
+    border: none;
+    box-shadow: none;
+  }
+}

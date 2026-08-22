@@ -11,7 +11,10 @@ export function EvidenceTab({ loanCase }: { loanCase: LoanCase }) {
       rows={facts.map((fact) => [
         fact.factType,
         `${fact.sourceKind}${fact.sourceIdentifier ? ` (${fact.sourceIdentifier})` : ''}`,
-        <span className="mono" style={{ wordBreak: 'break-word', display: 'block', maxWidth: 380 }}>
+        <span
+          className="mono"
+          style={{ wordBreak: 'break-word', display: 'block', maxWidth: 380 }}
+        >
           {JSON.stringify(fact.value)}
         </span>,
         formatDateTime(fact.observedAt),

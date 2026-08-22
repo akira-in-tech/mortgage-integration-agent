@@ -3,7 +3,10 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import { MockedProvider, type MockedResponse } from '@apollo/client/testing';
 import { useQuery } from '@apollo/client';
 import { CASE_QUERY } from './graphql/queries';
-import { SUBMIT_REVIEW_MUTATION, ESCALATE_CASE_MUTATION } from './graphql/mutations';
+import {
+  SUBMIT_REVIEW_MUTATION,
+  ESCALATE_CASE_MUTATION,
+} from './graphql/mutations';
 import { useCaseMutations } from './useCaseMutations';
 import { setStoredActorId, clearStoredToken } from './auth';
 
@@ -34,7 +37,11 @@ function caseData(status: string) {
   };
 }
 
-function TestHarness({ onMutationsReady }: { onMutationsReady: (m: ReturnType<typeof useCaseMutations>) => void }) {
+function TestHarness({
+  onMutationsReady,
+}: {
+  onMutationsReady: (m: ReturnType<typeof useCaseMutations>) => void;
+}) {
   const { data } = useQuery(CASE_QUERY, { variables: { caseId: CASE_ID } });
   const mutations = useCaseMutations(CASE_ID);
   onMutationsReady(mutations);
@@ -63,7 +70,12 @@ describe('useCaseMutations', () => {
           query: SUBMIT_REVIEW_MUTATION,
           variables: {
             caseId: CASE_ID,
-            input: { reviewType: 'CONDITION_RESOLUTION', actorId: 'reviewer-1', resolution: 'SATISFIED', reason: undefined },
+            input: {
+              reviewType: 'CONDITION_RESOLUTION',
+              actorId: 'reviewer-1',
+              resolution: 'SATISFIED',
+              reason: undefined,
+            },
           },
         },
         result: { data: { submitReview: true } },
@@ -89,7 +101,9 @@ describe('useCaseMutations', () => {
       </MockedProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'),
+    );
     expect(mutations.resolvingCondition).toBe(false);
 
     await act(async () => {
@@ -107,7 +121,11 @@ describe('useCaseMutations', () => {
     // that some timer fires eventually.
     await new Promise((resolve) => setTimeout(resolve, 2_200));
 
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('READY_FOR_UNDERWRITING'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent(
+        'READY_FOR_UNDERWRITING',
+      ),
+    );
     expect(mutations.resolvingCondition).toBe(false);
   }, 8_000);
 
@@ -120,11 +138,19 @@ describe('useCaseMutations', () => {
       {
         request: {
           query: ESCALATE_CASE_MUTATION,
-          variables: { caseId: CASE_ID, input: { actorId: 'reviewer-1', reason: 'needs a human' } },
+          variables: {
+            caseId: CASE_ID,
+            input: { actorId: 'reviewer-1', reason: 'needs a human' },
+          },
         },
         result: {
           data: {
-            escalateCase: { __typename: 'LoanCase', id: CASE_ID, status: 'MANUAL_REVIEW', version: 2 },
+            escalateCase: {
+              __typename: 'LoanCase',
+              id: CASE_ID,
+              status: 'MANUAL_REVIEW',
+              version: 2,
+            },
           },
         },
       },
@@ -141,7 +167,9 @@ describe('useCaseMutations', () => {
       </MockedProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'),
+    );
 
     await act(async () => {
       await mutations.escalate('needs a human');
@@ -150,7 +178,9 @@ describe('useCaseMutations', () => {
     // No pending settle window for escalate — status reflects immediately,
     // with no timer left to advance.
     expect(mutations.escalating).toBe(false);
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('MANUAL_REVIEW'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('MANUAL_REVIEW'),
+    );
   });
 
   it('throws without ever calling the mutation when no reviewer identity is stored', async () => {
@@ -169,8 +199,12 @@ describe('useCaseMutations', () => {
       </MockedProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'));
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('CONDITIONS_OPEN'),
+    );
 
-    await expect(mutations.resolveCondition('SATISFIED')).rejects.toThrow(/reconnect/i);
+    await expect(mutations.resolveCondition('SATISFIED')).rejects.toThrow(
+      /reconnect/i,
+    );
   });
 });

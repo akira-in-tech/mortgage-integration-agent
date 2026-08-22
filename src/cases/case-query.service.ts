@@ -182,4 +182,29 @@ export class CaseQueryService {
       }),
     );
   }
+
+  /**
+   * `recentActivity` (Section 14.1/15.2, M6) — the tenant's own audit
+   * events across every case, newest first, for a console activity feed
+   * ("Live Stream"). Real, near-live via polling, not a fabricated
+   * WebSocket push this codebase has no subsystem for: the same honest
+   * "live" this console's Ops Dashboard already settled on
+   * (`pollInterval`). Cheap and indexed —
+   * `IDX_audit_events_tenant_created` (`tenantId`, `createdAt`) already
+   * exists for exactly this shape of query, added at M5-019 before any
+   * read surface consumed it.
+   */
+  async listRecentActivity(
+    tenantId: string,
+    limit?: number,
+  ): Promise<AuditEvent[]> {
+    const pageSize = Math.min(Math.max(limit ?? 20, 1), 100);
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(AuditEvent).find({
+        where: { tenantId },
+        order: { createdAt: 'DESC' },
+        take: pageSize,
+      }),
+    );
+  }
 }

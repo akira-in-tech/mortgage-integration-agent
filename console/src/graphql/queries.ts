@@ -1,6 +1,6 @@
-import { gql } from '@apollo/client';
+import { graphql } from '../gql';
 
-export const CASES_QUERY = gql`
+export const CASES_QUERY = graphql(`
   query Cases($status: CaseStatus, $after: String, $first: Int) {
     cases(status: $status, after: $after, first: $first) {
       edges {
@@ -20,18 +20,32 @@ export const CASES_QUERY = gql`
       }
     }
   }
-`;
+`);
 
-export const CASE_STATUS_COUNTS_QUERY = gql`
+export const CASE_STATUS_COUNTS_QUERY = graphql(`
   query CaseStatusCounts {
     caseStatusCounts {
       status
       count
     }
   }
-`;
+`);
 
-export const CASE_QUERY = gql`
+export const RECENT_ACTIVITY_QUERY = graphql(`
+  query RecentActivity($limit: Int) {
+    recentActivity(limit: $limit) {
+      id
+      action
+      actorId
+      resourceType
+      resourceId
+      reason
+      createdAt
+    }
+  }
+`);
+
+export const CASE_QUERY = graphql(`
   query Case($caseId: ID!) {
     case(caseId: $caseId) {
       id
@@ -113,4 +127,4 @@ export const CASE_QUERY = gql`
       }
     }
   }
-`;
+`);

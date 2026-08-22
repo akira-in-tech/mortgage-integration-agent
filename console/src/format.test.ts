@@ -70,29 +70,39 @@ describe('formatLoanType', () => {
 
 describe('summarizeEvidenceValue', () => {
   it('summarizes INCOME as a monthly figure', () => {
-    expect(summarizeEvidenceValue('INCOME', { monthlyIncome: 9000 })).toBe('$9,000 / mo');
+    expect(summarizeEvidenceValue('INCOME', { monthlyIncome: 9000 })).toBe(
+      '$9,000 / mo',
+    );
   });
 
   it('summarizes CREDIT as a score', () => {
-    expect(summarizeEvidenceValue('CREDIT', { creditScore: 720 })).toBe('score 720');
+    expect(summarizeEvidenceValue('CREDIT', { creditScore: 720 })).toBe(
+      'score 720',
+    );
   });
 
   it('summarizes DOCUMENT verification outcome', () => {
-    expect(summarizeEvidenceValue('DOCUMENT', { allDocumentsValid: true })).toBe(
-      'All documents verified',
-    );
-    expect(summarizeEvidenceValue('DOCUMENT', { allDocumentsValid: false })).toBe(
-      'Some documents failed',
-    );
+    expect(
+      summarizeEvidenceValue('DOCUMENT', { allDocumentsValid: true }),
+    ).toBe('All documents verified');
+    expect(
+      summarizeEvidenceValue('DOCUMENT', { allDocumentsValid: false }),
+    ).toBe('Some documents failed');
   });
 
   it('summarizes IDENTITY verification outcome', () => {
-    expect(summarizeEvidenceValue('IDENTITY', { verified: true })).toBe('Verified');
-    expect(summarizeEvidenceValue('IDENTITY', { verified: false })).toBe('Not verified');
+    expect(summarizeEvidenceValue('IDENTITY', { verified: true })).toBe(
+      'Verified',
+    );
+    expect(summarizeEvidenceValue('IDENTITY', { verified: false })).toBe(
+      'Not verified',
+    );
   });
 
   it('summarizes ASSET as a currency figure', () => {
-    expect(summarizeEvidenceValue('ASSET', { liquidAssets: 50_000 })).toBe('$50,000');
+    expect(summarizeEvidenceValue('ASSET', { liquidAssets: 50_000 })).toBe(
+      '$50,000',
+    );
   });
 
   it('falls back to an em dash for an unrecognized fact type', () => {
@@ -104,7 +114,11 @@ describe('summarizeEvidenceValue', () => {
   });
 
   it('never returns raw unwrapped JSON — the exact overflow bug this helper fixed', () => {
-    const value = { monthlyIncome: 9000, employer: 'Acme Corp', verifiedAt: '2026-01-01' };
+    const value = {
+      monthlyIncome: 9000,
+      employer: 'Acme Corp',
+      verifiedAt: '2026-01-01',
+    };
     const result = summarizeEvidenceValue('INCOME', value);
     expect(result).not.toContain('{');
     expect(result).not.toContain('employer');

@@ -8,7 +8,10 @@ export function TimelineTab({ loanCase }: { loanCase: LoanCase }) {
 
   if (entries.length === 0) {
     return (
-      <div className="card" style={{ padding: 24, fontSize: 13, color: 'var(--ink-muted)' }}>
+      <div
+        className="card"
+        style={{ padding: 24, fontSize: 13, color: 'var(--ink-muted)' }}
+      >
         No timeline entries yet.
       </div>
     );
@@ -24,16 +27,27 @@ export function TimelineTab({ loanCase }: { loanCase: LoanCase }) {
             justifyContent: 'space-between',
             gap: 16,
             padding: '12px 20px',
-            borderBottom: i === entries.length - 1 ? 'none' : '1px solid var(--gridline)',
+            borderBottom:
+              i === entries.length - 1 ? 'none' : '1px solid var(--gridline)',
           }}
         >
           <div>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{entry.summary}</div>
-            <div className="mono" style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
+            <div
+              className="mono"
+              style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}
+            >
               {entry.kind}
             </div>
           </div>
-          <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', flex: 'none', whiteSpace: 'nowrap' }}>
+          <div
+            style={{
+              fontSize: 11.5,
+              color: 'var(--ink-muted)',
+              flex: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {formatDateTime(entry.timestamp)}
           </div>
         </div>

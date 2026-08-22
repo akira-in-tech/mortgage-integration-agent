@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useApolloClient } from '@apollo/client';
-import { SUBMIT_REVIEW_MUTATION, ESCALATE_CASE_MUTATION } from './graphql/mutations';
+import {
+  SUBMIT_REVIEW_MUTATION,
+  ESCALATE_CASE_MUTATION,
+} from './graphql/mutations';
 import { CASE_QUERY } from './graphql/queries';
 import { getStoredActorId } from './auth';
 
@@ -12,12 +15,18 @@ export function useCaseMutations(caseId: string) {
   const client = useApolloClient();
   const [applying, setApplying] = useState(false);
 
-  const [submitReviewMutation, submitReviewState] = useMutation(SUBMIT_REVIEW_MUTATION, {
-    refetchQueries: [{ query: CASE_QUERY, variables: { caseId } }],
-  });
-  const [escalateCaseMutation, escalateState] = useMutation(ESCALATE_CASE_MUTATION, {
-    refetchQueries: [{ query: CASE_QUERY, variables: { caseId } }],
-  });
+  const [submitReviewMutation, submitReviewState] = useMutation(
+    SUBMIT_REVIEW_MUTATION,
+    {
+      refetchQueries: [{ query: CASE_QUERY, variables: { caseId } }],
+    },
+  );
+  const [escalateCaseMutation, escalateState] = useMutation(
+    ESCALATE_CASE_MUTATION,
+    {
+      refetchQueries: [{ query: CASE_QUERY, variables: { caseId } }],
+    },
+  );
 
   // `submitReview` only ever delivers a Temporal signal (Section 15.1/9.5)
   // — it returns as soon as the workflow acknowledges receipt, not once the
@@ -28,24 +37,36 @@ export function useCaseMutations(caseId: string) {
   // being asynchronous; a second refetch after it's had a moment to settle
   // catches the case up. `escalateCase`, by contrast, is a real synchronous
   // compare-and-swap and needs no such wait.
-  async function resolveCondition(resolution: 'SATISFIED' | 'WAIVED', reason?: string) {
+  async function resolveCondition(
+    resolution: 'SATISFIED' | 'WAIVED',
+    reason?: string,
+  ) {
     const actorId = getStoredActorId();
-    if (!actorId) throw new Error('No reviewer identity set — reconnect first.');
+    if (!actorId)
+      throw new Error('No reviewer identity set — reconnect first.');
     await submitReviewMutation({
       variables: {
         caseId,
-        input: { reviewType: 'CONDITION_RESOLUTION', actorId, resolution, reason },
+        input: {
+          reviewType: 'CONDITION_RESOLUTION',
+          actorId,
+          resolution,
+          reason,
+        },
       },
     });
     setApplying(true);
     setTimeout(() => {
-      client.refetchQueries({ include: [CASE_QUERY] }).finally(() => setApplying(false));
+      client
+        .refetchQueries({ include: [CASE_QUERY] })
+        .finally(() => setApplying(false));
     }, SIGNAL_SETTLE_MS);
   }
 
   async function escalate(reason: string) {
     const actorId = getStoredActorId();
-    if (!actorId) throw new Error('No reviewer identity set — reconnect first.');
+    if (!actorId)
+      throw new Error('No reviewer identity set — reconnect first.');
     await escalateCaseMutation({
       variables: { caseId, input: { actorId, reason } },
     });

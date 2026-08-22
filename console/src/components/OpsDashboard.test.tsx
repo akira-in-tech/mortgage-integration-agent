@@ -13,8 +13,16 @@ describe('OpsDashboard', () => {
           data: {
             caseStatusCounts: [
               { __typename: 'CaseStatusCount', status: 'DRAFT', count: 4 },
-              { __typename: 'CaseStatusCount', status: 'CONDITIONS_OPEN', count: 2 },
-              { __typename: 'CaseStatusCount', status: 'READY_FOR_UNDERWRITING', count: 1 },
+              {
+                __typename: 'CaseStatusCount',
+                status: 'CONDITIONS_OPEN',
+                count: 2,
+              },
+              {
+                __typename: 'CaseStatusCount',
+                status: 'READY_FOR_UNDERWRITING',
+                count: 1,
+              },
             ],
           },
         },
@@ -27,7 +35,9 @@ describe('OpsDashboard', () => {
       </MockedProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('stat-total')).toHaveTextContent('7')); // total = 4+2+1
+    await waitFor(() =>
+      expect(screen.getByTestId('stat-total')).toHaveTextContent('7'),
+    ); // total = 4+2+1
 
     // Needs attention = CONDITIONS_OPEN(2) + WAITING_FOR_REVIEW(0) + MANUAL_REVIEW(0) = 2
     expect(screen.getByTestId('stat-attention')).toHaveTextContent('2');
@@ -56,6 +66,8 @@ describe('OpsDashboard', () => {
       </MockedProvider>,
     );
 
-    await waitFor(() => expect(screen.getByText(/network down/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/network down/)).toBeInTheDocument(),
+    );
   });
 });

@@ -23,13 +23,36 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
         background: 'var(--page)',
       }}
     >
-      <form onSubmit={connect} className="card-elevated" style={{ padding: 32, width: 380 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Connect to Meridian</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-muted)', marginBottom: 22, lineHeight: 1.5 }}>
-          Paste an API client bearer token (from <code>npm run create-api-client</code>) and your
-          name — actions you take are recorded under it, distinct from the credential itself.
+      <form
+        onSubmit={connect}
+        className="card-elevated"
+        style={{ padding: 32, width: 380 }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
+          Connect to Meridian
         </div>
-        <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Bearer token</label>
+        <div
+          style={{
+            fontSize: 13,
+            color: 'var(--ink-muted)',
+            marginBottom: 22,
+            lineHeight: 1.5,
+          }}
+        >
+          Paste an API client bearer token (from{' '}
+          <code>npm run create-api-client</code>) and your name — actions you
+          take are recorded under it, distinct from the credential itself.
+        </div>
+        <label
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            display: 'block',
+            marginBottom: 6,
+          }}
+        >
+          Bearer token
+        </label>
         <input
           value={token}
           onChange={(e) => setToken(e.target.value)}
@@ -44,7 +67,16 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
             marginBottom: 16,
           }}
         />
-        <label style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Your name</label>
+        <label
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            display: 'block',
+            marginBottom: 6,
+          }}
+        >
+          Your name
+        </label>
         <input
           value={actorId}
           onChange={(e) => setActorId(e.target.value)}
@@ -59,7 +91,11 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
             marginBottom: 22,
           }}
         />
-        <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+        <button
+          type="submit"
+          className="btn btn-primary"
+          style={{ width: '100%', justifyContent: 'center' }}
+        >
           Connect
         </button>
       </form>

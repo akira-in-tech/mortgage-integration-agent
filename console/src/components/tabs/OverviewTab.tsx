@@ -1,21 +1,45 @@
 import type { LoanCase } from '../../graphql/types';
 import { useCaseMutations } from '../../useCaseMutations';
 import { AlertTriangleIcon, PolicyIcon } from '../icons';
-import { formatDateTime, formatRelativeTime, summarizeEvidenceValue } from '../../format';
+import {
+  formatDateTime,
+  formatRelativeTime,
+  summarizeEvidenceValue,
+} from '../../format';
 
 export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
-  const openCondition = (loanCase.conditions ?? []).find((c) => c.status === 'OPEN');
-  const { resolveCondition, resolvingCondition, error } = useCaseMutations(loanCase.id);
+  const openCondition = (loanCase.conditions ?? []).find(
+    (c) => c.status === 'OPEN',
+  );
+  const { resolveCondition, resolvingCondition, error } = useCaseMutations(
+    loanCase.id,
+  );
 
   const recentActivity = [...(loanCase.timeline ?? [])]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    )
     .slice(0, 3);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 20 }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: 20,
+      }}
+    >
       {openCondition && (
         <div className="card-elevated" style={{ padding: 19 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 12,
+            }}
+          >
             <div
               style={{
                 width: 26,
@@ -32,12 +56,29 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
             </div>
             <div style={{ fontSize: 14, fontWeight: 700 }}>Open condition</div>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{openCondition.code}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55, marginBottom: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+            {openCondition.code}
+          </div>
+          <div
+            style={{
+              fontSize: 12.5,
+              color: 'var(--ink-2)',
+              lineHeight: 1.55,
+              marginBottom: 14,
+            }}
+          >
             {openCondition.description}
           </div>
           {error && (
-            <div style={{ fontSize: 12, color: 'var(--critical)', marginBottom: 8 }}>{error.message}</div>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--critical)',
+                marginBottom: 8,
+              }}
+            >
+              {error.message}
+            </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -62,14 +103,38 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
 
       {loanCase.policyBinding && (
         <div className="card" style={{ padding: 19 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 12,
+            }}
+          >
             <PolicyIcon color="var(--ink-2)" />
             <div style={{ fontSize: 14, fontWeight: 700 }}>Policy binding</div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 9, fontSize: 12.5 }}>
-            <Row label="Context" value={loanCase.policyBinding.contextKey} mono />
-            <Row label="Bound" value={formatRelativeTime(loanCase.policyBinding.boundAt)} />
-            <Row label="Revalidate after" value={formatDateTime(loanCase.policyBinding.revalidateAfter)} />
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 9,
+              fontSize: 12.5,
+            }}
+          >
+            <Row
+              label="Context"
+              value={loanCase.policyBinding.contextKey}
+              mono
+            />
+            <Row
+              label="Bound"
+              value={formatRelativeTime(loanCase.policyBinding.boundAt)}
+            />
+            <Row
+              label="Revalidate after"
+              value={formatDateTime(loanCase.policyBinding.revalidateAfter)}
+            />
             {loanCase.policyBinding.policySnapshot && (
               <Row
                 label="Resolution"
@@ -81,15 +146,31 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
       )}
 
       <div className="card" style={{ padding: 19 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Evidence summary</div>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+          Evidence summary
+        </div>
         {(loanCase.evidenceFacts ?? []).length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>No evidence collected yet.</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>
+            No evidence collected yet.
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {(loanCase.evidenceFacts ?? []).map((fact) => (
-              <div key={fact.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{fact.factType}</span>
-                <span className="mono" style={{ fontSize: 12.5, fontWeight: 600 }}>
+              <div
+                key={fact.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+                  {fact.factType}
+                </span>
+                <span
+                  className="mono"
+                  style={{ fontSize: 12.5, fontWeight: 600 }}
+                >
                   {summarizeEvidenceValue(fact.factType, fact.value)}
                 </span>
               </div>
@@ -99,9 +180,13 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
       </div>
 
       <div className="card" style={{ padding: 19 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Recent activity</div>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>
+          Recent activity
+        </div>
         {recentActivity.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>No activity yet.</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>
+            No activity yet.
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {recentActivity.map((entry, i) => (
@@ -118,7 +203,9 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
                 />
                 <div>
                   <div style={{ fontSize: 12.5 }}>{entry.summary}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>{formatRelativeTime(entry.timestamp)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-muted)' }}>
+                    {formatRelativeTime(entry.timestamp)}
+                  </div>
                 </div>
               </div>
             ))}
@@ -129,7 +216,15 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
   );
 }
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Row({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
       <span style={{ color: 'var(--ink-muted)' }}>{label}</span>

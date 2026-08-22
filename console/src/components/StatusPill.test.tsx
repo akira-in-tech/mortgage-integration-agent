@@ -25,6 +25,8 @@ describe('StatusPill', () => {
 
   it('STATUS_ORDER names exactly the same 8 statuses STATUS_CONFIG defines, with none missing or duplicated', () => {
     expect(new Set(STATUS_ORDER).size).toBe(STATUS_ORDER.length);
-    expect(STATUS_ORDER.slice().sort()).toEqual(Object.keys(STATUS_CONFIG).sort());
+    expect(STATUS_ORDER.slice().sort()).toEqual(
+      Object.keys(STATUS_CONFIG).sort(),
+    );
   });
 });

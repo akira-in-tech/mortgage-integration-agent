@@ -1,6 +1,6 @@
 import { BrandMark, GridIcon, FolderIcon, ChartIcon, GearIcon } from './icons';
 
-export type ConsoleView = 'dashboard' | 'queue';
+export type ConsoleView = 'dashboard' | 'queue' | 'stream';
 
 interface NavRailProps {
   initials: string;
@@ -43,13 +43,18 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
           aria-pressed={activeView === 'dashboard'}
           className="navicon"
           style={{
-            background: activeView === 'dashboard' ? 'var(--accent-wash)' : 'none',
+            background:
+              activeView === 'dashboard' ? 'var(--accent-wash)' : 'none',
             border: 'none',
             cursor: 'pointer',
           }}
           onClick={() => onNavigate('dashboard')}
         >
-          <GridIcon color={activeView === 'dashboard' ? 'var(--accent)' : 'var(--ink-muted)'} />
+          <GridIcon
+            color={
+              activeView === 'dashboard' ? 'var(--accent)' : 'var(--ink-muted)'
+            }
+          />
         </button>
         <button
           type="button"
@@ -63,11 +68,30 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
           }}
           onClick={() => onNavigate('queue')}
         >
-          <FolderIcon color={activeView === 'queue' ? 'var(--accent)' : 'var(--ink-muted)'} />
+          <FolderIcon
+            color={
+              activeView === 'queue' ? 'var(--accent)' : 'var(--ink-muted)'
+            }
+          />
         </button>
-        <div className="navicon">
-          <ChartIcon color="var(--ink-muted)" />
-        </div>
+        <button
+          type="button"
+          aria-label="Live Stream"
+          aria-pressed={activeView === 'stream'}
+          className="navicon"
+          style={{
+            background: activeView === 'stream' ? 'var(--accent-wash)' : 'none',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          onClick={() => onNavigate('stream')}
+        >
+          <ChartIcon
+            color={
+              activeView === 'stream' ? 'var(--accent)' : 'var(--ink-muted)'
+            }
+          />
+        </button>
         <div className="navicon">
           <GearIcon color="var(--ink-muted)" />
         </div>

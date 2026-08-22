@@ -1,12 +1,12 @@
-import { gql } from '@apollo/client';
+import { graphql } from '../gql';
 
-export const SUBMIT_REVIEW_MUTATION = gql`
+export const SUBMIT_REVIEW_MUTATION = graphql(`
   mutation SubmitReview($caseId: ID!, $input: ReviewDto!) {
     submitReview(caseId: $caseId, input: $input)
   }
-`;
+`);
 
-export const ESCALATE_CASE_MUTATION = gql`
+export const ESCALATE_CASE_MUTATION = graphql(`
   mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {
     escalateCase(caseId: $caseId, input: $input) {
       id
@@ -14,18 +14,21 @@ export const ESCALATE_CASE_MUTATION = gql`
       version
     }
   }
-`;
+`);
 
-export const APPROVE_COMMUNICATION_MESSAGE_MUTATION = gql`
-  mutation ApproveCommunicationMessage($messageId: ID!, $input: ApproveCommunicationMessageDto!) {
+export const APPROVE_COMMUNICATION_MESSAGE_MUTATION = graphql(`
+  mutation ApproveCommunicationMessage(
+    $messageId: ID!
+    $input: ApproveCommunicationMessageDto!
+  ) {
     approveCommunicationMessage(messageId: $messageId, input: $input) {
       id
       approvedAt
     }
   }
-`;
+`);
 
-export const SEND_COMMUNICATION_MESSAGE_MUTATION = gql`
+export const SEND_COMMUNICATION_MESSAGE_MUTATION = graphql(`
   mutation SendCommunicationMessage($messageId: ID!) {
     sendCommunicationMessage(messageId: $messageId) {
       outcome
@@ -33,4 +36,4 @@ export const SEND_COMMUNICATION_MESSAGE_MUTATION = gql`
       sentAt
     }
   }
-`;
+`);

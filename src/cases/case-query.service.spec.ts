@@ -461,6 +461,74 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
     });
   });
 
+  describe('listRecentActivity()', () => {
+    it('returns the tenant’s own audit events across every case, newest first', async () => {
+      const tenantId = randomUUID();
+      const caseA = await makeCase(tenantId);
+      const caseB = await makeCase(tenantId);
+      await dataSource.getRepository(AuditEvent).save([
+        {
+          tenantId,
+          actorId: 'reviewer-1',
+          action: 'CASE_CREATED',
+          resourceType: 'loan_case',
+          resourceId: caseA,
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        },
+        {
+          tenantId,
+          actorId: 'reviewer-1',
+          action: 'CASE_ESCALATED',
+          resourceType: 'loan_case',
+          resourceId: caseB,
+          createdAt: new Date('2026-01-02T00:00:00Z'),
+        },
+      ]);
+
+      const activity = await service.listRecentActivity(tenantId);
+
+      expect(activity.map((e) => e.action)).toEqual([
+        'CASE_ESCALATED',
+        'CASE_CREATED',
+      ]);
+    });
+
+    it('clamps an over-large limit to 100 and a sub-1 limit to 1', async () => {
+      const tenantId = randomUUID();
+      const caseId = await makeCase(tenantId);
+      await dataSource.getRepository(AuditEvent).save({
+        tenantId,
+        actorId: 'reviewer-1',
+        action: 'CASE_CREATED',
+        resourceType: 'loan_case',
+        resourceId: caseId,
+      });
+
+      const clampedLow = await service.listRecentActivity(tenantId, 0);
+      expect(clampedLow).toHaveLength(1);
+
+      const clampedHigh = await service.listRecentActivity(tenantId, 9999);
+      expect(clampedHigh.length).toBeLessThanOrEqual(100);
+    });
+
+    it('never returns another tenant’s audit events', async () => {
+      const tenantA = randomUUID();
+      const tenantB = randomUUID();
+      const caseA = await makeCase(tenantA);
+      await dataSource.getRepository(AuditEvent).save({
+        tenantId: tenantA,
+        actorId: 'reviewer-1',
+        action: 'CASE_CREATED',
+        resourceType: 'loan_case',
+        resourceId: caseA,
+      });
+
+      const activity = await service.listRecentActivity(tenantB);
+
+      expect(activity).toEqual([]);
+    });
+  });
+
   it('listAuditEvents() returns only events recorded with this exact caseId as their resourceId', async () => {
     const tenantId = randomUUID();
     const caseId = await makeCase(tenantId);

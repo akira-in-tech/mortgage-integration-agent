@@ -30,20 +30,29 @@ export function formatDateTime(isoDate: string): string {
 // documents has 6); dumping it whole reads as noise in a summary card
 // (and, unwrapped, overflows the page). The full JSON stays available in
 // the Evidence tab's own detail table.
-export function summarizeEvidenceValue(factType: string, value: unknown): string {
+export function summarizeEvidenceValue(
+  factType: string,
+  value: unknown,
+): string {
   if (typeof value !== 'object' || value === null) return String(value);
   const v = value as Record<string, unknown>;
   switch (factType) {
     case 'INCOME':
-      return typeof v.monthlyIncome === 'number' ? `${formatCurrency(v.monthlyIncome)} / mo` : '—';
+      return typeof v.monthlyIncome === 'number'
+        ? `${formatCurrency(v.monthlyIncome)} / mo`
+        : '—';
     case 'CREDIT':
       return typeof v.creditScore === 'number' ? `score ${v.creditScore}` : '—';
     case 'DOCUMENT':
-      return v.allDocumentsValid ? 'All documents verified' : 'Some documents failed';
+      return v.allDocumentsValid
+        ? 'All documents verified'
+        : 'Some documents failed';
     case 'IDENTITY':
       return v.verified ? 'Verified' : 'Not verified';
     case 'ASSET':
-      return typeof v.liquidAssets === 'number' ? formatCurrency(v.liquidAssets) : '—';
+      return typeof v.liquidAssets === 'number'
+        ? formatCurrency(v.liquidAssets)
+        : '—';
     default:
       return '—';
   }

@@ -9,7 +9,10 @@ interface DataTableProps {
 export function DataTable({ columns, rows, emptyLabel }: DataTableProps) {
   if (rows.length === 0) {
     return (
-      <div className="card" style={{ padding: 24, fontSize: 13, color: 'var(--ink-muted)' }}>
+      <div
+        className="card"
+        style={{ padding: 24, fontSize: 13, color: 'var(--ink-muted)' }}
+      >
         {emptyLabel}
       </div>
     );
@@ -47,7 +50,10 @@ export function DataTable({ columns, rows, emptyLabel }: DataTableProps) {
                   style={{
                     fontSize: 13,
                     padding: '11px 20px',
-                    borderBottom: i === rows.length - 1 ? 'none' : '1px solid var(--gridline)',
+                    borderBottom:
+                      i === rows.length - 1
+                        ? 'none'
+                        : '1px solid var(--gridline)',
                   }}
                 >
                   {cell}

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@apollo/client';
 import { CASE_QUERY } from '../graphql/queries';
-import type { LoanCase } from '../graphql/types';
 import { StatusPill } from './StatusPill';
+import { DocIcon } from './icons';
 import { useCaseMutations } from '../useCaseMutations';
 import { formatCurrency, formatRelativeTime } from '../format';
 import { OverviewTab } from './tabs/OverviewTab';
@@ -12,7 +12,13 @@ import { TimelineTab } from './tabs/TimelineTab';
 import { CommunicationsTab } from './tabs/CommunicationsTab';
 import { AuditTab } from './tabs/AuditTab';
 
-type TabId = 'overview' | 'evidence' | 'conditions' | 'timeline' | 'communications' | 'audit';
+type TabId =
+  | 'overview'
+  | 'evidence'
+  | 'conditions'
+  | 'timeline'
+  | 'communications'
+  | 'audit';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -25,29 +31,47 @@ const TABS: { id: TabId; label: string }[] = [
 
 const TERMINAL_STATUSES = new Set(['CLOSED', 'READY_FOR_UNDERWRITING']);
 
-export function CaseDetail({ caseId }: { caseId: string }) {
+export function CaseDetail({
+  caseId,
+  onOpenDossier,
+}: {
+  caseId: string;
+  onOpenDossier: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [escalating, setEscalating] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
 
-  const { data, loading, error } = useQuery<{ case: LoanCase }>(CASE_QUERY, {
+  const { data, loading, error } = useQuery(CASE_QUERY, {
     variables: { caseId },
   });
-  const { escalate, escalating: escalateInFlight, error: mutationError } = useCaseMutations(caseId);
+  const {
+    escalate,
+    escalating: escalateInFlight,
+    error: mutationError,
+  } = useCaseMutations(caseId);
 
   if (loading && !data) {
     return <Placeholder>Loading case…</Placeholder>;
   }
   if (error) {
-    return <Placeholder tone="critical">Couldn&rsquo;t load this case: {error.message}</Placeholder>;
+    return (
+      <Placeholder tone="critical">
+        Couldn&rsquo;t load this case: {error.message}
+      </Placeholder>
+    );
   }
   if (!data) {
     return <Placeholder>No case data.</Placeholder>;
   }
 
   const loanCase = data.case;
-  const openConditionCount = (loanCase.conditions ?? []).filter((c) => c.status === 'OPEN').length;
-  const canEscalate = !TERMINAL_STATUSES.has(loanCase.status) && loanCase.status !== 'WAITING_FOR_REVIEW';
+  const openConditionCount = (loanCase.conditions ?? []).filter(
+    (c) => c.status === 'OPEN',
+  ).length;
+  const canEscalate =
+    !TERMINAL_STATUSES.has(loanCase.status) &&
+    loanCase.status !== 'WAITING_FOR_REVIEW';
 
   async function submitEscalation() {
     if (!escalateReason.trim()) return;
@@ -57,21 +81,64 @@ export function CaseDetail({ caseId }: { caseId: string }) {
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--page)' }}>
-      <div style={{ flex: 'none', background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '22px 32px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        minHeight: 0,
+        background: 'var(--page)',
+      }}
+    >
+      <div
+        style={{
+          flex: 'none',
+          background: 'var(--surface)',
+          borderBottom: '1px solid var(--border)',
+          padding: '22px 32px 0',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+          }}
+        >
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>{loanCase.borrowerId}</div>
+              <div
+                style={{
+                  fontSize: 22,
+                  fontWeight: 700,
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                {loanCase.borrowerId}
+              </div>
               <StatusPill status={loanCase.status} />
             </div>
-            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}>
-              {loanCase.id} &middot; opened {formatRelativeTime(loanCase.createdAt)} &middot; version {loanCase.version}
+            <div
+              className="mono"
+              style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 3 }}
+            >
+              {loanCase.id} &middot; opened{' '}
+              {formatRelativeTime(loanCase.createdAt)} &middot; version{' '}
+              {loanCase.version}
             </div>
           </div>
-          {canEscalate && (
-            <div>
-              {!escalating ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn"
+              style={{ fontSize: 12.5 }}
+              onClick={onOpenDossier}
+            >
+              <DocIcon size={13} />
+              View dossier
+            </button>
+            {canEscalate &&
+              (!escalating ? (
                 <button className="btn" onClick={() => setEscalating(true)}>
                   Escalate
                 </button>
@@ -108,19 +175,38 @@ export function CaseDetail({ caseId }: { caseId: string }) {
                     Cancel
                   </button>
                 </div>
-              )}
-            </div>
-          )}
+              ))}
+          </div>
         </div>
 
         {mutationError && (
-          <div style={{ fontSize: 12, color: 'var(--critical)', marginTop: 10 }}>{mutationError.message}</div>
+          <div
+            style={{ fontSize: 12, color: 'var(--critical)', marginTop: 10 }}
+          >
+            {mutationError.message}
+          </div>
         )}
 
-        <div style={{ display: 'flex', gap: 28, margin: '18px 0 0', paddingBottom: 18, flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 28,
+            margin: '18px 0 0',
+            paddingBottom: 18,
+            flexWrap: 'wrap',
+          }}
+        >
           <Stat label="Loan type" value={loanCase.loanType} />
-          <Stat label="Requested amount" value={formatCurrency(loanCase.requestedAmount)} mono />
-          <Stat label="Stated income / mo" value={formatCurrency(loanCase.statedMonthlyIncome)} mono />
+          <Stat
+            label="Requested amount"
+            value={formatCurrency(loanCase.requestedAmount)}
+            mono
+          />
+          <Stat
+            label="Stated income / mo"
+            value={formatCurrency(loanCase.statedMonthlyIncome)}
+            mono
+          />
           <Stat label="Jurisdiction" value={loanCase.jurisdictionCode} />
           <Stat label="Borrower ID" value={loanCase.borrowerId} mono />
         </div>
@@ -139,7 +225,10 @@ export function CaseDetail({ caseId }: { caseId: string }) {
                 fontWeight: activeTab === tab.id ? 600 : 400,
                 color: activeTab === tab.id ? 'var(--ink)' : 'var(--ink-2)',
                 paddingBottom: 10,
-                borderBottom: activeTab === tab.id ? '2px solid var(--accent)' : '2px solid transparent',
+                borderBottom:
+                  activeTab === tab.id
+                    ? '2px solid var(--accent)'
+                    : '2px solid transparent',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
@@ -165,33 +254,73 @@ export function CaseDetail({ caseId }: { caseId: string }) {
         </div>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '24px 32px' }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '24px 32px',
+        }}
+      >
         {activeTab === 'overview' && <OverviewTab loanCase={loanCase} />}
         {activeTab === 'evidence' && <EvidenceTab loanCase={loanCase} />}
         {activeTab === 'conditions' && <ConditionsTab loanCase={loanCase} />}
         {activeTab === 'timeline' && <TimelineTab loanCase={loanCase} />}
-        {activeTab === 'communications' && <CommunicationsTab loanCase={loanCase} />}
+        {activeTab === 'communications' && (
+          <CommunicationsTab loanCase={loanCase} />
+        )}
         {activeTab === 'audit' && <AuditTab loanCase={loanCase} />}
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Stat({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div>
-      <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 2 }}>{label}</div>
-      <div className={mono ? 'mono' : undefined} style={{ fontSize: 13, fontWeight: 600 }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginBottom: 2 }}>
+        {label}
+      </div>
+      <div
+        className={mono ? 'mono' : undefined}
+        style={{ fontSize: 13, fontWeight: 600 }}
+      >
         {value}
       </div>
     </div>
   );
 }
 
-function Placeholder({ children, tone }: { children: React.ReactNode; tone?: 'critical' }) {
+function Placeholder({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone?: 'critical';
+}) {
   return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ fontSize: 13, color: tone === 'critical' ? 'var(--critical)' : 'var(--ink-muted)' }}>
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          color: tone === 'critical' ? 'var(--critical)' : 'var(--ink-muted)',
+        }}
+      >
         {children}
       </div>
     </div>
