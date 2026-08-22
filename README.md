@@ -104,6 +104,14 @@ DECISION_PROVIDER=ollama docker-compose up
 
 The stack starts PostgreSQL, Temporal, Keycloak, the API, and the worker. Open **<http://localhost:3000/graphql>** for the development GraphQL explorer. Run the React console separately from `console/` with `npm install && npm run dev`.
 
+To add the free local OpenTelemetry pipeline (Collector, Tempo, Prometheus, and Grafana) and enable export from both application processes:
+
+```bash
+OTEL_ENABLED=true docker compose --profile observability up -d
+```
+
+Open the provisioned reliability dashboard at <http://127.0.0.1:3001/d/lending-operations-reliability/lending-operations-reliability>. The profile binds its ports to loopback and is for development only; operational verification, SLO definitions, and incident procedures are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ## Setup (local, without Docker)
 
 **Prerequisites:** Node.js 24+, PostgreSQL 15+. Ollama is optional.
@@ -141,6 +149,11 @@ DECISION_PROVIDER=ollama npm run start:dev
 | `RATE_LIMIT_MAX` | No | Max requests per client IP per window (all routes except `/health/*`); defaults to `100` |
 | `TEMPORAL_ADDRESS` | No | Temporal frontend host:port; defaults to `localhost:7233` |
 | `TEMPORAL_NAMESPACE` | No | Temporal namespace; defaults to `default` |
+| `OTEL_ENABLED` | No | Explicit `true` enables OTLP trace/metric export; defaults to `false` |
+| `OTEL_SERVICE_NAME` | No | Low-cardinality API or worker service name; defaults to `mortgage-integration-agent` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | OTLP/HTTP Collector base URL; defaults to `http://127.0.0.1:4318` |
+| `OTEL_METRIC_EXPORT_INTERVAL_MS` | No | Metric export interval, 1,000-300,000 ms; defaults to 15,000 |
+| `OTEL_TRACE_SAMPLE_RATIO` | No | Parent-aware root sampling ratio from 0 through 1; defaults to 1 |
 | `OUTBOX_SIGNING_SECRET` | No | HMAC secret for signed outbox events (see below); the default is for local development only |
 
 All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=staging|production` disables TypeORM schema auto-synchronization, and production also disables GraphQL playground/introspection — see [Database migrations](#database-migrations).

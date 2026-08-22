@@ -66,6 +66,30 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: npm --prefix console audit --omit=dev --audit-level=high
 
+  observability-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Parse the complete profile first, then validate each backend's native
+      # configuration with the exact pinned release image used at runtime.
+      - run: docker compose --profile observability config --quiet
+      - run: |
+          docker run --rm \
+            -v "$PWD/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+            otel/opentelemetry-collector-contrib:0.159.0 \
+            validate --config=/etc/otelcol-contrib/config.yaml
+      - run: |
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro" \
+            -v "$PWD/observability/slo-rules.yaml:/etc/prometheus/slo-rules.yaml:ro" \
+            -v "$PWD/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro" \
+            prom/prometheus:v3.10.0-distroless \
+            check config /etc/prometheus/prometheus.yaml
+      - run: jq empty observability/grafana/dashboards/lending-operations.json
+
   container-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

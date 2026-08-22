@@ -1,0 +1,56 @@
+groups:
+  - name: lending-observability
+    rules:
+      - alert: LendingTelemetryCollectorDown
+        expr: up{job="otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: OpenTelemetry Collector metrics endpoint is unavailable
+          runbook: docs/OPERATIONS.md#collector-or-export-failure
+
+      - alert: LendingApiAvailabilityBurn
+        expr: lending:slo:api_availability:ratio_5m < 0.999
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: API availability is below the 99.9 percent release objective
+          runbook: docs/OPERATIONS.md#api-availability-or-latency
+
+      - alert: LendingApiLatencyHigh
+        expr: lending:slo:api_latency_p95_seconds:5m > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Non-workflow API p95 latency exceeds 500 milliseconds
+          runbook: docs/OPERATIONS.md#api-availability-or-latency
+
+      - alert: LendingProviderOutcomeUnknown
+        expr: lending:slo:provider_unknown_outcomes:increase_15m > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Provider operation has an unknown business outcome
+          runbook: docs/OPERATIONS.md#provider-outcome-unknown
+
+      - alert: LendingWebhookTerminalFailure
+        expr: lending:slo:webhook_terminal_failures:increase_15m > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Webhook delivery exhausted its retry budget
+          runbook: docs/OPERATIONS.md#webhook-terminal-failure
+
+      - alert: LendingAgentBudgetRejected
+        expr: sum(increase(lending_agent_budget_reservations_total{status="rejected"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent budget reservation or reconciliation was rejected
+          runbook: docs/OPERATIONS.md#agent-budget-rejection

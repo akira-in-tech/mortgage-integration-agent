@@ -10372,3 +10372,72 @@ git diff --check — passed
 ### Boundaries and next step
 
 The host-only verification does not prove export against a live Collector, metric-name translation in Prometheus, dashboard queries, alerts, or cross-process trace continuity in a real Temporal server. The next slice adds the self-hosted Collector, Tempo, Prometheus, and Grafana profile plus executable configuration checks, SLO rules, and operator runbooks; the final CI-equivalent run will exercise database- and Temporal-gated suites.
+
+## M7-014c: self-hosted observability stack, SLO rules, and live privacy proof
+
+### Status
+
+Implemented and verified. The repository now contains a free, opt-in local OpenTelemetry operations path with a real Collector, Tempo trace storage, Prometheus metrics and rules, a provisioned Grafana dashboard, alert runbooks, and CI-native configuration validation. The application remains vendor-neutral and disabled-by-default; production can replace every local backend behind the same OTLP contract.
+
+### Implementation
+
+- Added an `observability` Compose profile with pinned Collector, Tempo, Prometheus, and Grafana images. All host ports bind to loopback, persisted data uses named volumes, Grafana is anonymous Viewer-only for local use, and analytics, update checks, sign-up, login UI, and plugin preinstallation are disabled.
+- Added Collector memory limiting and batching, OTLP HTTP/gRPC receivers, Tempo trace export, and a Prometheus scrape endpoint. The Collector is the only application-facing telemetry contract.
+- Added five recording rules for API availability/latency, workflow-client latency, provider unknown outcomes, and webhook terminal failures; added six alerts with direct runbook anchors. Business invariants that require durable audit evidence remain explicitly outside generic HTTP SLO arithmetic.
+- Added a provisioned Grafana dashboard and Prometheus/Tempo data sources. Dashboard queries use bounded operational labels and panels cover API, workflow, provider, policy, Agent, budget, and webhook signals without borrower, case, tenant, workflow, or provider-generated identifiers.
+- Added `docs/OPERATIONS.md` as the single operator-owned source for topology, startup, privacy boundaries, objective/evidence distinctions, alert response, and the production replacement boundary.
+- Added an independent `observability-config` CI job. It parses the full Compose profile, invokes the pinned Collector's native validator, runs `promtool` against both rule files, and parses the dashboard JSON.
+- Disabled OpenTelemetry's default resource detectors. A live readback proved they otherwise exported the host ID, local user name, executable path, and full process command arguments; command arguments can contain secrets and are unnecessary for service-level operations.
+- Rebuilt sanitized `ReadableSpan` values using the complete exporter interface. Object spread did not retain the prototype method `spanContext()`, so a real OTLP shutdown/export exposed a delegate-contract failure that a plain attribute-only unit test could not detect. The new test invokes that method on the delegated span and verifies the sanitized status, name, and attributes.
+
+### Live evidence
+
+```text
+Collector, Tempo, Prometheus, Grafana health — all HTTP 200
+synthetic GraphQL request — HTTP 200 with X-Trace-Id
+Tempo lookup by returned trace ID — complete HTTP/Express/PostgreSQL trace found
+trace resource attributes — service.name only
+trace content — no injected authorization, borrower query, Temporal ID,
+  host ID, user name, executable path, command arguments, GraphQL document,
+  SQL text, SQL parameters, exception message, or stack
+Prometheus scrape — real HTTP and lending domain metrics present
+HTTP metric schema — http_response_status_code label matches SLO rule
+Prometheus rules API — 5 recording rules and 6 alerts loaded with health=ok
+Grafana API — both data sources and lending-operations-reliability dashboard provisioned
+```
+
+### Verification
+
+```text
+npm run lint:check — passed
+npm run build — passed
+backend full suite with isolated PostgreSQL and real Temporal —
+  99 suites / 759 tests passed; 1 suite / 3 credential-gated tests skipped
+backend E2E with isolated PostgreSQL, Temporal, and Keycloak —
+  4 suites / 40 tests passed
+console lint — passed
+console unit tests — 10 files / 44 tests passed
+console production build from tracked sources — passed
+console Playwright — 2 passed / 1 credential-gated live-login test skipped
+docker compose --profile observability config --quiet — passed
+Collector native configuration validation — passed
+promtool — Prometheus config, 5 recording rules, and 6 alerts passed
+Grafana dashboard JSON parse — passed
+root and console production dependency audits — 0 vulnerabilities
+production Docker image build and API/worker live startup — passed
+git diff --check — passed
+```
+
+The console production build was run with the three pre-existing untracked conflict copies temporarily outside `console/src`; they were restored byte-for-byte afterward and remain untracked. A clean checkout, including CI, never contains those copies.
+
+### Security, privacy, cost, and compatibility
+
+The profile uses only synthetic local traffic and free self-hosted components; it makes no real-provider or paid-model request. Telemetry export is fail-open and cannot grant authority or change a case outcome. Metrics use low-cardinality bounded labels, traces are sanitized immediately before export, and automatic host/process discovery is disabled. The local Grafana access model is intentionally unsuitable for an untrusted network and is not described as production deployment.
+
+Tempo 2.10.7 is used for this laptop profile because the current Tempo 3 single-binary deployment still requires a Kafka-compatible broker. That broker belongs in a production capacity and durability design, not in a free developer profile. This choice does not couple the application to Tempo because application processes export only OTLP to the Collector.
+
+### Known gaps and next safe step
+
+This establishes launch-quality application telemetry and a reproducible local evidence path, not production SLO attainment. There is still no authenticated, encrypted, multi-AZ observability backend; durable object storage and retention enforcement; alert delivery/on-call ownership; staging load/soak window; cloud infrastructure-as-code; backup/restore drill; or automated deployment rollback.
+
+The next release slice should codify a disposable staging environment and rollback path with infrastructure as code, then run a declared load/fault corpus long enough to generate the first downloadable SLO and release-evidence artifact. Real provider activation remains gated by the existing certification and BYOC controls.

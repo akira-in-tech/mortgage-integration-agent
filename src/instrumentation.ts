@@ -52,6 +52,10 @@ function startTelemetry(): void {
     );
     sdk = new NodeSDK({
       resource,
+      // Default host/process detectors include host IDs, local user names,
+      // executable paths, and full command arguments. None are required for
+      // service-level operations and command arguments can contain secrets.
+      autoDetectResources: false,
       sampler: new ParentBasedSampler({
         root: new TraceIdRatioBasedSampler(config.traceSampleRatio),
       }),

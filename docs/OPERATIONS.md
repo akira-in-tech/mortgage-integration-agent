@@ -1,0 +1,106 @@
+# Operations and observability
+
+This is the operator runbook for the implemented synthetic environment. It owns runtime telemetry, SLO measurement, alerts, and incident response; `README.md` remains the developer quickstart and `PROJECT_CHARTER.md` remains the normative product contract.
+
+## Runtime topology
+
+```text
+API / Worker
+  └─ OTLP/HTTP traces + metrics
+       └─ OpenTelemetry Collector
+            ├─ traces  → Tempo → Grafana Explore
+            └─ metrics → Prometheus exporter → Prometheus → Grafana dashboard
+```
+
+The application depends only on the OTLP contract. Tempo, Prometheus, and Grafana are free local implementations and can be replaced by a managed or tenant-controlled backend without changing domain services. Export is fail-open: Collector loss must degrade observability, not approve, deny, send, order, or mutate a case.
+
+## Start and verify locally
+
+The profile is opt-in and every published port binds to loopback. It has no production authentication or high-availability guarantee and must not be exposed to an untrusted network.
+
+```bash
+OTEL_ENABLED=true docker compose --profile observability up -d
+
+curl --fail http://127.0.0.1:13133/       # Collector
+curl --fail http://127.0.0.1:9090/-/ready # Prometheus
+curl --fail http://127.0.0.1:3200/ready   # Tempo
+curl --fail http://127.0.0.1:3001/api/health
+```
+
+Grafana is available at <http://127.0.0.1:3001> with anonymous Viewer access. The provisioned `Lending Operations Reliability` dashboard uses the provisioned Prometheus and Tempo data sources. Stop the profile without deleting its named volumes with:
+
+```bash
+docker compose --profile observability stop grafana prometheus otel-collector tempo
+```
+
+Deleting the named volumes is intentionally not part of the runbook because it destroys local trace, metric, and dashboard state.
+
+## Telemetry data boundary
+
+Metrics use bounded labels only: domain enums, fixed operation names, registered Agent tools, boolean states, and bounded failure codes. Never add tenant, case, borrower, workflow, provider receipt, intent, ledger, reservation, endpoint, URL query, free text, or credential values as metric labels.
+
+The telemetry pipeline removes or disables collection of:
+
+- Temporal workflow, run, activity, and update identifiers;
+- user identifiers, headers, cookies, authorization values, exception text, and stack traces;
+- database namespaces, SQL parameters, raw SQL, and GraphQL documents;
+- HTTP query strings and fragments;
+- automatically detected host IDs, local user names, process paths, and command arguments.
+
+Only the explicit service name is exported as a resource attribute. When adding instrumentation, extend the exporter-DLP tests and read a synthetic trace back from the target backend before accepting the change.
+
+## Initial release objectives
+
+These are targets from Charter Section 17.2, not claims about a deployed production service. A result is reportable only with the environment, load profile, observation window, sample size, and query artifact.
+
+| Objective | Target | Implemented signal | Current evidence |
+| --- | ---: | --- | --- |
+| Synthetic staging API availability | 99.9% monthly | HTTP server request count and `lending:slo:api_availability:ratio_5m` | Local pipeline only; monthly staging window unmeasured |
+| Non-workflow API latency | p95 below 500 ms | HTTP request-duration histogram and `lending:slo:api_latency_p95_seconds:5m` | Load profile unexecuted |
+| Workflow-start acknowledgement | p95 below 1 s | `lending_workflow_client_duration_seconds` with `operation=start` | Load profile unexecuted |
+| Provider retry/fallback duplicate effect | 0 | Durable intent/audit evidence; unknown-outcome metric and alert | Release fault corpus required; not inferred from HTTP metrics |
+| Protected communication without approval | 0 | Durable communication/audit evidence | Release corpus required |
+| Agent effect without budget/deadline authority | 0 | Budget reservation transition/failure metrics plus durable ledger evidence | Release corpus required |
+| Webhook delivery for healthy receivers | 99.9% in retry window | Webhook attempt/terminal-failure metrics | Healthy-receiver fault run required |
+| Cross-tenant exposure | 0 | Security tests and audit evidence | CI tests are evidence; production monitoring unmeasured |
+
+Prometheus recording rules live in `observability/slo-rules.yaml`; alert rules live in `observability/alerts.yaml`. Zero-tolerance business invariants require durable audit/release-corpus evaluation and are not converted into misleading generic availability percentages.
+
+## Alert response
+
+### Collector or export failure
+
+1. Confirm API/worker health independently. Do not stop lending operations solely because telemetry export is unavailable.
+2. Check `http://127.0.0.1:13133/`, Collector logs, receiver rejection counts, memory-limiter messages, and the Tempo endpoint.
+3. Preserve application logs and the outage window. Missing telemetry is itself an incident evidence gap.
+4. Restore the exporter, verify a synthetic trace and metric end to end, and record the unobserved interval. Never replay provider calls to recreate missing traces.
+
+### API availability or latency
+
+1. Separate application 5xx from proxy/client failures and confirm request volume is non-zero.
+2. Use a trace ID to inspect HTTP, policy, workflow-client, Agent, provider, and PostgreSQL spans without searching by borrower data.
+3. Check database pool/query latency, Temporal reachability, provider outcomes, event-loop saturation, and recent release changes.
+4. Apply the deployment rollback procedure when a release is causal. This repository does not yet contain the staging deployment/rollback implementation, so do not claim that step is automated.
+
+### Provider outcome unknown
+
+1. Treat the operation as potentially completed. Do not retry or fall back automatically.
+2. Locate the durable `OUTCOME_UNKNOWN` operation intent through authorized operations tooling.
+3. Reconcile through provider status or attributable verified callback evidence.
+4. A reviewer resolves the intent; preserve cost reservation until the business outcome is known.
+
+### Webhook terminal failure
+
+1. Inspect the durable delivery history and endpoint status without exposing its secret.
+2. Confirm DNS/SSRF validation, receiver health, status-code pattern, and signature-clock agreement.
+3. Correct the endpoint or receiver, then use the governed replay operation. Do not edit attempt history.
+
+### Agent budget rejection
+
+1. Use the Agent Budget Operations queue to distinguish exhaustion, deadline, version conflict, and unknown reservation.
+2. Do not increase a limit merely to clear an alert. Confirm tenant authority and expected cost first.
+3. Reviewer commit/release actions require evidence notes; unknown provider costs remain reserved until reconciled.
+
+## Production replacement boundary
+
+For staging/production, keep `OTEL_ENABLED=true`, set a distinct low-cardinality `OTEL_SERVICE_NAME` per process, and point `OTEL_EXPORTER_OTLP_ENDPOINT` to the authorized Collector. The local Tempo filesystem, anonymous Grafana, loopback ports, and Compose volumes are development components, not a deployable production observability tier. Production needs authenticated ingress, encrypted transport, durable object storage, retention/deletion policy, backup, multi-AZ design, capacity tests, alert routing, on-call ownership, and access audit before launch approval.

@@ -54,14 +54,26 @@ function sanitizeSpanName(name: string): string {
 
 function sanitizeSpan(span: ReadableSpan): ReadableSpan {
   return {
-    ...span,
     name: sanitizeSpanName(span.name),
+    kind: span.kind,
+    spanContext: () => span.spanContext(),
+    parentSpanContext: span.parentSpanContext,
+    startTime: span.startTime,
+    endTime: span.endTime,
     status: { code: span.status.code },
     attributes: sanitizeTelemetryAttributes(span.attributes),
+    links: span.links,
     events: span.events.map((event) => ({
       ...event,
       attributes: sanitizeTelemetryAttributes(event.attributes ?? {}),
     })),
+    duration: span.duration,
+    ended: span.ended,
+    resource: span.resource,
+    instrumentationScope: span.instrumentationScope,
+    droppedAttributesCount: span.droppedAttributesCount,
+    droppedEventsCount: span.droppedEventsCount,
+    droppedLinksCount: span.droppedLinksCount,
   };
 }
 
