@@ -1,6 +1,14 @@
 import { BrandMark, GridIcon, FolderIcon, ChartIcon, GearIcon } from './icons';
 
-export function NavRail({ initials }: { initials: string }) {
+export type ConsoleView = 'dashboard' | 'queue';
+
+interface NavRailProps {
+  initials: string;
+  activeView: ConsoleView;
+  onNavigate: (view: ConsoleView) => void;
+}
+
+export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
   return (
     <div
       style={{
@@ -29,12 +37,34 @@ export function NavRail({ initials }: { initials: string }) {
         <BrandMark />
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div className="navicon">
-          <GridIcon color="var(--ink-muted)" />
-        </div>
-        <div className="navicon" style={{ background: 'var(--accent-wash)' }}>
-          <FolderIcon color="var(--accent)" />
-        </div>
+        <button
+          type="button"
+          aria-label="Ops Dashboard"
+          aria-pressed={activeView === 'dashboard'}
+          className="navicon"
+          style={{
+            background: activeView === 'dashboard' ? 'var(--accent-wash)' : 'none',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          onClick={() => onNavigate('dashboard')}
+        >
+          <GridIcon color={activeView === 'dashboard' ? 'var(--accent)' : 'var(--ink-muted)'} />
+        </button>
+        <button
+          type="button"
+          aria-label="Triage Queue"
+          aria-pressed={activeView === 'queue'}
+          className="navicon"
+          style={{
+            background: activeView === 'queue' ? 'var(--accent-wash)' : 'none',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+          onClick={() => onNavigate('queue')}
+        >
+          <FolderIcon color={activeView === 'queue' ? 'var(--accent)' : 'var(--ink-muted)'} />
+        </button>
         <div className="navicon">
           <ChartIcon color="var(--ink-muted)" />
         </div>

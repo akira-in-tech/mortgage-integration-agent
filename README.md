@@ -265,7 +265,9 @@ A real React operations console lives in `console/` — Vite + React 18 + TypeSc
 
 To run it: `cd console && npm install && npm run dev` (serves on port 5173). It needs a real bearer token from the main app's `create-api-client.ts` — the console has no login flow of its own yet (bearer-only, matching `client/webhook-inspector.ts`'s existing pattern), entered once on its connect screen and kept in `localStorage`. Set `VITE_GRAPHQL_URL` if the API isn't at the default `http://localhost:3000/graphql`.
 
-Known gaps, honestly scoped rather than silently cut: no OIDC login, no GraphQL codegen (hand-written types verified by hand against a real schema dump), Triage Queue only (no Dashboard/Dossier/Stream views), client-side-only search, and no automated tests for the console itself yet — this slice's own verification was real but manual (curl plus a live headless-browser session), not yet automated.
+A second real view, **Ops Dashboard** (M6-009), followed once `caseStatusCounts` (M6-008) gave it real backing data: three KPI stat tiles (total cases, needs attention, ready for underwriting) and a horizontal bar chart of cases by status, colors pulled from the same `StatusPill` semantic mapping every other screen already uses — never a separate chart palette. A status absent from the real API response renders as a real, client-computed `0`, distinct from the backend's own discipline of never returning a fabricated zero row itself. M6-009 also closed the console's automated-test gap: 26 Vitest + Testing Library tests across format helpers, `StatusPill`, the real mutation-driving `useCaseMutations` hook (including a ~2.3s test against real, not faked, timers proving the eventual-consistency settle window genuinely holds), the "Mark satisfied" click path, and the new dashboard.
+
+Known gaps, honestly scoped rather than silently cut: no OIDC login, no GraphQL codegen (hand-written types verified by hand against a real schema dump), Case Dossier and Live Stream still unbuilt, client-side-only search, and no working ESLint config for `console/` (never set up, not just newly broken).
 
 ### Transactional outbox
 

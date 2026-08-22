@@ -22,6 +22,15 @@ export const CASES_QUERY = gql`
   }
 `;
 
+export const CASE_STATUS_COUNTS_QUERY = gql`
+  query CaseStatusCounts {
+    caseStatusCounts {
+      status
+      count
+    }
+  }
+`;
+
 export const CASE_QUERY = gql`
   query Case($caseId: ID!) {
     case(caseId: $caseId) {

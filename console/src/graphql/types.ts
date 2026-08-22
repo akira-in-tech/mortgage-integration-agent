@@ -159,3 +159,10 @@ export interface CaseConnection {
     endCursor: string | null;
   };
 }
+
+// caseStatusCounts (M6-008) — a status with zero real cases is simply
+// absent from the array, never a zero-count entry.
+export interface CaseStatusCount {
+  status: CaseStatus;
+  count: number;
+}

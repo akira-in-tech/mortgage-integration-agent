@@ -8854,3 +8854,93 @@ None new.
 ### Next safe step
 
 Build the console's Ops Dashboard view (M6-009) against this query, alongside closing the console's own automated-test gap named in M6-007.
+
+## M6-009: console automated tests + Ops Dashboard, closing both M6-007 Known Gaps
+
+### Status
+
+Implemented and verified. Closes the two Known Gaps M6-007's own entry named as the deliberate next step: no automated tests, and Triage Queue as the only real view.
+
+### Acceptance criterion
+
+The console has a real automated test suite (`npm test` inside `console/`) covering its actual mutation-driving logic — not just presentational rendering — and a second real view, Ops Dashboard, backed by `caseStatusCounts` (M6-008), showing real per-status case counts with no fabricated data.
+
+### Implementation
+
+**Tests** — Vitest + `@testing-library/react` + `jsdom` (added as `console/`-local devDependencies; the root backend's own Jest setup is untouched, `console/` was already excluded from it at M6-007). 26 tests across 5 files:
+
+- `format.test.ts`: every pure formatter, including a test that `summarizeEvidenceValue` never leaks raw JSON — the exact regression class the M6-007 overflow bug was.
+- `StatusPill.test.tsx`: all 8 real `CaseStatus` values render their configured label; `STATUS_ORDER` and `STATUS_CONFIG` stay in sync (same 8 keys, no duplicates).
+- `useCaseMutations.test.tsx`: the real hook, through `MockedProvider` — `resolveCondition` keeps `resolvingCondition` true through the actual ~2s settle window (real timers, not faked, specifically to prove the M6-007 eventual-consistency fix is genuinely there — advancing a mocked clock would only prove a `setTimeout` exists, not that it waits the real duration) and lands on the caught-up status once it elapses; `escalate` shows no such delay, matching the documented synchronous-vs-asynchronous distinction between the two mutations; a missing reviewer identity throws before ever calling the mutation.
+- `OverviewTab.test.tsx`: clicking the real "Mark satisfied" button fires `SUBMIT_REVIEW_MUTATION` with the correct variables and disables both action buttons while it settles — the actual UI click path, not just the hook in isolation.
+- `OpsDashboard.test.tsx`: KPI tiles and the status-breakdown bars compute correctly from a real `caseStatusCounts` response, including statuses absent from that response rendering as a real, client-computed `0` — and a query error surfaces a real message rather than a blank dashboard.
+
+**Ops Dashboard** — the second of the four originally-designed concepts to get a real build, chosen because M6-008 had just given it real backing data. `OpsDashboard.tsx`: three KPI stat tiles (total cases, needs attention — the sum of `CONDITIONS_OPEN`/`WAITING_FOR_REVIEW`/`MANUAL_REVIEW` counts, ready for underwriting) and a horizontal bar chart, one row per `STATUS_ORDER` entry, direct-labeled with the real count. Colors are pulled from `StatusPill`'s own `STATUS_CONFIG` (newly exported, plus a new `barColor` solid-token field alongside each status's existing wash/pill colors) rather than a separate palette — the same status color means the same thing on the pill and the chart, never redefined per surface. A status absent from the real API response renders as a real bar at `0`, computed client-side from the response's own absence — never a value the API itself fabricated (that discipline stays entirely on the M6-008 backend side, where a missing status really is omitted). `NavRail` gained real `activeView`/`onNavigate` wiring on its Dashboard and Queue icons (previously decorative); `App.tsx` now switches its main content and top-bar title between the two.
+
+### Affected files
+
+- `console/package.json` (+lockfile): `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`; `npm test` script.
+- `console/vite.config.ts`: Vitest `test` config (jsdom environment, setup file).
+- `console/src/test/setup.ts` (new): jest-dom matchers, automatic RTL cleanup between tests.
+- `console/src/format.test.ts`, `console/src/components/StatusPill.test.tsx`, `console/src/useCaseMutations.test.tsx`, `console/src/components/tabs/OverviewTab.test.tsx`, `console/src/components/OpsDashboard.test.tsx` (new)
+- `console/src/components/OpsDashboard.tsx` (new)
+- `console/src/components/StatusPill.tsx`: exported `STATUS_CONFIG`/`STATUS_ORDER`, added `barColor`.
+- `console/src/components/NavRail.tsx`: real nav state instead of one hardcoded active icon.
+- `console/src/App.tsx`: view switching.
+- `console/src/graphql/queries.ts`: `CASE_STATUS_COUNTS_QUERY`.
+- `console/src/graphql/types.ts`: `CaseStatusCount`.
+
+### Decisions and alternatives
+
+- **Vitest over Jest for the console**: the console is a Vite project; Vitest shares its config and transform pipeline directly, where Jest would need a separate ts-jest/babel setup duplicating what Vite already does. The root backend's own Jest suite is untouched and unaffected — two different test runners for two genuinely different projects sharing one repo, not a migration.
+- **Real timers for the settle-window test, not fake timers**: fake timers would prove a `setTimeout` call exists but not that the app really waits out the duration against Apollo's own real internal scheduling; a slightly slower test (~2.3s) buys a materially stronger guarantee for the one test where the actual fix being tested *is* a timing behavior.
+- **Ops Dashboard over Case Dossier or Live Stream as the second view**: M6-008 had just built its real backing data; building the view immediately after is the natural continuation, not a fresh design decision.
+- **`barColor` alongside the existing pill colors, not a separate chart palette**: `StatusPill`'s wash colors are for pill backgrounds, not solid chart fills, but the same 8-status semantic mapping (gray/blue/amber/red/green) applies unchanged — one source of truth per status, not two color systems that could drift apart.
+
+### Errors and fixes
+
+- **`MockedProvider`'s `addTypename={false}` prop is removed in the installed Apollo Client version (3.14.1)** — it now throws at runtime instead of silently no-op'ing. Fixed by adding real `__typename` fields to every mock response instead (the currently-supported way to get accurate cache behavior from `MockedProvider`).
+- **Mixing `vi.useFakeTimers()` with `MockedProvider`'s own internal scheduling and Testing Library's `waitFor` (which polls via a real `setInterval`) caused every async test to hang until Vitest's 5000ms per-test timeout**, rather than resolving. Fixed by dropping fake timers entirely for the settle-window test and awaiting a real `setTimeout` for the ~2s window instead (see Decisions above for why this is actually the better test, not just the workaround).
+- **`screen.getByText('2')` matched two separate DOM nodes** (a KPI tile's value and a bar chart row's count happened to be the same number in the test fixture) — fixed by adding `data-testid`s to the KPI tiles and asserting on those directly instead of ambiguous text content.
+- RTL's automatic cleanup-between-tests needs Vitest's `globals` mode or an explicit `afterEach(cleanup)`; this project uses explicit imports (not globals), so a second test in the same file was finding duplicate DOM nodes left over from the first. Fixed by calling `cleanup()` in `src/test/setup.ts`'s own `afterEach`, once, for every test file.
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean
+  npm run build (tsc -b && vite build) — clean, 382KB main bundle (gzip 114KB)
+  npx vitest run — 5 files / 26 tests passed, including a real ~2.3s
+    settle-window test against real (not faked) timers
+
+Backend (this slice touches no backend file — verification is the
+  console's own):
+  no changes to src/, so no backend re-verification needed beyond
+  M6-008's own already-completed pass
+
+Live end to end, real running API + console dev server:
+  curl caseStatusCounts directly — [{status: DRAFT, count: 5}]
+  Headless-Chrome + raw CDP screenshot of the Dashboard nav icon click:
+    KPI tiles read 5 / 0 / 0, bar chart shows Draft at full width with
+    every other status at a real computed 0, matching the curl result
+    exactly
+  Clicked back to the Triage Queue nav icon: existing view unaffected,
+    nav highlight state correctly follows the active view
+```
+
+### Security, privacy, cost, and compatibility
+
+No new backend surface — this slice is entirely `console/`-local plus consuming the already-shipped, already-scoped `caseStatusCounts` query. `OpsDashboard` polls every 30s (`pollInterval`) for a lightweight near-live view; the same tenant-scoped, already-authenticated query every other console screen uses.
+
+`npm install` in `console/` surfaced a known, pre-existing transitive advisory (`esbuild`'s dev-server CORS issue, GHSA-67mh-4wv8-2f99, inherited through `vite`/`vitest`) — moderate severity, dev-server-only (does not affect the production build), and already implicit in M6-007's original `vite ^5.4.0` dependency choice, not newly introduced by adding `vitest`. Not fixed this slice (the fix is a breaking `vite@8` upgrade); left as a known, accepted, dev-tooling-only item.
+
+### Known gaps
+
+- The console's `npm run lint` script has no working ESLint config in `console/` (it was never actually set up at M6-007 either — that entry never claimed lint passed, only `tsc --noEmit`/`vite build`) — a real, pre-existing gap, not introduced or fixed by this slice.
+- Case Dossier and Live Stream (the other two originally-designed concepts) remain unbuilt — still an explicit scope decision.
+- `OpsDashboard`'s "needs attention" figure is a client-side sum of three real per-status counts, not its own backend field — fine at this scale, but a tenant wanting that as a first-class metric would want it computed server-side instead.
+- Component/hook tests only — no true end-to-end browser automation is part of the automated suite yet (this slice's own live-browser check was manual, the same as M6-007's).
+
+### Next safe step
+
+Set up a working ESLint config for `console/` (the one real, still-open gap from both this slice and M6-007), or extend to a third view (Case Dossier is the next-most-designed concept).

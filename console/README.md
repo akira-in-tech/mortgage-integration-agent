@@ -1,8 +1,11 @@
 # Meridian — Underwriting Ops Console
 
-A real React operations console for the mortgage-integration-agent GraphQL API. Implements one screen — the Triage Queue — end to end against the real backend: case list with cursor pagination and status filtering, and a six-tab case detail pane (overview, evidence, conditions, timeline, communications, audit) with working mutations (resolve condition, escalate, approve/send communications).
+A real React operations console for the mortgage-integration-agent GraphQL API. Two real screens:
 
-See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 entry for what was built, how it was verified, and its known gaps.
+- **Triage Queue** — case list with cursor pagination and status filtering, and a six-tab case detail pane (overview, evidence, conditions, timeline, communications, audit) with working mutations (resolve condition, escalate, approve/send communications).
+- **Ops Dashboard** — KPI stat tiles and a status-breakdown bar chart, backed by the real `caseStatusCounts` GraphQL aggregate query.
+
+See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007/M6-008/M6-009 entries for what was built, how it was verified, and its known gaps.
 
 ## Run it
 
@@ -22,10 +25,17 @@ npm run build   # tsc --noEmit + vite build, output to dist/
 npm run preview # serve the production build locally
 ```
 
+## Test
+
+```bash
+npm test        # vitest run — format helpers, StatusPill, useCaseMutations,
+                 # the "Mark satisfied" click path, OpsDashboard
+```
+
 ## Known gaps
 
 - No OIDC login — bearer-token-only.
 - No GraphQL codegen — `src/graphql/types.ts` is hand-written against a real `src/schema.gql` dump and must be kept in sync by hand.
-- Triage Queue only — no Dashboard/Dossier/Stream views.
+- Case Dossier and Live Stream (two of the original four design concepts) still unbuilt.
 - Client-side-only search (substring match over currently-loaded rows).
-- No automated tests yet.
+- No working ESLint config in this directory (`npm run lint` will fail — never set up).
