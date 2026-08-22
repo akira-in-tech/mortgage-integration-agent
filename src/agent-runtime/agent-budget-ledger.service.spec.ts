@@ -194,12 +194,68 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     expect(unknown.status).toBe(AgentBudgetReservationStatus.Unknown);
     expect(unknown.ledger.remainingCostMinorUnits).toBe(0);
 
+    expect(await service.listUnknown(ledgerInput.tenantId)).toHaveLength(1);
     const released = await service.release(
       ledgerInput.tenantId,
       reserved.reservationId,
+      {
+        requireUnknown: true,
+        resolvedBy: 'reviewer-spec',
+        resolutionNote: 'Provider dashboard proves no operation occurred.',
+      },
     );
     expect(released.status).toBe(AgentBudgetReservationStatus.Released);
     expect(released.ledger.remainingCostMinorUnits).toBe(10);
+    expect(await service.listUnknown(ledgerInput.tenantId)).toEqual([]);
+    const resolved = await dataSource
+      .getRepository(AgentBudgetReservation)
+      .findOneByOrFail({ id: reserved.reservationId });
+    expect(resolved).toMatchObject({
+      resolvedBy: 'reviewer-spec',
+      resolutionNote: 'Provider dashboard proves no operation occurred.',
+    });
+  });
+
+  it('commits UNKNOWN work with reviewer evidence and rejects repeat disposition', async () => {
+    const ledgerInput = input({ costLimitMinorUnits: 10 });
+    const ledger = await service.createOrLoad(ledgerInput);
+    const reserved = await service.reserve({
+      tenantId: ledgerInput.tenantId,
+      ledgerId: ledger.ledgerId,
+      idempotencyKey: 'provider-confirmed',
+      expectedVersion: ledger.version,
+      units: {
+        stepUnits: 1,
+        tokenUnits: 0,
+        providerCallUnits: 1,
+        costMinorUnits: 10,
+      },
+    });
+    await service.markUnknown(ledgerInput.tenantId, reserved.reservationId);
+
+    const committed = await service.commit({
+      tenantId: ledgerInput.tenantId,
+      reservationId: reserved.reservationId,
+      actualCostMinorUnits: 7,
+      requireUnknown: true,
+      resolvedBy: 'reviewer-spec',
+      resolutionNote: 'Provider receipt confirms one completed lookup.',
+    });
+
+    expect(committed.status).toBe(AgentBudgetReservationStatus.Committed);
+    expect(committed.actualCostMinorUnits).toBe(7);
+    expect(committed.ledger.remainingCostMinorUnits).toBe(3);
+    await expect(
+      service.commit({
+        tenantId: ledgerInput.tenantId,
+        reservationId: reserved.reservationId,
+        requireUnknown: true,
+        resolvedBy: 'second-reviewer',
+        resolutionNote: 'Attempting to overwrite the completed disposition.',
+      }),
+    ).rejects.toMatchObject<Partial<AgentBudgetError>>({
+      code: 'RESERVATION_CONFLICT',
+    });
   });
 
   it('rejects expired work and atomically preserves a reservation after cost overage', async () => {

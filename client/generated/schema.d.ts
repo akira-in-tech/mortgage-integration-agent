@@ -121,6 +121,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agent-budget-reservations/unknown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List outcome-unknown Agent budget reservations */
+        get: operations["listUnknownAgentBudgetReservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agent-budget-reservations/{reservationId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve an outcome-unknown Agent budget reservation */
+        post: operations["reconcileAgentBudgetReservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases": {
         parameters: {
             query?: never;
@@ -381,6 +415,59 @@ export interface components {
         };
         OidcLogoutResultDto: {
             logoutUrl?: Record<string, never>;
+        };
+        AgentBudgetUnitsDto: {
+            stepUnits: number;
+            tokenUnits: number;
+            providerCallUnits: number;
+            costMinorUnits: number;
+        };
+        AgentBudgetReservationQueueItemDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            ledgerId: string;
+            idempotencyKey: string;
+            units: components["schemas"]["AgentBudgetUnitsDto"];
+            /** @enum {string} */
+            status: "RESERVED" | "COMMITTED" | "RELEASED" | "UNKNOWN";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ReconcileAgentBudgetReservationDto: {
+            /** @enum {string} */
+            outcome: "COMMITTED" | "RELEASED";
+            resolutionNote: string;
+            /** @description Trusted actual provider cost in integer minor units; COMMITTED only. */
+            actualCostMinorUnits?: number;
+        };
+        AgentBudgetSnapshotDto: {
+            /** Format: uuid */
+            ledgerId: string;
+            version: number;
+            remainingSteps: number;
+            remainingTokens: number;
+            remainingProviderCalls: number;
+            remainingCostMinorUnits: number;
+            remainingDurationMs: number;
+            /** @example USD */
+            currency: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            deadlineAt: string;
+            closed: boolean;
+        };
+        AgentBudgetReservationReceiptDto: {
+            /** Format: uuid */
+            reservationId: string;
+            idempotencyKey: string;
+            /** @enum {string} */
+            status: "RESERVED" | "COMMITTED" | "RELEASED" | "UNKNOWN";
+            units: components["schemas"]["AgentBudgetUnitsDto"];
+            actualCostMinorUnits?: Record<string, never> | null;
+            replayed: boolean;
+            ledger: components["schemas"]["AgentBudgetSnapshotDto"];
         };
         CreateCaseDto: {
             borrowerId: string;
@@ -665,6 +752,82 @@ export interface operations {
             };
             /** @description Missing, invalid, or unprovisioned OIDC identity. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listUnknownAgentBudgetReservations: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Oldest unresolved reservations first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentBudgetReservationQueueItemDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reconcileAgentBudgetReservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reservationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReconcileAgentBudgetReservationDto"];
+            };
+        };
+        responses: {
+            /** @description The committed or released reservation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentBudgetReservationReceiptDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -202,6 +202,38 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts Agent budget reconciliation evidence and its partial queue index', async () => {
+    const beforeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'agent_budget_reservations'
+           AND column_name IN ('resolvedBy', 'resolutionNote')
+         ORDER BY column_name`,
+      );
+    expect(beforeColumns).toEqual([
+      { column_name: 'resolutionNote' },
+      { column_name: 'resolvedBy' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    const afterColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'agent_budget_reservations'
+           AND column_name IN ('resolvedBy', 'resolutionNote')`,
+      );
+    expect(afterColumns).toEqual([]);
+    const indexes: Array<{ indexname: string }> = await scratchDataSource.query(
+      `SELECT indexname FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND indexname = 'IDX_agent_budget_reservations_unknown'`,
+    );
+    expect(indexes).toEqual([]);
+  });
+
   it('reverts the authoritative Agent budget migration without leaving its enum behind', async () => {
     expect(await tableNames()).toEqual(
       expect.arrayContaining([

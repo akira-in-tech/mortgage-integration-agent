@@ -1,4 +1,5 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { runInTenantContext } from '../database/tenant-context';
 import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
@@ -73,8 +74,31 @@ export interface AgentBudgetReservationReceipt {
  * conditional ledger update plus an idempotency record in the same tenant
  * transaction. A stale graph snapshot can fail, but it can never overspend.
  */
+@Injectable()
 export class AgentBudgetLedgerService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+
+  async listUnknown(
+    tenantId: string,
+    limit = 50,
+  ): Promise<AgentBudgetReservation[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new AgentBudgetError(
+        'RESERVATION_CONFLICT',
+        'Unknown-reservation page size must be between 1 and 100',
+      );
+    }
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(AgentBudgetReservation).find({
+        where: {
+          tenantId,
+          status: AgentBudgetReservationStatus.Unknown,
+        },
+        order: { createdAt: 'ASC', id: 'ASC' },
+        take: limit,
+      }),
+    );
+  }
 
   async createOrLoad(
     input: AgentBudgetLedgerInput,
@@ -232,16 +256,37 @@ export class AgentBudgetLedgerService {
     tenantId: string;
     reservationId: string;
     actualCostMinorUnits?: number;
+    requireUnknown?: boolean;
+    resolvedBy?: string;
+    resolutionNote?: string;
   }): Promise<AgentBudgetReservationReceipt> {
     if (input.actualCostMinorUnits !== undefined) {
       this.assertNonnegativeInt(input.actualCostMinorUnits, 'actual cost');
+    }
+    if (input.requireUnknown) {
+      this.validateManualResolution(input.resolvedBy, input.resolutionNote);
     }
     return this.resolveReservation(
       input.tenantId,
       input.reservationId,
       async (manager, reservation, ledger) => {
         if (reservation.status === AgentBudgetReservationStatus.Committed) {
+          if (input.requireUnknown) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'Only an UNKNOWN reservation can be reconciled manually',
+            );
+          }
           return this.receipt(reservation, ledger, false);
+        }
+        if (
+          input.requireUnknown &&
+          reservation.status !== AgentBudgetReservationStatus.Unknown
+        ) {
+          throw new AgentBudgetError(
+            'RESERVATION_CONFLICT',
+            'Only an UNKNOWN reservation can be reconciled manually',
+          );
         }
         if (reservation.status === AgentBudgetReservationStatus.Released) {
           throw new AgentBudgetError(
@@ -285,6 +330,8 @@ export class AgentBudgetLedgerService {
         reservation.status = AgentBudgetReservationStatus.Committed;
         reservation.actualCostMinorUnits = actualCost;
         reservation.resolvedAt = new Date();
+        reservation.resolvedBy = input.resolvedBy ?? null;
+        reservation.resolutionNote = input.resolutionNote ?? null;
         await manager.getRepository(AgentBudgetReservation).save(reservation);
         return this.receipt(reservation, rows[0], false);
       },
@@ -294,13 +341,39 @@ export class AgentBudgetLedgerService {
   async release(
     tenantId: string,
     reservationId: string,
+    resolution?: {
+      requireUnknown: true;
+      resolvedBy: string;
+      resolutionNote: string;
+    },
   ): Promise<AgentBudgetReservationReceipt> {
+    if (resolution?.requireUnknown) {
+      this.validateManualResolution(
+        resolution.resolvedBy,
+        resolution.resolutionNote,
+      );
+    }
     return this.resolveReservation(
       tenantId,
       reservationId,
       async (manager, reservation, ledger) => {
         if (reservation.status === AgentBudgetReservationStatus.Released) {
+          if (resolution?.requireUnknown) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'Only an UNKNOWN reservation can be reconciled manually',
+            );
+          }
           return this.receipt(reservation, ledger, false);
+        }
+        if (
+          resolution?.requireUnknown &&
+          reservation.status !== AgentBudgetReservationStatus.Unknown
+        ) {
+          throw new AgentBudgetError(
+            'RESERVATION_CONFLICT',
+            'Only an UNKNOWN reservation can be reconciled manually',
+          );
         }
         if (reservation.status === AgentBudgetReservationStatus.Committed) {
           throw new AgentBudgetError(
@@ -328,6 +401,8 @@ export class AgentBudgetLedgerService {
         )) as [AgentBudgetLedger[], number];
         reservation.status = AgentBudgetReservationStatus.Released;
         reservation.resolvedAt = new Date();
+        reservation.resolvedBy = resolution?.resolvedBy ?? null;
+        reservation.resolutionNote = resolution?.resolutionNote ?? null;
         await manager.getRepository(AgentBudgetReservation).save(reservation);
         return this.receipt(reservation, rows[0], false);
       },
@@ -544,6 +619,28 @@ export class AgentBudgetLedgerService {
       throw new AgentBudgetError(
         'RESERVATION_CONFLICT',
         `${name} must be a nonnegative 32-bit safe integer`,
+      );
+    }
+  }
+
+  private validateManualResolution(
+    resolvedBy: string | undefined,
+    resolutionNote: string | undefined,
+  ): void {
+    if (!resolvedBy?.trim() || resolvedBy.length > 200) {
+      throw new AgentBudgetError(
+        'RESERVATION_CONFLICT',
+        'Manual reconciliation requires a bounded reviewer identity',
+      );
+    }
+    if (
+      !resolutionNote?.trim() ||
+      resolutionNote.length < 10 ||
+      resolutionNote.length > 2000
+    ) {
+      throw new AgentBudgetError(
+        'RESERVATION_CONFLICT',
+        'Manual reconciliation requires a 10-2000 character evidence note',
       );
     }
   }

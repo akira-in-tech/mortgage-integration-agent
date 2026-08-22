@@ -16,6 +16,8 @@ import { ApiClientService } from '../src/auth/api-client.service';
 import { ApiClientRole } from '../src/database/enums/api-client.enum';
 import { CommunicationMessageService } from '../src/communications/communication-message.service';
 import { CommunicationMessage } from '../src/database/entities/communication-message.entity';
+import { AgentBudgetLedger } from '../src/database/entities/agent-budget-ledger.entity';
+import { AgentBudgetLedgerService } from '../src/agent-runtime/agent-budget-ledger.service';
 
 /**
  * Section 20 M5's own scope line: "threat-model tests and negative
@@ -172,8 +174,11 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
   let communicationMessageRepo: Repository<CommunicationMessage>;
   let communicationMessageService: CommunicationMessageService;
   let apiClientService: ApiClientService;
+  let agentBudgetService: AgentBudgetLedgerService;
+  let agentBudgetLedgerRepo: Repository<AgentBudgetLedger>;
   let tenantId: string;
   let authHeader: string;
+  let reviewerAuthHeader: string;
   const apiClientIds: string[] = [];
 
   beforeAll(async () => {
@@ -199,6 +204,10 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
     );
     communicationMessageService = moduleRef.get(CommunicationMessageService);
     apiClientService = moduleRef.get(ApiClientService);
+    agentBudgetService = moduleRef.get(AgentBudgetLedgerService);
+    agentBudgetLedgerRepo = moduleRef.get(
+      getRepositoryToken(AgentBudgetLedger),
+    );
 
     const tenant = await tenantRepo.save(
       tenantRepo.create({ name: 'Negative Authorization E2E Tenant' }),
@@ -210,6 +219,14 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
     });
     apiClientIds.push(client.id);
     authHeader = `Bearer ${token}`;
+    const { client: reviewer, token: reviewerToken } =
+      await apiClientService.create({
+        tenantId,
+        name: 'negative-authorization-e2e-budget-reviewer',
+        role: ApiClientRole.REVIEWER,
+      });
+    apiClientIds.push(reviewer.id);
+    reviewerAuthHeader = `Bearer ${reviewerToken}`;
   }, 30_000);
 
   afterAll(async () => {
@@ -217,6 +234,7 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
       await apiClientRepo.delete(apiClientIds);
     }
     if (tenantId) {
+      await agentBudgetLedgerRepo.delete({ tenantId });
       await caseRepo.delete({ tenantId });
       await tenantRepo.delete({ id: tenantId });
     }
@@ -304,6 +322,68 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
       // a query-string tenantId is not read by anything.
       expect(fetched.status).toBe(200);
       expect(fetched.body.tenantId).toBe(tenantId);
+    });
+  });
+
+  describe('Agent budget reconciliation authority', () => {
+    it('hides the UNKNOWN queue from a PARTNER and lets a REVIEWER reconcile exact tenant capacity', async () => {
+      const startedAt = new Date();
+      const ledger = await agentBudgetService.createOrLoad({
+        tenantId,
+        caseId: uuidv4(),
+        workflowRunId: `neg-auth-budget-${uuidv4()}`,
+        stepLimit: 2,
+        tokenLimit: 0,
+        providerCallLimit: 1,
+        costLimitMinorUnits: 10,
+        currency: 'USD',
+        startedAt,
+        deadlineAt: new Date(startedAt.getTime() + 60_000),
+      });
+      const reservation = await agentBudgetService.reserve({
+        tenantId,
+        ledgerId: ledger.ledgerId,
+        idempotencyKey: 'negative-auth-provider-call',
+        expectedVersion: ledger.version,
+        units: {
+          stepUnits: 1,
+          tokenUnits: 0,
+          providerCallUnits: 1,
+          costMinorUnits: 10,
+        },
+      });
+      await agentBudgetService.markUnknown(tenantId, reservation.reservationId);
+
+      await request(app.getHttpServer())
+        .get('/v1/agent-budget-reservations/unknown')
+        .set('Authorization', authHeader)
+        .expect(403);
+
+      const queued = await request(app.getHttpServer())
+        .get('/v1/agent-budget-reservations/unknown?limit=10')
+        .set('Authorization', reviewerAuthHeader)
+        .expect(200);
+      expect(queued.body).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: reservation.reservationId }),
+        ]),
+      );
+
+      const reconciled = await request(app.getHttpServer())
+        .post(
+          `/v1/agent-budget-reservations/${reservation.reservationId}/reconcile`,
+        )
+        .set('Authorization', reviewerAuthHeader)
+        .send({
+          outcome: 'RELEASED',
+          resolutionNote: 'Provider confirms no external lookup occurred.',
+        })
+        .expect(200);
+      expect(reconciled.body).toMatchObject({
+        reservationId: reservation.reservationId,
+        status: 'RELEASED',
+        ledger: { remainingCostMinorUnits: 10 },
+      });
     });
   });
 

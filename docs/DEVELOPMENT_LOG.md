@@ -9974,3 +9974,58 @@ The green matrix proves the repository's implemented controls, not production re
 ### Next safe step
 
 Implement tenant-wide Agent aggregate budget authority and reservation reconciliation before introducing any cost-bearing tool.
+
+## M7-006: reviewer Agent-budget reconciliation surface
+
+### Status
+
+Implemented and verified through service, migration, generated OpenAPI/client, RBAC, audit, and real HTTP integration layers. An unresolved side-effect reservation now has a least-privilege operator path instead of requiring direct SQL.
+
+### Acceptance criterion
+
+Only an authenticated `REVIEWER` may list the tenant's `UNKNOWN` reservations or resolve one; a `PARTNER` receives 403; disposition is accepted exactly once, requires an evidence note, preserves or consumes capacity consistently, records authenticated actor and reason, and emits an append-only audit event.
+
+### Implementation
+
+- Added nullable `resolvedBy` and `resolutionNote` evidence to reservations plus a tenant/time/id partial index covering only `UNKNOWN` rows. The 41st migration has explicit rollback coverage for both columns and the index.
+- Made `AgentBudgetLedgerService` injectable and added a tenant-RLS-scoped, oldest-first queue with a bounded page size.
+- Added manual commit/release invariants: only `UNKNOWN` may enter the reviewer path; reviewer identity and a 10-2000-character evidence note are required; a completed disposition cannot be overwritten by another reviewer.
+- Manual commit atomically converts reserved capacity into used capacity and records trusted actual cost, still rejecting a cost that exceeds remaining authority. Manual release frees reserved capacity only after evidence confirms the external effect did not occur.
+- Added `GET /v1/agent-budget-reservations/unknown` and `POST /v1/agent-budget-reservations/{reservationId}/reconcile`, both protected by tenant authentication and `REVIEWER` RBAC. `RELEASED` rejects an `actualCostMinorUnits` field rather than silently ignoring contradictory input.
+- Added explicit OpenAPI response DTOs that omit tenant ids and internal resolution fields not needed by the queue consumer while exposing reservation units and the post-disposition ledger receipt.
+- Recorded `AGENT_BUDGET_RESERVATION_RECONCILED` through the append-only audit service with actor, tenant, resource, correlation, reason, outcome, actual cost, and ledger version.
+- Regenerated the checked-in OpenAPI document and TypeScript client.
+
+### Verification
+
+```text
+npm run lint + npm run build — passed
+controller + real PostgreSQL service + 41-migration apply/revert suites —
+  3 suites / 51 tests passed
+negative-authorization HTTP E2E — 1 suite / 6 tests passed
+  PARTNER 403, REVIEWER queue 200, REVIEWER release 200, capacity restored
+complete backend CI-equivalent suite with PostgreSQL 16 and Temporal 1.29.7 —
+  96 suites / 733 tests passed; 1 suite / 3 credential-gated tests skipped
+complete backend E2E with PostgreSQL 16, Temporal 1.29.7, and Keycloak 26 —
+  4 suites / 40 tests passed
+OpenAPI document + TypeScript client regeneration — passed
+git diff --check — passed
+```
+
+### Decisions and alternatives
+
+- Reconciliation uses the existing `REVIEWER` role because it is a human interpretation of an ambiguous operational outcome, matching the charter's defined reviewer authority. A speculative admin role was not introduced.
+- Audit failure remains non-blocking under the existing audit-service contract; the authoritative reservation row itself stores actor and note in the same database transaction as the capacity disposition, so audit availability cannot erase the core evidence.
+- The queue returns oldest first and caps one request at 100. Cursor pagination is unnecessary at the synthetic launch volume, while an unbounded query would be an avoidable production hazard.
+
+### Security, privacy, cost, and compatibility
+
+Tenant RLS and the authenticated tenant id are enforced in the service, not only the controller. Queue responses contain operational ids and integer usage, no borrower/provider payload. Tests use synthetic provider evidence and spend no money. Existing automatic commit/release calls remain source-compatible because manual evidence parameters are optional outside the explicit reconciliation path.
+
+### Known gap
+
+The React console does not yet render this queue, and a reservation is not yet foreign-key-linked to a provider operation intent for one-click evidence correlation. Tenant-wide aggregate cost caps also remain open; per-workflow limits alone cannot enforce an organization-wide monthly ceiling.
+
+### Next safe step
+
+Add tenant-wide aggregate provider-call/cost ceilings atomically coupled to each workflow reservation, then expose this existing queue in the operations console.

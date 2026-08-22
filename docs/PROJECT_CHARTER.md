@@ -64,7 +64,7 @@ The repository currently contains verified local vertical slices for:
 
 The following release boundaries remain open and are not represented as implemented:
 
-- tenant-level aggregate cost controls and operator reconciliation surfaces for future cost-bearing Agent tools;
+- tenant-level aggregate cost controls for future cost-bearing Agent tools;
 - jurisdiction ancestry, policy-source freshness automation, grandfathering, and transition-rule execution;
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
 - complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and manual plus live-stack accessibility evidence;
@@ -80,7 +80,7 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 | Intake | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations. | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks. |
 | Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence. | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated. |
 | Policy | Released versions resolve by exact jurisdiction/product/lifecycle context and bind immutable snapshots before evaluation. | Jurisdiction ancestry, automated source freshness, and grandfathering remain open. |
-| Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative step, token, provider-call, cost, and deadline reservations; stale, exhausted, expired, and replayed unresolved effects route safely. | Current tools declare zero token/provider/cost usage; tenant-level aggregate cost controls and an operator reconciliation surface remain open before cost-bearing tools enter the graph. |
+| Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative step, token, provider-call, cost, and deadline reservations; stale, exhausted, expired, and replayed unresolved effects route safely; REVIEWER-only queue/reconciliation endpoints preserve actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; tenant-level aggregate cost controls remain open before cost-bearing tools enter the graph. |
 | Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
 | Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
 | Trust | OIDC/API clients, RBAC, consent, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Purpose-level consent, complete lineage, encrypted object storage, and deployed control evidence remain open. |
@@ -1963,7 +1963,7 @@ The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Ea
 1. Enforce console lint, tests, build, and GraphQL-codegen drift in CI; add dependency, secret, and container scanning without inventing a green result.
 2. Add browser end-to-end and accessibility coverage for login, triage, review, communication approval, and disconnected/degraded states.
 3. Add least-privilege provider reconciliation, provider promotion, data-disposition, policy-impact, and Agent-budget operations surfaces.
-4. Add tenant-level aggregate Agent limits and an operator reservation-reconciliation surface, plus policy-source freshness monitoring, jurisdiction ancestry, and transition rules before any cost-bearing tool enters the graph.
+4. Add tenant-level aggregate Agent limits, plus policy-source freshness monitoring, jurisdiction ancestry, and transition rules before any cost-bearing tool enters the graph.
 5. Add OpenTelemetry traces/metrics, SLOs, alerts, runbooks, and downloadable evaluation/release evidence.
 6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.
 

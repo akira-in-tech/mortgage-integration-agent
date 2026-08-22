@@ -22,6 +22,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { AuthModule } from './auth/auth.module';
 import { ConsentModule } from './consent/consent.module';
 import { AuditModule } from './audit/audit.module';
+import { AgentBudgetModule } from './agent-runtime/agent-budget.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { AuditModule } from './audit/audit.module';
     AuthModule,
     ConsentModule,
     AuditModule,
+    AgentBudgetModule,
     CasesModule,
     PolicyModule,
     CommunicationsModule,

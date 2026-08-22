@@ -175,6 +175,106 @@
         ]
       }
     },
+    "/v1/agent-budget-reservations/unknown": {
+      "get": {
+        "operationId": "listUnknownAgentBudgetReservations",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest unresolved reservations first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentBudgetReservationQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List outcome-unknown Agent budget reservations",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
+    "/v1/agent-budget-reservations/{reservationId}/reconcile": {
+      "post": {
+        "operationId": "reconcileAgentBudgetReservation",
+        "parameters": [
+          {
+            "name": "reservationId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileAgentBudgetReservationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The committed or released reservation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentBudgetReservationReceiptDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resolve an outcome-unknown Agent budget reservation",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
     "/v1/loan-cases": {
       "post": {
         "operationId": "createCase",
@@ -991,6 +1091,193 @@
             "type": "object"
           }
         }
+      },
+      "AgentBudgetUnitsDto": {
+        "type": "object",
+        "properties": {
+          "stepUnits": {
+            "type": "number"
+          },
+          "tokenUnits": {
+            "type": "number"
+          },
+          "providerCallUnits": {
+            "type": "number"
+          },
+          "costMinorUnits": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "stepUnits",
+          "tokenUnits",
+          "providerCallUnits",
+          "costMinorUnits"
+        ]
+      },
+      "AgentBudgetReservationQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ledgerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "units": {
+            "$ref": "#/components/schemas/AgentBudgetUnitsDto"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "COMMITTED",
+              "RELEASED",
+              "UNKNOWN"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "ledgerId",
+          "idempotencyKey",
+          "units",
+          "status",
+          "createdAt"
+        ]
+      },
+      "ReconcileAgentBudgetReservationDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "COMMITTED",
+              "RELEASED"
+            ]
+          },
+          "resolutionNote": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "actualCostMinorUnits": {
+            "type": "number",
+            "description": "Trusted actual provider cost in integer minor units; COMMITTED only.",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "outcome",
+          "resolutionNote"
+        ]
+      },
+      "AgentBudgetSnapshotDto": {
+        "type": "object",
+        "properties": {
+          "ledgerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "number"
+          },
+          "remainingSteps": {
+            "type": "number"
+          },
+          "remainingTokens": {
+            "type": "number"
+          },
+          "remainingProviderCalls": {
+            "type": "number"
+          },
+          "remainingCostMinorUnits": {
+            "type": "number"
+          },
+          "remainingDurationMs": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string",
+            "example": "USD"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadlineAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ledgerId",
+          "version",
+          "remainingSteps",
+          "remainingTokens",
+          "remainingProviderCalls",
+          "remainingCostMinorUnits",
+          "remainingDurationMs",
+          "currency",
+          "startedAt",
+          "deadlineAt",
+          "closed"
+        ]
+      },
+      "AgentBudgetReservationReceiptDto": {
+        "type": "object",
+        "properties": {
+          "reservationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "COMMITTED",
+              "RELEASED",
+              "UNKNOWN"
+            ]
+          },
+          "units": {
+            "$ref": "#/components/schemas/AgentBudgetUnitsDto"
+          },
+          "actualCostMinorUnits": {
+            "type": "object",
+            "nullable": true
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "ledger": {
+            "$ref": "#/components/schemas/AgentBudgetSnapshotDto"
+          }
+        },
+        "required": [
+          "reservationId",
+          "idempotencyKey",
+          "status",
+          "units",
+          "replayed",
+          "ledger"
+        ]
       },
       "CreateCaseDto": {
         "type": "object",

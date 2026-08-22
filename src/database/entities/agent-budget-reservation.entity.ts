@@ -58,6 +58,12 @@ export class AgentBudgetReservation {
   @Column({ type: 'timestamptz', nullable: true })
   resolvedAt!: Date | null;
 
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  resolvedBy!: string | null;
+
+  @Column({ type: 'varchar', length: 2000, nullable: true })
+  resolutionNote!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
