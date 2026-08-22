@@ -10108,3 +10108,28 @@ Before publication, Git author/email were verified as `Akira <akiraye1999@gmail.
 ### Honest boundary
 
 The run proves repository CI on GitHub-hosted infrastructure. It does not prove cloud deployment, real-provider certification, legal/compliance approval, real borrower data handling, backup recovery, load/soak behavior, or production SLO attainment.
+
+## M7-009: reconcile draft branch with current main
+
+### Status
+
+Resolved draft PR #2's `DIRTY` merge state without reintroducing superseded launch code. Merge commit `36776ed` joins current `main` ancestry while preserving the audited platform tree byte-for-byte.
+
+### Conflict audit and decision
+
+`main` had merged the earlier branch and then added two productionization commits touching 22 files. A three-way merge showed conflicts in environment configuration, CI, Docker, README, package manifests, Agent service, AppModule, data source, health, main bootstrap, and E2E. The additions were not independent improvements that could safely be combined:
+
+- `1710000000000-create-loan-applications.ts` would create the same table before the existing initial migration, making the cumulative migration sequence invalid.
+- `src/common/api-key.guard.ts` introduced a second, production-only static API-key scheme outside the current tenant-scoped API-client/OIDC/RBAC authentication boundary.
+- its `AppModule` version removed Temporal, Auth, Consent, Audit, AgentBudget, Cases, Policy, Communications, and Webhooks from the application graph.
+- its health, bootstrap, environment, CI, Docker, and package changes were narrower predecessors of controls already implemented and verified on this branch.
+
+Because every conflicting or newly added behavior was either duplicate, structurally incompatible, or superseded, the merge used Git's `ours` strategy. This records both parents and makes the branch descendant of current `main` while leaving the validated working tree unchanged; `git diff f887d10..36776ed` is empty.
+
+### Identity and safety
+
+The merge commit author is `Akira <akiraye1999@gmail.com>`. The three untracked console conflict-copy files were not read into the index, changed, deleted, or committed.
+
+### Next safe step
+
+Push the merge plus this audit note, require a green GitHub Actions run for the new head, and confirm GitHub no longer reports the PR as `DIRTY`.
