@@ -3,7 +3,14 @@ import { AuthController } from './auth.controller';
 
 describe('AuthController', () => {
   const tenantDirectory = { listForUser: jest.fn() };
-  const controller = new AuthController(tenantDirectory as never);
+  const oidcSessionService = {
+    authenticateCookie: jest.fn(),
+    logout: jest.fn(),
+  };
+  const controller = new AuthController(
+    tenantDirectory as never,
+    oidcSessionService as never,
+  );
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -24,5 +31,18 @@ describe('AuthController', () => {
       UnauthorizedException,
     );
     expect(tenantDirectory.listForUser).not.toHaveBeenCalled();
+  });
+
+  it('returns an unauthenticated status without leaking session failure detail', async () => {
+    oidcSessionService.authenticateCookie.mockRejectedValue(
+      new UnauthorizedException(),
+    );
+
+    await expect(
+      controller.getSession({} as never, {} as never),
+    ).resolves.toEqual({
+      authenticated: false,
+      memberships: [],
+    });
   });
 });

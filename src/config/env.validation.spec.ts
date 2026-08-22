@@ -206,4 +206,112 @@ describe('validateEnvironment', () => {
       ).toThrow(/APP_DATABASE_URL/);
     });
   });
+
+  describe('OIDC server-side session boundary', () => {
+    const oidcConfig = {
+      OIDC_ISSUER_URL: 'https://identity.example.test/realms/lending',
+      OIDC_AUDIENCE: 'lending-api',
+      OIDC_CLIENT_ID: 'operations-console',
+      OIDC_CALLBACK_URL:
+        'https://console.example.test/v1/auth/session/callback',
+      CONSOLE_ORIGIN: 'https://console.example.test',
+    };
+
+    it('accepts a complete development OIDC config with the local encryption-key policy', () => {
+      const result = validateEnvironment(baseConfig(oidcConfig));
+      expect(result.OIDC_CLIENT_ID).toBe('operations-console');
+      expect(result.OIDC_SESSION_MAX_AGE_SECONDS).toBe(28_800);
+    });
+
+    it('requires issuer and audience together', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ OIDC_ISSUER_URL: oidcConfig.OIDC_ISSUER_URL }),
+        ),
+      ).toThrow(/OIDC_ISSUER_URL and OIDC_AUDIENCE/);
+    });
+
+    it('rejects partial OIDC client/session settings without an issuer', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ OIDC_CLIENT_SECRET: 'orphaned-client-secret' }),
+        ),
+      ).toThrow(/OIDC_ISSUER_URL and OIDC_AUDIENCE/);
+    });
+
+    it('requires a 32-byte encryption key when OIDC is enabled in production', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ ...oidcConfig, NODE_ENV: 'production' }),
+        ),
+      ).toThrow(/OIDC_SESSION_ENCRYPTION_KEY/);
+
+      const result = validateEnvironment(
+        baseConfig({
+          ...oidcConfig,
+          NODE_ENV: 'production',
+          OIDC_SESSION_ENCRYPTION_KEY: 'a'.repeat(64),
+        }),
+      );
+      expect(result.OIDC_SESSION_ENCRYPTION_KEY).toBe('a'.repeat(64));
+    });
+
+    it('requires explicit HTTPS callback and console origins in production', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            OIDC_ISSUER_URL: 'https://identity.example.test/realms/lending',
+            OIDC_AUDIENCE: 'lending-api',
+            NODE_ENV: 'production',
+            OIDC_SESSION_ENCRYPTION_KEY: 'a'.repeat(64),
+          }),
+        ),
+      ).toThrow(/OIDC_CALLBACK_URL[\s\S]*CONSOLE_ORIGIN/);
+
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            ...oidcConfig,
+            NODE_ENV: 'production',
+            OIDC_SESSION_ENCRYPTION_KEY: 'a'.repeat(64),
+            OIDC_CALLBACK_URL:
+              'http://console.example.test/v1/auth/session/callback',
+          }),
+        ),
+      ).toThrow(/OIDC_CALLBACK_URL must use HTTPS/);
+    });
+
+    it('applies the same explicit-key and HTTPS boundary to staging', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            ...oidcConfig,
+            NODE_ENV: 'staging',
+          }),
+        ),
+      ).toThrow(/OIDC_SESSION_ENCRYPTION_KEY/);
+
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            ...oidcConfig,
+            NODE_ENV: 'staging',
+            OIDC_SESSION_ENCRYPTION_KEY: 'a'.repeat(64),
+            CONSOLE_ORIGIN: 'http://console.example.test',
+          }),
+        ),
+      ).toThrow(/CONSOLE_ORIGIN must use HTTPS/);
+    });
+
+    it('rejects a CONSOLE_ORIGIN containing a path', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            ...oidcConfig,
+            CONSOLE_ORIGIN: 'https://console.example.test/app',
+          }),
+        ),
+      ).toThrow(/scheme and authority/);
+    });
+  });
 });

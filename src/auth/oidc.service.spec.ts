@@ -73,3 +73,28 @@ describeOrSkip('OidcService (Section 16.1, M5-024)', () => {
     await expect(unconfigured.verify('anything')).rejects.toThrow();
   });
 });
+
+describe('OidcService discovery trust boundary', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('rejects metadata whose issuer differs from the configured issuer', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        issuer: 'https://attacker.example.test/realms/lending',
+        jwks_uri: 'https://attacker.example.test/jwks',
+        authorization_endpoint: 'https://attacker.example.test/authorize',
+      }),
+    } as Response);
+    const service = new OidcService(
+      new ConfigService({
+        OIDC_ISSUER_URL: 'https://identity.example.test/realms/lending',
+        OIDC_AUDIENCE: 'lending-api',
+      }),
+    );
+
+    await expect(service.getDiscoveryDocument()).rejects.toThrow(
+      /issuer does not match/,
+    );
+  });
+});

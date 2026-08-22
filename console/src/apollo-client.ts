@@ -1,16 +1,11 @@
 import { ApolloClient, InMemoryCache, HttpLink, from } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { getStoredToken } from './auth';
-import {
-  hasOidcSession,
-  getOidcTenantId,
-  getValidOidcAccessToken,
-} from './oidc';
+import { getOidcCsrfToken, hasOidcSession, getOidcTenantId } from './oidc';
 
-const GRAPHQL_URL =
-  import.meta.env.VITE_GRAPHQL_URL ?? 'http://localhost:3000/graphql';
+const GRAPHQL_URL = import.meta.env.VITE_GRAPHQL_URL ?? '/graphql';
 
-const httpLink = new HttpLink({ uri: GRAPHQL_URL });
+const httpLink = new HttpLink({ uri: GRAPHQL_URL, credentials: 'include' });
 
 // Checked, and refreshed if needed, before every request — not on a
 // background timer — so a request that happens to fire right at the
@@ -18,14 +13,14 @@ const httpLink = new HttpLink({ uri: GRAPHQL_URL });
 // actually attached to.
 const authLink = setContext(async (_, { headers }) => {
   if (hasOidcSession()) {
-    const token = await getValidOidcAccessToken();
     const tenantId = getOidcTenantId();
-    if (token && tenantId) {
+    const csrfToken = getOidcCsrfToken();
+    if (tenantId && csrfToken) {
       return {
         headers: {
           ...headers,
-          authorization: `Bearer ${token}`,
           'x-tenant-id': tenantId,
+          'x-csrf-token': csrfToken,
         },
       };
     }

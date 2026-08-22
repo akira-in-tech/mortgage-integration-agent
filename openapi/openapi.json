@@ -29,6 +29,116 @@
         ]
       }
     },
+    "/v1/auth/session/login": {
+      "get": {
+        "operationId": "beginOidcSessionLogin",
+        "parameters": [
+          {
+            "name": "returnTo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start server-side Authorization Code + PKCE login",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session/callback": {
+      "get": {
+        "operationId": "completeOidcSessionLogin",
+        "parameters": [
+          {
+            "name": "code",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Complete OIDC login and issue an HttpOnly session",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "operationId": "getOidcSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcSessionStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "meridian_session": []
+          }
+        ],
+        "summary": "Resolve and refresh the current HttpOnly OIDC session",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session/logout": {
+      "post": {
+        "operationId": "endOidcSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcLogoutResultDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "meridian_session": []
+          }
+        ],
+        "summary": "Delete the server session and return the provider logout URL",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
     "/v1/auth/me/tenants": {
       "get": {
         "operationId": "listMyTenantMemberships",
@@ -52,6 +162,9 @@
           }
         },
         "security": [
+          {
+            "meridian_session": []
+          },
           {
             "bearer": []
           }
@@ -810,6 +923,12 @@
         "bearerFormat": "JWT",
         "type": "http",
         "description": "A Section 20 M5 scoped API-client credential, \"{clientId}.{secret}\" — minted via `npm run create-api-client` (no self-service REST endpoint exists yet). The tenant is always the one this credential belongs to; no request body or query parameter can specify a different one."
+      },
+      "cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "meridian_session",
+        "description": "Opaque HttpOnly human-session handle issued by the OIDC BFF. Unsafe requests also require the session CSRF value in X-CSRF-Token."
       }
     },
     "schemas": {
@@ -836,6 +955,42 @@
           "tenantName",
           "role"
         ]
+      },
+      "OidcSessionStatusDto": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string"
+          },
+          "csrfToken": {
+            "type": "string"
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantMembershipSummaryDto"
+            }
+          }
+        },
+        "required": [
+          "authenticated",
+          "memberships"
+        ]
+      },
+      "OidcLogoutResultDto": {
+        "type": "object",
+        "properties": {
+          "logoutUrl": {
+            "type": "object"
+          }
+        }
       },
       "CreateCaseDto": {
         "type": "object",

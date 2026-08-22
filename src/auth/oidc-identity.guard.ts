@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -11,6 +12,8 @@ import { User } from '../database/entities/user.entity';
 import { getRequestFromContext } from './get-request-from-context';
 import { OidcIdentityContext } from './oidc-identity-context';
 import { OidcService } from './oidc.service';
+import { OidcSessionService } from './oidc-session.service';
+import { getResponseFromContext } from './get-response-from-context';
 
 /**
  * Verifies a human OIDC token before tenant selection. Unlike `OidcGuard`,
@@ -25,6 +28,8 @@ export class OidcIdentityGuard implements CanActivate {
     private readonly oidcService: OidcService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @Optional()
+    private readonly oidcSessionService?: OidcSessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -36,12 +41,20 @@ export class OidcIdentityGuard implements CanActivate {
       typeof header === 'string' && header.startsWith('Bearer ')
         ? header.slice('Bearer '.length).trim()
         : undefined;
-    if (!token) {
+    let user: User | null;
+    if (token) {
+      const claims = await this.oidcService.verify(token);
+      user = await this.userRepository.findOneBy({ subject: claims.sub });
+    } else if (this.oidcSessionService) {
+      const identity = await this.oidcSessionService.authenticateCookie(
+        request,
+        getResponseFromContext(context),
+        false,
+      );
+      user = identity.user;
+    } else {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }
-
-    const claims = await this.oidcService.verify(token);
-    const user = await this.userRepository.findOneBy({ subject: claims.sub });
     if (!user) {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }

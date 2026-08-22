@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,6 +14,8 @@ import { TenantMembership } from '../database/entities/tenant-membership.entity'
 import { OidcService } from './oidc.service';
 import { AuthContext } from './auth-context';
 import { getRequestFromContext } from './get-request-from-context';
+import { getResponseFromContext } from './get-response-from-context';
+import { OidcSessionService } from './oidc-session.service';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,6 +41,8 @@ export class OidcGuard implements CanActivate {
     private readonly userRepository: Repository<User>,
     @InjectRepository(TenantMembership)
     private readonly membershipRepository: Repository<TenantMembership>,
+    @Optional()
+    private readonly oidcSessionService?: OidcSessionService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -50,10 +55,6 @@ export class OidcGuard implements CanActivate {
       typeof header === 'string' && header.startsWith('Bearer ')
         ? header.slice('Bearer '.length).trim()
         : undefined;
-    if (!token) {
-      throw new UnauthorizedException('Invalid or missing API credentials');
-    }
-
     const tenantIdHeader = request.headers['x-tenant-id'];
     const tenantId =
       typeof tenantIdHeader === 'string' ? tenantIdHeader : undefined;
@@ -61,9 +62,22 @@ export class OidcGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }
 
-    const claims = await this.oidcService.verify(token);
-
-    const user = await this.userRepository.findOneBy({ subject: claims.sub });
+    let user: User | null;
+    if (token) {
+      const claims = await this.oidcService.verify(token);
+      user = await this.userRepository.findOneBy({ subject: claims.sub });
+    } else if (this.oidcSessionService) {
+      const method = request.method?.toUpperCase();
+      const requireCsrf = !['GET', 'HEAD', 'OPTIONS'].includes(method ?? '');
+      const identity = await this.oidcSessionService.authenticateCookie(
+        request,
+        getResponseFromContext(context),
+        requireCsrf,
+      );
+      user = identity.user;
+    } else {
+      throw new UnauthorizedException('Invalid or missing API credentials');
+    }
     if (!user) {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }

@@ -9663,3 +9663,74 @@ Playwright data is synthetic and the tests send no real credential or borrower d
 ### Next safe step
 
 Replace browser-readable OIDC tokens with a same-origin backend-for-frontend session, then add one live-stack browser smoke journey for the final identity path.
+
+## M6-021: same-origin OIDC backend-for-frontend session boundary
+
+### Status
+
+Implemented and locally verified at service, guard, generated-contract, database-migration, console-unit, deterministic Chromium, and live Keycloak/PostgreSQL Chromium levels. Provider access, refresh, and ID tokens no longer enter console JavaScript or browser storage. Hosted CI and a deployed HTTPS ingress remain separate release evidence.
+
+### Acceptance criterion
+
+A human console session uses Authorization Code + S256 PKCE without exposing provider tokens to browser JavaScript; session state survives API replica/process changes through PostgreSQL; unsafe cookie-authenticated requests require CSRF proof; tenant authority is still resolved from current database memberships on every operational request; logout deletes the durable session before directing the browser to the provider; direct bearer clients remain compatible.
+
+### Implementation
+
+- Added `oidc_sessions` through the 39th explicit migration. Only SHA-256 session/CSRF hashes, a user reference, expiry metadata, and an AES-256-GCM token bundle are stored. The authenticated-encryption additional data binds ciphertext to its session handle hash, and deleting a user cascades session deletion.
+- Added `OidcSessionService` as the backend-for-frontend boundary. Login state, PKCE verifier, and return path use short-lived `HttpOnly`, `SameSite=Lax`, path-scoped cookies. Callback state is timing-safe checked before code exchange; return paths accept only same-origin relative paths; a new high-entropy opaque session is issued only after provider verification and local user provisioning succeed.
+- Added absolute session lifetime, near-expiry access-token refresh, rotated refresh-token preservation, throttled last-used writes, expired-session cleanup, durable logout, and provider RP logout discovery. Providers that omit `refresh_expires_in` use the operator's stricter absolute session cap instead of collapsing the session to access-token lifetime.
+- Provider tokens are one authenticated ciphertext field, not independent plaintext columns. Staging and production startup now require a unique 32-byte encryption key and explicit HTTPS issuer, callback, and console origins. Partial client/session configuration without issuer plus audience fails startup, and `CONSOLE_ORIGIN` must be an origin rather than a path-bearing URL.
+- Added same-origin REST endpoints for login, callback, session resolution, and logout. OpenAPI now distinguishes the opaque cookie security scheme from direct API bearer authentication, and the checked-in specification/client are regenerated from the application.
+- Extended both OIDC guards to accept either the existing direct bearer path or the durable cookie session. GraphQL/unsafe HTTP methods require the session's double-submit CSRF header; safe pre-tenant identity discovery does not grant tenant authority. The selected `X-Tenant-Id` is still looked up against `tenant_memberships` on every operational request.
+- Replaced the console's Web Crypto/token/localStorage implementation with a small same-origin session adapter. Only the selected tenant id remains in browser storage; identity and CSRF state are memory-only, while provider credentials remain inaccessible behind the `HttpOnly` handle. Apollo sends cookies plus `X-Tenant-Id`/`X-CSRF-Token`, never an OIDC Authorization header.
+- Added Vite `/graphql` and `/v1` development proxies so the local browser uses the same first-party topology expected behind a release reverse proxy.
+- Updated environment examples, console operating guidance, current charter baseline, main README, deterministic browser fixtures, and the generated REST contract.
+- Added an opt-in credential-backed Playwright journey that uses the repository's real Keycloak realm, migrated PostgreSQL, running API, Vite same-origin proxy, real session cookies, real GraphQL authentication, and real RP logout. It skips by default when those services are not explicitly provisioned.
+
+### Decisions and alternatives
+
+- PostgreSQL sessions were selected over process memory so horizontally scaled API replicas and restarts do not invalidate every login. No Redis dependency is required for correctness; a later cache may accelerate lookups but cannot become the authority store accidentally.
+- The browser receives the CSRF value in the authenticated session response and a non-`HttpOnly` cookie while the server stores only its hash. Requiring both cookie and header provides an explicit double-submit check; `SameSite=Lax` is defense in depth, not the only CSRF control.
+- Direct OIDC bearer support remains for machine/API callers and compatibility. The browser path intentionally never falls back to exporting provider tokens.
+- Encryption uses a single operator-supplied key in this slice. A multi-key decrypt/key-version rotation window would add real operational value, but claiming it without a secrets-manager/deployment design would be false production evidence.
+
+### Verification
+
+```text
+npm run migration:revert + npm run migration:run against isolated PostgreSQL — 39th migration, including user foreign key, passed
+npm test -- --runInBand — 51 suites / 383 tests passed; 44 infrastructure-gated suites skipped without credentials
+npm run test:e2e -- --runInBand with isolated PostgreSQL and Temporal — 4 suites / 39 tests passed
+npm run lint:check — passed with zero warnings
+npm run build — passed
+console npm run lint — passed with zero warnings
+console npm test — 9 files / 42 tests passed
+console npm run build — passed under Vite 8.2.2 (local shell Node 22.11 emits the documented Node-minimum warning; CI uses Node 24)
+console npm run test:e2e — 2 Chromium journeys passed, including cookie-session tenant/CSRF/header assertions and zero browser-stored provider tokens
+RUN_LIVE_OIDC=true console npm run test:e2e -- e2e/oidc-live.spec.ts — 1 real Chromium Keycloak/API/PostgreSQL login, GraphQL, cookie, CSRF, and logout journey passed
+npm run generate:openapi + npm run generate:client — passed from the 39-migration schema
+npm audit --omit=dev --audit-level=high for root and console — zero production vulnerabilities
+git diff --check — passed
+```
+
+### Errors and fixes
+
+- The interrupted console refactor had landed source changes but left tests asserting the removed browser-token model. Tests were rewritten around the BFF contract instead of keeping compatibility helpers that could reintroduce token exposure.
+- The initial session lifetime used `expires_in` whenever a provider omitted `refresh_expires_in`, shortening a refresh-capable login to one access-token lifetime. The fallback now uses the explicit local absolute cap when a refresh token exists.
+- The first migration proof predated the user foreign key. Because this migration was still uncommitted and the database was isolated verification state, it was cleanly reverted and rerun with the cascade constraint rather than recording an untested schema claim.
+- The first sandboxed Playwright attempt could not bind `127.0.0.1:5173` (`EPERM`). The same command was rerun with approved local-listener access and both journeys passed.
+- The first backend E2E run failed 23 workflow cases because Temporal was not running; the other 16 cases passed. After starting the repository-pinned Temporal service and waiting for its default namespace, the identical four-suite command passed all 39 cases. This was recorded as an environment prerequisite rather than hidden as a code retry.
+
+### Security, privacy, cost, and compatibility
+
+No real borrower data or paid provider is used. Browser fixtures contain synthetic identities and case data. Session handles have 256 bits of randomness, secrets are compared timing-safely where caller-controlled equality matters, token ciphertext uses a fresh 96-bit IV, and expired or unprovisioned sessions fail with the same generic credential error. Staging/production cookies are `Secure`; staging/production OIDC startup fails closed without HTTPS URLs and an explicit encryption key. Existing scoped API-client and direct OIDC bearer callers remain valid.
+
+### Known gaps
+
+- The live-stack Chromium path is opt-in and locally verified; it is not yet wired into or verified by hosted CI.
+- Encryption-key rotation currently requires session invalidation; no key-version/multi-key decrypt window exists.
+- Decryption failures fail closed but do not yet emit a dedicated low-cardinality session-corruption metric.
+- The release topology must route console, `/v1`, and `/graphql` behind one HTTPS origin; Vite proxying proves only the local topology, not a deployed ingress.
+
+### Next safe step
+
+Add launch infrastructure and observability: one-origin ingress, managed secret injection, session/error metrics, live-stack identity smoke evidence, rollback/runbooks, and a deployed staging proof before claiming production readiness.

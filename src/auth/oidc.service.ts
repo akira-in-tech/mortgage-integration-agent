@@ -6,9 +6,20 @@ export interface OidcClaims extends JWTPayload {
   sub: string;
 }
 
-interface DiscoveryDocument {
+export interface OidcDiscoveryDocument {
   issuer: string;
   jwks_uri: string;
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  end_session_endpoint?: string;
+}
+
+export interface OidcTokenResponse {
+  access_token: string;
+  expires_in: number;
+  refresh_token?: string;
+  refresh_expires_in?: number;
+  id_token?: string;
 }
 
 /**
@@ -31,12 +42,17 @@ interface DiscoveryDocument {
 export class OidcService {
   private readonly issuer?: string;
   private readonly audience?: string;
-  private discovery: Promise<DiscoveryDocument> | null = null;
+  private readonly clientId?: string;
+  private readonly clientSecret?: string;
+  private discovery: Promise<OidcDiscoveryDocument> | null = null;
   private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
   constructor(configService: ConfigService) {
     this.issuer = configService.get<string>('OIDC_ISSUER_URL');
     this.audience = configService.get<string>('OIDC_AUDIENCE');
+    this.clientId =
+      configService.get<string>('OIDC_CLIENT_ID') ?? this.audience;
+    this.clientSecret = configService.get<string>('OIDC_CLIENT_SECRET');
   }
 
   /**
@@ -68,6 +84,68 @@ export class OidcService {
     }
   }
 
+  /** Builds the provider authorization URL without exposing issuer metadata to the browser application. */
+  async buildAuthorizationUrl(input: {
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+  }): Promise<string> {
+    const discovery = await this.getDiscoveryDocument();
+    if (!this.clientId || !discovery.authorization_endpoint) {
+      throw new UnauthorizedException('OIDC is not configured');
+    }
+    const url = new URL(discovery.authorization_endpoint);
+    url.searchParams.set('client_id', this.clientId);
+    url.searchParams.set('redirect_uri', input.redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'openid email profile');
+    url.searchParams.set('state', input.state);
+    url.searchParams.set('code_challenge', input.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+    return url.toString();
+  }
+
+  exchangeAuthorizationCode(input: {
+    code: string;
+    redirectUri: string;
+    codeVerifier: string;
+  }): Promise<OidcTokenResponse> {
+    return this.requestTokens({
+      grant_type: 'authorization_code',
+      code: input.code,
+      redirect_uri: input.redirectUri,
+      code_verifier: input.codeVerifier,
+    });
+  }
+
+  refresh(refreshToken: string): Promise<OidcTokenResponse> {
+    return this.requestTokens({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    });
+  }
+
+  async buildLogoutUrl(
+    idToken: string | undefined,
+    postLogoutRedirectUri: string,
+  ): Promise<string | null> {
+    const discovery = await this.getDiscoveryDocument();
+    if (!this.clientId || !discovery.end_session_endpoint) return null;
+    const url = new URL(discovery.end_session_endpoint);
+    url.searchParams.set('client_id', this.clientId);
+    url.searchParams.set('post_logout_redirect_uri', postLogoutRedirectUri);
+    if (idToken) url.searchParams.set('id_token_hint', idToken);
+    return url.toString();
+  }
+
+  async getDiscoveryDocument(): Promise<OidcDiscoveryDocument> {
+    if (!this.issuer || !this.audience) {
+      throw new UnauthorizedException('OIDC is not configured');
+    }
+    if (!this.discovery) this.discovery = this.fetchDiscoveryDocument();
+    return this.discovery;
+  }
+
   private async resolveJwks(): Promise<{
     jwks: ReturnType<typeof createRemoteJWKSet>;
     issuer: string;
@@ -75,14 +153,47 @@ export class OidcService {
     if (!this.discovery) {
       this.discovery = this.fetchDiscoveryDocument();
     }
-    const discovery = await this.discovery;
+    const discovery = await this.getDiscoveryDocument();
     if (!this.jwks) {
       this.jwks = createRemoteJWKSet(new URL(discovery.jwks_uri));
     }
     return { jwks: this.jwks, issuer: discovery.issuer };
   }
 
-  private async fetchDiscoveryDocument(): Promise<DiscoveryDocument> {
+  private async requestTokens(
+    input: Record<string, string>,
+  ): Promise<OidcTokenResponse> {
+    const discovery = await this.getDiscoveryDocument();
+    if (!this.clientId || !discovery.token_endpoint) {
+      throw new UnauthorizedException('OIDC is not configured');
+    }
+    const params = new URLSearchParams({ client_id: this.clientId, ...input });
+    if (this.clientSecret) params.set('client_secret', this.clientSecret);
+    const response = await fetch(discovery.token_endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params,
+    });
+    if (!response.ok) {
+      throw new UnauthorizedException('OIDC token exchange failed');
+    }
+    const body = (await response.json()) as Partial<OidcTokenResponse>;
+    if (
+      typeof body.access_token !== 'string' ||
+      typeof body.expires_in !== 'number' ||
+      !Number.isFinite(body.expires_in) ||
+      body.expires_in <= 0 ||
+      (body.refresh_expires_in !== undefined &&
+        (typeof body.refresh_expires_in !== 'number' ||
+          !Number.isFinite(body.refresh_expires_in) ||
+          body.refresh_expires_in <= 0))
+    ) {
+      throw new UnauthorizedException('OIDC token exchange failed');
+    }
+    return body as OidcTokenResponse;
+  }
+
+  private async fetchDiscoveryDocument(): Promise<OidcDiscoveryDocument> {
     const response = await fetch(
       `${this.issuer}/.well-known/openid-configuration`,
     );
@@ -92,11 +203,18 @@ export class OidcService {
         `OIDC discovery failed: HTTP ${response.status} from ${this.issuer}`,
       );
     }
-    const document = (await response.json()) as Partial<DiscoveryDocument>;
+    const document = (await response.json()) as Partial<OidcDiscoveryDocument>;
     if (!document.issuer || !document.jwks_uri) {
       this.discovery = null;
       throw new Error('OIDC discovery document missing issuer/jwks_uri');
     }
-    return document as DiscoveryDocument;
+    // OIDC Discovery requires exact issuer equality. Accepting metadata for a
+    // different issuer enables mix-up and sends authorization/token traffic
+    // to endpoints outside the operator-configured trust boundary.
+    if (document.issuer !== this.issuer) {
+      this.discovery = null;
+      throw new Error('OIDC discovery issuer does not match configuration');
+    }
+    return document as OidcDiscoveryDocument;
   }
 }

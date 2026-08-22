@@ -21,9 +21,9 @@ Serves on `http://localhost:5173`. Requires the main API running (`npm run start
 Two ways to sign in:
 
 - **Bearer token** — obtain one from the repo root's `create-api-client.ts` script, paste it and a reviewer name into the connect screen. Kept in `localStorage` (`meridian.apiToken` / `meridian.actorId`).
-- **Sign in with SSO** — a real Authorization Code + PKCE flow against this repo's own Keycloak realm (`keycloak/realm-export.json`; see the repo root's `docker-compose.yml` or CI workflow for how to run Keycloak locally). Sign in first; the console then calls the pre-tenant `GET /v1/auth/me/tenants` endpoint and automatically selects the only provisioned membership or asks the user to choose among several. The backend still re-authorizes that selected tenant on every operational request. The seeded local account is `reviewer@example.com` / `reviewer-dev-password`; the backend needs `OIDC_ISSUER_URL`/`OIDC_AUDIENCE` set.
+- **Sign in with SSO** — a real Authorization Code + PKCE flow owned by the API's same-origin backend-for-frontend. Provider access, refresh, and ID tokens are AES-256-GCM ciphertext in PostgreSQL; the browser receives an opaque `HttpOnly` session cookie and a double-submit CSRF value. The API returns only the verified identity's provisioned memberships and re-authorizes the selected tenant on every request. The seeded local Keycloak account is `reviewer@example.com` / `reviewer-dev-password`.
 
-If the API isn't at the default `http://localhost:3000/graphql`, set `VITE_GRAPHQL_URL`; set `VITE_API_URL` to the same API origin for tenant discovery. If Keycloak isn't at the default `http://localhost:8080/realms/mortgage-agent`, set `VITE_OIDC_ISSUER_URL` (and `VITE_OIDC_CLIENT_ID` if not `mortgage-agent-app`) — e.g. in a `.env.local` file, gitignored.
+Vite proxies `/graphql` and `/v1` to `http://localhost:3000`, keeping browser traffic first-party in development. Override `VITE_GRAPHQL_URL`/`VITE_API_URL` only when a reverse proxy supplies an equivalent same-origin route. Configure the provider, client, callback, console origin, session lifetime, and production encryption key through the root `OIDC_*`/`CONSOLE_ORIGIN` server variables; no provider configuration or secret belongs in a `VITE_*` variable.
 
 ## Build
 
@@ -37,12 +37,14 @@ npm run preview # serve the production build locally
 ```bash
 npm test        # vitest run — format helpers, StatusPill, useCaseMutations,
                  # the "Mark satisfied" click path, OpsDashboard, CaseDossier,
-                 # LiveStream, oidc (PKCE/token exchange/refresh)
+                 # LiveStream, oidc (BFF session/tenant/CSRF orchestration)
 npm run lint     # real ESLint flat config — TS, React hooks, prettier
 npm run test:e2e # Playwright Chromium journeys + axe WCAG scan
 ```
 
-Install the local browser once with `npx playwright install chromium`. The browser gate exercises browser storage, Bearer and OIDC tenant-session orchestration, GraphQL authentication headers, RP-initiated logout, keyboard-addressable controls, and automated WCAG checks. Its network responses are deterministic fixtures; the real Keycloak/PostgreSQL OIDC integration remains a separate credential-backed suite.
+Install the local browser once with `npx playwright install chromium`. The browser gate exercises Bearer and OIDC tenant-session orchestration, cookie-session GraphQL headers, CSRF, RP-initiated logout, absence of provider tokens in browser storage, keyboard-addressable controls, and automated WCAG checks. Its network responses are deterministic fixtures; a complete browser redirect through live Keycloak/PostgreSQL remains a separate release-evidence gate.
+
+`RUN_LIVE_OIDC=true npm run test:e2e -- e2e/oidc-live.spec.ts` runs that credential-backed gate when the local API, migrated PostgreSQL, Keycloak realm, and synthetic user membership are provisioned. It is skipped by default rather than silently replacing live services with mocks.
 
 ## GraphQL codegen
 
@@ -57,5 +59,5 @@ npm run codegen
 ## Known gaps
 
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
-- The fast browser gate uses deterministic network fixtures; a full browser redirect through a live Keycloak, API, and PostgreSQL stack remains open.
-- Tokens remain in browser `localStorage`; a production deployment should put them behind a same-origin backend-for-frontend with `HttpOnly`, `Secure`, and `SameSite` cookies.
+- The live Keycloak/API/PostgreSQL journey is opt-in and locally verified, but is not yet enforced by hosted CI.
+- Key rotation currently requires invalidating existing OIDC sessions; a versioned multi-key decrypt window is not implemented.

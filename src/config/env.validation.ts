@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Matches,
   Max,
   Min,
@@ -170,9 +171,16 @@ export class EnvironmentVariables {
   // unset rather than being forced to stand up an identity provider.
   @IsOptional()
   @IsString()
-  @Matches(/^https?:\/\/\S+$/, {
-    message: 'OIDC_ISSUER_URL must be an http(s) URL',
-  })
+  @IsUrl(
+    {
+      protocols: ['http', 'https'],
+      require_protocol: true,
+      require_tld: false,
+    },
+    {
+      message: 'OIDC_ISSUER_URL must be an http(s) URL',
+    },
+  )
   OIDC_ISSUER_URL?: string;
 
   // The `aud` claim OidcService requires every verified token to carry —
@@ -181,6 +189,62 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   OIDC_AUDIENCE?: string;
+
+  // OAuth client id defaults to OIDC_AUDIENCE. It is separate because some
+  // providers issue an API audience that differs from the relying-party id.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OIDC_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OIDC_CLIENT_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsUrl(
+    {
+      protocols: ['http', 'https'],
+      require_protocol: true,
+      require_tld: false,
+    },
+    {
+      message: 'OIDC_CALLBACK_URL must be an http(s) URL',
+    },
+  )
+  OIDC_CALLBACK_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsUrl(
+    {
+      protocols: ['http', 'https'],
+      require_protocol: true,
+      require_tld: false,
+    },
+    {
+      message: 'CONSOLE_ORIGIN must be an http(s) origin',
+    },
+  )
+  CONSOLE_ORIGIN?: string;
+
+  // 32-byte AES-256 key, hex encoded. A local-only default is selected by
+  // OidcSessionService outside production; production must provide its own.
+  @IsOptional()
+  @IsString()
+  @Matches(/^[0-9a-fA-F]{64}$/, {
+    message:
+      'OIDC_SESSION_ENCRYPTION_KEY must be exactly 64 hexadecimal characters',
+  })
+  OIDC_SESSION_ENCRYPTION_KEY?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(300)
+  @Max(2_592_000)
+  OIDC_SESSION_MAX_AGE_SECONDS: number = 28_800;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────
@@ -205,6 +269,73 @@ export function validateEnvironment(
       .flatMap((error) => Object.values(error.constraints ?? {}))
       .join('\n  - ');
     throw new Error(`Invalid environment configuration:\n  - ${details}`);
+  }
+
+  const issuerConfigured = Boolean(validatedConfig.OIDC_ISSUER_URL);
+  const audienceConfigured = Boolean(validatedConfig.OIDC_AUDIENCE);
+  const oidcSupplementConfigured = Boolean(
+    validatedConfig.OIDC_CLIENT_ID ||
+    validatedConfig.OIDC_CLIENT_SECRET ||
+    validatedConfig.OIDC_CALLBACK_URL ||
+    validatedConfig.CONSOLE_ORIGIN ||
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEY,
+  );
+  if (
+    issuerConfigured !== audienceConfigured ||
+    (oidcSupplementConfigured && !issuerConfigured)
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - OIDC_ISSUER_URL and OIDC_AUDIENCE must be configured together',
+    );
+  }
+  const productionLike =
+    validatedConfig.NODE_ENV === NodeEnvironment.Production ||
+    validatedConfig.NODE_ENV === NodeEnvironment.Staging;
+  if (productionLike && issuerConfigured) {
+    const productionErrors: string[] = [];
+    if (!validatedConfig.OIDC_SESSION_ENCRYPTION_KEY) {
+      productionErrors.push(
+        'OIDC_SESSION_ENCRYPTION_KEY is required when OIDC is enabled in staging or production',
+      );
+    }
+    if (!validatedConfig.OIDC_CALLBACK_URL) {
+      productionErrors.push(
+        'OIDC_CALLBACK_URL is required when OIDC is enabled in staging or production',
+      );
+    }
+    if (!validatedConfig.CONSOLE_ORIGIN) {
+      productionErrors.push(
+        'CONSOLE_ORIGIN is required when OIDC is enabled in staging or production',
+      );
+    }
+    for (const [name, value] of [
+      ['OIDC_ISSUER_URL', validatedConfig.OIDC_ISSUER_URL],
+      ['OIDC_CALLBACK_URL', validatedConfig.OIDC_CALLBACK_URL],
+      ['CONSOLE_ORIGIN', validatedConfig.CONSOLE_ORIGIN],
+    ] as const) {
+      if (value && new URL(value).protocol !== 'https:') {
+        productionErrors.push(
+          `${name} must use HTTPS in staging or production`,
+        );
+      }
+    }
+    if (productionErrors.length > 0) {
+      throw new Error(
+        `Invalid environment configuration:\n  - ${productionErrors.join('\n  - ')}`,
+      );
+    }
+  }
+
+  if (validatedConfig.CONSOLE_ORIGIN) {
+    const originUrl = new URL(validatedConfig.CONSOLE_ORIGIN);
+    if (
+      originUrl.origin !== validatedConfig.CONSOLE_ORIGIN ||
+      originUrl.pathname !== '/'
+    ) {
+      throw new Error(
+        'Invalid environment configuration:\n  - CONSOLE_ORIGIN must contain only scheme and authority',
+      );
+    }
   }
 
   return validatedConfig;

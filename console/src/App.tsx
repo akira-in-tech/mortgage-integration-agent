@@ -9,9 +9,9 @@ import { ConnectScreen } from './components/ConnectScreen';
 import { TenantSelectionScreen } from './components/TenantSelectionScreen';
 import { getStoredActorId, getStoredToken, clearSession } from './auth';
 import {
-  tryHandleOidcCallback,
+  loadOidcSession,
   hasOidcSession,
-  hasOidcTokens,
+  hasOidcIdentity,
   clearOidcSession,
   beginOidcLogout,
 } from './oidc';
@@ -19,29 +19,34 @@ import { SearchIcon } from './components/icons';
 
 export function App() {
   const [checkingOidcCallback, setCheckingOidcCallback] = useState(true);
-  const [connected, setConnected] = useState(
-    () => Boolean(getStoredToken() && getStoredActorId()) || hasOidcSession(),
+  const [connected, setConnected] = useState(() =>
+    Boolean(getStoredToken() && getStoredActorId()),
   );
-  const [selectingTenant, setSelectingTenant] = useState(
-    () => hasOidcTokens() && !hasOidcSession(),
-  );
+  const [selectingTenant, setSelectingTenant] = useState(false);
+  const [memberships, setMemberships] = useState<
+    import('./oidc').OidcTenantMembership[]
+  >([]);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [dossierCaseId, setDossierCaseId] = useState<string | null>(null);
   const [view, setView] = useState<ConsoleView>('queue');
 
   useEffect(() => {
-    tryHandleOidcCallback()
-      .then((handled) => {
-        if (handled) {
-          setConnected(hasOidcSession());
-          setSelectingTenant(!hasOidcSession());
-        }
+    loadOidcSession()
+      .then((session) => {
+        if (!session.authenticated) return;
+        setMemberships(session.memberships);
+        setConnected(hasOidcSession());
+        setSelectingTenant(!hasOidcSession());
       })
+      // An unavailable identity endpoint must not strand machine-token users
+      // on the startup screen; operational queries still report their own
+      // transport failure after an explicit connection attempt.
+      .catch(() => clearOidcSession())
       .finally(() => setCheckingOidcCallback(false));
   }, []);
 
   function disconnect() {
-    const upstreamOidcSession = hasOidcTokens();
+    const upstreamOidcSession = hasOidcIdentity();
     clearSession();
     setConnected(false);
     setSelectingTenant(false);
@@ -75,6 +80,7 @@ export function App() {
     if (selectingTenant) {
       return (
         <TenantSelectionScreen
+          memberships={memberships}
           onSelected={() => {
             setSelectingTenant(false);
             setConnected(true);

@@ -48,6 +48,12 @@ test('connects with a bearer credential and sends it on the case query', async (
   page,
 }) => {
   let authorization: string | undefined;
+  await page.route('**/v1/auth/session', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ authenticated: false, memberships: [] }),
+    });
+  });
   await page.route('**/graphql', async (route) => {
     authorization = route.request().headers().authorization;
     await replyWithCases(route);
@@ -74,43 +80,40 @@ test('connects with a bearer credential and sends it on the case query', async (
 test('discovers an OIDC tenant before sending tenant-scoped requests and performs RP logout', async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    if (sessionStorage.getItem('meridian.e2e.oidcSeeded')) return;
-    sessionStorage.setItem('meridian.e2e.oidcSeeded', 'true');
-    localStorage.setItem('meridian.oidc.accessToken', 'oidc-access-token');
-    localStorage.setItem(
-      'meridian.oidc.expiresAt',
-      String(Date.now() + 10 * 60 * 1000),
-    );
-    localStorage.setItem('meridian.oidc.idToken', 'oidc-id-token');
-    localStorage.setItem('meridian.actorId', 'reviewer@example.com');
-  });
-
-  let discoveryTenantHeader: string | undefined;
   let graphqlTenantHeader: string | undefined;
-  await page.route('**/v1/auth/me/tenants', async (route) => {
-    discoveryTenantHeader = route.request().headers()['x-tenant-id'];
+  let graphqlCsrfHeader: string | undefined;
+  let graphqlAuthorization: string | undefined;
+  await page.route('**/v1/auth/session', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
-      body: JSON.stringify([
-        {
-          tenantId: TENANT_ID,
-          tenantName: 'E2E Lending',
-          role: 'REVIEWER',
-        },
-      ]),
+      body: JSON.stringify({
+        authenticated: true,
+        userId: '30000000-0000-4000-8000-000000000003',
+        email: 'reviewer@example.com',
+        csrfToken: 'csrf-e2e-token',
+        memberships: [
+          {
+            tenantId: TENANT_ID,
+            tenantName: 'E2E Lending',
+            role: 'REVIEWER',
+          },
+        ],
+      }),
     });
   });
   await page.route('**/graphql', async (route) => {
     graphqlTenantHeader = route.request().headers()['x-tenant-id'];
+    graphqlCsrfHeader = route.request().headers()['x-csrf-token'];
+    graphqlAuthorization = route.request().headers().authorization;
     await replyWithCases(route);
   });
-  await page.route('**/.well-known/openid-configuration', async (route) => {
+  await page.route('**/v1/auth/session/logout', async (route) => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().headers()['x-csrf-token']).toBe('csrf-e2e-token');
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        end_session_endpoint:
-          'http://127.0.0.1:5173/oidc-logout-complete',
+        logoutUrl: 'http://127.0.0.1:5173/oidc-logout-complete',
       }),
     });
   });
@@ -118,20 +121,18 @@ test('discovers an OIDC tenant before sending tenant-scoped requests and perform
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Cases' })).toBeVisible();
   await expect(page.getByText('BORROWER-E2E')).toBeVisible();
-  expect(discoveryTenantHeader).toBeUndefined();
   expect(graphqlTenantHeader).toBe(TENANT_ID);
+  expect(graphqlCsrfHeader).toBe('csrf-e2e-token');
+  expect(graphqlAuthorization).toBeUndefined();
+
+  expect(
+    await page.evaluate(() =>
+      Object.keys(localStorage).filter((key) =>
+        /accessToken|refreshToken|idToken|expiresAt/.test(key),
+      ),
+    ),
+  ).toEqual([]);
 
   await page.getByRole('button', { name: 'Disconnect' }).click();
   await page.waitForURL(/oidc-logout-complete/);
-  const logoutUrl = new URL(page.url());
-  expect(logoutUrl.searchParams.get('client_id')).toBe('mortgage-agent-app');
-  expect(logoutUrl.searchParams.get('id_token_hint')).toBe('oidc-id-token');
-  expect(logoutUrl.searchParams.get('post_logout_redirect_uri')).toBe(
-    'http://127.0.0.1:5173/',
-  );
-  expect(
-    await page.evaluate(() =>
-      localStorage.getItem('meridian.oidc.accessToken'),
-    ),
-  ).toBeNull();
 });

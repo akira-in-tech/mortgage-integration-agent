@@ -36,6 +36,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/session/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Start server-side Authorization Code + PKCE login */
+        get: operations["beginOidcSessionLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/session/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Complete OIDC login and issue an HttpOnly session */
+        get: operations["completeOidcSessionLogin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Resolve and refresh the current HttpOnly OIDC session */
+        get: operations["getOidcSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/session/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete the server session and return the provider logout URL */
+        post: operations["endOidcSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/me/tenants": {
         parameters: {
             query?: never;
@@ -303,6 +371,17 @@ export interface components {
             /** @enum {string} */
             role: "PARTNER" | "REVIEWER";
         };
+        OidcSessionStatusDto: {
+            authenticated: boolean;
+            /** Format: uuid */
+            userId?: string;
+            email?: string;
+            csrfToken?: string;
+            memberships: components["schemas"]["TenantMembershipSummaryDto"][];
+        };
+        OidcLogoutResultDto: {
+            logoutUrl?: Record<string, never>;
+        };
         CreateCaseDto: {
             borrowerId: string;
             requestedAmount: number;
@@ -487,6 +566,83 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    beginOidcSessionLogin: {
+        parameters: {
+            query?: {
+                returnTo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    completeOidcSessionLogin: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getOidcSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcSessionStatusDto"];
+                };
+            };
+        };
+    };
+    endOidcSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OidcLogoutResultDto"];
+                };
             };
         };
     };

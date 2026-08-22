@@ -31,6 +31,12 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
       description:
         'A Section 20 M5 scoped API-client credential, "{clientId}.{secret}" — minted via `npm run create-api-client` (no self-service REST endpoint exists yet). The tenant is always the one this credential belongs to; no request body or query parameter can specify a different one.',
     })
+    .addCookieAuth('meridian_session', {
+      type: 'apiKey',
+      in: 'cookie',
+      description:
+        'Opaque HttpOnly human-session handle issued by the OIDC BFF. Unsafe requests also require the session CSRF value in X-CSRF-Token.',
+    })
     .build();
   return SwaggerModule.createDocument(app, config);
 }

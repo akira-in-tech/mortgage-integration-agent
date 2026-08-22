@@ -1,11 +1,8 @@
-import { useEffect, useState } from 'react';
-import {
-  fetchOidcTenantMemberships,
-  setOidcTenantId,
-  type OidcTenantMembership,
-} from '../oidc';
+import { useEffect } from 'react';
+import { setOidcTenantId, type OidcTenantMembership } from '../oidc';
 
 interface TenantSelectionScreenProps {
+  memberships: OidcTenantMembership[];
   onSelected: () => void;
   onCancel: () => void;
 }
@@ -18,44 +15,18 @@ interface TenantSelectionScreenProps {
 export function TenantSelectionScreen({
   onSelected,
   onCancel,
+  memberships,
 }: TenantSelectionScreenProps) {
-  const [memberships, setMemberships] = useState<OidcTenantMembership[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   function select(membership: OidcTenantMembership) {
     setOidcTenantId(membership.tenantId);
     onSelected();
   }
 
   useEffect(() => {
-    let active = true;
-    fetchOidcTenantMemberships()
-      .then((result) => {
-        if (!active) return;
-        if (result.length === 1) {
-          select(result[0]);
-          return;
-        }
-        setMemberships(result);
-      })
-      .catch((cause: unknown) => {
-        if (!active) return;
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Unable to load your tenant memberships.',
-        );
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-    // `onSelected` is an App state setter and stable for the lifetime of this
-    // screen. Running membership discovery more than once could flash a stale
-    // tenant choice or repeat a token refresh, so this effect is mount-only.
+    if (memberships.length === 1) select(memberships[0]);
+    // Memberships are an immutable snapshot from the just-resolved backend
+    // session. Selecting exactly once avoids a render loop if the parent
+    // recreates its callback while this screen is still mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -84,15 +55,11 @@ export function TenantSelectionScreen({
           aria-live="polite"
           style={{ fontSize: 13, color: 'var(--ink-muted)', lineHeight: 1.5 }}
         >
-          {loading && 'Loading your authorized memberships…'}
-          {!loading && error && error}
-          {!loading &&
-            !error &&
-            memberships.length === 0 &&
+          {memberships.length === 0 &&
             'Your identity is valid, but no tenant membership has been provisioned.'}
         </div>
 
-        {!loading && !error && memberships.length > 1 && (
+        {memberships.length > 1 && (
           <div style={{ display: 'grid', gap: 10, marginTop: 20 }}>
             {memberships.map((membership) => (
               <button
@@ -115,7 +82,7 @@ export function TenantSelectionScreen({
           </div>
         )}
 
-        {!loading && (error || memberships.length === 0) && (
+        {memberships.length === 0 && (
           <button
             type="button"
             className="btn"

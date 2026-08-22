@@ -14,6 +14,8 @@ import { AuditModule } from '../audit/audit.module';
 import { OidcIdentityGuard } from './oidc-identity.guard';
 import { TenantMembershipDirectoryService } from './tenant-membership-directory.service';
 import { AuthController } from './auth.controller';
+import { OidcSession } from '../database/entities/oidc-session.entity';
+import { OidcSessionService } from './oidc-session.service';
 
 /**
  * `@Global()`: `TenantAuthGuard` is applied via `@UseGuards(TenantAuthGuard)`
@@ -28,13 +30,20 @@ import { AuthController } from './auth.controller';
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ApiClient, User, TenantMembership, Tenant]),
+    TypeOrmModule.forFeature([
+      ApiClient,
+      User,
+      TenantMembership,
+      Tenant,
+      OidcSession,
+    ]),
     AuditModule,
   ],
   providers: [
     ApiClientService,
     ApiKeyGuard,
     OidcService,
+    OidcSessionService,
     OidcGuard,
     OidcIdentityGuard,
     TenantAuthGuard,
@@ -46,6 +55,7 @@ import { AuthController } from './auth.controller';
     ApiClientService,
     ApiKeyGuard,
     OidcService,
+    OidcSessionService,
     OidcGuard,
     OidcIdentityGuard,
     TenantAuthGuard,

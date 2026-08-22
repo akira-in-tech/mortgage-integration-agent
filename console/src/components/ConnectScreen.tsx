@@ -21,11 +21,9 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
   function connectWithOidc(e: React.FormEvent) {
     e.preventDefault();
     setRedirecting(true);
-    // Real redirect to this repo's own Keycloak realm — the browser
-    // leaves the app entirely until Keycloak sends it back with a real
-    // authorization code (handled by App.tsx's tryHandleOidcCallback()
-    // on the next load).
-    void beginOidcLogin();
+    // The backend owns PKCE state, code exchange, refresh, and provider
+    // tokens. The browser follows only the same-origin login endpoint.
+    beginOidcLogin();
   }
 
   return (

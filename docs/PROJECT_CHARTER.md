@@ -59,7 +59,7 @@ The repository currently contains verified local vertical slices for:
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks, deterministic failure scenarios, and a generated TypeScript client;
 - API-client and OIDC authentication, two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
-- a React operations console with case queue, dashboard, dossier, communications review, live activity polling, and Authorization Code + PKCE login;
+- a React operations console with case queue, dashboard, dossier, communications review, live activity polling, and a same-origin Authorization Code + PKCE backend-for-frontend session;
 - no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
 
 The following release boundaries remain open and are not represented as implemented:
@@ -67,7 +67,7 @@ The following release boundaries remain open and are not represented as implemen
 - authoritative token, provider-call, and cost budget ledgers and reservations for future cost-bearing Agent tools;
 - jurisdiction ancestry, policy-source freshness automation, grandfathering, and transition-rule execution;
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
-- complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and automated browser accessibility coverage;
+- complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and manual plus live-stack accessibility evidence;
 - infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, runbooks, and release artifacts;
 - production provider adapters, real-data approval, or official underwriting integrations.
 
