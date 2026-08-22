@@ -269,7 +269,7 @@ Every remaining M6-007 Known Gap but OIDC login has since closed. **`recentActiv
 
 **OIDC login (M6-015)** closed the last named console gap: a real Authorization Code + PKCE flow against this repo's own Keycloak realm (`keycloak/realm-export.json`, updated with the console's dev origin and server-side-enforced PKCE), implemented with no client library — PKCE generation, the redirect, the token exchange, and refresh are all just the Web Crypto API and `fetch`. The connect screen gained a real second mode (bearer token vs. "Sign in with SSO"); `apollo-client.ts`'s authLink checks for an active OIDC session first, refreshing the access token if it's within 30s of real expiry, before every request. Live-verified through an actual Keycloak-hosted login page via headless-Chrome, not just curl: real redirect, real login form submission, real callback with a matching PKCE `state`, real token exchange, and a real GraphQL query succeeding with the resulting `Authorization`/`X-Tenant-Id` headers.
 
-Known gaps, honestly scoped rather than silently cut: client-side-only search on the Triage Queue, no browser-level end-to-end/accessibility suite yet, and browser tokens remain in `localStorage` until a same-origin backend-for-frontend session boundary is implemented.
+Known gaps, honestly scoped rather than silently cut: client-side-only search on the Triage Queue, the fast Playwright/axe browser gate uses deterministic network fixtures rather than a live Keycloak stack, and browser tokens remain in `localStorage` until a same-origin backend-for-frontend session boundary is implemented.
 
 ### Transactional outbox
 

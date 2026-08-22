@@ -62,7 +62,8 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
   }
 
   return (
-    <div
+    <section
+      aria-labelledby="case-list-heading"
       style={{
         width: 368,
         flex: 'none',
@@ -82,11 +83,17 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
             marginBottom: 14,
           }}
         >
-          <div
-            style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.01em' }}
+          <h1
+            id="case-list-heading"
+            style={{
+              fontSize: 17,
+              fontWeight: 700,
+              letterSpacing: '-0.01em',
+              margin: 0,
+            }}
           >
             Cases
-          </div>
+          </h1>
           <div
             className="mono"
             style={{ fontSize: 12, color: 'var(--ink-muted)' }}
@@ -107,7 +114,11 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
           }}
         >
           <SearchIcon size={14} color="var(--ink-muted)" />
+          <label className="sr-only" htmlFor="case-search">
+            Search borrower or case ID
+          </label>
           <input
+            id="case-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search borrower, case ID…"
@@ -122,12 +133,18 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
             }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
+        <div
+          role="group"
+          aria-label="Filter cases by status"
+          style={{ display: 'flex', gap: 6, overflowX: 'auto' }}
+        >
           {FILTER_CHIPS.map((chip) => {
             const active = chip.status === statusFilter;
             return (
               <button
                 key={chip.label}
+                type="button"
+                aria-pressed={active}
                 onClick={() => setStatusFilter(chip.status)}
                 style={{
                   flex: 'none',
@@ -197,7 +214,7 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -212,14 +229,24 @@ function CaseRow({
 }) {
   const { node } = edge;
   return (
-    <div
+    <button
+      type="button"
+      aria-pressed={selected}
       onClick={onClick}
       style={{
         padding: selected ? '13px 18px' : '13px 18px 13px 20.5px',
         background: selected ? 'var(--accent-wash)' : undefined,
-        borderLeft: selected ? '2.5px solid var(--accent)' : undefined,
-        borderBottom: '1px solid var(--gridline)',
         cursor: 'pointer',
+        width: '100%',
+        borderTop: 'none',
+        borderRight: 'none',
+        borderBottom: '1px solid var(--gridline)',
+        borderLeft: selected
+          ? '2.5px solid var(--accent)'
+          : '2.5px solid transparent',
+        fontFamily: 'var(--font-sans)',
+        color: 'var(--ink)',
+        textAlign: 'left',
       }}
     >
       <div
@@ -253,6 +280,6 @@ function CaseRow({
       >
         {node.id.slice(0, 8)}
       </div>
-    </div>
+    </button>
   );
 }

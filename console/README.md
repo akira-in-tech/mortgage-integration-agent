@@ -39,7 +39,10 @@ npm test        # vitest run — format helpers, StatusPill, useCaseMutations,
                  # the "Mark satisfied" click path, OpsDashboard, CaseDossier,
                  # LiveStream, oidc (PKCE/token exchange/refresh)
 npm run lint     # real ESLint flat config — TS, React hooks, prettier
+npm run test:e2e # Playwright Chromium journeys + axe WCAG scan
 ```
+
+Install the local browser once with `npx playwright install chromium`. The browser gate exercises browser storage, Bearer and OIDC tenant-session orchestration, GraphQL authentication headers, RP-initiated logout, keyboard-addressable controls, and automated WCAG checks. Its network responses are deterministic fixtures; the real Keycloak/PostgreSQL OIDC integration remains a separate credential-backed suite.
 
 ## GraphQL codegen
 
@@ -54,5 +57,5 @@ npm run codegen
 ## Known gaps
 
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
-- Browser-level end-to-end and automated accessibility coverage remain open; component and hook tests run in CI.
+- The fast browser gate uses deterministic network fixtures; a full browser redirect through a live Keycloak, API, and PostgreSQL stack remains open.
 - Tokens remain in browser `localStorage`; a production deployment should put them behind a same-origin backend-for-frontend with `HttpOnly`, `Secure`, and `SameSite` cookies.

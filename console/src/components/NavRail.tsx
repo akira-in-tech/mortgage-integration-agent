@@ -10,7 +10,8 @@ interface NavRailProps {
 
 export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
   return (
-    <div
+    <nav
+      aria-label="Primary"
       style={{
         width: 64,
         flex: 'none',
@@ -23,6 +24,7 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
       }}
     >
       <div
+        aria-hidden="true"
         style={{
           width: 32,
           height: 32,
@@ -92,12 +94,20 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
             }
           />
         </button>
-        <div className="navicon">
+        <button
+          type="button"
+          aria-label="Settings (not available)"
+          className="navicon"
+          disabled
+          style={{ border: 'none', background: 'none' }}
+        >
           <GearIcon color="var(--ink-muted)" />
-        </div>
+        </button>
       </div>
       <div style={{ flex: 1 }} />
       <div
+        aria-label={`Signed in as ${initials}`}
+        role="img"
         style={{
           width: 30,
           height: 30,
@@ -113,6 +123,6 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
       >
         {initials}
       </div>
-    </div>
+    </nav>
   );
 }

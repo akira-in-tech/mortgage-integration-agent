@@ -1,6 +1,6 @@
 import { useQuery } from '@apollo/client';
 import { CASE_STATUS_COUNTS_QUERY } from '../graphql/queries';
-import { STATUS_CONFIG, STATUS_ORDER } from './StatusPill';
+import { STATUS_CONFIG, STATUS_ORDER } from './status-config';
 
 const ATTENTION_STATUSES = new Set([
   'CONDITIONS_OPEN',
@@ -42,16 +42,16 @@ export function OpsDashboard() {
         background: 'var(--page)',
       }}
     >
-      <div
+      <h1
         style={{
           fontSize: 20,
           fontWeight: 700,
           letterSpacing: '-0.01em',
-          marginBottom: 20,
+          margin: '0 0 20px',
         }}
       >
         Ops Dashboard
-      </div>
+      </h1>
 
       <div
         style={{

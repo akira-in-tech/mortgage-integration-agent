@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { StatusPill } from './StatusPill';
-import { STATUS_CONFIG, STATUS_ORDER } from './StatusPill';
+import { STATUS_CONFIG, STATUS_ORDER } from './status-config';
 import type { CaseStatus } from '../graphql/types';
 
 describe('StatusPill', () => {

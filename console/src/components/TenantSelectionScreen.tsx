@@ -60,7 +60,7 @@ export function TenantSelectionScreen({
   }, []);
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -69,10 +69,17 @@ export function TenantSelectionScreen({
         background: 'var(--page)',
       }}
     >
-      <div className="card-elevated" style={{ padding: 32, width: 420 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+      <section
+        className="card-elevated"
+        aria-labelledby="tenant-selection-heading"
+        style={{ padding: 32, width: 420 }}
+      >
+        <h1
+          id="tenant-selection-heading"
+          style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}
+        >
           Choose an organization
-        </div>
+        </h1>
         <div
           aria-live="polite"
           style={{ fontSize: 13, color: 'var(--ink-muted)', lineHeight: 1.5 }}
@@ -118,7 +125,7 @@ export function TenantSelectionScreen({
             Sign out
           </button>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

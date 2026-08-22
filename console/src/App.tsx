@@ -125,7 +125,7 @@ export function App() {
           minWidth: 0,
         }}
       >
-        <div
+        <header
           style={{
             height: 56,
             flex: 'none',
@@ -179,39 +179,41 @@ export function App() {
               Disconnect
             </button>
           </div>
-        </div>
+        </header>
 
-        {view === 'dashboard' ? (
-          <OpsDashboard />
-        ) : view === 'stream' ? (
-          <LiveStream />
-        ) : (
-          <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-            <CaseList
-              selectedCaseId={selectedCaseId}
-              onSelectCase={setSelectedCaseId}
-            />
-            {selectedCaseId ? (
-              <CaseDetail
-                caseId={selectedCaseId}
-                onOpenDossier={() => setDossierCaseId(selectedCaseId)}
+        <main style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+          {view === 'dashboard' ? (
+            <OpsDashboard />
+          ) : view === 'stream' ? (
+            <LiveStream />
+          ) : (
+            <>
+              <CaseList
+                selectedCaseId={selectedCaseId}
+                onSelectCase={setSelectedCaseId}
               />
-            ) : (
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
-                  Select a case to view its detail.
+              {selectedCaseId ? (
+                <CaseDetail
+                  caseId={selectedCaseId}
+                  onOpenDossier={() => setDossierCaseId(selectedCaseId)}
+                />
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
+                    Select a case to view its detail.
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </>
+          )}
+        </main>
       </div>
     </div>
   );

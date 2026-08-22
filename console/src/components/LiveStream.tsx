@@ -64,11 +64,16 @@ export function LiveStream() {
           marginBottom: 20,
         }}
       >
-        <div
-          style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em' }}
+        <h1
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            letterSpacing: '-0.01em',
+            margin: 0,
+          }}
         >
           Live Stream
-        </div>
+        </h1>
         <LivePulse />
       </div>
 

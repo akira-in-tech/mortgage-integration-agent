@@ -9601,3 +9601,65 @@ The signed body and signature never cross to a receiver-selected redirect target
 ### Next safe step
 
 Add browser E2E/accessibility coverage for the console identity and operational flow.
+
+## M6-020: Playwright browser and axe accessibility release gate
+
+### Status
+
+Implemented and locally verified in real Chromium. The console now has a browser-level CI gate in addition to Vitest: it proves browser storage and navigation behavior, authentication header wiring, tenant selection, logout construction, and automated WCAG rules against rendered DOM.
+
+### Acceptance criterion
+
+The launch browser can complete a Bearer connection and an OIDC tenant-session journey using deterministic service fixtures; operational GraphQL requests carry the expected credential/tenant headers; pre-tenant discovery carries no tenant header; RP logout clears local OIDC credentials; axe reports zero automatic violations on the connect and triage surfaces; CI retains a Playwright report even on failure.
+
+### Implementation
+
+- Added current `@playwright/test` 1.62.1 and `@axe-core/playwright` 4.13.0, a Chromium-only launch project, CI-stable worker/retry policy, trace-on-first-retry, failure screenshots, and HTML reports.
+- Added two browser journeys: Bearer login through the real rendered connect form into a mocked GraphQL contract, and pre-seeded OIDC tokens through real membership-selection/session code into tenant-scoped GraphQL and discovered RP logout.
+- Added the Playwright install/run steps and retained report artifact to the existing least-privilege console CI job.
+- Scoped Vitest collection to `src/**/*.test.{ts,tsx}` so the two runners cannot collect each other's suites.
+- Repaired DOM semantics found while building the gate: associated form labels, heading and landmark structure, named navigation, pressed-state filters, a disabled/nameable settings control, keyboard-operable case rows, and a visually-hidden search label.
+- Darkened the shared muted/accent tokens only as far as required for the rendered small text to meet automated WCAG AA contrast checks.
+- Moved status configuration into `status-config.ts`, leaving `StatusPill.tsx` component-only and eliminating the final two Fast Refresh lint warnings.
+- Upgraded the vulnerable development server/test chain to Vite 8.2.2, Vitest 4.1.11, and `@vitejs/plugin-react` 6.1.0; console and root now state the same Node 24 minimum.
+
+### Decisions and alternatives
+
+- Chromium is the explicit launch baseline. Adding three browser engines would triple browser-install and execution cost before a supported-browser matrix exists; the configuration is already project-based so Firefox/WebKit can be added when product support requires them.
+- The fast gate intercepts network contracts but does not claim real OIDC-provider coverage. The backend already has credential-gated Keycloak/PostgreSQL integration tests; a full browser-plus-live-stack journey remains separately named below.
+- axe runs without rule suppression and fails on every reported violation. Semantic and contrast defects were repaired instead of excluding unstable selectors or downgrading the assertion to serious/critical only.
+- Dependency upgrades were selected from current package metadata and validated as one compatible Vite/Vitest/plugin set. No `npm audit fix --force` or peer override is part of the committed install path.
+
+### Verification
+
+```text
+Node 24.19 clean npm ci --include=optional — 519 packages installed
+npm run lint — passed with 0 errors and 0 warnings
+npm test — 9 files / 47 tests passed under Vitest 4.1.11
+npm run build — passed under Vite 8.2.2
+npm run test:e2e — 2 Chromium journeys passed, including axe with
+  zero reported violations
+npm audit — 0 vulnerabilities across production and development tree
+npm audit --omit=dev --audit-level=high — 0 vulnerabilities
+```
+
+### Errors and fixes
+
+- The first Vitest run collected `e2e/console.spec.ts` and failed because Playwright tests cannot execute under Vitest. The Vite test config now explicitly includes source tests only.
+- The first axe run found four connect-screen contrast failures; after the first token adjustment it found one 4.47:1 page-background failure. Shared tokens were corrected and the unfiltered axe scan then passed.
+- The first OIDC logout assertion saw the token reappear because Playwright's `addInitScript` correctly runs for every same-origin navigation, including the test logout destination. The fixture now seeds once per session, allowing the test to observe the product's real clearing behavior.
+- The first Vite 8 install encountered stale peer resolution and then npm's documented optional-native-package issue. The lockfile was regenerated from explicit compatible versions, followed by a clean Node 24 install including optional dependencies; no force/legacy flag is required by the final lockfile.
+
+### Security, privacy, cost, and compatibility
+
+Playwright data is synthetic and the tests send no real credential or borrower data. CI installs only Chromium, runs with one worker, and retains diagnostics for 14 days. The toolchain upgrade removes the previously reported Vite/Vitest development-server advisories; production dependencies remain advisory-free. Node 24 is required consistently by both root and console and is already the CI runtime.
+
+### Known gaps
+
+- The OIDC browser journey validates console orchestration with deterministic responses; it does not yet drive a real browser through the live Keycloak login form and real API/PostgreSQL membership lookup.
+- Automated axe checks do not replace manual screen-reader, zoom/reflow, focus-order, reduced-motion, or high-contrast review.
+- Tokens remain in `localStorage`; the same-origin HttpOnly session boundary is still the next production-launch blocker.
+
+### Next safe step
+
+Replace browser-readable OIDC tokens with a same-origin backend-for-frontend session, then add one live-stack browser smoke journey for the final identity path.

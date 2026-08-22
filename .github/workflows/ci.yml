@@ -33,6 +33,17 @@ jobs:
       - run: npm --prefix console run lint
       - run: npm --prefix console test
       - run: npm --prefix console run build
+      # Install only the launch browser and its Linux dependencies. Playwright
+      # uses one worker in CI for stable resource consumption.
+      - run: npm --prefix console exec playwright install --with-deps chromium
+      - run: npm --prefix console run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: console-playwright-report
+          path: console/playwright-report/
+          retention-days: 14
 
   production-dependency-audit:
     runs-on: ubuntu-latest

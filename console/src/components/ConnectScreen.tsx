@@ -29,7 +29,7 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
   }
 
   return (
-    <div
+    <main
       style={{
         minHeight: '100vh',
         display: 'flex',
@@ -38,10 +38,17 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
         background: 'var(--page)',
       }}
     >
-      <div className="card-elevated" style={{ padding: 32, width: 380 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
+      <section
+        className="card-elevated"
+        aria-labelledby="connect-heading"
+        style={{ padding: 32, width: 380 }}
+      >
+        <h1
+          id="connect-heading"
+          style={{ fontSize: 18, fontWeight: 700, margin: '0 0 6px' }}
+        >
           Connect to Meridian
-        </div>
+        </h1>
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
           <ModeTab active={mode === 'bearer'} onClick={() => setMode('bearer')}>
@@ -67,16 +74,18 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
               you take are recorded under it, distinct from the credential
               itself.
             </div>
-            <FieldLabel>Bearer token</FieldLabel>
+            <FieldLabel htmlFor="bearer-token">Bearer token</FieldLabel>
             <input
+              id="bearer-token"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="00000000-0000-0000-0000-000000000000.…"
               className="mono"
               style={inputStyle}
             />
-            <FieldLabel>Your name</FieldLabel>
+            <FieldLabel htmlFor="actor-name">Your name</FieldLabel>
             <input
+              id="actor-name"
               value={actorId}
               onChange={(e) => setActorId(e.target.value)}
               placeholder="reviewer-1"
@@ -113,8 +122,8 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
             </button>
           </form>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
 
@@ -129,9 +138,16 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
   return (
     <label
+      htmlFor={htmlFor}
       style={{
         fontSize: 12,
         fontWeight: 600,
@@ -156,6 +172,7 @@ function ModeTab({
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       style={{
         flex: 1,

@@ -25,6 +25,8 @@ npm-debug.log*
 
 # Coverage
 coverage/
+console/playwright-report/
+console/test-results/
 
 # Jest cache
 .jest-cache/
