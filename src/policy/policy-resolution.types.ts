@@ -1,17 +1,18 @@
 import { PolicyRuleDocument } from './dsl/policy-rule.types';
 
 /**
- * Simplified stand-in for Section 10.3's `PolicyResolutionContext` — this
- * slice resolves by exact jurisdiction/product/lifecycle-event match at a
- * point in time, not the full bitemporal, jurisdiction-ancestry-aware
- * design (see PolicyApplicabilityResolverService's class comment for what
- * is and isn't implemented yet).
+ * Server-owned facts that determine which immutable policy versions apply.
+ * `asOf` is the evaluation instant; `applicationReceivedAt` is the stable
+ * business-time anchor used by grandfathering rules. Callers must never
+ * substitute an evaluation retry timestamp for the original application
+ * receipt timestamp.
  */
 export interface PolicyResolutionContext {
   jurisdictionCode: string;
   productCode: string;
   lifecycleEvent: string;
   asOf: Date;
+  applicationReceivedAt?: Date;
 }
 
 export interface ResolvedPolicyVersionRef {
@@ -34,4 +35,6 @@ export interface PolicyResolutionResult {
   status: 'RESOLVED' | 'REVIEW_REQUIRED';
   versions: ResolvedPolicyVersionRef[];
   unresolvedReasons: string[];
+  /** Earliest source-freshness or scheduled policy boundary. */
+  revalidateAfter?: Date;
 }

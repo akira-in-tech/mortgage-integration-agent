@@ -184,6 +184,8 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(Jurisdiction),
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(PolicyVersion),
+      dataSource.getRepository(PolicySource),
+      dataSource.getRepository(PolicySourceRevision),
     );
     policyEvaluationService = new PolicyEvaluationService(
       policyResolver,

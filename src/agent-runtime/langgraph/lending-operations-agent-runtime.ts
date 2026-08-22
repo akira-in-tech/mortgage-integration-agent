@@ -560,6 +560,7 @@ export function createLendingOperationsAgentRuntime(
             jurisdictionCode: loanCase.jurisdictionCode,
             productCode: loanTypeToProductCode(loanCase.loanType),
             lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+            applicationReceivedAt: loanCase.createdAt.toISOString(),
           },
         );
         if (!budgeted.ok) {

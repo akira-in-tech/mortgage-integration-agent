@@ -54,7 +54,7 @@ The repository currently contains verified local vertical slices for:
 - tenant-keyed loan cases, versioned evidence, conditions, timelines, and audit events;
 - explicit PostgreSQL migrations, restricted runtime role, and row-level security on tenant data;
 - Temporal workflows with wait, signal, resume, retry classification, and transactional outbox events;
-- a versioned policy DSL, applicability resolution, immutable snapshots and bindings, dependency-generation validation, change-impact assessment, and transition approval;
+- a versioned policy DSL, ancestry-aware applicability resolution, source-freshness enforcement, application-time transition execution, immutable snapshots and bindings, dependency-generation validation, change-impact assessment, and transition approval;
 - a bounded LangGraph.js Agent runtime with registered tools, PostgreSQL-authoritative per-tool budget reservations, mandatory-review routing, immutable evaluation manifests, and persisted run history;
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks, deterministic failure scenarios, and a generated TypeScript client;
@@ -64,7 +64,7 @@ The repository currently contains verified local vertical slices for:
 
 The following release boundaries remain open and are not represented as implemented:
 
-- jurisdiction ancestry, policy-source freshness automation, grandfathering, and transition-rule execution;
+- external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage;
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
 - complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and manual plus live-stack accessibility evidence;
 - infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, runbooks, and release artifacts;
@@ -78,7 +78,7 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 | --- | --- | --- |
 | Intake | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations. | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks. |
 | Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence. | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated. |
-| Policy | Released versions resolve by exact jurisdiction/product/lifecycle context and bind immutable snapshots before evaluation. | Jurisdiction ancestry, automated source freshness, and grandfathering remain open. |
+| Policy | Released versions resolve across the full covered jurisdiction ancestry; every registered source must satisfy its freshness objective; allowlisted transition rules use the immutable application receipt time for grandfathering; resolver releases, source deadlines, scheduled boundaries, and catalog changes invalidate reuse before evaluation binds an immutable snapshot. | External source monitoring/ingestion and broader reviewed jurisdiction coverage remain open; stale, incomplete, cyclic, or unsupported policy context fails closed to review. |
 | Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; stale, exhausted, expired, unconfigured, and replayed unresolved effects route safely; REVIEWER-only reconciliation preserves actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; real cost-bearing adapters still require their provider-certification and operational gates. |
 | Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
 | Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
@@ -1962,7 +1962,7 @@ The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Ea
 1. Enforce console lint, tests, build, and GraphQL-codegen drift in CI; add dependency, secret, and container scanning without inventing a green result.
 2. Add browser end-to-end and accessibility coverage for login, triage, review, communication approval, and disconnected/degraded states.
 3. Add least-privilege provider reconciliation, provider promotion, data-disposition, policy-impact, and Agent-budget operations surfaces.
-4. Add policy-source freshness monitoring, jurisdiction ancestry, and transition rules before policy coverage expands.
+4. Add external policy-source monitoring/ingestion and reviewed jurisdiction packs before policy coverage expands.
 5. Add OpenTelemetry traces/metrics, SLOs, alerts, runbooks, and downloadable evaluation/release evidence.
 6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.
 

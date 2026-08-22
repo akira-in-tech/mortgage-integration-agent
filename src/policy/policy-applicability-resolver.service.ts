@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
 import { PolicyApplicability } from '../database/entities/policy-applicability.entity';
+import { PolicySource } from '../database/entities/policy-source.entity';
+import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
 import { PolicyVersion } from '../database/entities/policy-version.entity';
 import { JurisdictionCoverageStatus } from '../database/enums/jurisdiction.enum';
 import { PolicyReleaseStatus } from '../database/enums/policy-version.enum';
@@ -14,19 +16,12 @@ import {
 } from './policy-resolution.types';
 
 /**
- * A real, but deliberately simplified, implementation of Section 10.3's
- * applicability resolver. What it does: given a jurisdiction, product,
- * lifecycle event, and a point in time, selects every RELEASED
- * `PolicyVersion` whose `PolicyApplicability` matches and whose effective
- * window covers that time, and fails closed to `REVIEW_REQUIRED` on
- * unresolved coverage or overlapping versions of the same rule.
- *
- * What it does not do yet (Known gaps, docs/DEVELOPMENT_LOG.md): walk
- * jurisdiction ancestry (a US-CA case should also match a US-level
- * federal rule — this only matches the exact jurisdiction code given),
- * grandfathering/transition-rule evaluation, dependency-generation-based
- * fast-path validation (Section 10.4), or persisting an immutable
- * `CasePolicySnapshot` — this returns its result in-memory only.
+ * Section 10.3's fail-closed applicability resolver. It walks the complete
+ * jurisdiction ancestry, verifies every declared source against its own
+ * freshness objective, and applies an allowlisted transition-rule strategy
+ * before selecting released versions. Unknown hierarchy, stale coverage,
+ * unsupported transition semantics, or overlapping versions are review
+ * conditions; the resolver never guesses a precedence rule.
  */
 @Injectable()
 export class PolicyApplicabilityResolverService {
@@ -37,6 +32,10 @@ export class PolicyApplicabilityResolverService {
     private readonly applicabilityRepository: Repository<PolicyApplicability>,
     @InjectRepository(PolicyVersion)
     private readonly policyVersionRepository: Repository<PolicyVersion>,
+    @InjectRepository(PolicySource)
+    private readonly policySourceRepository: Repository<PolicySource>,
+    @InjectRepository(PolicySourceRevision)
+    private readonly sourceRevisionRepository: Repository<PolicySourceRevision>,
   ) {}
 
   async resolve(
@@ -44,25 +43,27 @@ export class PolicyApplicabilityResolverService {
   ): Promise<PolicyResolutionResult> {
     const unresolvedReasons: string[] = [];
 
-    const jurisdiction = await this.jurisdictionRepository.findOneBy({
-      code: context.jurisdictionCode,
-    });
-    if (
-      !jurisdiction ||
-      jurisdiction.coverageStatus !== JurisdictionCoverageStatus.COVERED
-    ) {
-      // Section 10.6: "If declared jurisdiction coverage is incomplete...
-      // validation stops and routes to review" — never an implicit "no
-      // rules apply" default.
-      unresolvedReasons.push(
-        `jurisdiction "${context.jurisdictionCode}" has no reviewed, covered policy source`,
-      );
+    const ancestry = await this.loadCoveredAncestry(
+      context.jurisdictionCode,
+      unresolvedReasons,
+    );
+    if (!ancestry) {
+      return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
+    }
+
+    const knowledgeAsOf = new Date();
+    const sourceFreshnessDeadline = await this.validateSourceFreshness(
+      ancestry.map((jurisdiction) => jurisdiction.code),
+      knowledgeAsOf,
+      unresolvedReasons,
+    );
+    if (unresolvedReasons.length > 0) {
       return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
     }
 
     const applicabilityRows = await this.applicabilityRepository.find({
       where: {
-        jurisdictionCode: context.jurisdictionCode,
+        jurisdictionCode: In(ancestry.map((jurisdiction) => jurisdiction.code)),
         productCode: context.productCode,
         lifecycleEvent: context.lifecycleEvent,
       },
@@ -72,22 +73,52 @@ export class PolicyApplicabilityResolverService {
       string,
       Array<{ applicability: PolicyApplicability; version: PolicyVersion }>
     >();
+    const scheduledBoundaries: Date[] = [];
+    const policyVersions = applicabilityRows.length
+      ? await this.policyVersionRepository.find({
+          where: {
+            id: In(applicabilityRows.map((row) => row.policyVersionId)),
+          },
+        })
+      : [];
+    const policyVersionById = new Map(
+      policyVersions.map((version) => [version.id, version]),
+    );
 
     for (const applicability of applicabilityRows) {
-      const version = await this.policyVersionRepository.findOneBy({
-        id: applicability.policyVersionId,
-      });
+      const version = policyVersionById.get(applicability.policyVersionId);
       if (!version || version.releaseStatus !== PolicyReleaseStatus.RELEASED) {
         continue;
       }
-      if (version.effectiveFrom.getTime() > context.asOf.getTime()) {
+      const applicabilityInstant = this.resolveApplicabilityInstant(
+        applicability,
+        context,
+        unresolvedReasons,
+      );
+      if (!applicabilityInstant) {
+        continue;
+      }
+      if (version.effectiveFrom.getTime() > applicabilityInstant.getTime()) {
+        if (
+          applicability.transitionRule !==
+          'application_received_on_or_after_effective_date'
+        ) {
+          scheduledBoundaries.push(version.effectiveFrom);
+        }
         continue;
       }
       if (
         version.effectiveTo &&
-        version.effectiveTo.getTime() <= context.asOf.getTime()
+        version.effectiveTo.getTime() <= applicabilityInstant.getTime()
       ) {
         continue;
+      }
+      if (
+        version.effectiveTo &&
+        applicability.transitionRule !==
+          'application_received_on_or_after_effective_date'
+      ) {
+        scheduledBoundaries.push(version.effectiveTo);
       }
       const bucket = candidatesByRuleId.get(version.ruleId) ?? [];
       bucket.push({ applicability, version });
@@ -120,6 +151,152 @@ export class PolicyApplicabilityResolverService {
     if (unresolvedReasons.length > 0) {
       return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
     }
-    return { status: 'RESOLVED', versions, unresolvedReasons: [] };
+    // Source deadlines are authoritative even when no rule applies. The
+    // evaluation service combines this with its maximum validation interval.
+    const revalidateAfter = [sourceFreshnessDeadline, ...scheduledBoundaries]
+      .filter((value): value is Date => Boolean(value))
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    return {
+      status: 'RESOLVED',
+      versions,
+      unresolvedReasons: [],
+      revalidateAfter,
+    };
+  }
+
+  private async loadCoveredAncestry(
+    leafCode: string,
+    unresolvedReasons: string[],
+  ): Promise<Jurisdiction[] | null> {
+    const ancestry: Jurisdiction[] = [];
+    const visited = new Set<string>();
+    let nextCode: string | null = leafCode;
+
+    while (nextCode) {
+      if (visited.has(nextCode)) {
+        unresolvedReasons.push(
+          `jurisdiction ancestry contains a cycle at "${nextCode}"`,
+        );
+        return null;
+      }
+      visited.add(nextCode);
+
+      const jurisdiction = await this.jurisdictionRepository.findOneBy({
+        code: nextCode,
+      });
+      if (!jurisdiction) {
+        unresolvedReasons.push(
+          `jurisdiction ancestry references unknown code "${nextCode}"`,
+        );
+        return null;
+      }
+      if (jurisdiction.coverageStatus !== JurisdictionCoverageStatus.COVERED) {
+        unresolvedReasons.push(
+          `jurisdiction "${nextCode}" does not have reviewed COVERED status`,
+        );
+        return null;
+      }
+      ancestry.push(jurisdiction);
+      nextCode = jurisdiction.parentCode;
+    }
+
+    return ancestry;
+  }
+
+  private async validateSourceFreshness(
+    jurisdictionCodes: string[],
+    knowledgeAsOf: Date,
+    unresolvedReasons: string[],
+  ): Promise<Date | undefined> {
+    const sources = await this.policySourceRepository.find({
+      where: { jurisdictionCode: In(jurisdictionCodes) },
+    });
+    const sourcesByJurisdiction = new Map<string, PolicySource[]>();
+    for (const source of sources) {
+      const bucket = sourcesByJurisdiction.get(source.jurisdictionCode) ?? [];
+      bucket.push(source);
+      sourcesByJurisdiction.set(source.jurisdictionCode, bucket);
+    }
+
+    for (const jurisdictionCode of jurisdictionCodes) {
+      if (!(sourcesByJurisdiction.get(jurisdictionCode)?.length ?? 0)) {
+        unresolvedReasons.push(
+          `jurisdiction "${jurisdictionCode}" has no registered policy source`,
+        );
+      }
+    }
+    if (sources.length === 0) return undefined;
+
+    const revisions = await this.sourceRevisionRepository.find({
+      where: { policySourceId: In(sources.map((source) => source.id)) },
+      order: { recordedAt: 'DESC' },
+    });
+    const latestRevisionBySource = new Map<string, PolicySourceRevision>();
+    for (const revision of revisions) {
+      if (!latestRevisionBySource.has(revision.policySourceId)) {
+        latestRevisionBySource.set(revision.policySourceId, revision);
+      }
+    }
+
+    let earliestDeadline: Date | undefined;
+    for (const source of sources) {
+      const revision = latestRevisionBySource.get(source.id);
+      if (!revision) {
+        unresolvedReasons.push(
+          `policy source "${source.name}" has no recorded revision`,
+        );
+        continue;
+      }
+      if (source.freshnessObjectiveHours <= 0) {
+        unresolvedReasons.push(
+          `policy source "${source.name}" has an invalid freshness objective`,
+        );
+        continue;
+      }
+      const deadline = new Date(
+        revision.recordedAt.getTime() +
+          source.freshnessObjectiveHours * 60 * 60 * 1000,
+      );
+      if (deadline.getTime() <= knowledgeAsOf.getTime()) {
+        unresolvedReasons.push(
+          `policy source "${source.name}" exceeded its freshness objective at ${deadline.toISOString()}`,
+        );
+        continue;
+      }
+      if (!earliestDeadline || deadline < earliestDeadline) {
+        earliestDeadline = deadline;
+      }
+    }
+    return earliestDeadline;
+  }
+
+  private resolveApplicabilityInstant(
+    applicability: PolicyApplicability,
+    context: PolicyResolutionContext,
+    unresolvedReasons: string[],
+  ): Date | null {
+    if (!applicability.transitionRule) return context.asOf;
+
+    if (
+      applicability.transitionRule ===
+      'application_received_on_or_after_effective_date'
+    ) {
+      if (!context.applicationReceivedAt) {
+        unresolvedReasons.push(
+          `policy applicability "${applicability.id}" requires the original application receipt time`,
+        );
+        return null;
+      }
+      return context.applicationReceivedAt;
+    }
+
+    if (applicability.transitionRule === 'evaluation_as_of_effective_date') {
+      return context.asOf;
+    }
+
+    unresolvedReasons.push(
+      `policy applicability "${applicability.id}" uses unsupported transition rule "${applicability.transitionRule}"`,
+    );
+    return null;
   }
 }

@@ -65,6 +65,8 @@ describeOrSkip('PolicyEvaluationService', () => {
       dataSource.getRepository(Jurisdiction),
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(PolicyVersion),
+      dataSource.getRepository(PolicySource),
+      dataSource.getRepository(PolicySourceRevision),
     );
     service = new PolicyEvaluationService(
       resolver,
@@ -259,6 +261,23 @@ describeOrSkip('PolicyEvaluationService', () => {
       .getRepository(CasePolicyBinding)
       .find({ where: { tenantId: TENANT_ID, caseId } });
     expect(bindings).toHaveLength(1);
+  });
+
+  it('refreshes a binding created by an older resolver release', async () => {
+    await seedReleasedVersion('pes-rule-resolver-upgrade');
+    const caseId = '10000000-0000-0000-0000-000000000009';
+    const first = await service.evaluate(TENANT_ID, caseId, baseContext);
+    await dataSource
+      .getRepository(CasePolicySnapshot)
+      .update({ id: first.snapshot.id }, { resolverVersion: '1.0.0' });
+
+    const resolveSpy = jest.spyOn(resolver, 'resolve');
+    const second = await service.evaluate(TENANT_ID, caseId, baseContext);
+
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(second.snapshot.resolverVersion).toBe('2.0.0');
+    expect(second.snapshot.id).not.toBe(first.snapshot.id);
+    resolveSpy.mockRestore();
   });
 
   it('takes the slow path but reuses the snapshot when the catalog generation moved but this case is unaffected', async () => {

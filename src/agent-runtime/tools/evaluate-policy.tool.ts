@@ -6,6 +6,8 @@ export interface EvaluatePolicyArgs {
   jurisdictionCode: string;
   productCode: string;
   lifecycleEvent: string;
+  /** Immutable server-read case creation time used by transition rules. */
+  applicationReceivedAt: string;
 }
 
 export interface EvaluatePolicyResult {
@@ -58,7 +60,13 @@ export function evaluatePolicyTool(
       const evaluation = await deps.policyEvaluationService.evaluate(
         tenantId,
         caseId,
-        { ...args, asOf: new Date() },
+        {
+          jurisdictionCode: args.jurisdictionCode,
+          productCode: args.productCode,
+          lifecycleEvent: args.lifecycleEvent,
+          applicationReceivedAt: new Date(args.applicationReceivedAt),
+          asOf: new Date(),
+        },
       );
       return {
         outcome: evaluation.outcome,

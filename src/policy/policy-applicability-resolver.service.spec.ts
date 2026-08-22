@@ -47,6 +47,7 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
   let dataSource: DataSource;
   let resolver: PolicyApplicabilityResolverService;
   const cleanupIds = {
+    jurisdictionCodes: [] as string[],
     applicabilityIds: [] as string[],
     versionIds: [] as string[],
     revisionIds: [] as string[],
@@ -70,6 +71,8 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
       dataSource.getRepository(Jurisdiction),
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(PolicyVersion),
+      dataSource.getRepository(PolicySource),
+      dataSource.getRepository(PolicySourceRevision),
     );
 
     await dataSource.getRepository(Jurisdiction).save(
@@ -104,6 +107,11 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
           .getRepository(PolicySource)
           .delete(cleanupIds.sourceIds);
       }
+      if (cleanupIds.jurisdictionCodes.length) {
+        await dataSource
+          .getRepository(Jurisdiction)
+          .delete(cleanupIds.jurisdictionCodes);
+      }
       await dataSource
         .getRepository(Jurisdiction)
         .delete({ code: JURISDICTION_CODE });
@@ -111,22 +119,18 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
     }
   }, 30_000);
 
-  async function makeReleasedVersion(overrides: {
-    ruleId: string;
-    version: string;
-    effectiveFrom: Date;
-    effectiveTo?: Date | null;
-    releaseStatus?: PolicyReleaseStatus;
-    dsl?: Record<string, unknown>;
-  }): Promise<PolicyVersion> {
+  async function makeFreshSource(
+    jurisdictionCode: string,
+    freshnessObjectiveHours = 24,
+  ): Promise<{ source: PolicySource; revision: PolicySourceRevision }> {
     const sourceRepo = dataSource.getRepository(PolicySource);
     const source = await sourceRepo.save(
       sourceRepo.create({
-        name: 'Resolver test source',
+        name: `Resolver test source (${jurisdictionCode})`,
         owner: 'policy-team',
-        jurisdictionCode: JURISDICTION_CODE,
+        jurisdictionCode,
         retrievalMode: PolicySourceRetrievalMode.SYNTHETIC,
-        freshnessObjectiveHours: 24,
+        freshnessObjectiveHours,
       }),
     );
     cleanupIds.sourceIds.push(source.id);
@@ -135,12 +139,27 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
     const revision = await revisionRepo.save(
       revisionRepo.create({
         policySourceId: source.id,
-        checksum: `sha256:${overrides.ruleId}-${overrides.version}`,
+        checksum: `sha256:${source.id}`,
         publishedAt: new Date('2026-12-01T00:00:00Z'),
         content: {},
       }),
     );
     cleanupIds.revisionIds.push(revision.id);
+    return { source, revision };
+  }
+
+  async function makeReleasedVersion(overrides: {
+    ruleId: string;
+    version: string;
+    effectiveFrom: Date;
+    effectiveTo?: Date | null;
+    releaseStatus?: PolicyReleaseStatus;
+    dsl?: Record<string, unknown>;
+    jurisdictionCode?: string;
+    transitionRule?: string | null;
+  }): Promise<PolicyVersion> {
+    const jurisdictionCode = overrides.jurisdictionCode ?? JURISDICTION_CODE;
+    const { revision } = await makeFreshSource(jurisdictionCode);
 
     const versionRepo = dataSource.getRepository(PolicyVersion);
     const version = await versionRepo.save(
@@ -167,9 +186,10 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
     const applicability = await applicabilityRepo.save(
       applicabilityRepo.create({
         policyVersionId: version.id,
-        jurisdictionCode: JURISDICTION_CODE,
+        jurisdictionCode,
         productCode: PRODUCT_CODE,
         lifecycleEvent: LIFECYCLE_EVENT,
+        transitionRule: overrides.transitionRule ?? null,
       }),
     );
     cleanupIds.applicabilityIds.push(applicability.id);
@@ -323,5 +343,152 @@ describeOrSkip('PolicyApplicabilityResolverService', () => {
     expect(result.status).toBe('REVIEW_REQUIRED');
 
     await dataSource.getRepository(Jurisdiction).delete({ code: partialCode });
+  });
+
+  it('resolves policies declared on every covered jurisdiction ancestor', async () => {
+    const parentCode = 'US-ANCESTRY-PARENT';
+    const childCode = 'US-ANCESTRY-CHILD';
+    await dataSource.getRepository(Jurisdiction).save([
+      dataSource.getRepository(Jurisdiction).create({
+        code: parentCode,
+        level: JurisdictionLevel.FEDERAL,
+        name: 'Resolver ancestry parent',
+        coverageStatus: JurisdictionCoverageStatus.COVERED,
+      }),
+      dataSource.getRepository(Jurisdiction).create({
+        code: childCode,
+        level: JurisdictionLevel.STATE,
+        parentCode,
+        name: 'Resolver ancestry child',
+        coverageStatus: JurisdictionCoverageStatus.COVERED,
+      }),
+    ]);
+    cleanupIds.jurisdictionCodes.push(childCode, parentCode);
+    await makeFreshSource(childCode);
+    await makeReleasedVersion({
+      ruleId: 'ancestor-rule',
+      version: '1.0.0',
+      jurisdictionCode: parentCode,
+      effectiveFrom: new Date('2025-01-01T00:00:00Z'),
+    });
+
+    const result = await resolver.resolve({
+      jurisdictionCode: childCode,
+      productCode: PRODUCT_CODE,
+      lifecycleEvent: LIFECYCLE_EVENT,
+      asOf: new Date('2027-06-01T00:00:00Z'),
+    });
+
+    expect(result.status).toBe('RESOLVED');
+    expect(result.versions.map((version) => version.ruleId)).toContain(
+      'ancestor-rule',
+    );
+  });
+
+  it('fails closed when any declared source in the ancestry is stale', async () => {
+    const staleCode = 'US-STALE-SOURCE';
+    await dataSource.getRepository(Jurisdiction).save(
+      dataSource.getRepository(Jurisdiction).create({
+        code: staleCode,
+        level: JurisdictionLevel.STATE,
+        name: 'Resolver stale-source jurisdiction',
+        coverageStatus: JurisdictionCoverageStatus.COVERED,
+      }),
+    );
+    cleanupIds.jurisdictionCodes.push(staleCode);
+    const { revision } = await makeFreshSource(staleCode, 1);
+    await dataSource
+      .getRepository(PolicySourceRevision)
+      .update(
+        { id: revision.id },
+        { recordedAt: new Date('2020-01-01T00:00:00Z') },
+      );
+
+    const result = await resolver.resolve({
+      jurisdictionCode: staleCode,
+      productCode: PRODUCT_CODE,
+      lifecycleEvent: LIFECYCLE_EVENT,
+      asOf: new Date(),
+    });
+
+    expect(result.status).toBe('REVIEW_REQUIRED');
+    expect(result.unresolvedReasons.join(' ')).toContain(
+      'exceeded its freshness objective',
+    );
+  });
+
+  it('grandfathers an application against the policy window at receipt time', async () => {
+    const transitionCode = 'US-GRANDFATHER';
+    await dataSource.getRepository(Jurisdiction).save(
+      dataSource.getRepository(Jurisdiction).create({
+        code: transitionCode,
+        level: JurisdictionLevel.STATE,
+        name: 'Resolver grandfathering jurisdiction',
+        coverageStatus: JurisdictionCoverageStatus.COVERED,
+      }),
+    );
+    cleanupIds.jurisdictionCodes.push(transitionCode);
+    await makeReleasedVersion({
+      ruleId: 'grandfathered-rule',
+      version: '1.0.0',
+      jurisdictionCode: transitionCode,
+      effectiveFrom: new Date('2025-01-01T00:00:00Z'),
+      effectiveTo: new Date('2027-01-01T00:00:00Z'),
+      transitionRule: 'application_received_on_or_after_effective_date',
+    });
+    await makeReleasedVersion({
+      ruleId: 'grandfathered-rule',
+      version: '2.0.0',
+      jurisdictionCode: transitionCode,
+      effectiveFrom: new Date('2027-01-01T00:00:00Z'),
+      transitionRule: 'application_received_on_or_after_effective_date',
+    });
+
+    const result = await resolver.resolve({
+      jurisdictionCode: transitionCode,
+      productCode: PRODUCT_CODE,
+      lifecycleEvent: LIFECYCLE_EVENT,
+      applicationReceivedAt: new Date('2026-12-15T00:00:00Z'),
+      asOf: new Date('2027-06-01T00:00:00Z'),
+    });
+
+    expect(result.status).toBe('RESOLVED');
+    expect(
+      result.versions.find((version) => version.ruleId === 'grandfathered-rule')
+        ?.version,
+    ).toBe('1.0.0');
+  });
+
+  it('fails closed for an unsupported transition rule', async () => {
+    const unsupportedCode = 'US-UNSUPPORTED-TR';
+    await dataSource.getRepository(Jurisdiction).save(
+      dataSource.getRepository(Jurisdiction).create({
+        code: unsupportedCode,
+        level: JurisdictionLevel.STATE,
+        name: 'Resolver unsupported-transition jurisdiction',
+        coverageStatus: JurisdictionCoverageStatus.COVERED,
+      }),
+    );
+    cleanupIds.jurisdictionCodes.push(unsupportedCode);
+    await makeReleasedVersion({
+      ruleId: 'unsupported-transition-rule',
+      version: '1.0.0',
+      jurisdictionCode: unsupportedCode,
+      effectiveFrom: new Date('2025-01-01T00:00:00Z'),
+      transitionRule: 'guess_based_on_latest_version',
+    });
+
+    const result = await resolver.resolve({
+      jurisdictionCode: unsupportedCode,
+      productCode: PRODUCT_CODE,
+      lifecycleEvent: LIFECYCLE_EVENT,
+      applicationReceivedAt: new Date('2026-01-01T00:00:00Z'),
+      asOf: new Date('2027-06-01T00:00:00Z'),
+    });
+
+    expect(result.status).toBe('REVIEW_REQUIRED');
+    expect(result.unresolvedReasons.join(' ')).toContain(
+      'unsupported transition rule',
+    );
   });
 });

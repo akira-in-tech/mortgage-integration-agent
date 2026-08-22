@@ -124,6 +124,8 @@ async function main(): Promise<void> {
     dataSource.getRepository(Jurisdiction),
     dataSource.getRepository(PolicyApplicability),
     dataSource.getRepository(PolicyVersion),
+    dataSource.getRepository(PolicySource),
+    dataSource.getRepository(PolicySourceRevision),
   );
   const policyEvaluationService = new PolicyEvaluationService(
     resolver,

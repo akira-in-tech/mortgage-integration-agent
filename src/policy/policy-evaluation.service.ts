@@ -14,7 +14,7 @@ import {
 } from './policy-resolution.types';
 import { runInTenantContext } from '../database/tenant-context';
 
-export const RESOLVER_VERSION = '1.0.0';
+export const RESOLVER_VERSION = '2.0.0';
 // Section 10.4: "configured maximum validation interval" — the ceiling on
 // how long a binding can go without at least confirming the catalog
 // generation still matches, regardless of whether anything ever changes.
@@ -44,7 +44,23 @@ function snapshotVersions(resolution: PolicyResolutionResult) {
 }
 
 function contextKey(context: PolicyResolutionContext): string {
-  return `${context.jurisdictionCode}|${context.productCode}|${context.lifecycleEvent}`;
+  return `${context.jurisdictionCode}|${context.productCode}|${context.lifecycleEvent}|${context.applicationReceivedAt?.toISOString() ?? 'UNSPECIFIED'}`;
+}
+
+function nextRevalidationDeadline(
+  validatedAt: Date,
+  resolution: PolicyResolutionResult,
+): Date {
+  const maximumInterval = new Date(
+    validatedAt.getTime() + MAX_VALIDATION_INTERVAL_MS,
+  );
+  if (
+    resolution.revalidateAfter &&
+    resolution.revalidateAfter.getTime() < maximumInterval.getTime()
+  ) {
+    return resolution.revalidateAfter;
+  }
+  return maximumInterval;
 }
 
 /** Rebuilds a `PolicyResolutionResult` from a persisted snapshot alone — no `PolicyVersion` lookups — for the fast path below. */
@@ -128,9 +144,20 @@ export class PolicyEvaluationService {
         }),
     );
     const now = new Date();
+    const existingSnapshot = existingBinding
+      ? await runInTenantContext(this.dataSource, tenantId, (manager) =>
+          manager
+            .getRepository(CasePolicySnapshot)
+            .findOneByOrFail({ id: existingBinding.policySnapshotId }),
+        )
+      : undefined;
 
+    // Resolver releases are policy dependencies. A deployment may change
+    // hierarchy, freshness, or transition semantics without changing a
+    // catalog row, so older snapshots must bypass both reuse fast paths.
     if (
       existingBinding &&
+      existingSnapshot?.resolverVersion === RESOLVER_VERSION &&
       existingBinding.contextKey === currentContextKey &&
       existingBinding.observedCatalogGeneration === currentGeneration &&
       existingBinding.revalidateAfter.getTime() > now.getTime()
@@ -139,18 +166,10 @@ export class PolicyEvaluationService {
       // catalog generation since this binding was created, and the
       // periodic revalidation deadline hasn't passed — reuse without
       // calling the resolver at all.
-      const snapshot = await runInTenantContext(
-        this.dataSource,
-        tenantId,
-        (manager) =>
-          manager
-            .getRepository(CasePolicySnapshot)
-            .findOneByOrFail({ id: existingBinding.policySnapshotId }),
-      );
       return {
         outcome: 'REUSED',
-        resolution: reconstructResolution(snapshot),
-        snapshot,
+        resolution: reconstructResolution(existingSnapshot),
+        snapshot: existingSnapshot,
         binding: existingBinding,
       };
     }
@@ -178,6 +197,7 @@ export class PolicyEvaluationService {
 
     if (
       existingBinding &&
+      existingSnapshot?.resolverVersion === RESOLVER_VERSION &&
       existingBinding.contextKey === currentContextKey &&
       existingBinding.dependencyDigest === digest
     ) {
@@ -185,9 +205,7 @@ export class PolicyEvaluationService {
       // but this case's own applicable content is unchanged — refresh
       // the binding's observed generation in place (no new snapshot) so
       // the next call can take the fast path again immediately.
-      const revalidateAfter = new Date(
-        now.getTime() + MAX_VALIDATION_INTERVAL_MS,
-      );
+      const revalidateAfter = nextRevalidationDeadline(now, resolution);
       await runInTenantContext(this.dataSource, tenantId, (manager) =>
         manager
           .getRepository(CasePolicyBinding)
@@ -196,18 +214,10 @@ export class PolicyEvaluationService {
             { observedCatalogGeneration: currentGeneration, revalidateAfter },
           ),
       );
-      const snapshot = await runInTenantContext(
-        this.dataSource,
-        tenantId,
-        (manager) =>
-          manager
-            .getRepository(CasePolicySnapshot)
-            .findOneByOrFail({ id: existingBinding.policySnapshotId }),
-      );
       return {
         outcome: 'REUSED',
         resolution,
-        snapshot,
+        snapshot: existingSnapshot,
         binding: {
           ...existingBinding,
           observedCatalogGeneration: currentGeneration,
@@ -244,9 +254,7 @@ export class PolicyEvaluationService {
               contextKey: currentContextKey,
               observedCatalogGeneration: currentGeneration,
               policySnapshotId: snapshot.id,
-              revalidateAfter: new Date(
-                now.getTime() + MAX_VALIDATION_INTERVAL_MS,
-              ),
+              revalidateAfter: nextRevalidationDeadline(now, resolution),
               invalidatedAt: null,
             }),
           );

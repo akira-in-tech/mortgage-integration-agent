@@ -10133,3 +10133,51 @@ The merge commit author is `Akira <akiraye1999@gmail.com>`. The three untracked 
 ### Next safe step
 
 Push the merge plus this audit note, require a green GitHub Actions run for the new head, and confirm GitHub no longer reports the PR as `DIRTY`.
+
+## M7-010: ancestry-aware, freshness-bounded policy transition execution
+
+### Status
+
+Implemented and database-verified. A live evaluation now confirms the complete jurisdiction chain, every declared source's freshness, and the policy window anchored to the original application receipt time before it can reuse or create a binding.
+
+### Acceptance criterion
+
+A child jurisdiction includes rules from every covered ancestor; missing, partial, cyclic, or source-less ancestry fails closed; a stale or revision-less source fails closed; grandfathering selects the version effective when the application was received; unsupported transition semantics fail closed; and a resolver release, source deadline, scheduled effective boundary, or maximum validation interval prevents unsafe binding reuse.
+
+### Implementation
+
+- `PolicyApplicabilityResolverService` now walks `Jurisdiction.parentCode` to the root with explicit missing-node and cycle detection, queries applicability for the bounded ancestry set, and preserves overlap-as-ambiguity semantics across layers.
+- Each COVERED ancestry node must own at least one registered `PolicySource`. The latest `PolicySourceRevision.recordedAt` plus the source's own positive `freshnessObjectiveHours` defines its authoritative deadline; any missing revision, invalid objective, or expired deadline routes to review.
+- The allowlisted `application_received_on_or_after_effective_date` transition evaluates both ends of a version's effective window against immutable `LoanCase.createdAt`. The evaluation-time strategy remains explicit; unknown strings never fall back to newest-version guessing.
+- `PolicyResolutionResult.revalidateAfter` carries the earliest source or scheduled boundary. `PolicyEvaluationService` takes the minimum of that value and its one-hour maximum validation interval.
+- The binding context key now includes application receipt time, and resolver version `2.0.0` invalidates snapshots produced under prior resolver semantics even when no catalog row changed.
+- The durable LangGraph path reads `LoanCase.createdAt` on the server and passes it through `evaluate_policy`; policy change-impact dry runs use the same immutable value.
+- Migration 43 adds a freshness-bounded federal coverage sentinel for the existing synthetic US ancestry node. It records reviewed no-rule coverage without inventing a federal rule.
+
+### Errors found and fixed
+
+The first grandfathering test reused the suite's shared base jurisdiction after an earlier overlap test had deliberately left two conflicting versions in place, producing a legitimate `REVIEW_REQUIRED`. The transition tests now own distinct jurisdictions so they prove transition behavior rather than fixture pollution.
+
+A final fast-path audit found that catalog generation alone did not invalidate a binding after resolver code changed. The resolver version is now checked on both reuse paths; an old-version snapshot forces full resolution and replacement.
+
+### Verification
+
+```text
+npm run build — passed
+cumulative 43-migration apply on isolated PostgreSQL 16 database — passed
+43rd migration revert and re-apply on the same isolated database — passed
+targeted real PostgreSQL policy, Agent-runtime, and workflow suites —
+  6 suites / 64 tests passed
+```
+
+### Security, privacy, cost, and compatibility
+
+Freshness uses internal revision metadata and trusted server time; no evaluation performs web scraping, paid calls, or accepts a client-supplied policy timestamp. Application receipt time comes from the tenant-scoped persisted case. Historical replay remains a separate authorization concern. Existing exact-jurisdiction policies remain applicable, while newly visible ancestor policies can only narrow an unsafe omission.
+
+### Known gaps
+
+No external connector currently polls authoritative policy sources or authors candidate DSL revisions. Program/investor and tenant overlays still need dedicated dependency keys beyond the conservative global catalog generation. Only the two documented transition strategies are executable; additional legal transition semantics require reviewed implementations and tests rather than free-form interpretation.
+
+### Next safe step
+
+Expose the existing Agent-budget reconciliation and aggregate usage APIs in the operations console, then add OpenTelemetry telemetry and downloadable evaluation evidence.

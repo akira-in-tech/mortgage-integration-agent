@@ -208,6 +208,7 @@ export class PolicyChangeImpactService {
       jurisdictionCode: context.jurisdictionCode,
       productCode: context.productCode,
       lifecycleEvent: context.lifecycleEvent,
+      applicationReceivedAt: loanCase.createdAt,
       asOf: new Date(),
     });
     const { impact, details } = classifyImpact(priorSnapshot, dryRun);

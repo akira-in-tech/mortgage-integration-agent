@@ -35,7 +35,10 @@ import { PolicySourceRetrievalMode } from '../../database/enums/policy-source.en
 import { PolicyReleaseStatus } from '../../database/enums/policy-version.enum';
 import { LoanType } from '../../database/enums/loan-type.enum';
 import { PolicyApplicabilityResolverService } from '../../policy/policy-applicability-resolver.service';
-import { PolicyEvaluationService } from '../../policy/policy-evaluation.service';
+import {
+  PolicyEvaluationService,
+  RESOLVER_VERSION,
+} from '../../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../../policy/evaluation-manifest.service';
 import { CommunicationMessageService } from '../../communications/communication-message.service';
 import { LendingOperationsAgentState } from '../agent-state.types';
@@ -101,6 +104,8 @@ describeOrSkip(
         dataSource.getRepository(Jurisdiction),
         dataSource.getRepository(PolicyApplicability),
         dataSource.getRepository(PolicyVersion),
+        dataSource.getRepository(PolicySource),
+        dataSource.getRepository(PolicySourceRevision),
       );
       policyEvaluationService = new PolicyEvaluationService(
         resolver,
@@ -433,7 +438,7 @@ describeOrSkip(
       expect(manifest.caseId).toBe(caseId);
       expect(manifest.policyBindingId).not.toBeNull();
       expect(manifest.observedPolicyDependencyDigest).toHaveLength(64);
-      expect(manifest.evaluatorVersion).toBe('1.0.0');
+      expect(manifest.evaluatorVersion).toBe(RESOLVER_VERSION);
       expect(manifest.manifestHash).toHaveLength(64);
       const incomeFact = await dataSource
         .getRepository(EvidenceFact)

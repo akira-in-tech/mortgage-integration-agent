@@ -81,6 +81,8 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       dataSource.getRepository(Jurisdiction),
       dataSource.getRepository(PolicyApplicability),
       dataSource.getRepository(PolicyVersion),
+      dataSource.getRepository(PolicySource),
+      dataSource.getRepository(PolicySourceRevision),
     );
     evaluationService = new PolicyEvaluationService(
       resolver,
