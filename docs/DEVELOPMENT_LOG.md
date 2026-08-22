@@ -9892,3 +9892,42 @@ The first full CI-equivalent backend run also exposed stale evaluation-corpus le
 ### Next safe step
 
 Add tenant aggregate limits and a least-privilege reservation reconciliation API/console queue, then address policy-source freshness and jurisdiction inheritance.
+
+## M7-004: non-destructive live OIDC test isolation
+
+### Status
+
+Implemented and verified twice consecutively against the same real Keycloak and PostgreSQL services. Identity integration tests now coexist with a user provisioned by the live browser environment instead of colliding with or deleting it.
+
+### Acceptance criterion
+
+Both real-token guard suites can run repeatedly when the seeded Keycloak subject already has a local `users` row; each suite removes only memberships and users it created; the unknown-subject negative test preserves pre-existing memberships and sessions.
+
+### Implementation
+
+- Reused the existing user for the configured issuer subject when present and recorded ownership only when a suite created the row.
+- Tracked exact membership row ids and deleted only those rows, replacing prior user-wide membership cleanup that could remove unrelated tenant grants.
+- Reworked the unknown-subject test to temporarily replace the existing row's subject and restore it in `finally`. The user id remains stable, so foreign-key cascades cannot erase shared membership/session state.
+- Applied the same ownership-aware fixture behavior to the combined API-key/OIDC tenant guard suite.
+
+### Verification
+
+```text
+npm run lint — passed with zero warnings
+npm run build — passed
+real Keycloak/PostgreSQL OIDC + tenant-auth guard suites, first run —
+  2 suites / 11 tests passed
+identical command, immediate second run — 2 suites / 11 tests passed
+```
+
+### Error and fix
+
+The full CI-equivalent run found `UQ_users_subject` collisions because the live browser smoke environment had legitimately provisioned the same seeded Keycloak identity. The old tests assumed exclusive ownership and their cleanup could delete shared state. Reuse plus row-level ownership tracking fixes the test contract rather than clearing the database to make the symptom disappear.
+
+### Security and compatibility
+
+No credential, tenant membership, or session outside the exact fixture-owned rows is deleted. The negative test still exercises a real signed token with no matching subject while keeping the shared user's stable primary key and restoring the subject even when the assertion fails.
+
+### Next safe step
+
+Rerun the complete backend and browser CI-equivalent matrix from the now-repeatable shared local stack.

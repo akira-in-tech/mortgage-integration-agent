@@ -78,7 +78,8 @@ describeOrSkip('TenantAuthGuard (Section 16.1, M5-024)', () => {
   let guard: TenantAuthGuard;
   let apiClientService: ApiClientService;
   const apiClientIds: string[] = [];
-  const userIds: string[] = [];
+  const createdUserIds: string[] = [];
+  const membershipIds: string[] = [];
 
   beforeAll(async () => {
     dataSource = new DataSource({
@@ -108,14 +109,11 @@ describeOrSkip('TenantAuthGuard (Section 16.1, M5-024)', () => {
       if (apiClientIds.length > 0) {
         await dataSource.getRepository(ApiClient).delete(apiClientIds);
       }
-      if (userIds.length > 0) {
-        await dataSource
-          .getRepository(TenantMembership)
-          .createQueryBuilder()
-          .delete()
-          .where('"userId" IN (:...ids)', { ids: userIds })
-          .execute();
-        await dataSource.getRepository(User).delete(userIds);
+      if (membershipIds.length > 0) {
+        await dataSource.getRepository(TenantMembership).delete(membershipIds);
+      }
+      if (createdUserIds.length > 0) {
+        await dataSource.getRepository(User).delete(createdUserIds);
       }
       await dataSource.destroy();
     }
@@ -141,22 +139,24 @@ describeOrSkip('TenantAuthGuard (Section 16.1, M5-024)', () => {
   it('authenticates a real OIDC token for a provisioned user with a real tenant membership', async () => {
     const token = await fetchRealToken();
     const subject = decodeJwt(token).sub as string;
-    const user = await dataSource.getRepository(User).save(
-      dataSource.getRepository(User).create({
-        subject,
-        email: 'reviewer@example.com',
-      }),
-    );
-    userIds.push(user.id);
+    const userRepo = dataSource.getRepository(User);
+    let user = await userRepo.findOneBy({ subject });
+    if (!user) {
+      user = await userRepo.save(
+        userRepo.create({ subject, email: 'reviewer@example.com' }),
+      );
+      createdUserIds.push(user.id);
+    }
 
     const tenantId = randomUUID();
-    await dataSource.getRepository(TenantMembership).save(
+    const membership = await dataSource.getRepository(TenantMembership).save(
       dataSource.getRepository(TenantMembership).create({
         tenantId,
         userId: user.id,
         role: ApiClientRole.REVIEWER,
       }),
     );
+    membershipIds.push(membership.id);
 
     const { context, request } = contextFor(`Bearer ${token}`, tenantId);
     await expect(guard.canActivate(context)).resolves.toBe(true);

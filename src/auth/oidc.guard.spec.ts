@@ -86,7 +86,8 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
   let identityGuard: OidcIdentityGuard;
   let subject: string;
   let userId: string;
-  const userIds: string[] = [];
+  let createdUserId: string | undefined;
+  const membershipIds: string[] = [];
 
   beforeAll(async () => {
     dataSource = new DataSource({
@@ -118,26 +119,24 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
     const claims = decodeJwt(token);
     subject = claims.sub as string;
 
-    const user = await dataSource.getRepository(User).save(
-      dataSource.getRepository(User).create({
-        subject,
-        email: 'reviewer@example.com',
-      }),
-    );
+    const userRepo = dataSource.getRepository(User);
+    let user = await userRepo.findOneBy({ subject });
+    if (!user) {
+      user = await userRepo.save(
+        userRepo.create({ subject, email: 'reviewer@example.com' }),
+      );
+      createdUserId = user.id;
+    }
     userId = user.id;
-    userIds.push(user.id);
   }, 15_000);
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
-      if (userIds.length > 0) {
-        await dataSource
-          .getRepository(TenantMembership)
-          .createQueryBuilder()
-          .delete()
-          .where('"userId" IN (:...ids)', { ids: userIds })
-          .execute();
-        await dataSource.getRepository(User).delete(userIds);
+      if (membershipIds.length > 0) {
+        await dataSource.getRepository(TenantMembership).delete(membershipIds);
+      }
+      if (createdUserId) {
+        await dataSource.getRepository(User).delete(createdUserId);
       }
       await dataSource.destroy();
     }
@@ -145,13 +144,14 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
 
   it('accepts a real token for a provisioned user with a real tenant membership, attaching the resolved AuthContext', async () => {
     const tenantId = randomUUID();
-    await dataSource.getRepository(TenantMembership).save(
+    const membership = await dataSource.getRepository(TenantMembership).save(
       dataSource.getRepository(TenantMembership).create({
         tenantId,
         userId,
         role: ApiClientRole.REVIEWER,
       }),
     );
+    membershipIds.push(membership.id);
 
     const token = await fetchRealToken();
     const { context, request } = contextFor(`Bearer ${token}`, tenantId);
@@ -202,24 +202,21 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
     // credential this test intentionally doesn't reach for. Simpler and
     // just as real: a well-formed but nonexistent subject fails the same
     // way any unrecognized bearer credential does — verified via a
-    // temporarily-deleted user of our own instead.
+    // temporarily-hidden subject of our own instead. Updating the subject
+    // preserves any pre-existing user's memberships and sessions; deleting
+    // the shared fixture would cascade unrelated local state.
     const token = await fetchRealToken();
-    await dataSource.getRepository(User).delete({ subject });
+    const hiddenSubject = `oidc-guard-hidden-${randomUUID()}`;
+    await dataSource
+      .getRepository(User)
+      .update({ id: userId }, { subject: hiddenSubject });
     try {
       const { context } = contextFor(`Bearer ${token}`, randomUUID());
       await expect(guard.canActivate(context)).rejects.toThrow(
         UnauthorizedException,
       );
     } finally {
-      const restored = await dataSource.getRepository(User).save(
-        dataSource.getRepository(User).create({
-          subject,
-          email: 'reviewer@example.com',
-        }),
-      );
-      // A fresh row, not the original — track it separately for cleanup
-      // rather than reusing the stale `userId` captured in beforeAll.
-      userIds.push(restored.id);
+      await dataSource.getRepository(User).update({ id: userId }, { subject });
     }
   }, 15_000);
 
