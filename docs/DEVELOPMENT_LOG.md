@@ -10085,3 +10085,26 @@ The console still lacks the reservation queue and aggregate usage view. Aggregat
 ### Next safe step
 
 Expose read-only aggregate usage and UNKNOWN reservations in the console, then prioritize policy-source freshness and jurisdiction inheritance before expanding policy coverage.
+
+## M7-008: first GitHub-hosted launch-gate evidence
+
+### Status
+
+GitHub Actions run `32557321872` completed successfully for Akira's pushed commit `1f80bdb` on draft PR #2. This upgrades the earlier local-only evidence to hosted CI evidence for that exact revision; it is still not evidence of a deployed staging or production environment.
+
+### Verification
+
+```text
+build-and-test — passed in 2m38s
+console — passed in 42s
+container-build — passed in 52s
+production-dependency-audit — passed in 10s
+```
+
+### Identity and publication boundary
+
+Before publication, Git author/email were verified as `Akira <akiraye1999@gmail.com>`, GitHub CLI's active account was verified as `akira-in-tech`, the remote was verified as `https://github.com/akira-in-tech/mortgage-integration-agent.git`, and the remote branch was confirmed to be an ancestor of the local branch. Fourteen commits were fast-forward pushed to `project-bugfix-unit-tests`; draft PR #2 was created against `main`. No alternate Git or GitHub identity was used.
+
+### Honest boundary
+
+The run proves repository CI on GitHub-hosted infrastructure. It does not prove cloud deployment, real-provider certification, legal/compliance approval, real borrower data handling, backup recovery, load/soak behavior, or production SLO attainment.
