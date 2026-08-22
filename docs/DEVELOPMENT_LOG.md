@@ -10342,3 +10342,33 @@ root dependency audit at installation — 0 vulnerabilities
 ### Boundaries and next step
 
 This slice proves safe initialization, export configuration, automatic framework/database spans, trace correlation, and data-minimizing sanitization. It does not yet claim domain metric coverage, a running Collector/dashboard, alert behavior, or SLO attainment. The next independent slice adds low-cardinality provider, policy, Agent, workflow, and webhook signals before the local observability stack consumes them.
+
+## M7-014b: governed domain telemetry and Temporal trace propagation
+
+### Status
+
+Implemented and verified at the unit/build boundary. Provider dispatch, policy binding, bounded Agent execution, authoritative budget transitions, Temporal client/worker execution, and webhook delivery now emit correlated traces and low-cardinality operational metrics.
+
+### Implementation
+
+- Added domain counters and duration histograms for provider outcomes, policy reuse/refresh/review, Agent terminal routes and tool attempts, budget reservation transitions and units, Temporal client operations, and webhook batches/delivery outcomes.
+- Labels are restricted to domain enums, fixed operation names, registered Agent tools, booleans, and bounded failure codes. Tenant, case, borrower, workflow, intent, ledger, reservation, endpoint, and provider-generated identifiers are never metric labels.
+- Added the Temporal SDK's OpenTelemetry v2 plugin to API clients and workers so W3C trace context crosses workflow and activity boundaries instead of ending at the API's start/signal call.
+- Added a final sanitizing exporter in front of OTLP. It removes Temporal business IDs, user IDs, headers, cookies, authorization values, exception messages/stacks, database namespaces/parameters, and GraphQL documents; it also strips HTTP queries and reduces SQL to an operation verb. This applies to framework, library, Temporal, and application spans alike.
+- Preserved Temporal replay safety by using its official plugin/workflow interceptor path instead of accessing wall clock, random values, or the Node SDK from deterministic workflow code.
+- Kept manual workflow/client metrics separate from identifiers used internally for durable idempotency and reconciliation.
+
+### Verification
+
+```text
+telemetry configuration, label safety, exporter DLP, provider dispatch —
+  4 suites / 13 tests passed; 9 database-gated tests skipped in the host-only run
+npm run lint:check — passed
+npm run build — passed
+npm install audit result after replacing the legacy Temporal OTel package — 0 vulnerabilities
+git diff --check — passed
+```
+
+### Boundaries and next step
+
+The host-only verification does not prove export against a live Collector, metric-name translation in Prometheus, dashboard queries, alerts, or cross-process trace continuity in a real Temporal server. The next slice adds the self-hosted Collector, Tempo, Prometheus, and Grafana profile plus executable configuration checks, SLO rules, and operator runbooks; the final CI-equivalent run will exercise database- and Temporal-gated suites.

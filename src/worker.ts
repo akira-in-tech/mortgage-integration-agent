@@ -1,4 +1,7 @@
-import { shutdownTelemetry } from './instrumentation';
+import {
+  getTemporalTelemetryPlugins,
+  shutdownTelemetry,
+} from './instrumentation';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
@@ -99,6 +102,7 @@ async function bootstrap(): Promise<void> {
     // already proven working in case-conditions.workflow.spec.ts.
     workflowsPath: require.resolve('./workflows/case-conditions.workflow'),
     activities,
+    plugins: getTemporalTelemetryPlugins(),
   });
 
   console.log(

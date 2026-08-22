@@ -10,6 +10,10 @@ import {
 } from './types';
 import { SyntheticProviderRejectionError } from '../integrations/synthetic-provider-failures';
 import { ConsentService } from '../consent/consent.service';
+import {
+  operationalTelemetry,
+  ProviderOutcome,
+} from '../observability/operational-telemetry';
 
 export interface DispatchProviderRequestDeps {
   registry: ProviderRegistryService;
@@ -140,112 +144,154 @@ export async function dispatchProviderRequest<TFinding>(
 ): Promise<TFinding> {
   const mode = params.mode ?? 'SIMULATOR';
   const adapter = deps.registry.resolve(params.capability, mode);
+  const telemetryStartedAt = performance.now();
+  let telemetryOutcome: ProviderOutcome = 'failed';
 
-  const active = await deps.killSwitchService.isActive(
-    adapter.providerId,
-    params.capability,
-    mode,
-  );
-  if (!active) {
-    throw new ProviderDisabledError(
-      `provider ${adapter.providerId} capability=${params.capability} mode=${mode} is disabled — see provider_adapter_status for the reason`,
-    );
-  }
-
-  // M4-007: SIMULATOR stays the free default (Section 11.1) — the
-  // governed promotion chain only gates modes real credentials could
-  // actually reach.
-  if (mode !== 'SIMULATOR') {
-    const activated = await deps.promotionService.isActivated(
-      adapter.providerId,
-      params.capability,
-      mode,
-    );
-    if (!activated) {
-      throw new ProviderNotActivatedError(
-        `provider ${adapter.providerId} capability=${params.capability} mode=${mode} has no active promotion — see provider_activations`,
-      );
-    }
-  }
-
-  // M5-005: attach the case's own active consent record (if any) to the
-  // grant being issued, so revalidate() can later confirm it's still
-  // granted and unrevoked (Section 11.5) immediately before dispatch.
-  const consentRecordId = await deps.consentService.activeRecordId(
-    params.tenantId,
-    params.caseId,
-  );
-
-  const grant = await deps.authorizationService.issue({
-    tenantId: params.tenantId,
-    caseId: params.caseId,
-    borrowerSubjectId: params.borrowerSubjectId,
-    providerId: adapter.providerId,
-    capability: params.capability,
-    purposeCode: params.purposeCode,
-    permittedDataClasses: params.permittedDataClasses,
-    permittedFields: params.permittedFields,
-    consentRecordIds: consentRecordId ? [consentRecordId] : [],
-  });
-
-  const intent = await deps.intentService.prepare({
-    tenantId: params.tenantId,
-    caseId: params.caseId,
-    providerId: adapter.providerId,
-    capability: params.capability,
-    effectClass: adapter.operation.effectClass,
-    authorizationGrantId: grant.id,
-    requestPayloadForFingerprint: params.request,
-  });
-
-  const revalidation = await deps.authorizationService.revalidate(grant.id, {
-    tenantId: params.tenantId,
-    caseId: params.caseId,
-    providerId: adapter.providerId,
-    capability: params.capability,
-  });
-  if (!revalidation.valid) {
-    await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
-    throw new ProviderRevalidationError(revalidation.reason);
-  }
-
-  await deps.intentService.markDispatched(intent.tenantId, intent.id);
   try {
-    const receipt = (await adapter.submit(
-      params.request,
-      intent,
-      revalidation.grant,
-      { tenantId: params.tenantId, caseId: params.caseId },
-    )) as SynchronousProviderReceipt<unknown>;
-    await deps.intentService.markSucceeded(intent.tenantId, intent.id);
-    const finding = adapter.normalize(receipt.payload, {
-      tenantId: params.tenantId,
-      caseId: params.caseId,
-    }) as TFinding;
-    // Section 11.5's field-bound authorization (M5-028) — filtered
-    // against the freshly revalidated grant's own permittedFields, not
-    // params.permittedFields directly, the same "trust the revalidated
-    // state, not the original request" discipline revalidate() itself
-    // exists for.
-    return filterToPermittedFields(finding, revalidation.grant.permittedFields);
-  } catch (error) {
-    if (error instanceof SyntheticProviderRejectionError) {
-      await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
-    } else {
-      // M5-027: any other failure — including a real one from a real
-      // adapter (M4-007's AUTHORIZED_SANDBOX Plaid integration can throw
-      // a genuine network/HTTP error this synthetic-only classification
-      // never anticipated) — is classified the same conservative way
-      // `SyntheticProviderTimeoutError` already was: Section 11.5's own
-      // "after an ambiguous timeout, the state becomes OUTCOME_UNKNOWN."
-      // Leaving an intent silently stuck at DISPATCHED with an
-      // unclassified thrown error, its previous behavior for anything
-      // that wasn't a recognized synthetic fault, is strictly worse: it
-      // doesn't even signal that the real outcome is unknown.
-      // ProviderReconciliationService is what eventually notices an
-      // intent stuck here and flags it for a human.
-      await deps.intentService.markOutcomeUnknown(intent.tenantId, intent.id);
-    }
-    throw error;
+    return await operationalTelemetry.withSpan(
+      'provider.dispatch',
+      {
+        capability: params.capability,
+        mode,
+        effect_class: adapter.operation.effectClass,
+      },
+      async () => {
+        const active = await deps.killSwitchService.isActive(
+          adapter.providerId,
+          params.capability,
+          mode,
+        );
+        if (!active) {
+          telemetryOutcome = 'disabled';
+          throw new ProviderDisabledError(
+            `provider ${adapter.providerId} capability=${params.capability} mode=${mode} is disabled — see provider_adapter_status for the reason`,
+          );
+        }
+
+        // M4-007: SIMULATOR stays the free default (Section 11.1) — the
+        // governed promotion chain only gates modes real credentials could
+        // actually reach.
+        if (mode !== 'SIMULATOR') {
+          const activated = await deps.promotionService.isActivated(
+            adapter.providerId,
+            params.capability,
+            mode,
+          );
+          if (!activated) {
+            telemetryOutcome = 'not_activated';
+            throw new ProviderNotActivatedError(
+              `provider ${adapter.providerId} capability=${params.capability} mode=${mode} has no active promotion — see provider_activations`,
+            );
+          }
+        }
+
+        // M5-005: attach the case's own active consent record (if any) to the
+        // grant being issued, so revalidate() can later confirm it's still
+        // granted and unrevoked (Section 11.5) immediately before dispatch.
+        const consentRecordId = await deps.consentService.activeRecordId(
+          params.tenantId,
+          params.caseId,
+        );
+
+        const grant = await deps.authorizationService.issue({
+          tenantId: params.tenantId,
+          caseId: params.caseId,
+          borrowerSubjectId: params.borrowerSubjectId,
+          providerId: adapter.providerId,
+          capability: params.capability,
+          purposeCode: params.purposeCode,
+          permittedDataClasses: params.permittedDataClasses,
+          permittedFields: params.permittedFields,
+          consentRecordIds: consentRecordId ? [consentRecordId] : [],
+        });
+
+        const intent = await deps.intentService.prepare({
+          tenantId: params.tenantId,
+          caseId: params.caseId,
+          providerId: adapter.providerId,
+          capability: params.capability,
+          effectClass: adapter.operation.effectClass,
+          authorizationGrantId: grant.id,
+          requestPayloadForFingerprint: params.request,
+        });
+
+        const revalidation = await deps.authorizationService.revalidate(
+          grant.id,
+          {
+            tenantId: params.tenantId,
+            caseId: params.caseId,
+            providerId: adapter.providerId,
+            capability: params.capability,
+          },
+        );
+        if (!revalidation.valid) {
+          telemetryOutcome = 'authorization_rejected';
+          await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
+          throw new ProviderRevalidationError(revalidation.reason);
+        }
+
+        await deps.intentService.markDispatched(intent.tenantId, intent.id);
+        try {
+          const receipt = (await adapter.submit(
+            params.request,
+            intent,
+            revalidation.grant,
+            { tenantId: params.tenantId, caseId: params.caseId },
+          )) as SynchronousProviderReceipt<unknown>;
+          await deps.intentService.markSucceeded(intent.tenantId, intent.id);
+          const finding = adapter.normalize(receipt.payload, {
+            tenantId: params.tenantId,
+            caseId: params.caseId,
+          }) as TFinding;
+          // Section 11.5's field-bound authorization (M5-028) — filtered
+          // against the freshly revalidated grant's own permittedFields, not
+          // params.permittedFields directly, the same "trust the revalidated
+          // state, not the original request" discipline revalidate() itself
+          // exists for.
+          telemetryOutcome = 'succeeded';
+          return filterToPermittedFields(
+            finding,
+            revalidation.grant.permittedFields,
+          );
+        } catch (error) {
+          if (error instanceof SyntheticProviderRejectionError) {
+            telemetryOutcome = 'provider_rejected';
+            await deps.intentService.markFailedFinal(
+              intent.tenantId,
+              intent.id,
+            );
+          } else {
+            telemetryOutcome = 'outcome_unknown';
+            // M5-027: any other failure — including a real one from a real
+            // adapter (M4-007's AUTHORIZED_SANDBOX Plaid integration can throw
+            // a genuine network/HTTP error this synthetic-only classification
+            // never anticipated) — is classified the same conservative way
+            // `SyntheticProviderTimeoutError` already was: Section 11.5's own
+            // "after an ambiguous timeout, the state becomes OUTCOME_UNKNOWN."
+            // Leaving an intent silently stuck at DISPATCHED with an
+            // unclassified thrown error, its previous behavior for anything
+            // that wasn't a recognized synthetic fault, is strictly worse: it
+            // doesn't even signal that the real outcome is unknown.
+            // ProviderReconciliationService is what eventually notices an
+            // intent stuck here and flags it for a human.
+            await deps.intentService.markOutcomeUnknown(
+              intent.tenantId,
+              intent.id,
+            );
+          }
+          throw error;
+        }
+      },
+    );
+  } finally {
+    operationalTelemetry.recordProvider(
+      {
+        capability: params.capability,
+        mode,
+        effectClass: adapter.operation.effectClass,
+        outcome: telemetryOutcome,
+      },
+      telemetryStartedAt,
+    );
   }
 }

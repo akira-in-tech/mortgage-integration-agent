@@ -9,6 +9,7 @@ import {
 } from '../database/entities/agent-budget-reservation.entity';
 import { TenantAgentBudgetUsage } from '../database/entities/tenant-agent-budget-usage.entity';
 import { Tenant } from '../database/entities/tenant.entity';
+import { operationalTelemetry } from '../observability/operational-telemetry';
 
 export type AgentBudgetFailureCode =
   | 'BUDGET_EXHAUSTED'
@@ -93,6 +94,23 @@ export interface AgentBudgetAggregateUsageSnapshot {
 @Injectable()
 export class AgentBudgetLedgerService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+
+  private async observeReservation(
+    action: 'reserve' | 'commit' | 'release' | 'mark_unknown',
+    operation: () => Promise<AgentBudgetReservationReceipt>,
+  ): Promise<AgentBudgetReservationReceipt> {
+    try {
+      const receipt = await operation();
+      operationalTelemetry.recordBudgetReservation(action, receipt);
+      return receipt;
+    } catch (error) {
+      operationalTelemetry.recordBudgetFailure(
+        action,
+        error instanceof AgentBudgetError ? error.code : 'ERROR',
+      );
+      throw error;
+    }
+  }
 
   async listUnknown(
     tenantId: string,
@@ -237,32 +255,33 @@ export class AgentBudgetLedgerService {
     expectedVersion: number;
     units: AgentBudgetUnits;
   }): Promise<AgentBudgetReservationReceipt> {
-    this.validateUnits(input.units);
-    if (!input.idempotencyKey || input.idempotencyKey.length > 200) {
-      throw new AgentBudgetError(
-        'RESERVATION_CONFLICT',
-        'Budget reservation requires a bounded idempotency key',
-      );
-    }
-    try {
-      return await runInTenantContext(
-        this.dataSource,
-        input.tenantId,
-        async (manager) => {
-          const existing = await manager
-            .getRepository(AgentBudgetReservation)
-            .findOneBy({
-              ledgerId: input.ledgerId,
-              tenantId: input.tenantId,
-              idempotencyKey: input.idempotencyKey,
-            });
-          if (existing) {
-            this.assertSameUnits(existing, input.units);
-            return this.receiptFor(manager, existing, true);
-          }
+    return this.observeReservation('reserve', async () => {
+      this.validateUnits(input.units);
+      if (!input.idempotencyKey || input.idempotencyKey.length > 200) {
+        throw new AgentBudgetError(
+          'RESERVATION_CONFLICT',
+          'Budget reservation requires a bounded idempotency key',
+        );
+      }
+      try {
+        return await runInTenantContext(
+          this.dataSource,
+          input.tenantId,
+          async (manager) => {
+            const existing = await manager
+              .getRepository(AgentBudgetReservation)
+              .findOneBy({
+                ledgerId: input.ledgerId,
+                tenantId: input.tenantId,
+                idempotencyKey: input.idempotencyKey,
+              });
+            if (existing) {
+              this.assertSameUnits(existing, input.units);
+              return this.receiptFor(manager, existing, true);
+            }
 
-          const [ledgers] = (await manager.query(
-            `UPDATE "agent_budget_ledgers"
+            const [ledgers] = (await manager.query(
+              `UPDATE "agent_budget_ledgers"
                SET "stepReserved" = "stepReserved" + $3,
                    "tokenReserved" = "tokenReserved" + $4,
                    "providerCallReserved" = "providerCallReserved" + $5,
@@ -277,60 +296,61 @@ export class AgentBudgetLedgerService {
                AND "providerCallUsed" + "providerCallReserved" + $5 <= "providerCallLimit"
                AND "costUsedMinorUnits" + "costReservedMinorUnits" + $6 <= "costLimitMinorUnits"
              RETURNING *`,
-            [
-              input.ledgerId,
+              [
+                input.ledgerId,
+                input.tenantId,
+                input.units.stepUnits,
+                input.units.tokenUnits,
+                input.units.providerCallUnits,
+                input.units.costMinorUnits,
+                input.expectedVersion,
+              ],
+            )) as [AgentBudgetLedger[], number];
+            if (!ledgers[0]) {
+              await this.throwReservationFailure(manager, input);
+            }
+            const aggregateWindowStart = await this.reserveTenantAggregate(
+              manager,
               input.tenantId,
-              input.units.stepUnits,
-              input.units.tokenUnits,
-              input.units.providerCallUnits,
-              input.units.costMinorUnits,
-              input.expectedVersion,
-            ],
-          )) as [AgentBudgetLedger[], number];
-          if (!ledgers[0]) {
-            await this.throwReservationFailure(manager, input);
-          }
-          const aggregateWindowStart = await this.reserveTenantAggregate(
-            manager,
-            input.tenantId,
-            ledgers[0].currency.trim(),
-            input.units,
-          );
-          const reservation = await manager
-            .getRepository(AgentBudgetReservation)
-            .save(
-              manager.getRepository(AgentBudgetReservation).create({
-                tenantId: input.tenantId,
-                ledgerId: input.ledgerId,
-                idempotencyKey: input.idempotencyKey,
-                ...input.units,
-                aggregateWindowStart,
-                actualCostMinorUnits: null,
-                status: AgentBudgetReservationStatus.Reserved,
-                resolvedAt: null,
-              }),
+              ledgers[0].currency.trim(),
+              input.units,
             );
-          return this.receipt(reservation, ledgers[0], false);
-        },
-      );
-    } catch (error) {
-      if (!this.isUniqueViolation(error)) throw error;
-      return runInTenantContext(
-        this.dataSource,
-        input.tenantId,
-        async (manager) => {
-          const existing = await manager
-            .getRepository(AgentBudgetReservation)
-            .findOneByOrFail({
-              ledgerId: input.ledgerId,
-              tenantId: input.tenantId,
-              idempotencyKey: input.idempotencyKey,
-            });
-          this.assertSameUnits(existing, input.units);
-          return this.receiptFor(manager, existing, true);
-        },
-      );
-    }
+            const reservation = await manager
+              .getRepository(AgentBudgetReservation)
+              .save(
+                manager.getRepository(AgentBudgetReservation).create({
+                  tenantId: input.tenantId,
+                  ledgerId: input.ledgerId,
+                  idempotencyKey: input.idempotencyKey,
+                  ...input.units,
+                  aggregateWindowStart,
+                  actualCostMinorUnits: null,
+                  status: AgentBudgetReservationStatus.Reserved,
+                  resolvedAt: null,
+                }),
+              );
+            return this.receipt(reservation, ledgers[0], false);
+          },
+        );
+      } catch (error) {
+        if (!this.isUniqueViolation(error)) throw error;
+        return runInTenantContext(
+          this.dataSource,
+          input.tenantId,
+          async (manager) => {
+            const existing = await manager
+              .getRepository(AgentBudgetReservation)
+              .findOneByOrFail({
+                ledgerId: input.ledgerId,
+                tenantId: input.tenantId,
+                idempotencyKey: input.idempotencyKey,
+              });
+            this.assertSameUnits(existing, input.units);
+            return this.receiptFor(manager, existing, true);
+          },
+        );
+      }
+    });
   }
 
   async commit(input: {
@@ -341,44 +361,45 @@ export class AgentBudgetLedgerService {
     resolvedBy?: string;
     resolutionNote?: string;
   }): Promise<AgentBudgetReservationReceipt> {
-    if (input.actualCostMinorUnits !== undefined) {
-      this.assertNonnegativeInt(input.actualCostMinorUnits, 'actual cost');
-    }
-    if (input.requireUnknown) {
-      this.validateManualResolution(input.resolvedBy, input.resolutionNote);
-    }
-    return this.resolveReservation(
-      input.tenantId,
-      input.reservationId,
-      async (manager, reservation, ledger) => {
-        if (reservation.status === AgentBudgetReservationStatus.Committed) {
-          if (input.requireUnknown) {
+    return this.observeReservation('commit', async () => {
+      if (input.actualCostMinorUnits !== undefined) {
+        this.assertNonnegativeInt(input.actualCostMinorUnits, 'actual cost');
+      }
+      if (input.requireUnknown) {
+        this.validateManualResolution(input.resolvedBy, input.resolutionNote);
+      }
+      return this.resolveReservation(
+        input.tenantId,
+        input.reservationId,
+        async (manager, reservation, ledger) => {
+          if (reservation.status === AgentBudgetReservationStatus.Committed) {
+            if (input.requireUnknown) {
+              throw new AgentBudgetError(
+                'RESERVATION_CONFLICT',
+                'Only an UNKNOWN reservation can be reconciled manually',
+              );
+            }
+            return this.receipt(reservation, ledger, false);
+          }
+          if (
+            input.requireUnknown &&
+            reservation.status !== AgentBudgetReservationStatus.Unknown
+          ) {
             throw new AgentBudgetError(
               'RESERVATION_CONFLICT',
               'Only an UNKNOWN reservation can be reconciled manually',
             );
           }
-          return this.receipt(reservation, ledger, false);
-        }
-        if (
-          input.requireUnknown &&
-          reservation.status !== AgentBudgetReservationStatus.Unknown
-        ) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'Only an UNKNOWN reservation can be reconciled manually',
-          );
-        }
-        if (reservation.status === AgentBudgetReservationStatus.Released) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'A released budget reservation cannot be committed',
-          );
-        }
-        const actualCost =
-          input.actualCostMinorUnits ?? reservation.costMinorUnits;
-        const [rows] = (await manager.query(
-          `UPDATE "agent_budget_ledgers"
+          if (reservation.status === AgentBudgetReservationStatus.Released) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'A released budget reservation cannot be committed',
+            );
+          }
+          const actualCost =
+            input.actualCostMinorUnits ?? reservation.costMinorUnits;
+          const [rows] = (await manager.query(
+            `UPDATE "agent_budget_ledgers"
            SET "stepReserved" = "stepReserved" - $3,
                "stepUsed" = "stepUsed" + $3,
                "tokenReserved" = "tokenReserved" - $4,
@@ -392,32 +413,33 @@ export class AgentBudgetLedgerService {
          WHERE "id" = $1 AND "tenantId" = $2
            AND "costUsedMinorUnits" + "costReservedMinorUnits" - $6 + $7 <= "costLimitMinorUnits"
          RETURNING *`,
-          [
-            ledger.id,
-            input.tenantId,
-            reservation.stepUnits,
-            reservation.tokenUnits,
-            reservation.providerCallUnits,
-            reservation.costMinorUnits,
-            actualCost,
-          ],
-        )) as [AgentBudgetLedger[], number];
-        if (!rows[0]) {
-          throw new AgentBudgetError(
-            'BUDGET_EXHAUSTED',
-            'Actual provider cost exceeds the authoritative budget',
-          );
-        }
-        await this.commitTenantAggregate(manager, reservation, actualCost);
-        reservation.status = AgentBudgetReservationStatus.Committed;
-        reservation.actualCostMinorUnits = actualCost;
-        reservation.resolvedAt = new Date();
-        reservation.resolvedBy = input.resolvedBy ?? null;
-        reservation.resolutionNote = input.resolutionNote ?? null;
-        await manager.getRepository(AgentBudgetReservation).save(reservation);
-        return this.receipt(reservation, rows[0], false);
-      },
-    );
+            [
+              ledger.id,
+              input.tenantId,
+              reservation.stepUnits,
+              reservation.tokenUnits,
+              reservation.providerCallUnits,
+              reservation.costMinorUnits,
+              actualCost,
+            ],
+          )) as [AgentBudgetLedger[], number];
+          if (!rows[0]) {
+            throw new AgentBudgetError(
+              'BUDGET_EXHAUSTED',
+              'Actual provider cost exceeds the authoritative budget',
+            );
+          }
+          await this.commitTenantAggregate(manager, reservation, actualCost);
+          reservation.status = AgentBudgetReservationStatus.Committed;
+          reservation.actualCostMinorUnits = actualCost;
+          reservation.resolvedAt = new Date();
+          reservation.resolvedBy = input.resolvedBy ?? null;
+          reservation.resolutionNote = input.resolutionNote ?? null;
+          await manager.getRepository(AgentBudgetReservation).save(reservation);
+          return this.receipt(reservation, rows[0], false);
+        },
+      );
+    });
   }
 
   async release(
@@ -429,42 +451,43 @@ export class AgentBudgetLedgerService {
       resolutionNote: string;
     },
   ): Promise<AgentBudgetReservationReceipt> {
-    if (resolution?.requireUnknown) {
-      this.validateManualResolution(
-        resolution.resolvedBy,
-        resolution.resolutionNote,
-      );
-    }
-    return this.resolveReservation(
-      tenantId,
-      reservationId,
-      async (manager, reservation, ledger) => {
-        if (reservation.status === AgentBudgetReservationStatus.Released) {
-          if (resolution?.requireUnknown) {
+    return this.observeReservation('release', async () => {
+      if (resolution?.requireUnknown) {
+        this.validateManualResolution(
+          resolution.resolvedBy,
+          resolution.resolutionNote,
+        );
+      }
+      return this.resolveReservation(
+        tenantId,
+        reservationId,
+        async (manager, reservation, ledger) => {
+          if (reservation.status === AgentBudgetReservationStatus.Released) {
+            if (resolution?.requireUnknown) {
+              throw new AgentBudgetError(
+                'RESERVATION_CONFLICT',
+                'Only an UNKNOWN reservation can be reconciled manually',
+              );
+            }
+            return this.receipt(reservation, ledger, false);
+          }
+          if (
+            resolution?.requireUnknown &&
+            reservation.status !== AgentBudgetReservationStatus.Unknown
+          ) {
             throw new AgentBudgetError(
               'RESERVATION_CONFLICT',
               'Only an UNKNOWN reservation can be reconciled manually',
             );
           }
-          return this.receipt(reservation, ledger, false);
-        }
-        if (
-          resolution?.requireUnknown &&
-          reservation.status !== AgentBudgetReservationStatus.Unknown
-        ) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'Only an UNKNOWN reservation can be reconciled manually',
-          );
-        }
-        if (reservation.status === AgentBudgetReservationStatus.Committed) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'A committed budget reservation cannot be released',
-          );
-        }
-        const [rows] = (await manager.query(
-          `UPDATE "agent_budget_ledgers"
+          if (reservation.status === AgentBudgetReservationStatus.Committed) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'A committed budget reservation cannot be released',
+            );
+          }
+          const [rows] = (await manager.query(
+            `UPDATE "agent_budget_ledgers"
            SET "stepReserved" = "stepReserved" - $3,
                "tokenReserved" = "tokenReserved" - $4,
                "providerCallReserved" = "providerCallReserved" - $5,
@@ -472,53 +495,58 @@ export class AgentBudgetLedgerService {
                "version" = "version" + 1,
                "updatedAt" = now()
          WHERE "id" = $1 AND "tenantId" = $2 RETURNING *`,
-          [
-            ledger.id,
-            tenantId,
-            reservation.stepUnits,
-            reservation.tokenUnits,
-            reservation.providerCallUnits,
-            reservation.costMinorUnits,
-          ],
-        )) as [AgentBudgetLedger[], number];
-        if (!rows[0]) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'The reservation ledger could not release capacity',
-          );
-        }
-        await this.releaseTenantAggregate(manager, reservation);
-        reservation.status = AgentBudgetReservationStatus.Released;
-        reservation.resolvedAt = new Date();
-        reservation.resolvedBy = resolution?.resolvedBy ?? null;
-        reservation.resolutionNote = resolution?.resolutionNote ?? null;
-        await manager.getRepository(AgentBudgetReservation).save(reservation);
-        return this.receipt(reservation, rows[0], false);
-      },
-    );
+            [
+              ledger.id,
+              tenantId,
+              reservation.stepUnits,
+              reservation.tokenUnits,
+              reservation.providerCallUnits,
+              reservation.costMinorUnits,
+            ],
+          )) as [AgentBudgetLedger[], number];
+          if (!rows[0]) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'The reservation ledger could not release capacity',
+            );
+          }
+          await this.releaseTenantAggregate(manager, reservation);
+          reservation.status = AgentBudgetReservationStatus.Released;
+          reservation.resolvedAt = new Date();
+          reservation.resolvedBy = resolution?.resolvedBy ?? null;
+          reservation.resolutionNote = resolution?.resolutionNote ?? null;
+          await manager.getRepository(AgentBudgetReservation).save(reservation);
+          return this.receipt(reservation, rows[0], false);
+        },
+      );
+    });
   }
 
   async markUnknown(
     tenantId: string,
     reservationId: string,
   ): Promise<AgentBudgetReservationReceipt> {
-    return this.resolveReservation(
-      tenantId,
-      reservationId,
-      async (manager, reservation, ledger) => {
-        if (reservation.status === AgentBudgetReservationStatus.Reserved) {
-          reservation.status = AgentBudgetReservationStatus.Unknown;
-          await manager.getRepository(AgentBudgetReservation).save(reservation);
-        } else if (
-          reservation.status !== AgentBudgetReservationStatus.Unknown
-        ) {
-          throw new AgentBudgetError(
-            'RESERVATION_CONFLICT',
-            'Only an unresolved reservation can become outcome-unknown',
-          );
-        }
-        return this.receipt(reservation, ledger, false);
-      },
+    return this.observeReservation('mark_unknown', () =>
+      this.resolveReservation(
+        tenantId,
+        reservationId,
+        async (manager, reservation, ledger) => {
+          if (reservation.status === AgentBudgetReservationStatus.Reserved) {
+            reservation.status = AgentBudgetReservationStatus.Unknown;
+            await manager
+              .getRepository(AgentBudgetReservation)
+              .save(reservation);
+          } else if (
+            reservation.status !== AgentBudgetReservationStatus.Unknown
+          ) {
+            throw new AgentBudgetError(
+              'RESERVATION_CONFLICT',
+              'Only an unresolved reservation can become outcome-unknown',
+            );
+          }
+          return this.receipt(reservation, ledger, false);
+        },
+      ),
     );
   }
 

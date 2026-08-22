@@ -67,6 +67,7 @@ import {
   MandatoryReviewCategory,
   MandatoryReviewTrigger,
 } from '../mandatory-review-triggers';
+import { operationalTelemetry } from '../../observability/operational-telemetry';
 
 export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
@@ -284,351 +285,436 @@ export function createLendingOperationsAgentRuntime(
 
   return {
     async run(input: AgentRunInput): Promise<AgentRunResult> {
-      const startedAt = new Date();
-      const initialBudget = await budgetLedgerService.createOrLoad({
-        tenantId: input.initialState.tenantId,
-        caseId: input.initialState.caseId,
-        workflowRunId: input.initialState.workflowRunId,
-        stepLimit: input.budget.stepBudget,
-        tokenLimit: input.budget.tokenBudget,
-        providerCallLimit: input.budget.providerCallBudget,
-        costLimitMinorUnits: input.budget.costBudgetMinorUnits,
-        currency: input.budget.currency,
-        startedAt: new Date(input.initialState.runStartedAt),
-        deadlineAt: new Date(input.runDeadlineAt),
-      });
-      const authoritativeInitialState = applyBudgetSnapshot(
-        input.initialState,
-        initialBudget,
-      );
-      const registry = buildToolRegistry(
-        allTools.filter((tool) => input.allowedTools.includes(tool.name)),
-      );
-      const toolContext = {
-        tenantId: input.initialState.tenantId,
-        caseId: input.initialState.caseId,
-      };
-
-      type BudgetedToolResult =
-        | {
-            ok: true;
-            agentState: LendingOperationsAgentState;
-            invocation: ToolInvocationResult;
-          }
-        | {
-            ok: false;
-            agentState: LendingOperationsAgentState;
-            trigger: MandatoryReviewTrigger;
-          };
-
-      /**
-       * The only runtime path to a tool. Capacity is reserved before any
-       * effect and settled afterward; graph state receives only database
-       * snapshots. A replayed unfinished side effect is quarantined because
-       * re-executing it without reconciliation could duplicate an effect.
-       */
-      async function invokeBudgetedTool(
-        agentState: LendingOperationsAgentState,
-        toolName: string,
-        args: unknown,
-      ): Promise<BudgetedToolResult> {
-        const exceeded = budgetExceeded(agentState);
-        if (exceeded) return { ok: false, agentState, trigger: exceeded };
-
-        const definition = allTools.find((tool) => tool.name === toolName);
-        const usage = definition?.budget ?? {
-          tokenUnits: 0,
-          providerCallUnits: 0,
-          costMinorUnits: 0,
+      return operationalTelemetry.observeAgentRun(async () => {
+        const startedAt = new Date();
+        const initialBudget = await budgetLedgerService.createOrLoad({
+          tenantId: input.initialState.tenantId,
+          caseId: input.initialState.caseId,
+          workflowRunId: input.initialState.workflowRunId,
+          stepLimit: input.budget.stepBudget,
+          tokenLimit: input.budget.tokenBudget,
+          providerCallLimit: input.budget.providerCallBudget,
+          costLimitMinorUnits: input.budget.costBudgetMinorUnits,
+          currency: input.budget.currency,
+          startedAt: new Date(input.initialState.runStartedAt),
+          deadlineAt: new Date(input.runDeadlineAt),
+        });
+        const authoritativeInitialState = applyBudgetSnapshot(
+          input.initialState,
+          initialBudget,
+        );
+        const registry = buildToolRegistry(
+          allTools.filter((tool) => input.allowedTools.includes(tool.name)),
+        );
+        const toolContext = {
+          tenantId: input.initialState.tenantId,
+          caseId: input.initialState.caseId,
         };
-        try {
-          const reservation = await budgetLedgerService.reserve({
-            tenantId: agentState.tenantId,
-            ledgerId: agentState.budgetLedgerId!,
-            idempotencyKey: [
-              agentState.workflowRunId,
-              agentState.caseVersion,
-              toolName,
-              agentState.attemptedTools.length,
-            ].join(':'),
-            expectedVersion: agentState.budgetLedgerVersion,
-            units: { stepUnits: 1, ...usage },
-          });
-          let reservedState = applyBudgetSnapshot(
-            agentState,
-            reservation.ledger,
-          );
-          if (reservation.replayed && definition?.sideEffect !== 'NONE') {
-            if (reservation.status === AgentBudgetReservationStatus.Reserved) {
-              const unknown = await budgetLedgerService.markUnknown(
-                agentState.tenantId,
-                reservation.reservationId,
-              );
-              reservedState = applyBudgetSnapshot(
-                reservedState,
-                unknown.ledger,
-              );
+
+        type BudgetedToolResult =
+          | {
+              ok: true;
+              agentState: LendingOperationsAgentState;
+              invocation: ToolInvocationResult;
             }
+          | {
+              ok: false;
+              agentState: LendingOperationsAgentState;
+              trigger: MandatoryReviewTrigger;
+            };
+
+        /**
+         * The only runtime path to a tool. Capacity is reserved before any
+         * effect and settled afterward; graph state receives only database
+         * snapshots. A replayed unfinished side effect is quarantined because
+         * re-executing it without reconciliation could duplicate an effect.
+         */
+        async function invokeBudgetedTool(
+          agentState: LendingOperationsAgentState,
+          toolName: string,
+          args: unknown,
+        ): Promise<BudgetedToolResult> {
+          const exceeded = budgetExceeded(agentState);
+          if (exceeded) {
+            operationalTelemetry.recordAgentTool(toolName, 'blocked');
+            return { ok: false, agentState, trigger: exceeded };
+          }
+
+          const definition = allTools.find((tool) => tool.name === toolName);
+          const usage = definition?.budget ?? {
+            tokenUnits: 0,
+            providerCallUnits: 0,
+            costMinorUnits: 0,
+          };
+          try {
+            const reservation = await budgetLedgerService.reserve({
+              tenantId: agentState.tenantId,
+              ledgerId: agentState.budgetLedgerId!,
+              idempotencyKey: [
+                agentState.workflowRunId,
+                agentState.caseVersion,
+                toolName,
+                agentState.attemptedTools.length,
+              ].join(':'),
+              expectedVersion: agentState.budgetLedgerVersion,
+              units: { stepUnits: 1, ...usage },
+            });
+            let reservedState = applyBudgetSnapshot(
+              agentState,
+              reservation.ledger,
+            );
+            if (reservation.replayed && definition?.sideEffect !== 'NONE') {
+              if (
+                reservation.status === AgentBudgetReservationStatus.Reserved
+              ) {
+                const unknown = await budgetLedgerService.markUnknown(
+                  agentState.tenantId,
+                  reservation.reservationId,
+                );
+                reservedState = applyBudgetSnapshot(
+                  reservedState,
+                  unknown.ledger,
+                );
+              }
+              operationalTelemetry.recordAgentTool(toolName, 'blocked');
+              return {
+                ok: false,
+                agentState: reservedState,
+                trigger: classifyMandatoryReviewTrigger(
+                  MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                  `${toolName} has a replayed ${reservation.status} side-effect reservation requiring reconciliation`,
+                ),
+              };
+            }
+
+            const invocation = await invokeTool(
+              registry,
+              toolName,
+              {
+                ...toolContext,
+                budgetReservationId: reservation.reservationId,
+              },
+              args,
+            );
+            const committed = await budgetLedgerService.commit({
+              tenantId: agentState.tenantId,
+              reservationId: reservation.reservationId,
+              actualCostMinorUnits: usage.costMinorUnits,
+            });
+            operationalTelemetry.recordAgentTool(
+              toolName,
+              invocation.outcome === 'SUCCESS' ? 'success' : 'failure',
+            );
+            return {
+              ok: true,
+              agentState: applyBudgetSnapshot(reservedState, committed.ledger),
+              invocation,
+            };
+          } catch (error) {
+            if (!(error instanceof AgentBudgetError)) {
+              operationalTelemetry.recordAgentTool(toolName, 'failure');
+              throw error;
+            }
+            operationalTelemetry.recordAgentTool(toolName, 'blocked');
             return {
               ok: false,
-              agentState: reservedState,
+              agentState,
               trigger: classifyMandatoryReviewTrigger(
-                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
-                `${toolName} has a replayed ${reservation.status} side-effect reservation requiring reconciliation`,
+                MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+                `${error.code}: ${error.message}`,
               ),
             };
           }
-
-          const invocation = await invokeTool(
-            registry,
-            toolName,
-            {
-              ...toolContext,
-              budgetReservationId: reservation.reservationId,
-            },
-            args,
-          );
-          const committed = await budgetLedgerService.commit({
-            tenantId: agentState.tenantId,
-            reservationId: reservation.reservationId,
-            actualCostMinorUnits: usage.costMinorUnits,
-          });
-          return {
-            ok: true,
-            agentState: applyBudgetSnapshot(reservedState, committed.ledger),
-            invocation,
-          };
-        } catch (error) {
-          if (!(error instanceof AgentBudgetError)) throw error;
-          return {
-            ok: false,
-            agentState,
-            trigger: classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
-              `${error.code}: ${error.message}`,
-            ),
-          };
         }
-      }
 
-      async function consumeBudgetedRuntimeStep(
-        agentState: LendingOperationsAgentState,
-        stepName: string,
-      ): Promise<
-        | { ok: true; agentState: LendingOperationsAgentState }
-        | {
-            ok: false;
-            agentState: LendingOperationsAgentState;
-            trigger: MandatoryReviewTrigger;
+        async function consumeBudgetedRuntimeStep(
+          agentState: LendingOperationsAgentState,
+          stepName: string,
+        ): Promise<
+          | { ok: true; agentState: LendingOperationsAgentState }
+          | {
+              ok: false;
+              agentState: LendingOperationsAgentState;
+              trigger: MandatoryReviewTrigger;
+            }
+        > {
+          const exceeded = budgetExceeded(agentState);
+          if (exceeded) return { ok: false, agentState, trigger: exceeded };
+          try {
+            const reservation = await budgetLedgerService.reserve({
+              tenantId: agentState.tenantId,
+              ledgerId: agentState.budgetLedgerId!,
+              idempotencyKey: [
+                agentState.workflowRunId,
+                agentState.caseVersion,
+                `runtime-${stepName}`,
+                agentState.attemptedTools.length,
+              ].join(':'),
+              expectedVersion: agentState.budgetLedgerVersion,
+              units: {
+                stepUnits: 1,
+                tokenUnits: 0,
+                providerCallUnits: 0,
+                costMinorUnits: 0,
+              },
+            });
+            const committed = await budgetLedgerService.commit({
+              tenantId: agentState.tenantId,
+              reservationId: reservation.reservationId,
+            });
+            return {
+              ok: true,
+              agentState: applyBudgetSnapshot(agentState, committed.ledger),
+            };
+          } catch (error) {
+            if (!(error instanceof AgentBudgetError)) throw error;
+            return {
+              ok: false,
+              agentState,
+              trigger: classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+                `${error.code}: ${error.message}`,
+              ),
+            };
           }
-      > {
-        const exceeded = budgetExceeded(agentState);
-        if (exceeded) return { ok: false, agentState, trigger: exceeded };
-        try {
-          const reservation = await budgetLedgerService.reserve({
-            tenantId: agentState.tenantId,
-            ledgerId: agentState.budgetLedgerId!,
-            idempotencyKey: [
-              agentState.workflowRunId,
-              agentState.caseVersion,
-              `runtime-${stepName}`,
-              agentState.attemptedTools.length,
-            ].join(':'),
-            expectedVersion: agentState.budgetLedgerVersion,
-            units: {
-              stepUnits: 1,
-              tokenUnits: 0,
-              providerCallUnits: 0,
-              costMinorUnits: 0,
+        }
+
+        /**
+         * The single place Section 9.5's two-tier "ambiguity/protected
+         * action: interrupt for review" vs. "budget or runtime failure:
+         * route to manual review" distinction is applied — every mandatory-
+         * review trigger this graph detects flows through here, dispatching
+         * on `MandatoryReviewTrigger.route` (`mandatory-review-triggers.ts`)
+         * rather than each call site independently deciding which of the
+         * two routes it means (Section 20's exit evidence B; M3-021). The
+         * persisted `reviewCategory` this produces is what makes a run's
+         * audit trail queryable by *which* Section 9.6 concern triggered
+         * it, not just a free-text reason string.
+         */
+        function routeMandatoryReview(
+          agentState: LendingOperationsAgentState,
+          trigger: MandatoryReviewTrigger,
+        ): Partial<RuntimeState> {
+          return {
+            agentState: {
+              ...agentState,
+              reviewState: {
+                requested: true,
+                reason: trigger.reason,
+                category: trigger.category,
+              },
             },
-          });
-          const committed = await budgetLedgerService.commit({
-            tenantId: agentState.tenantId,
-            reservationId: reservation.reservationId,
-          });
-          return {
-            ok: true,
-            agentState: applyBudgetSnapshot(agentState, committed.ledger),
-          };
-        } catch (error) {
-          if (!(error instanceof AgentBudgetError)) throw error;
-          return {
-            ok: false,
-            agentState,
-            trigger: classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
-              `${error.code}: ${error.message}`,
-            ),
+            route:
+              trigger.route === 'INTERRUPT_FOR_REVIEW'
+                ? 'INTERRUPTED_FOR_REVIEW'
+                : 'ROUTED_TO_MANUAL_REVIEW',
           };
         }
-      }
 
-      /**
-       * The single place Section 9.5's two-tier "ambiguity/protected
-       * action: interrupt for review" vs. "budget or runtime failure:
-       * route to manual review" distinction is applied — every mandatory-
-       * review trigger this graph detects flows through here, dispatching
-       * on `MandatoryReviewTrigger.route` (`mandatory-review-triggers.ts`)
-       * rather than each call site independently deciding which of the
-       * two routes it means (Section 20's exit evidence B; M3-021). The
-       * persisted `reviewCategory` this produces is what makes a run's
-       * audit trail queryable by *which* Section 9.6 concern triggered
-       * it, not just a free-text reason string.
-       */
-      function routeMandatoryReview(
-        agentState: LendingOperationsAgentState,
-        trigger: MandatoryReviewTrigger,
-      ): Partial<RuntimeState> {
-        return {
-          agentState: {
-            ...agentState,
-            reviewState: {
-              requested: true,
-              reason: trigger.reason,
-              category: trigger.category,
-            },
-          },
-          route:
-            trigger.route === 'INTERRUPT_FOR_REVIEW'
-              ? 'INTERRUPTED_FOR_REVIEW'
-              : 'ROUTED_TO_MANUAL_REVIEW',
-        };
-      }
-
-      async function verifyConsentNode(
-        state: RuntimeState,
-      ): Promise<Partial<RuntimeState>> {
-        const trigger = consentInvalid(state.agentState);
-        if (trigger) return routeMandatoryReview(state.agentState, trigger);
-        return {};
-      }
-
-      async function checkCompletenessNode(
-        state: RuntimeState,
-      ): Promise<Partial<RuntimeState>> {
-        const budgeted = await invokeBudgetedTool(
-          state.agentState,
-          'check_case_completeness',
-          {},
-        );
-        if (!budgeted.ok) {
-          return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
+        async function verifyConsentNode(
+          state: RuntimeState,
+        ): Promise<Partial<RuntimeState>> {
+          const trigger = consentInvalid(state.agentState);
+          if (trigger) return routeMandatoryReview(state.agentState, trigger);
+          return {};
         }
-        const invocation = budgeted.invocation;
-        const nextState = recordAttempt(
-          budgeted.agentState,
-          'check_case_completeness',
-          invocation.outcome,
-          invocation.error,
-        );
-        if (invocation.outcome === 'FAILURE') {
-          return routeMandatoryReview(
-            nextState,
-            classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
-              `check_case_completeness unavailable: ${invocation.error}`,
-            ),
+
+        async function checkCompletenessNode(
+          state: RuntimeState,
+        ): Promise<Partial<RuntimeState>> {
+          const budgeted = await invokeBudgetedTool(
+            state.agentState,
+            'check_case_completeness',
+            {},
           );
+          if (!budgeted.ok) {
+            return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
+          }
+          const invocation = budgeted.invocation;
+          const nextState = recordAttempt(
+            budgeted.agentState,
+            'check_case_completeness',
+            invocation.outcome,
+            invocation.error,
+          );
+          if (invocation.outcome === 'FAILURE') {
+            return routeMandatoryReview(
+              nextState,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `check_case_completeness unavailable: ${invocation.error}`,
+              ),
+            );
+          }
+          const result = invocation.result as CheckCaseCompletenessResult;
+          if (!result.complete) {
+            return { agentState: nextState, route: 'AWAITING_INFORMATION' };
+          }
+          return { agentState: nextState };
         }
-        const result = invocation.result as CheckCaseCompletenessResult;
-        if (!result.complete) {
-          return { agentState: nextState, route: 'AWAITING_INFORMATION' };
+
+        async function evaluatePolicyNode(
+          state: RuntimeState,
+        ): Promise<Partial<RuntimeState>> {
+          const exceeded = budgetExceeded(state.agentState);
+          if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
+
+          const loanCase = await runInTenantContext(
+            deps.dataSource,
+            toolContext.tenantId,
+            (manager) =>
+              manager.getRepository(LoanCase).findOneByOrFail({
+                id: toolContext.caseId,
+                tenantId: toolContext.tenantId,
+              }),
+          );
+
+          const budgeted = await invokeBudgetedTool(
+            state.agentState,
+            'evaluate_policy',
+            {
+              jurisdictionCode: loanCase.jurisdictionCode,
+              productCode: loanTypeToProductCode(loanCase.loanType),
+              lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
+              applicationReceivedAt: loanCase.createdAt.toISOString(),
+            },
+          );
+          if (!budgeted.ok) {
+            return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
+          }
+          const invocation = budgeted.invocation;
+          const nextState = recordAttempt(
+            budgeted.agentState,
+            'evaluate_policy',
+            invocation.outcome,
+            invocation.error,
+          );
+          if (invocation.outcome === 'FAILURE') {
+            return routeMandatoryReview(
+              nextState,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `evaluate_policy unavailable: ${invocation.error}`,
+              ),
+            );
+          }
+          const result = invocation.result as EvaluatePolicyResult;
+          if (result.status === 'REVIEW_REQUIRED') {
+            // No `EvaluationInputManifest` here (M3-022's own scope
+            // boundary, see that entity's comment): REVIEW_REQUIRED means
+            // no binding was created for this ambiguous resolution — a
+            // manifest without a real `policyBindingId` to reference would
+            // have nothing genuine to read from.
+            return routeMandatoryReview(
+              nextState,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.POLICY_AMBIGUITY,
+                result.unresolvedReasons.join('; ') || 'policy review required',
+              ),
+            );
+          }
+          return {
+            agentState: {
+              ...nextState,
+              policyBindingId: result.policyBindingId,
+            },
+            policyEvaluation: result,
+          };
         }
-        return { agentState: nextState };
-      }
 
-      async function evaluatePolicyNode(
-        state: RuntimeState,
-      ): Promise<Partial<RuntimeState>> {
-        const exceeded = budgetExceeded(state.agentState);
-        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
+        async function resolveOutcomeNode(
+          state: RuntimeState,
+        ): Promise<Partial<RuntimeState>> {
+          const budgetedStep = await consumeBudgetedRuntimeStep(
+            state.agentState,
+            'resolve-outcome',
+          );
+          if (!budgetedStep.ok) {
+            return routeMandatoryReview(
+              budgetedStep.agentState,
+              budgetedStep.trigger,
+            );
+          }
+          const stepped = budgetedStep.agentState;
+          const evaluation = state.policyEvaluation!;
 
-        const loanCase = await runInTenantContext(
-          deps.dataSource,
-          toolContext.tenantId,
-          (manager) =>
-            manager.getRepository(LoanCase).findOneByOrFail({
-              id: toolContext.caseId,
+          // Section 20's exit evidence F / Section 18.3 ("evaluations
+          // without a valid immutable input manifest accepted: 0"): every
+          // completed DSL evaluation gets a manifest now, not only ones
+          // that go on to open a condition (M3-022) — this branch has no
+          // applicable rule to check evidence against, so the manifest
+          // simply references no evidence, but the evaluation itself (and
+          // the real policyBindingId/digest it read) is still real and
+          // worth an audit-backed record.
+          if (evaluation.matchedVersions.length === 0) {
+            await deps.evaluationManifestService.assemble({
               tenantId: toolContext.tenantId,
-            }),
-        );
+              caseId: toolContext.caseId,
+              caseVersion: state.agentState.caseVersion,
+              policyBindingId: state.agentState.policyBindingId!,
+              observedPolicyDependencyDigest:
+                evaluation.observedPolicyDependencyDigest!,
+              evaluatorVersion: RESOLVER_VERSION,
+              evidence: [],
+            });
+            return { agentState: stepped, route: 'PROPOSED_ACTION' };
+          }
 
-        const budgeted = await invokeBudgetedTool(
-          state.agentState,
-          'evaluate_policy',
-          {
-            jurisdictionCode: loanCase.jurisdictionCode,
-            productCode: loanTypeToProductCode(loanCase.loanType),
-            lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
-            applicationReceivedAt: loanCase.createdAt.toISOString(),
-          },
-        );
-        if (!budgeted.ok) {
-          return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
-        }
-        const invocation = budgeted.invocation;
-        const nextState = recordAttempt(
-          budgeted.agentState,
-          'evaluate_policy',
-          invocation.outcome,
-          invocation.error,
-        );
-        if (invocation.outcome === 'FAILURE') {
-          return routeMandatoryReview(
-            nextState,
-            classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
-              `evaluate_policy unavailable: ${invocation.error}`,
-            ),
+          // Sequential, not Promise.all: both queries share the same
+          // transaction's single underlying connection, and node-postgres
+          // itself warns that overlapping queries on one client (rather
+          // than awaited one at a time) is deprecated — real risk of
+          // result-set confusion between the two queries, not just a style
+          // preference.
+          const { loanCase, latestIncomeFact } = await runInTenantContext(
+            deps.dataSource,
+            toolContext.tenantId,
+            async (manager) => {
+              const loanCase = await manager
+                .getRepository(LoanCase)
+                .findOneByOrFail({
+                  id: toolContext.caseId,
+                  tenantId: toolContext.tenantId,
+                });
+              const latestIncomeFact = await manager
+                .getRepository(EvidenceFact)
+                .findOne({
+                  where: {
+                    tenantId: toolContext.tenantId,
+                    caseId: toolContext.caseId,
+                    factType: EvidenceType.INCOME,
+                  },
+                  order: { observedAt: 'DESC' },
+                });
+              return { loanCase, latestIncomeFact };
+            },
           );
-        }
-        const result = invocation.result as EvaluatePolicyResult;
-        if (result.status === 'REVIEW_REQUIRED') {
-          // No `EvaluationInputManifest` here (M3-022's own scope
-          // boundary, see that entity's comment): REVIEW_REQUIRED means
-          // no binding was created for this ambiguous resolution — a
-          // manifest without a real `policyBindingId` to reference would
-          // have nothing genuine to read from.
-          return routeMandatoryReview(
-            nextState,
-            classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.POLICY_AMBIGUITY,
-              result.unresolvedReasons.join('; ') || 'policy review required',
-            ),
-          );
-        }
-        return {
-          agentState: { ...nextState, policyBindingId: result.policyBindingId },
-          policyEvaluation: result,
-        };
-      }
+          const factContext: PolicyFactContext = {
+            application: {
+              monthly_income: Number(loanCase.statedMonthlyIncome),
+            },
+            evidence: {
+              verified_monthly_income: (
+                latestIncomeFact?.value as
+                  { monthlyIncome?: number } | undefined
+              )?.monthlyIncome,
+            },
+          };
 
-      async function resolveOutcomeNode(
-        state: RuntimeState,
-      ): Promise<Partial<RuntimeState>> {
-        const budgetedStep = await consumeBudgetedRuntimeStep(
-          state.agentState,
-          'resolve-outcome',
-        );
-        if (!budgetedStep.ok) {
-          return routeMandatoryReview(
-            budgetedStep.agentState,
-            budgetedStep.trigger,
-          );
-        }
-        const stepped = budgetedStep.agentState;
-        const evaluation = state.policyEvaluation!;
+          const match = evaluation.matchedVersions
+            .map((version) => ({
+              version,
+              result: evaluatePolicyRule(version.rule, factContext),
+            }))
+            .find(({ result }) => result.matched);
 
-        // Section 20's exit evidence F / Section 18.3 ("evaluations
-        // without a valid immutable input manifest accepted: 0"): every
-        // completed DSL evaluation gets a manifest now, not only ones
-        // that go on to open a condition (M3-022) — this branch has no
-        // applicable rule to check evidence against, so the manifest
-        // simply references no evidence, but the evaluation itself (and
-        // the real policyBindingId/digest it read) is still real and
-        // worth an audit-backed record.
-        if (evaluation.matchedVersions.length === 0) {
-          await deps.evaluationManifestService.assemble({
+          // Section 10.5: assembled right after the DSL evaluation
+          // completes, referencing exactly the evidence this evaluation
+          // actually read (`latestIncomeFact`), not every fact on the
+          // case — whether or not a rule ended up matching, since a
+          // "checked and nothing applied" outcome is still a real,
+          // completed evaluation Section 18.3's gate covers.
+          const manifest = await deps.evaluationManifestService.assemble({
             tenantId: toolContext.tenantId,
             caseId: toolContext.caseId,
             caseVersion: state.agentState.caseVersion,
@@ -636,219 +722,157 @@ export function createLendingOperationsAgentRuntime(
             observedPolicyDependencyDigest:
               evaluation.observedPolicyDependencyDigest!,
             evaluatorVersion: RESOLVER_VERSION,
-            evidence: [],
+            evidence: latestIncomeFact ? [latestIncomeFact] : [],
           });
-          return { agentState: stepped, route: 'PROPOSED_ACTION' };
-        }
 
-        // Sequential, not Promise.all: both queries share the same
-        // transaction's single underlying connection, and node-postgres
-        // itself warns that overlapping queries on one client (rather
-        // than awaited one at a time) is deprecated — real risk of
-        // result-set confusion between the two queries, not just a style
-        // preference.
-        const { loanCase, latestIncomeFact } = await runInTenantContext(
-          deps.dataSource,
-          toolContext.tenantId,
-          async (manager) => {
-            const loanCase = await manager
-              .getRepository(LoanCase)
-              .findOneByOrFail({
-                id: toolContext.caseId,
-                tenantId: toolContext.tenantId,
-              });
-            const latestIncomeFact = await manager
-              .getRepository(EvidenceFact)
-              .findOne({
-                where: {
-                  tenantId: toolContext.tenantId,
-                  caseId: toolContext.caseId,
-                  factType: EvidenceType.INCOME,
-                },
-                order: { observedAt: 'DESC' },
-              });
-            return { loanCase, latestIncomeFact };
-          },
-        );
-        const factContext: PolicyFactContext = {
-          application: { monthly_income: Number(loanCase.statedMonthlyIncome) },
-          evidence: {
-            verified_monthly_income: (
-              latestIncomeFact?.value as { monthlyIncome?: number } | undefined
-            )?.monthlyIncome,
-          },
-        };
+          if (!match) {
+            return { agentState: stepped, route: 'PROPOSED_ACTION' };
+          }
 
-        const match = evaluation.matchedVersions
-          .map((version) => ({
-            version,
-            result: evaluatePolicyRule(version.rule, factContext),
-          }))
-          .find(({ result }) => result.matched);
-
-        // Section 10.5: assembled right after the DSL evaluation
-        // completes, referencing exactly the evidence this evaluation
-        // actually read (`latestIncomeFact`), not every fact on the
-        // case — whether or not a rule ended up matching, since a
-        // "checked and nothing applied" outcome is still a real,
-        // completed evaluation Section 18.3's gate covers.
-        const manifest = await deps.evaluationManifestService.assemble({
-          tenantId: toolContext.tenantId,
-          caseId: toolContext.caseId,
-          caseVersion: state.agentState.caseVersion,
-          policyBindingId: state.agentState.policyBindingId!,
-          observedPolicyDependencyDigest:
-            evaluation.observedPolicyDependencyDigest!,
-          evaluatorVersion: RESOLVER_VERSION,
-          evidence: latestIncomeFact ? [latestIncomeFact] : [],
-        });
-
-        if (!match) {
-          return { agentState: stepped, route: 'PROPOSED_ACTION' };
-        }
-
-        const budgetedCondition = await invokeBudgetedTool(
-          stepped,
-          'create_condition',
-          {
-            code: match.version.rule.outcome.condition,
-            description: match.result.reason,
-            policyVersionId: match.version.policyVersionId,
-            ruleId: match.version.ruleId,
-            policySnapshotId: evaluation.policySnapshotId,
-            expectedCaseVersion: state.agentState.caseVersion,
-            evaluationManifestId: manifest.id,
-          },
-        );
-        if (!budgetedCondition.ok) {
-          return routeMandatoryReview(
+          const budgetedCondition = await invokeBudgetedTool(
+            stepped,
+            'create_condition',
+            {
+              code: match.version.rule.outcome.condition,
+              description: match.result.reason,
+              policyVersionId: match.version.policyVersionId,
+              ruleId: match.version.ruleId,
+              policySnapshotId: evaluation.policySnapshotId,
+              expectedCaseVersion: state.agentState.caseVersion,
+              evaluationManifestId: manifest.id,
+            },
+          );
+          if (!budgetedCondition.ok) {
+            return routeMandatoryReview(
+              budgetedCondition.agentState,
+              budgetedCondition.trigger,
+            );
+          }
+          const invocation = budgetedCondition.invocation;
+          const nextState = recordAttempt(
             budgetedCondition.agentState,
-            budgetedCondition.trigger,
+            'create_condition',
+            invocation.outcome,
+            invocation.error,
           );
-        }
-        const invocation = budgetedCondition.invocation;
-        const nextState = recordAttempt(
-          budgetedCondition.agentState,
-          'create_condition',
-          invocation.outcome,
-          invocation.error,
-        );
-        if (invocation.outcome === 'FAILURE') {
-          return routeMandatoryReview(
+          if (invocation.outcome === 'FAILURE') {
+            return routeMandatoryReview(
+              nextState,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `create_condition failed: ${invocation.error}`,
+              ),
+            );
+          }
+          const created = invocation.result as CreateConditionResult;
+          if (created.outcome === 'STALE_CASE_VERSION') {
+            // Not a tool failure — the tool ran correctly and found the
+            // case has moved on since this run's initial state was
+            // captured (Section 10.5). Propagating out of the graph (not
+            // routing to manual review) lets Temporal's own activity retry
+            // re-run evaluateConditions against the case's current state,
+            // which is what a stale evaluation actually needs.
+            throw new StaleCaseVersionError(
+              toolContext.caseId,
+              state.agentState.caseVersion,
+            );
+          }
+
+          // A condition was genuinely opened — draft (not send; see this
+          // function's own class comment) a remediation request explaining
+          // it, using the DSL evaluator's own real reason string (the same
+          // evidence-backed text `case-timeline.service.ts` already shows),
+          // not a fabricated narrative. No case-level channel/locale/
+          // contact-preference model exists yet, so EMAIL/en-US/BORROWER
+          // are the only defaults available — a real gap, not silently
+          // assumed correct (Known gaps).
+          const budgetedDraft = await invokeBudgetedTool(
             nextState,
-            classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
-              `create_condition failed: ${invocation.error}`,
-            ),
+            'draft_information_request',
+            {
+              recipientRelationship: 'BORROWER',
+              channel: 'EMAIL',
+              locale: 'en-US',
+              variables: {},
+              freeformContent: `A condition on your loan application requires attention: ${match.version.rule.outcome.condition}. ${match.result.reason}`,
+              hasAttachments: false,
+            },
           );
-        }
-        const created = invocation.result as CreateConditionResult;
-        if (created.outcome === 'STALE_CASE_VERSION') {
-          // Not a tool failure — the tool ran correctly and found the
-          // case has moved on since this run's initial state was
-          // captured (Section 10.5). Propagating out of the graph (not
-          // routing to manual review) lets Temporal's own activity retry
-          // re-run evaluateConditions against the case's current state,
-          // which is what a stale evaluation actually needs.
-          throw new StaleCaseVersionError(
-            toolContext.caseId,
-            state.agentState.caseVersion,
-          );
-        }
-
-        // A condition was genuinely opened — draft (not send; see this
-        // function's own class comment) a remediation request explaining
-        // it, using the DSL evaluator's own real reason string (the same
-        // evidence-backed text `case-timeline.service.ts` already shows),
-        // not a fabricated narrative. No case-level channel/locale/
-        // contact-preference model exists yet, so EMAIL/en-US/BORROWER
-        // are the only defaults available — a real gap, not silently
-        // assumed correct (Known gaps).
-        const budgetedDraft = await invokeBudgetedTool(
-          nextState,
-          'draft_information_request',
-          {
-            recipientRelationship: 'BORROWER',
-            channel: 'EMAIL',
-            locale: 'en-US',
-            variables: {},
-            freeformContent: `A condition on your loan application requires attention: ${match.version.rule.outcome.condition}. ${match.result.reason}`,
-            hasAttachments: false,
-          },
-        );
-        if (!budgetedDraft.ok) {
-          return routeMandatoryReview(
+          if (!budgetedDraft.ok) {
+            return routeMandatoryReview(
+              budgetedDraft.agentState,
+              budgetedDraft.trigger,
+            );
+          }
+          const draftInvocation = budgetedDraft.invocation;
+          const withDraftAttempt = recordAttempt(
             budgetedDraft.agentState,
-            budgetedDraft.trigger,
+            'draft_information_request',
+            draftInvocation.outcome,
+            draftInvocation.error,
           );
-        }
-        const draftInvocation = budgetedDraft.invocation;
-        const withDraftAttempt = recordAttempt(
-          budgetedDraft.agentState,
-          'draft_information_request',
-          draftInvocation.outcome,
-          draftInvocation.error,
-        );
-        if (draftInvocation.outcome === 'FAILURE') {
-          return routeMandatoryReview(
-            withDraftAttempt,
-            classifyMandatoryReviewTrigger(
-              MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
-              `draft_information_request failed: ${draftInvocation.error}`,
-            ),
-          );
-        }
-        const drafted = draftInvocation.result as DraftInformationRequestResult;
+          if (draftInvocation.outcome === 'FAILURE') {
+            return routeMandatoryReview(
+              withDraftAttempt,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `draft_information_request failed: ${draftInvocation.error}`,
+              ),
+            );
+          }
+          const drafted =
+            draftInvocation.result as DraftInformationRequestResult;
 
-        return {
-          agentState: {
-            ...withDraftAttempt,
-            proposedAction: {
-              tool: 'create_condition',
-              arguments: {
-                conditionId: created.conditionId,
-                code: match.version.rule.outcome.condition,
-                communicationMessageId: drafted.communicationMessageId,
+          return {
+            agentState: {
+              ...withDraftAttempt,
+              proposedAction: {
+                tool: 'create_condition',
+                arguments: {
+                  conditionId: created.conditionId,
+                  code: match.version.rule.outcome.condition,
+                  communicationMessageId: drafted.communicationMessageId,
+                },
               },
             },
-          },
-          route: 'PROPOSED_ACTION',
+            route: 'PROPOSED_ACTION',
+          };
+        }
+
+        const graph = new StateGraph(RuntimeAnnotation)
+          .addNode('verifyConsent', verifyConsentNode)
+          .addNode('checkCompleteness', checkCompletenessNode)
+          .addNode('evaluatePolicy', evaluatePolicyNode)
+          .addNode('resolveOutcome', resolveOutcomeNode)
+          .addEdge(START, 'verifyConsent')
+          .addConditionalEdges('verifyConsent', (state) =>
+            state.route ? END : 'checkCompleteness',
+          )
+          .addConditionalEdges('checkCompleteness', (state) =>
+            state.route ? END : 'evaluatePolicy',
+          )
+          .addConditionalEdges('evaluatePolicy', (state) =>
+            state.route ? END : 'resolveOutcome',
+          )
+          .addEdge('resolveOutcome', END)
+          .compile();
+
+        const finalState = await graph.invoke({
+          agentState: authoritativeInitialState,
+          route: undefined,
+          policyEvaluation: undefined,
+        });
+
+        const result: AgentRunResult = {
+          finalState: finalState.agentState,
+          // A route is always set by whichever terminal node ran; this
+          // fail-closed fallback only guards against a future graph-wiring
+          // bug leaving it unset, never an expected path today.
+          route: finalState.route ?? 'ROUTED_TO_MANUAL_REVIEW',
         };
-      }
-
-      const graph = new StateGraph(RuntimeAnnotation)
-        .addNode('verifyConsent', verifyConsentNode)
-        .addNode('checkCompleteness', checkCompletenessNode)
-        .addNode('evaluatePolicy', evaluatePolicyNode)
-        .addNode('resolveOutcome', resolveOutcomeNode)
-        .addEdge(START, 'verifyConsent')
-        .addConditionalEdges('verifyConsent', (state) =>
-          state.route ? END : 'checkCompleteness',
-        )
-        .addConditionalEdges('checkCompleteness', (state) =>
-          state.route ? END : 'evaluatePolicy',
-        )
-        .addConditionalEdges('evaluatePolicy', (state) =>
-          state.route ? END : 'resolveOutcome',
-        )
-        .addEdge('resolveOutcome', END)
-        .compile();
-
-      const finalState = await graph.invoke({
-        agentState: authoritativeInitialState,
-        route: undefined,
-        policyEvaluation: undefined,
+        await persistAgentRun(deps.dataSource, startedAt, result);
+        return result;
       });
-
-      const result: AgentRunResult = {
-        finalState: finalState.agentState,
-        // A route is always set by whichever terminal node ran; this
-        // fail-closed fallback only guards against a future graph-wiring
-        // bug leaving it unset, never an expected path today.
-        route: finalState.route ?? 'ROUTED_TO_MANUAL_REVIEW',
-      };
-      await persistAgentRun(deps.dataSource, startedAt, result);
-      return result;
     },
   };
 }

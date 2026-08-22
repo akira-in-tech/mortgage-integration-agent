@@ -13,6 +13,7 @@ import {
   PolicyResolutionResult,
 } from './policy-resolution.types';
 import { runInTenantContext } from '../database/tenant-context';
+import { operationalTelemetry } from '../observability/operational-telemetry';
 
 export const RESOLVER_VERSION = '2.0.0';
 // Section 10.4: "configured maximum validation interval" — the ceiling on
@@ -128,6 +129,26 @@ export class PolicyEvaluationService {
   ) {}
 
   async evaluate(
+    tenantId: string,
+    caseId: string,
+    context: PolicyResolutionContext,
+  ): Promise<PolicyEvaluationResult> {
+    const telemetryStartedAt = performance.now();
+    try {
+      const result = await operationalTelemetry.withSpan(
+        'policy.evaluate',
+        { resolver_version: RESOLVER_VERSION },
+        () => this.evaluateInternal(tenantId, caseId, context),
+      );
+      operationalTelemetry.recordPolicy(result.outcome, telemetryStartedAt);
+      return result;
+    } catch (error) {
+      operationalTelemetry.recordPolicy('ERROR', telemetryStartedAt);
+      throw error;
+    }
+  }
+
+  private async evaluateInternal(
     tenantId: string,
     caseId: string,
     context: PolicyResolutionContext,

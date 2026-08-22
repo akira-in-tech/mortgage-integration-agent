@@ -14,6 +14,8 @@ import {
   ResumeInterruptedEvaluationSignalPayload,
 } from './case-conditions.signals';
 import { CaseConditionsWorkflowInput } from './case-conditions.types';
+import { operationalTelemetry } from '../observability/operational-telemetry';
+import { getTemporalTelemetryPlugins } from '../instrumentation';
 
 /**
  * Thin wrapper around the Temporal `Client` for starting and signaling the
@@ -43,6 +45,7 @@ export class TemporalClientService implements OnModuleDestroy {
     const connection = await this.getConnection();
     return new Client({
       connection,
+      plugins: getTemporalTelemetryPlugins(),
       namespace: this.configService.get<string>(
         'TEMPORAL_NAMESPACE',
         'default',
@@ -62,25 +65,29 @@ export class TemporalClientService implements OnModuleDestroy {
   async startCaseConditionsWorkflow(
     input: CaseConditionsWorkflowInput,
   ): Promise<{ workflowId: string; runId: string }> {
-    const client = await this.getClient();
-    const workflowId = `case-conditions-${input.caseId}`;
-    try {
-      const handle = await client.workflow.start(caseConditionsWorkflow, {
-        taskQueue: CASE_CONDITIONS_TASK_QUEUE,
-        workflowId,
-        args: [input],
-      });
-      return {
-        workflowId: handle.workflowId,
-        runId: handle.firstExecutionRunId,
-      };
-    } catch (error) {
-      if (error instanceof WorkflowExecutionAlreadyStartedError) {
-        const existing = await client.workflow.getHandle(workflowId).describe();
-        return { workflowId, runId: existing.runId };
+    return operationalTelemetry.observeWorkflow('start', async () => {
+      const client = await this.getClient();
+      const workflowId = `case-conditions-${input.caseId}`;
+      try {
+        const handle = await client.workflow.start(caseConditionsWorkflow, {
+          taskQueue: CASE_CONDITIONS_TASK_QUEUE,
+          workflowId,
+          args: [input],
+        });
+        return {
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+        };
+      } catch (error) {
+        if (error instanceof WorkflowExecutionAlreadyStartedError) {
+          const existing = await client.workflow
+            .getHandle(workflowId)
+            .describe();
+          return { workflowId, runId: existing.runId };
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   /**
@@ -93,9 +100,11 @@ export class TemporalClientService implements OnModuleDestroy {
     caseId: string,
     payload: ResolveConditionSignalPayload,
   ): Promise<void> {
-    const client = await this.getClient();
-    const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
-    await handle.signal(resolveConditionSignal, payload);
+    return operationalTelemetry.observeWorkflow('signal', async () => {
+      const client = await this.getClient();
+      const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
+      await handle.signal(resolveConditionSignal, payload);
+    });
   }
 
   /**
@@ -108,9 +117,11 @@ export class TemporalClientService implements OnModuleDestroy {
     caseId: string,
     payload: ResumeInterruptedEvaluationSignalPayload,
   ): Promise<void> {
-    const client = await this.getClient();
-    const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
-    await handle.signal(resumeInterruptedEvaluationSignal, payload);
+    return operationalTelemetry.observeWorkflow('signal', async () => {
+      const client = await this.getClient();
+      const handle = client.workflow.getHandle(`case-conditions-${caseId}`);
+      await handle.signal(resumeInterruptedEvaluationSignal, payload);
+    });
   }
 
   /**
@@ -123,15 +134,17 @@ export class TemporalClientService implements OnModuleDestroy {
     caseId: string,
     runId?: string,
   ): Promise<{ workflowId: string; runId: string; status: string }> {
-    const client = await this.getClient();
-    const workflowId = `case-conditions-${caseId}`;
-    const handle = client.workflow.getHandle(workflowId, runId);
-    const description = await handle.describe();
-    return {
-      workflowId,
-      runId: description.runId,
-      status: description.status.name,
-    };
+    return operationalTelemetry.observeWorkflow('describe', async () => {
+      const client = await this.getClient();
+      const workflowId = `case-conditions-${caseId}`;
+      const handle = client.workflow.getHandle(workflowId, runId);
+      const description = await handle.describe();
+      return {
+        workflowId,
+        runId: description.runId,
+        status: description.status.name,
+      };
+    });
   }
 
   async onModuleDestroy(): Promise<void> {

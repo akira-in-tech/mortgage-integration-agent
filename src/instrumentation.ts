@@ -4,9 +4,13 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import {
+  BatchSpanProcessor,
   ParentBasedSampler,
   TraceIdRatioBasedSampler,
 } from '@opentelemetry/sdk-trace-base';
+import { resourceFromAttributes } from '@opentelemetry/resources';
+import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
+import { OpenTelemetryPlugin } from '@temporalio/interceptors-opentelemetry-v2';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
@@ -15,8 +19,10 @@ import {
   readTelemetryBootstrapConfig,
   sanitizeHttpTarget,
 } from './observability/telemetry-config';
+import { SanitizingSpanExporter } from './observability/sanitizing-span-exporter';
 
 let sdk: NodeSDK | undefined;
+let temporalPlugin: OpenTelemetryPlugin | undefined;
 
 function requestTarget(request: IncomingMessage): string | undefined {
   return request.url;
@@ -34,14 +40,22 @@ function startTelemetry(): void {
   }
 
   try {
+    const resource = resourceFromAttributes({
+      [ATTR_SERVICE_NAME]: config.serviceName,
+    });
+    const spanProcessor = new BatchSpanProcessor(
+      new SanitizingSpanExporter(
+        new OTLPTraceExporter({
+          url: `${config.otlpEndpoint}/v1/traces`,
+        }),
+      ),
+    );
     sdk = new NodeSDK({
-      serviceName: config.serviceName,
+      resource,
       sampler: new ParentBasedSampler({
         root: new TraceIdRatioBasedSampler(config.traceSampleRatio),
       }),
-      traceExporter: new OTLPTraceExporter({
-        url: `${config.otlpEndpoint}/v1/traces`,
-      }),
+      spanProcessors: [spanProcessor],
       metricReaders: [
         new PeriodicExportingMetricReader({
           exporter: new OTLPMetricExporter({
@@ -84,11 +98,18 @@ function startTelemetry(): void {
       ],
     });
     sdk.start();
+    temporalPlugin = new OpenTelemetryPlugin({ resource, spanProcessor });
   } catch (error) {
     sdk = undefined;
+    temporalPlugin = undefined;
     const reason = error instanceof Error ? error.name : 'unknown error';
     console.warn(`OpenTelemetry disabled after bootstrap failure (${reason})`);
   }
+}
+
+/** Shares the configured processor with Temporal's replay-safe interceptors. */
+export function getTemporalTelemetryPlugins(): OpenTelemetryPlugin[] {
+  return temporalPlugin ? [temporalPlugin] : [];
 }
 
 startTelemetry();
@@ -97,6 +118,7 @@ startTelemetry();
 export async function shutdownTelemetry(): Promise<void> {
   const runningSdk = sdk;
   sdk = undefined;
+  temporalPlugin = undefined;
   if (!runningSdk) {
     return;
   }

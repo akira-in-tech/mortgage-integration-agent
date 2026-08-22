@@ -19,6 +19,7 @@ import {
   runInTenantContext,
   runWithRlsBypass,
 } from '../database/tenant-context';
+import { operationalTelemetry } from '../observability/operational-telemetry';
 
 /** Bounds how much work one `dispatchPendingEvents()` call does — a real production safety property (Worker service, Section 12.1's "webhook delivery"), not an arbitrary test convenience. */
 const EVENT_BATCH_SIZE = 50;
@@ -76,6 +77,14 @@ export class WebhookDispatchService {
 
   async dispatchPendingEvents(
     options: DispatchPendingEventsOptions = {},
+  ): Promise<DispatchPendingEventsResult> {
+    return operationalTelemetry.observeWebhookBatch(() =>
+      this.dispatchPendingEventsInternal(options),
+    );
+  }
+
+  private async dispatchPendingEventsInternal(
+    options: DispatchPendingEventsOptions,
   ): Promise<DispatchPendingEventsResult> {
     const now = options.now ?? new Date();
 
@@ -265,6 +274,10 @@ export class WebhookDispatchService {
       manager
         .getRepository(WebhookDelivery)
         .update({ id: delivery.id }, { attempts, status, nextAttemptAt }),
+    );
+    operationalTelemetry.recordWebhookDelivery(
+      outcome,
+      status === WebhookDeliveryStatus.FAILED_FINAL,
     );
   }
 }
