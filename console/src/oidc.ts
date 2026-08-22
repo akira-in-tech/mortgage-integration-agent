@@ -7,21 +7,22 @@
 // browser — not just anyone with the authorization code — is the one
 // that started the flow.
 //
-// `OidcGuard` needs an explicit `X-Tenant-Id` on every request (a real
-// human can hold `tenant_memberships` in more than one tenant); there is
-// no self-service "list my tenants" query anywhere in this codebase
-// (Known gap, honestly disclosed), so the tenant id is entered once at
-// sign-in time, the same real limitation the bearer-token connect
-// screen's `actorId` field already has.
+// `OidcGuard` needs an explicit `X-Tenant-Id` on every operational request
+// because one person can belong to more than one tenant. After token exchange,
+// the separate pre-tenant identity endpoint returns only the verified subject's
+// provisioned memberships; choosing one never bypasses the guard's per-request
+// membership and role check.
 import { setStoredActorId } from './auth';
 
 const ISSUER_URL =
   import.meta.env.VITE_OIDC_ISSUER_URL ??
   'http://localhost:8080/realms/mortgage-agent';
 const CLIENT_ID = import.meta.env.VITE_OIDC_CLIENT_ID ?? 'mortgage-agent-app';
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
 const ACCESS_TOKEN_KEY = 'meridian.oidc.accessToken';
 const REFRESH_TOKEN_KEY = 'meridian.oidc.refreshToken';
+const ID_TOKEN_KEY = 'meridian.oidc.idToken';
 const EXPIRES_AT_KEY = 'meridian.oidc.expiresAt';
 const TENANT_ID_KEY = 'meridian.oidc.tenantId';
 const PENDING_KEY = 'meridian.oidc.pending';
@@ -33,7 +34,6 @@ const REFRESH_SKEW_MS = 30_000;
 interface PendingLogin {
   verifier: string;
   state: string;
-  tenantId: string;
 }
 
 interface TokenResponse {
@@ -76,12 +76,18 @@ function decodeIdTokenClaims(idToken: string): {
   return JSON.parse(json);
 }
 
-export async function beginOidcLogin(tenantId: string): Promise<void> {
+export interface OidcTenantMembership {
+  tenantId: string;
+  tenantName: string;
+  role: 'PARTNER' | 'REVIEWER';
+}
+
+export async function beginOidcLogin(): Promise<void> {
   const verifier = randomString();
   const challenge = base64UrlEncode(await sha256(verifier));
   const state = randomString(24);
 
-  const pending: PendingLogin = { verifier, state, tenantId };
+  const pending: PendingLogin = { verifier, state };
   window.sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
 
   const redirectUri = window.location.origin + window.location.pathname;
@@ -126,7 +132,11 @@ export async function tryHandleOidcCallback(): Promise<boolean> {
   });
   if (!tokens) return false;
 
-  storeTokens(tokens, pending.tenantId);
+  // Tenant authority is selected only after the verified identity asks the
+  // backend for its own memberships. Keeping token acquisition and tenant
+  // selection separate prevents a caller from treating an arbitrary UUID
+  // typed before login as evidence of membership.
+  storeTokens(tokens);
   return true;
 }
 
@@ -142,17 +152,20 @@ async function exchangeToken(
   return (await response.json()) as TokenResponse;
 }
 
-function storeTokens(tokens: TokenResponse, tenantId: string): void {
+function storeTokens(tokens: TokenResponse, tenantId?: string): void {
   window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
   window.localStorage.setItem(
     EXPIRES_AT_KEY,
     String(Date.now() + tokens.expires_in * 1000),
   );
-  window.localStorage.setItem(TENANT_ID_KEY, tenantId);
+  if (tenantId !== undefined) {
+    window.localStorage.setItem(TENANT_ID_KEY, tenantId);
+  }
   if (tokens.refresh_token) {
     window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
   }
   if (tokens.id_token) {
+    window.localStorage.setItem(ID_TOKEN_KEY, tokens.id_token);
     const claims = decodeIdTokenClaims(tokens.id_token);
     setStoredActorId(claims.email ?? claims.preferred_username ?? 'oidc-user');
   }
@@ -160,6 +173,19 @@ function storeTokens(tokens: TokenResponse, tenantId: string): void {
 
 export function getOidcTenantId(): string | null {
   return window.localStorage.getItem(TENANT_ID_KEY);
+}
+
+export function setOidcTenantId(tenantId: string): void {
+  if (!tenantId) throw new Error('A tenant id is required');
+  window.localStorage.setItem(TENANT_ID_KEY, tenantId);
+}
+
+export function clearOidcTenantId(): void {
+  window.localStorage.removeItem(TENANT_ID_KEY);
+}
+
+export function hasOidcTokens(): boolean {
+  return Boolean(window.localStorage.getItem(ACCESS_TOKEN_KEY));
 }
 
 export function hasOidcSession(): boolean {
@@ -172,6 +198,7 @@ export function clearOidcSession(): void {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY);
   window.localStorage.removeItem(REFRESH_TOKEN_KEY);
   window.localStorage.removeItem(EXPIRES_AT_KEY);
+  window.localStorage.removeItem(ID_TOKEN_KEY);
   window.localStorage.removeItem(TENANT_ID_KEY);
 }
 
@@ -201,6 +228,83 @@ export async function getValidOidcAccessToken(): Promise<string | null> {
   }
 
   const tenantId = getOidcTenantId();
-  storeTokens(tokens, tenantId ?? '');
+  storeTokens(tokens, tenantId ?? undefined);
   return tokens.access_token;
+}
+
+/**
+ * Discovers only the verified OIDC user's own memberships. This request has
+ * no `X-Tenant-Id` because its purpose is to choose that value; the backend's
+ * pre-tenant guard verifies the token and derives the user id from `sub`.
+ */
+export async function fetchOidcTenantMemberships(): Promise<
+  OidcTenantMembership[]
+> {
+  const token = await getValidOidcAccessToken();
+  if (!token) throw new Error('Your sign-in session is no longer valid.');
+
+  const response = await fetch(`${API_URL}/v1/auth/me/tenants`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error('Unable to load your tenant memberships.');
+  }
+  const body = (await response.json()) as unknown;
+  if (!Array.isArray(body)) {
+    throw new Error('The tenant-membership response was malformed.');
+  }
+  return body.map((item) => {
+    if (
+      typeof item !== 'object' ||
+      item === null ||
+      typeof (item as Record<string, unknown>).tenantId !== 'string' ||
+      typeof (item as Record<string, unknown>).tenantName !== 'string' ||
+      !['PARTNER', 'REVIEWER'].includes(
+        String((item as Record<string, unknown>).role),
+      )
+    ) {
+      throw new Error('The tenant-membership response was malformed.');
+    }
+    return item as OidcTenantMembership;
+  });
+}
+
+/**
+ * Ends both the local session and, when the issuer advertises the standard
+ * RP-initiated logout endpoint, the upstream SSO session. A discovery or
+ * network failure still clears local credentials and returns `false` so the
+ * caller can render the disconnected state without claiming global logout.
+ */
+export async function beginOidcLogout(): Promise<boolean> {
+  const idToken = window.localStorage.getItem(ID_TOKEN_KEY);
+  let endSessionEndpoint: string | undefined;
+  try {
+    const response = await fetch(
+      `${ISSUER_URL}/.well-known/openid-configuration`,
+    );
+    if (response.ok) {
+      const document = (await response.json()) as {
+        end_session_endpoint?: unknown;
+      };
+      if (typeof document.end_session_endpoint === 'string') {
+        endSessionEndpoint = document.end_session_endpoint;
+      }
+    }
+  } catch {
+    endSessionEndpoint = undefined;
+  } finally {
+    clearOidcSession();
+  }
+
+  if (!endSessionEndpoint) return false;
+
+  const url = new URL(endSessionEndpoint);
+  url.searchParams.set('client_id', CLIENT_ID);
+  url.searchParams.set(
+    'post_logout_redirect_uri',
+    window.location.origin + window.location.pathname,
+  );
+  if (idToken) url.searchParams.set('id_token_hint', idToken);
+  window.location.href = url.toString();
+  return true;
 }

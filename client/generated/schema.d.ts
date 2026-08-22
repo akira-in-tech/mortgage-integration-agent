@@ -36,6 +36,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/me/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the authenticated human user's tenant memberships */
+        get: operations["listMyTenantMemberships"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases": {
         parameters: {
             query?: never;
@@ -279,6 +296,13 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        TenantMembershipSummaryDto: {
+            /** Format: uuid */
+            tenantId: string;
+            tenantName: string;
+            /** @enum {string} */
+            role: "PARTNER" | "REVIEWER";
+        };
         CreateCaseDto: {
             borrowerId: string;
             requestedAmount: number;
@@ -459,6 +483,32 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listMyTenantMemberships: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantMembershipSummaryDto"][];
+                };
+            };
+            /** @description Missing, invalid, or unprovisioned OIDC identity. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

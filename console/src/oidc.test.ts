@@ -3,9 +3,13 @@ import {
   beginOidcLogin,
   tryHandleOidcCallback,
   getOidcTenantId,
+  setOidcTenantId,
+  hasOidcTokens,
   hasOidcSession,
   clearOidcSession,
   getValidOidcAccessToken,
+  fetchOidcTenantMemberships,
+  beginOidcLogout,
 } from './oidc';
 import { getStoredActorId } from './auth';
 
@@ -53,7 +57,7 @@ describe('oidc', () => {
 
   describe('beginOidcLogin', () => {
     it('redirects to the real issuer authorize endpoint with a real PKCE S256 challenge and stashes the verifier for the callback', async () => {
-      await beginOidcLogin(TENANT_ID);
+      await beginOidcLogin();
 
       expect(window.location.href).toContain(
         `${ISSUER_URL}/protocol/openid-connect/auth`,
@@ -68,7 +72,7 @@ describe('oidc', () => {
       const pending = JSON.parse(
         window.sessionStorage.getItem('meridian.oidc.pending')!,
       );
-      expect(pending.tenantId).toBe(TENANT_ID);
+      expect(pending).not.toHaveProperty('tenantId');
       expect(pending.state).toBe(url.searchParams.get('state'));
       expect(pending.verifier).toBeTruthy();
     });
@@ -82,7 +86,7 @@ describe('oidc', () => {
     });
 
     it('exchanges a real matching code+state for tokens, stores them, and derives actorId from the id_token', async () => {
-      await beginOidcLogin(TENANT_ID);
+      await beginOidcLogin();
       const authorizeUrl = new URL(window.location.href);
       const state = authorizeUrl.searchParams.get('state')!;
 
@@ -103,9 +107,13 @@ describe('oidc', () => {
       const handled = await tryHandleOidcCallback();
 
       expect(handled).toBe(true);
-      expect(hasOidcSession()).toBe(true);
-      expect(getOidcTenantId()).toBe(TENANT_ID);
+      expect(hasOidcTokens()).toBe(true);
+      expect(hasOidcSession()).toBe(false);
+      expect(getOidcTenantId()).toBeNull();
       expect(getStoredActorId()).toBe('reviewer@example.com');
+
+      setOidcTenantId(TENANT_ID);
+      expect(hasOidcSession()).toBe(true);
 
       const [, requestInit] = fetchMock.mock.calls[0];
       const body = requestInit.body as URLSearchParams;
@@ -119,7 +127,7 @@ describe('oidc', () => {
     });
 
     it('fails closed on a state mismatch instead of exchanging a code with no matching PKCE verifier', async () => {
-      await beginOidcLogin(TENANT_ID);
+      await beginOidcLogin();
       setLocation(
         'http://localhost:5173/?code=real-auth-code&state=forged-state',
       );
@@ -219,11 +227,94 @@ describe('oidc', () => {
       window.localStorage.setItem('meridian.oidc.refreshToken', 'x');
       window.localStorage.setItem('meridian.oidc.expiresAt', '123');
       window.localStorage.setItem('meridian.oidc.tenantId', TENANT_ID);
+      window.localStorage.setItem('meridian.oidc.idToken', 'id-token');
 
       clearOidcSession();
 
       expect(hasOidcSession()).toBe(false);
       expect(getOidcTenantId()).toBeNull();
+      expect(window.localStorage.getItem('meridian.oidc.idToken')).toBeNull();
+    });
+  });
+
+  describe('fetchOidcTenantMemberships', () => {
+    it('loads the verified identity memberships without a tenant header', async () => {
+      window.localStorage.setItem('meridian.oidc.accessToken', 'access-token');
+      window.localStorage.setItem(
+        'meridian.oidc.expiresAt',
+        String(Date.now() + 60_000),
+      );
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [
+          { tenantId: TENANT_ID, tenantName: 'Atlas', role: 'REVIEWER' },
+        ],
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(fetchOidcTenantMemberships()).resolves.toEqual([
+        { tenantId: TENANT_ID, tenantName: 'Atlas', role: 'REVIEWER' },
+      ]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:3000/v1/auth/me/tenants',
+        { headers: { Authorization: 'Bearer access-token' } },
+      );
+      expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty(
+        'X-Tenant-Id',
+      );
+    });
+
+    it('rejects malformed membership responses instead of trusting browser authority data', async () => {
+      window.localStorage.setItem('meridian.oidc.accessToken', 'access-token');
+      window.localStorage.setItem(
+        'meridian.oidc.expiresAt',
+        String(Date.now() + 60_000),
+      );
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => [{ tenantId: TENANT_ID, role: 'ADMIN' }],
+        }),
+      );
+
+      await expect(fetchOidcTenantMemberships()).rejects.toThrow('malformed');
+    });
+  });
+
+  describe('beginOidcLogout', () => {
+    it('clears local credentials and redirects through the discovered upstream logout endpoint', async () => {
+      window.localStorage.setItem('meridian.oidc.accessToken', 'access-token');
+      window.localStorage.setItem('meridian.oidc.idToken', 'id-token');
+      window.localStorage.setItem('meridian.oidc.tenantId', TENANT_ID);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            end_session_endpoint:
+              'http://localhost:8080/realms/mortgage-agent/logout',
+          }),
+        }),
+      );
+
+      await expect(beginOidcLogout()).resolves.toBe(true);
+
+      const logoutUrl = new URL(window.location.href);
+      expect(logoutUrl.pathname).toContain('/logout');
+      expect(logoutUrl.searchParams.get('client_id')).toBe(
+        'mortgage-agent-app',
+      );
+      expect(logoutUrl.searchParams.get('id_token_hint')).toBe('id-token');
+      expect(hasOidcTokens()).toBe(false);
+    });
+
+    it('still clears local credentials when discovery is unavailable', async () => {
+      window.localStorage.setItem('meridian.oidc.accessToken', 'access-token');
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+      await expect(beginOidcLogout()).resolves.toBe(false);
+      expect(hasOidcTokens()).toBe(false);
     });
   });
 });

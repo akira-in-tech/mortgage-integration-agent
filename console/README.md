@@ -21,9 +21,9 @@ Serves on `http://localhost:5173`. Requires the main API running (`npm run start
 Two ways to sign in:
 
 - **Bearer token** — obtain one from the repo root's `create-api-client.ts` script, paste it and a reviewer name into the connect screen. Kept in `localStorage` (`meridian.apiToken` / `meridian.actorId`).
-- **Sign in with SSO** — a real Authorization Code + PKCE flow against this repo's own Keycloak realm (`keycloak/realm-export.json`; see the repo root's `docker-compose.yml` or CI workflow for how to run Keycloak locally). Enter the tenant id an administrator granted you (no self-service tenant lookup exists yet) and sign in with a real Keycloak account — e.g. the realm's own seeded `reviewer@example.com` / `reviewer-dev-password` for local dev. The backend needs `OIDC_ISSUER_URL`/`OIDC_AUDIENCE` set for this path to work (see the repo root's `.env.example`).
+- **Sign in with SSO** — a real Authorization Code + PKCE flow against this repo's own Keycloak realm (`keycloak/realm-export.json`; see the repo root's `docker-compose.yml` or CI workflow for how to run Keycloak locally). Sign in first; the console then calls the pre-tenant `GET /v1/auth/me/tenants` endpoint and automatically selects the only provisioned membership or asks the user to choose among several. The backend still re-authorizes that selected tenant on every operational request. The seeded local account is `reviewer@example.com` / `reviewer-dev-password`; the backend needs `OIDC_ISSUER_URL`/`OIDC_AUDIENCE` set.
 
-If the API isn't at the default `http://localhost:3000/graphql`, set `VITE_GRAPHQL_URL`. If Keycloak isn't at the default `http://localhost:8080/realms/mortgage-agent`, set `VITE_OIDC_ISSUER_URL` (and `VITE_OIDC_CLIENT_ID` if not `mortgage-agent-app`) — e.g. in a `.env.local` file, gitignored.
+If the API isn't at the default `http://localhost:3000/graphql`, set `VITE_GRAPHQL_URL`; set `VITE_API_URL` to the same API origin for tenant discovery. If Keycloak isn't at the default `http://localhost:8080/realms/mortgage-agent`, set `VITE_OIDC_ISSUER_URL` (and `VITE_OIDC_CLIENT_ID` if not `mortgage-agent-app`) — e.g. in a `.env.local` file, gitignored.
 
 ## Build
 
@@ -53,7 +53,6 @@ npm run codegen
 
 ## Known gaps
 
-- No self-service tenant discovery for OIDC sign-in — a human must be told their tenant id out of band.
-- No Keycloak-side logout propagation — `Disconnect` clears the console's own session only, not the Keycloak SSO session.
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
 - Browser-level end-to-end and automated accessibility coverage remain open; component and hook tests run in CI.
+- Tokens remain in browser `localStorage`; a production deployment should put them behind a same-origin backend-for-frontend with `HttpOnly`, `Secure`, and `SameSite` cookies.

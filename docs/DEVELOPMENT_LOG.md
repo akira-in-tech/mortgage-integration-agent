@@ -9434,13 +9434,14 @@ npm run lint:check — passed
 console/npm run lint — passed with 0 errors and 2 existing warnings
 console/npm test — 8 files, 40 tests passed
 console/npm run build — passed
-generated artifact verification — passed with no diff
+generated artifact verification — superseded by the corrected isolated-
+  database verification recorded in M6-017
 docker build --tag mortgage-integration-agent:ci . — passed
 ```
 
 ### Errors and fixes
 
-- The first migration verification reached a separate macOS PostgreSQL process already bound to loopback port 5432, not the new Docker service, and failed because that server had no `mortgage` role. Verification was rerun against the isolated Compose container address; the migration and generators completed there. No database configuration was changed to hide the collision.
+- The first migration verification reached a separate macOS PostgreSQL process already bound to loopback port 5432, not the new Docker service, and failed because that server had no `mortgage` role. The attempted Compose-container-address fallback was not reachable from the macOS host and did not regenerate the artifacts. M6-017 corrects this record and completes the check with a dedicated PostgreSQL container published on port 55432. No database configuration was changed to hide the collision.
 - The first container build did not produce a tagged image before the tool session ended. A second cached build completed all stages and exported `mortgage-integration-agent:ci`; the complete export result was captured.
 
 ### Security, privacy, cost, and compatibility
@@ -9455,3 +9456,60 @@ Workflow-level permissions are read-only. No deployment credential or cloud perm
 ### Next safe step
 
 Add browser E2E/accessibility coverage and close the console's tenant-discovery and identity-session lifecycle gaps.
+
+## M6-017: OIDC tenant discovery and upstream session logout
+
+### Status
+
+Implemented and verified at focused backend-unit, generated-contract, and console-component levels. OIDC login no longer asks a user to know or type a tenant UUID before authentication. Disconnect now follows the issuer's discovered RP-initiated logout endpoint when one is available rather than only deleting local keys. A real-service OIDC case is present but remains credential-gated locally; hosted execution is still pending publication.
+
+### Acceptance criterion
+
+A provisioned human authenticates first, discovers only memberships belonging to the verified token subject, selects one when several exist, and still passes the existing tenant-and-role check on every later request. Logout clears local credentials even when the issuer is unavailable and propagates to the upstream OIDC session when discovery advertises a logout endpoint.
+
+### Implementation
+
+- Added `OidcIdentityGuard`, a deliberately pre-tenant guard that verifies the bearer token and provisioned `User` but attaches no tenant or role authority.
+- Added `GET /v1/auth/me/tenants` and `TenantMembershipDirectoryService`; the user id comes only from the guard-issued identity context, never a query/path/body field.
+- Added a post-login `TenantSelectionScreen`: one membership is selected automatically, several require an explicit choice, and zero/error states provide a safe sign-out path.
+- Split possession of valid OIDC tokens from possession of a selected tenant in console session state.
+- Added runtime validation for membership responses before any tenant id is stored.
+- Stored the ID token only for the RP-initiated logout hint, discovered `end_session_endpoint`, and configured the local Keycloak client's exact post-logout URI.
+- Regenerated OpenAPI and the TypeScript client for the new identity endpoint.
+- Updated current README/console documentation; historical M6-015 notes remain unchanged as an accurate record of what that earlier slice did not include.
+
+### Decisions and alternatives
+
+- Membership discovery is not tenant authorization. The discovery endpoint has no case/provider/policy access and `OidcGuard` still checks `(tenantId, userId)` plus role on every operational request.
+- No auto-provisioning occurs from token claims. A valid identity with zero memberships sees an empty state; it never receives a default tenant.
+- The local Keycloak realm uses an exact `http://localhost:5173/` post-logout URI rather than a broad wildcard. Production identity configuration remains environment-owned.
+
+### Verification
+
+```text
+backend focused Jest — 3 suites, 8 tests passed
+real OIDC guard integration spec — new pre-tenant identity case included (credential-gated locally and configured for CI's Keycloak job; hosted result pending push)
+npm run build — passed
+npm run lint:check — passed
+console/npm test — 9 files, 47 tests passed
+console/npm run build — passed
+console/npm run lint — 0 errors, 2 pre-existing warnings
+npm run generate:openapi + npm run generate:client — passed
+contract generation database — fresh PostgreSQL 16 container on host port
+  55432; all 38 migrations passed before generation
+```
+
+This entry also corrects M6-016's verification record: the Compose container's internal address was not reachable from the macOS host, so that earlier attempt did not prove generated-artifact freshness. The dedicated port-55432 database above is the first completed isolated-database regeneration for these two slices.
+
+### Security, privacy, cost, and compatibility
+
+The endpoint returns tenant id, display name, and current role only for the verified provisioned user. It accepts no target identity and grants no new membership. Local credentials are cleared in a `finally` path even when logout discovery fails. Tokens still live in `localStorage`; replacing that with an HttpOnly same-origin session requires a backend-for-frontend and remains explicitly open.
+
+### Known gaps
+
+- No backend-for-frontend cookie session; XSS exposure of browser storage remains a production-launch blocker for the console.
+- No browser-level end-to-end test yet proves the full redirect -> membership choice -> operational request -> upstream logout journey.
+
+### Next safe step
+
+Add the browser E2E/accessibility harness, then implement a same-origin session boundary before any real-data deployment.

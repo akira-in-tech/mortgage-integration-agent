@@ -29,6 +29,39 @@
         ]
       }
     },
+    "/v1/auth/me/tenants": {
+      "get": {
+        "operationId": "listMyTenantMemberships",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TenantMembershipSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or unprovisioned OIDC identity."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the authenticated human user's tenant memberships",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
     "/v1/loan-cases": {
       "post": {
         "operationId": "createCase",
@@ -780,6 +813,30 @@
       }
     },
     "schemas": {
+      "TenantMembershipSummaryDto": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantName": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "PARTNER",
+              "REVIEWER"
+            ]
+          }
+        },
+        "required": [
+          "tenantId",
+          "tenantName",
+          "role"
+        ]
+      },
       "CreateCaseDto": {
         "type": "object",
         "properties": {

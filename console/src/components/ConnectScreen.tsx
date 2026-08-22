@@ -8,7 +8,6 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
   const [mode, setMode] = useState<Mode>('bearer');
   const [token, setToken] = useState('');
   const [actorId, setActorId] = useState('');
-  const [tenantId, setTenantId] = useState('');
   const [redirecting, setRedirecting] = useState(false);
 
   function connectWithBearer(e: React.FormEvent) {
@@ -21,13 +20,12 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
 
   function connectWithOidc(e: React.FormEvent) {
     e.preventDefault();
-    if (!tenantId.trim()) return;
     setRedirecting(true);
     // Real redirect to this repo's own Keycloak realm — the browser
     // leaves the app entirely until Keycloak sends it back with a real
     // authorization code (handled by App.tsx's tryHandleOidcCallback()
     // on the next load).
-    void beginOidcLogin(tenantId.trim());
+    void beginOidcLogin();
   }
 
   return (
@@ -102,17 +100,9 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
                 lineHeight: 1.5,
               }}
             >
-              Sign in with your real Keycloak account. There is no self-service
-              tenant lookup yet — enter the tenant id an administrator gave you.
+              Sign in with your OIDC account. After authentication, the console
+              loads only the tenant memberships provisioned for that identity.
             </div>
-            <FieldLabel>Tenant ID</FieldLabel>
-            <input
-              value={tenantId}
-              onChange={(e) => setTenantId(e.target.value)}
-              placeholder="00000000-0000-0000-0000-000000000000"
-              className="mono"
-              style={{ ...inputStyle, marginBottom: 22 }}
-            />
             <button
               type="submit"
               className="btn btn-primary"

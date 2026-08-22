@@ -9,6 +9,7 @@ import { TenantMembership } from '../database/entities/tenant-membership.entity'
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { OidcService } from './oidc.service';
 import { OidcGuard } from './oidc.guard';
+import { OidcIdentityGuard } from './oidc-identity.guard';
 import { AuthContext } from './auth-context';
 
 // Requires both a reachable Postgres and a reachable Keycloak (same
@@ -47,11 +48,24 @@ function contextFor(
   tenantIdHeader?: string,
 ): {
   context: ExecutionContext;
-  request: { headers: Record<string, string>; authContext?: AuthContext };
+  request: {
+    headers: Record<string, string>;
+    authContext?: AuthContext;
+    oidcIdentity?: {
+      userId: string;
+      subject: string;
+      email: string;
+    };
+  };
 } {
   const request: {
     headers: Record<string, string>;
     authContext?: AuthContext;
+    oidcIdentity?: {
+      userId: string;
+      subject: string;
+      email: string;
+    };
   } = { headers: {} };
   if (authorizationHeader !== undefined) {
     request.headers['authorization'] = authorizationHeader;
@@ -69,6 +83,7 @@ function contextFor(
 describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
   let dataSource: DataSource;
   let guard: OidcGuard;
+  let identityGuard: OidcIdentityGuard;
   let subject: string;
   let userId: string;
   const userIds: string[] = [];
@@ -88,6 +103,10 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
       oidcService,
       dataSource.getRepository(User),
       dataSource.getRepository(TenantMembership),
+    );
+    identityGuard = new OidcIdentityGuard(
+      oidcService,
+      dataSource.getRepository(User),
     );
 
     const token = await fetchRealToken();
@@ -145,6 +164,19 @@ describeOrSkip('OidcGuard (Section 16.1, M5-024)', () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       ),
     });
+  }, 15_000);
+
+  it('discovers a real provisioned human identity without trusting a tenant header', async () => {
+    const token = await fetchRealToken();
+    const { context, request } = contextFor(`Bearer ${token}`);
+
+    await expect(identityGuard.canActivate(context)).resolves.toBe(true);
+    expect(request).toHaveProperty('oidcIdentity', {
+      userId,
+      subject,
+      email: 'reviewer@example.com',
+    });
+    expect(request.authContext).toBeUndefined();
   }, 15_000);
 
   it('rejects a real, otherwise-valid token when no X-Tenant-Id header is present', async () => {

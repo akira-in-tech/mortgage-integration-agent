@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApiClient } from '../database/entities/api-client.entity';
 import { User } from '../database/entities/user.entity';
 import { TenantMembership } from '../database/entities/tenant-membership.entity';
+import { Tenant } from '../database/entities/tenant.entity';
 import { ApiClientService } from './api-client.service';
 import { ApiKeyGuard } from './api-key.guard';
 import { OidcService } from './oidc.service';
@@ -10,6 +11,9 @@ import { OidcGuard } from './oidc.guard';
 import { TenantAuthGuard } from './tenant-auth.guard';
 import { RoleGuard } from './role.guard';
 import { AuditModule } from '../audit/audit.module';
+import { OidcIdentityGuard } from './oidc-identity.guard';
+import { TenantMembershipDirectoryService } from './tenant-membership-directory.service';
+import { AuthController } from './auth.controller';
 
 /**
  * `@Global()`: `TenantAuthGuard` is applied via `@UseGuards(TenantAuthGuard)`
@@ -24,7 +28,7 @@ import { AuditModule } from '../audit/audit.module';
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ApiClient, User, TenantMembership]),
+    TypeOrmModule.forFeature([ApiClient, User, TenantMembership, Tenant]),
     AuditModule,
   ],
   providers: [
@@ -32,16 +36,21 @@ import { AuditModule } from '../audit/audit.module';
     ApiKeyGuard,
     OidcService,
     OidcGuard,
+    OidcIdentityGuard,
     TenantAuthGuard,
     RoleGuard,
+    TenantMembershipDirectoryService,
   ],
+  controllers: [AuthController],
   exports: [
     ApiClientService,
     ApiKeyGuard,
     OidcService,
     OidcGuard,
+    OidcIdentityGuard,
     TenantAuthGuard,
     RoleGuard,
+    TenantMembershipDirectoryService,
   ],
 })
 export class AuthModule {}

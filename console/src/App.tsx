@@ -6,11 +6,14 @@ import { CaseDossier } from './components/CaseDossier';
 import { OpsDashboard } from './components/OpsDashboard';
 import { LiveStream } from './components/LiveStream';
 import { ConnectScreen } from './components/ConnectScreen';
+import { TenantSelectionScreen } from './components/TenantSelectionScreen';
 import { getStoredActorId, getStoredToken, clearSession } from './auth';
 import {
   tryHandleOidcCallback,
   hasOidcSession,
+  hasOidcTokens,
   clearOidcSession,
+  beginOidcLogout,
 } from './oidc';
 import { SearchIcon } from './components/icons';
 
@@ -19,6 +22,9 @@ export function App() {
   const [connected, setConnected] = useState(
     () => Boolean(getStoredToken() && getStoredActorId()) || hasOidcSession(),
   );
+  const [selectingTenant, setSelectingTenant] = useState(
+    () => hasOidcTokens() && !hasOidcSession(),
+  );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [dossierCaseId, setDossierCaseId] = useState<string | null>(null);
   const [view, setView] = useState<ConsoleView>('queue');
@@ -26,16 +32,25 @@ export function App() {
   useEffect(() => {
     tryHandleOidcCallback()
       .then((handled) => {
-        if (handled) setConnected(true);
+        if (handled) {
+          setConnected(hasOidcSession());
+          setSelectingTenant(!hasOidcSession());
+        }
       })
       .finally(() => setCheckingOidcCallback(false));
   }, []);
 
   function disconnect() {
+    const upstreamOidcSession = hasOidcTokens();
     clearSession();
-    clearOidcSession();
     setConnected(false);
+    setSelectingTenant(false);
     setSelectedCaseId(null);
+    if (upstreamOidcSession) {
+      void beginOidcLogout();
+    } else {
+      clearOidcSession();
+    }
   }
 
   if (checkingOidcCallback) {
@@ -57,6 +72,17 @@ export function App() {
   }
 
   if (!connected) {
+    if (selectingTenant) {
+      return (
+        <TenantSelectionScreen
+          onSelected={() => {
+            setSelectingTenant(false);
+            setConnected(true);
+          }}
+          onCancel={disconnect}
+        />
+      );
+    }
     return <ConnectScreen onConnected={() => setConnected(true)} />;
   }
 
