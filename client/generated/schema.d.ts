@@ -145,7 +145,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List a case's consent history */
+        get: operations["listConsents"];
         put?: never;
         /** Grant or revoke consent for a case */
         post: operations["submitConsentAction"];
@@ -690,6 +691,41 @@ export interface operations {
                 content?: never;
             };
             /** @description No case with this id owned by the authenticated tenant, or no running workflow for it. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listConsents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsentRecord"][];
+                };
+            };
+            /** @description Missing or invalid API credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No case with this id owned by the authenticated tenant. */
             404: {
                 headers: {
                     [name: string]: unknown;

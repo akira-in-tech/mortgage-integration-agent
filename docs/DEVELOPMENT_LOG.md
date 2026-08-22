@@ -9403,3 +9403,55 @@ Documentation only. No runtime, schema, credential, provider, data, or deploymen
 ### Next safe step
 
 Extend CI to verify the React console and generated GraphQL client, then add security checks that produce real artifacts rather than documentation-only claims.
+
+## M6-016: Console, generated-contract, container, and production-dependency CI gates
+
+### Status
+
+Implemented and locally verified. CI previously exercised only the backend, database, Temporal, Keycloak, and REST/GraphQL tests. A broken React build, stale generated GraphQL types, a stale OpenAPI client, a non-buildable container, or a high-severity production dependency advisory could therefore merge without any required job noticing it.
+
+### Acceptance criterion
+
+Every push and pull request independently validates the console, the backend and real-service suites, generated API artifacts, the production container, and production dependency advisories. Generated code is regenerated from the bootable application schema and compared with the committed result rather than trusted because it exists in the tree.
+
+### Implementation
+
+- Added a least-privilege, concurrency-cancelled CI workflow baseline with explicit job timeouts and manual dispatch support.
+- Added an independent console job running clean install, lint, all Vitest tests, TypeScript compilation, and the Vite production build.
+- Added production dependency audits for both lockfiles at the high-severity release threshold.
+- Added a clean Docker image build job and removed local environment files, console dependencies, tests, evaluation fixtures, and repository automation metadata from the backend image build context.
+- Extended the real-service backend job to regenerate OpenAPI, the TypeScript REST client, and GraphQL console types, then fail on any checked-in artifact drift.
+- Regeneration found and repaired a real pre-existing drift: `GET /v1/loan-cases/{caseId}/consents` already existed in OpenAPI, but `client/generated/schema.d.ts` did not expose `listConsents`.
+- Updated the console README so it no longer reports missing codegen CI enforcement as an open gap.
+
+### Verification
+
+```text
+npm audit --omit=dev --audit-level=high — 0 vulnerabilities
+console/npm audit --omit=dev --audit-level=high — 0 vulnerabilities
+npm run build — passed
+npm run lint:check — passed
+console/npm run lint — passed with 0 errors and 2 existing warnings
+console/npm test — 8 files, 40 tests passed
+console/npm run build — passed
+generated artifact verification — passed with no diff
+docker build --tag mortgage-integration-agent:ci . — passed
+```
+
+### Errors and fixes
+
+- The first migration verification reached a separate macOS PostgreSQL process already bound to loopback port 5432, not the new Docker service, and failed because that server had no `mortgage` role. Verification was rerun against the isolated Compose container address; the migration and generators completed there. No database configuration was changed to hide the collision.
+- The first container build did not produce a tagged image before the tool session ended. A second cached build completed all stages and exported `mortgage-integration-agent:ci`; the complete export result was captured.
+
+### Security, privacy, cost, and compatibility
+
+Workflow-level permissions are read-only. No deployment credential or cloud permission is available to pull-request jobs. Dependency gates cover shipped packages without pretending every development-tool advisory has a production exploit path. Container and generated-contract checks are deterministic and require no paid service.
+
+### Known gaps
+
+- GitHub-hosted execution remains unverified until the invalid Akira GitHub CLI session is restored and this branch is pushed.
+- Secret scanning, SAST, SBOM/provenance, browser E2E, accessibility, infrastructure scanning, load/soak, and deployed smoke tests remain separate release slices.
+
+### Next safe step
+
+Add browser E2E/accessibility coverage and close the console's tenant-discovery and identity-session lifecycle gaps.

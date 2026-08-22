@@ -56,4 +56,4 @@ npm run codegen
 - No self-service tenant discovery for OIDC sign-in — a human must be told their tenant id out of band.
 - No Keycloak-side logout propagation — `Disconnect` clears the console's own session only, not the Keycloak SSO session.
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
-- No CI enforcement that `src/gql/` stays in sync with the backend schema — `npm run codegen` must be re-run by hand after a schema change.
+- Browser-level end-to-end and automated accessibility coverage remain open; component and hook tests run in CI.

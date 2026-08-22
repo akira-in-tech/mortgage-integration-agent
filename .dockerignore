@@ -1,6 +1,14 @@
 node_modules
 dist
 .git
+.github
+.claude
+.env
+.env.*
 *.md
 coverage
 .jest-cache
+console
+evaluation
+keycloak
+test

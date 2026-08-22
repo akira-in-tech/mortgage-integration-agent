@@ -3,10 +3,69 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+# Validation jobs do not need repository write access. Deployment workflows,
+# when introduced, receive their own narrowly-scoped OIDC permissions instead
+# of expanding the trust boundary of every pull-request run.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  console:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: console/package-lock.json
+
+      - run: npm --prefix console ci
+      - run: npm --prefix console run lint
+      - run: npm --prefix console test
+      - run: npm --prefix console run build
+
+  production-dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            console/package-lock.json
+
+      # Release blocking is scoped to shipped dependencies. Development-only
+      # tool findings remain visible in normal audit output but do not make a
+      # synthetic release unavailable without a production exploit path.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm --prefix console audit --omit=dev --audit-level=high
+
+  container-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --tag mortgage-integration-agent:ci .
+
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     # Mirrors docker-compose.yml's postgres and temporal services so CI
     # exercises the same images, credentials, and health check as local
@@ -135,3 +194,12 @@ jobs:
       - run: npm test -- --ci --runInBand --forceExit
 
       - run: npm run test:e2e
+
+      # API and console clients are checked-in release artifacts. Regenerate
+      # them from the bootable application schema and fail when a contributor
+      # changed a controller/resolver without committing the matching client.
+      - run: npm run generate:openapi
+      - run: npm run generate:client
+      - run: npm --prefix console ci
+      - run: npm --prefix console run codegen
+      - run: git diff --exit-code -- openapi/openapi.json client/generated/schema.d.ts console/src/gql
