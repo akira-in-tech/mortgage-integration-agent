@@ -10441,3 +10441,24 @@ Tempo 2.10.7 is used for this laptop profile because the current Tempo 3 single-
 This establishes launch-quality application telemetry and a reproducible local evidence path, not production SLO attainment. There is still no authenticated, encrypted, multi-AZ observability backend; durable object storage and retention enforcement; alert delivery/on-call ownership; staging load/soak window; cloud infrastructure-as-code; backup/restore drill; or automated deployment rollback.
 
 The next release slice should codify a disposable staging environment and rollback path with infrastructure as code, then run a declared load/fault corpus long enough to generate the first downloadable SLO and release-evidence artifact. Real provider activation remains gated by the existing certification and BYOC controls.
+
+## M7-015: GitHub Actions Node 24 runtime maintenance
+
+### Status
+
+Implemented and verified. The CI workflow no longer relies on the deprecated Node 20 action runtime.
+
+### Trigger and implementation
+
+The first fully green M7-014 remote run emitted GitHub runner annotations for every `actions/checkout@v4` use and each `actions/setup-node@v4` use: those action generations target Node 20 and were being forced onto Node 24 by the hosted runner. Official action release pages identify `actions/checkout@v7` and `actions/setup-node@v7` as the current releases. Every checkout and setup-node step in `.github/workflows/ci.yml` now uses v7; job permissions, configured application Node version, caches, commands, and release gates are unchanged.
+
+### Verification and boundary
+
+```text
+workflow action reference scan — no checkout@v4 or setup-node@v4 remains
+docker compose --profile observability config --quiet — passed
+git diff --check — passed
+first M7-014 remote CI before this maintenance slice — all 10 push/PR jobs passed
+```
+
+This is CI-runner maintenance only. It changes no application runtime, API, schema, generated client, provider behavior, or deployment authority. The follow-up remote run is the acceptance evidence for the v7 action environment.
