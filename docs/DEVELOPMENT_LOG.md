@@ -10273,3 +10273,43 @@ This proves a local production artifact and real local dependencies, not cloud d
 ### Next safe step
 
 Add OpenTelemetry traces and metrics with explicit SLO dashboards, then codify a staging deployment and rollback path without changing the simulated-provider default.
+
+## M7-013: documentation source-of-truth consolidation
+
+### Status
+
+Implemented and verified. The repository now has one current root quickstart instead of a second walkthrough whose product and security claims had drifted behind the implementation.
+
+### Audit scope and decision
+
+Every tracked Markdown document was classified by ownership and current purpose:
+
+- `README.md` is the product, setup, API, and runnable-developer entry point.
+- `console/README.md` owns console-only install, authentication, build, test, and code-generation instructions.
+- `docs/PROJECT_CHARTER.md` is the normative product and architecture contract.
+- `docs/DEVELOPMENT_LOG.md` is the append-only implementation and decision record.
+- `docs/QUICKSTART.md` duplicated the root README's setup/client material and still claimed that authentication, webhooks, and most REST endpoints did not exist. Those statements had been superseded by later milestones.
+
+Only `docs/QUICKSTART.md` met both deletion conditions: no unique current ownership and materially stale duplicated guidance. The other four files were retained because merging or deleting any of them would collapse distinct audiences or erase historical evidence.
+
+### Implementation
+
+- Deleted `docs/QUICKSTART.md`.
+- Replaced the root README's link to that file with the current `npm run quickstart` command, required running services, separate synthetic `PARTNER`/`REVIEWER` credentials, 30-second completion contract, and disposable-database warning.
+- Updated `client/quickstart.ts` and `client/scenario-catalog.ts` maintainer comments to point to the root README as the single current runbook.
+- Preserved earlier development-log references to `docs/QUICKSTART.md` as historical evidence that the artifact existed when M4-003 shipped. They are not presented as current instructions, and the append-only record was not rewritten retroactively.
+
+### Verification
+
+```text
+tracked documentation inventory — 5 files audited; 1 redundant file removed
+current-code reference scan — no live README or source reference to docs/QUICKSTART.md
+markdown structure/reference review — passed
+npm run lint:check — passed
+npm run build — passed
+git diff --check — passed
+```
+
+### Compatibility and recovery
+
+No runtime, API, schema, generated artifact, or package script changed. Git retains the removed walkthrough and can recover it from history if historical comparison is required. The three pre-existing untracked console conflict copies were not modified, staged, or deleted.

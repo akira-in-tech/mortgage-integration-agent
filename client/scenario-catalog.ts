@@ -23,8 +23,8 @@ import { ApiClientService } from '../src/auth/api-client.service';
  * Run `npm run scenario-catalog` for every scenario in order, or
  * `npm run scenario-catalog -- <name>` for one (see SCENARIOS below for
  * names). Requires a real API server + Temporal worker already running
- * (see docs/QUICKSTART.md) — every call goes through the real, generated
- * client, never a mock.
+ * (see README.md's generated-client quickstart) — every call goes through
+ * the real, generated client, never a mock.
  */
 
 const API_BASE_URL = process.env.API_BASE_URL ?? 'http://localhost:3000';

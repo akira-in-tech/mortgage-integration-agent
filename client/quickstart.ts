@@ -13,9 +13,9 @@ import { ApiClientService } from '../src/auth/api-client.service';
  * Section 20 M4 exit evidence: "generated client completes the published
  * quickstart." Run via `npm run quickstart` after `npm run generate:openapi
  * && npm run generate:client` and after a real API server + Temporal
- * worker are running (see docs/QUICKSTART.md) — every call below goes
- * through the real, generated, fully-typed client (`client/index.ts`)
- * against the real REST API, never a mock.
+ * worker are running (see README.md's generated-client quickstart) — every
+ * call below goes through the real, generated, fully-typed client
+ * (`client/index.ts`) against the real REST API, never a mock.
  *
  * Tenant creation has no REST endpoint yet (Section 15.1's target surface
  * doesn't include one, and this codebase hasn't built one) — this script
