@@ -38,6 +38,7 @@ export function draftInformationRequestTool(
     name: 'draft_information_request',
     purpose: 'Prepare a remediation request',
     sideEffect: 'CASE_MUTATION',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'No',
     async execute({ tenantId, caseId }, args) {
       const message = await deps.messageService.draft(tenantId, caseId, {

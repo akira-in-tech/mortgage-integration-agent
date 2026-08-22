@@ -72,6 +72,7 @@ export function escalateToReviewerTool(
     name: 'escalate_to_reviewer',
     purpose: 'Pause and create review task',
     sideEffect: 'WORKFLOW_TRANSITION',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'No',
     async execute({ tenantId, caseId }, args) {
       return runInTenantContext(deps.dataSource, tenantId, async (manager) => {

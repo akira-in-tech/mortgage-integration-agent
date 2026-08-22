@@ -13,6 +13,7 @@ import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
+import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
@@ -313,6 +314,9 @@ export async function cleanupEvaluationRun(
   dataSource: DataSource,
   tenantId: string,
 ): Promise<void> {
+  // Reservations cascade with their ledger. This must run before cases are
+  // deleted and makes a named corpus repeatable without replaying old budget.
+  await dataSource.getRepository(AgentBudgetLedger).delete({ tenantId });
   const agentRuns = await dataSource
     .getRepository(AgentRun)
     .find({ where: { tenantId } });

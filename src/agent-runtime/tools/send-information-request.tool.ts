@@ -29,6 +29,7 @@ export function sendInformationRequestTool(
     name: 'send_information_request',
     purpose: 'Deliver an external message',
     sideEffect: 'EXTERNAL_COMMUNICATION',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary:
       'Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content; formal notices outside product scope remain prohibited',
     async execute({ tenantId }, args) {

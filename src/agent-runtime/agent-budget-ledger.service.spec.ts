@@ -123,6 +123,8 @@ describeOrSkip('AgentBudgetLedgerService', () => {
 
     const first = await service.reserve(request);
     const replay = await service.reserve(request);
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
     expect(replay.reservationId).toBe(first.reservationId);
     expect(replay.ledger.remainingSteps).toBe(1);
 

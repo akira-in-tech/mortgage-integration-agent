@@ -40,6 +40,7 @@ export function checkCaseCompletenessTool(
     name: 'check_case_completeness',
     purpose: 'Validate required intake fields',
     sideEffect: 'NONE',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'No',
     async execute({ tenantId, caseId }) {
       const facts = await runInTenantContext(

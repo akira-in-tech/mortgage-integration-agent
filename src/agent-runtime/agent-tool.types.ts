@@ -23,6 +23,15 @@ export type ToolSideEffect =
 export interface AgentToolContext {
   tenantId: string;
   caseId: string;
+  /** Stable budget reservation identity for downstream provider idempotency. */
+  budgetReservationId?: string;
+}
+
+export interface AgentToolBudget {
+  /** Conservative maximums reserved before execution; actual cost settles later. */
+  tokenUnits: number;
+  providerCallUnits: number;
+  costMinorUnits: number;
 }
 
 /**
@@ -38,6 +47,7 @@ export interface AgentTool<TArgs, TResult> {
   name: string;
   purpose: string;
   sideEffect: ToolSideEffect;
+  budget: AgentToolBudget;
   /** Section 9.4's "Approval boundary" column, free text for now — no formal approval-policy engine exists yet. */
   approvalBoundary: string;
   /** Section 16.4's permanent capability denylist (`structural-exclusions.ts`) — absent on every real tool today; exists only so a future tool declaring one gets rejected at `buildToolRegistry()` time, not discovered in production. */
@@ -95,6 +105,13 @@ export function buildToolRegistry(tools: AnyAgentTool[]): AgentToolRegistry {
       identifier: tool.name,
       declaredCommandClass: tool.structurallyExcludedCommandClass,
     });
+    for (const [dimension, value] of Object.entries(tool.budget)) {
+      if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error(
+          `tool "${tool.name}" has an invalid ${dimension} budget`,
+        );
+      }
+    }
     registry.set(tool.name, tool);
   }
   return registry;

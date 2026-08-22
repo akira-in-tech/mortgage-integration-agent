@@ -14,7 +14,14 @@ import {
   buildToolRegistry,
   invokeTool,
   AnyAgentTool,
+  ToolInvocationResult,
 } from '../agent-tool.types';
+import {
+  AgentBudgetError,
+  AgentBudgetLedgerService,
+  AgentBudgetSnapshot,
+} from '../agent-budget-ledger.service';
+import { AgentBudgetReservationStatus } from '../../database/entities/agent-budget-reservation.entity';
 import {
   checkCaseCompletenessTool,
   CheckCaseCompletenessResult,
@@ -67,6 +74,8 @@ export interface LendingOperationsAgentRuntimeDeps {
   evaluationManifestService: EvaluationManifestService;
   messageService: CommunicationMessageService;
   outboxSigningSecret: string;
+  /** Injectable seam keeps runtime tests deterministic while production uses PostgreSQL. */
+  budgetLedgerService?: AgentBudgetLedgerService;
 }
 
 /**
@@ -151,15 +160,13 @@ function recordAttempt(
 }
 
 /**
- * Section 9.3: budget fields are server-issued observations the runtime
- * enforces, never model authority. This checks only the two budget
- * dimensions this adapter actually tracks (steps, trusted deadline) —
- * token, provider-call, and cost-ledger enforcement remain a known gap
- * (docs/DEVELOPMENT_LOG.md), so exhausting those is not yet detected here.
+ * Fast local check against the latest authoritative snapshot. The database
+ * reservation remains the enforcement point for every capacity dimension;
+ * this check only avoids a round trip when steps or trusted time are already
+ * visibly exhausted.
  */
 function budgetExceeded(
   agentState: LendingOperationsAgentState,
-  runDeadlineAt: string,
 ): MandatoryReviewTrigger | undefined {
   if (agentState.remainingStepBudget <= 0) {
     return classifyMandatoryReviewTrigger(
@@ -167,21 +174,34 @@ function budgetExceeded(
       'remainingStepBudget exhausted',
     );
   }
-  if (Date.now() >= Date.parse(runDeadlineAt)) {
+  if (
+    agentState.remainingDurationBudgetMs <= 0 ||
+    Date.now() >= Date.parse(agentState.runDeadlineAt)
+  ) {
     return classifyMandatoryReviewTrigger(
       MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
-      `runDeadlineAt (${runDeadlineAt}) exceeded`,
+      `runDeadlineAt (${agentState.runDeadlineAt}) exceeded`,
     );
   }
   return undefined;
 }
 
-function consumeStep(
+function applyBudgetSnapshot(
   agentState: LendingOperationsAgentState,
+  snapshot: AgentBudgetSnapshot,
 ): LendingOperationsAgentState {
   return {
     ...agentState,
-    remainingStepBudget: agentState.remainingStepBudget - 1,
+    budgetLedgerId: snapshot.ledgerId,
+    budgetLedgerVersion: snapshot.version,
+    remainingStepBudget: snapshot.remainingSteps,
+    remainingDurationBudgetMs: snapshot.remainingDurationMs,
+    remainingTokenBudget: snapshot.remainingTokens,
+    remainingProviderCallBudget: snapshot.remainingProviderCalls,
+    remainingCostBudgetMinorUnits: snapshot.remainingCostMinorUnits,
+    budgetCurrency: snapshot.currency,
+    runStartedAt: snapshot.startedAt,
+    runDeadlineAt: snapshot.deadlineAt,
   };
 }
 
@@ -191,9 +211,9 @@ function consumeStep(
  * before evidence is even inspected, and Section 6.3's authority order
  * puts it first of all: "Consent, authorization, and security controls
  * may stop processing." `consentStatus` is the only piece of that this
- * codebase can check today — no authorization-grant or budget-ledger
- * model exists yet (see `budgetExceeded` above and
- * docs/DEVELOPMENT_LOG.md's Known gaps for what else Section 9.6 lists
+ * codebase can check today. The budget ledger is now enforced separately at
+ * every tool boundary; per-tool provider authorization remains inside each
+ * provider adapter (see docs/DEVELOPMENT_LOG.md's Known gaps for what else Section 9.6 lists
  * that has no real backing signal yet: contradictory evidence, evidence
  * confidence thresholds, communication classification, provider-contract
  * conformance, and prompt-injection signals, since this graph makes no
@@ -259,10 +279,28 @@ export function createLendingOperationsAgentRuntime(
     }),
     draftInformationRequestTool({ messageService: deps.messageService }),
   ];
+  const budgetLedgerService =
+    deps.budgetLedgerService ?? new AgentBudgetLedgerService(deps.dataSource);
 
   return {
     async run(input: AgentRunInput): Promise<AgentRunResult> {
       const startedAt = new Date();
+      const initialBudget = await budgetLedgerService.createOrLoad({
+        tenantId: input.initialState.tenantId,
+        caseId: input.initialState.caseId,
+        workflowRunId: input.initialState.workflowRunId,
+        stepLimit: input.budget.stepBudget,
+        tokenLimit: input.budget.tokenBudget,
+        providerCallLimit: input.budget.providerCallBudget,
+        costLimitMinorUnits: input.budget.costBudgetMinorUnits,
+        currency: input.budget.currency,
+        startedAt: new Date(input.initialState.runStartedAt),
+        deadlineAt: new Date(input.runDeadlineAt),
+      });
+      const authoritativeInitialState = applyBudgetSnapshot(
+        input.initialState,
+        initialBudget,
+      );
       const registry = buildToolRegistry(
         allTools.filter((tool) => input.allowedTools.includes(tool.name)),
       );
@@ -270,6 +308,160 @@ export function createLendingOperationsAgentRuntime(
         tenantId: input.initialState.tenantId,
         caseId: input.initialState.caseId,
       };
+
+      type BudgetedToolResult =
+        | {
+            ok: true;
+            agentState: LendingOperationsAgentState;
+            invocation: ToolInvocationResult;
+          }
+        | {
+            ok: false;
+            agentState: LendingOperationsAgentState;
+            trigger: MandatoryReviewTrigger;
+          };
+
+      /**
+       * The only runtime path to a tool. Capacity is reserved before any
+       * effect and settled afterward; graph state receives only database
+       * snapshots. A replayed unfinished side effect is quarantined because
+       * re-executing it without reconciliation could duplicate an effect.
+       */
+      async function invokeBudgetedTool(
+        agentState: LendingOperationsAgentState,
+        toolName: string,
+        args: unknown,
+      ): Promise<BudgetedToolResult> {
+        const exceeded = budgetExceeded(agentState);
+        if (exceeded) return { ok: false, agentState, trigger: exceeded };
+
+        const definition = allTools.find((tool) => tool.name === toolName);
+        const usage = definition?.budget ?? {
+          tokenUnits: 0,
+          providerCallUnits: 0,
+          costMinorUnits: 0,
+        };
+        try {
+          const reservation = await budgetLedgerService.reserve({
+            tenantId: agentState.tenantId,
+            ledgerId: agentState.budgetLedgerId!,
+            idempotencyKey: [
+              agentState.workflowRunId,
+              agentState.caseVersion,
+              toolName,
+              agentState.attemptedTools.length,
+            ].join(':'),
+            expectedVersion: agentState.budgetLedgerVersion,
+            units: { stepUnits: 1, ...usage },
+          });
+          let reservedState = applyBudgetSnapshot(
+            agentState,
+            reservation.ledger,
+          );
+          if (reservation.replayed && definition?.sideEffect !== 'NONE') {
+            if (reservation.status === AgentBudgetReservationStatus.Reserved) {
+              const unknown = await budgetLedgerService.markUnknown(
+                agentState.tenantId,
+                reservation.reservationId,
+              );
+              reservedState = applyBudgetSnapshot(
+                reservedState,
+                unknown.ledger,
+              );
+            }
+            return {
+              ok: false,
+              agentState: reservedState,
+              trigger: classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `${toolName} has a replayed ${reservation.status} side-effect reservation requiring reconciliation`,
+              ),
+            };
+          }
+
+          const invocation = await invokeTool(
+            registry,
+            toolName,
+            {
+              ...toolContext,
+              budgetReservationId: reservation.reservationId,
+            },
+            args,
+          );
+          const committed = await budgetLedgerService.commit({
+            tenantId: agentState.tenantId,
+            reservationId: reservation.reservationId,
+            actualCostMinorUnits: usage.costMinorUnits,
+          });
+          return {
+            ok: true,
+            agentState: applyBudgetSnapshot(reservedState, committed.ledger),
+            invocation,
+          };
+        } catch (error) {
+          if (!(error instanceof AgentBudgetError)) throw error;
+          return {
+            ok: false,
+            agentState,
+            trigger: classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+              `${error.code}: ${error.message}`,
+            ),
+          };
+        }
+      }
+
+      async function consumeBudgetedRuntimeStep(
+        agentState: LendingOperationsAgentState,
+        stepName: string,
+      ): Promise<
+        | { ok: true; agentState: LendingOperationsAgentState }
+        | {
+            ok: false;
+            agentState: LendingOperationsAgentState;
+            trigger: MandatoryReviewTrigger;
+          }
+      > {
+        const exceeded = budgetExceeded(agentState);
+        if (exceeded) return { ok: false, agentState, trigger: exceeded };
+        try {
+          const reservation = await budgetLedgerService.reserve({
+            tenantId: agentState.tenantId,
+            ledgerId: agentState.budgetLedgerId!,
+            idempotencyKey: [
+              agentState.workflowRunId,
+              agentState.caseVersion,
+              `runtime-${stepName}`,
+              agentState.attemptedTools.length,
+            ].join(':'),
+            expectedVersion: agentState.budgetLedgerVersion,
+            units: {
+              stepUnits: 1,
+              tokenUnits: 0,
+              providerCallUnits: 0,
+              costMinorUnits: 0,
+            },
+          });
+          const committed = await budgetLedgerService.commit({
+            tenantId: agentState.tenantId,
+            reservationId: reservation.reservationId,
+          });
+          return {
+            ok: true,
+            agentState: applyBudgetSnapshot(agentState, committed.ledger),
+          };
+        } catch (error) {
+          if (!(error instanceof AgentBudgetError)) throw error;
+          return {
+            ok: false,
+            agentState,
+            trigger: classifyMandatoryReviewTrigger(
+              MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+              `${error.code}: ${error.message}`,
+            ),
+          };
+        }
+      }
 
       /**
        * The single place Section 9.5's two-tier "ambiguity/protected
@@ -314,17 +506,17 @@ export function createLendingOperationsAgentRuntime(
       async function checkCompletenessNode(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
-        const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
-        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
-
-        const invocation = await invokeTool(
-          registry,
+        const budgeted = await invokeBudgetedTool(
+          state.agentState,
           'check_case_completeness',
-          toolContext,
           {},
         );
+        if (!budgeted.ok) {
+          return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
+        }
+        const invocation = budgeted.invocation;
         const nextState = recordAttempt(
-          consumeStep(state.agentState),
+          budgeted.agentState,
           'check_case_completeness',
           invocation.outcome,
           invocation.error,
@@ -348,7 +540,7 @@ export function createLendingOperationsAgentRuntime(
       async function evaluatePolicyNode(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
-        const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
+        const exceeded = budgetExceeded(state.agentState);
         if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
 
         const loanCase = await runInTenantContext(
@@ -361,18 +553,21 @@ export function createLendingOperationsAgentRuntime(
             }),
         );
 
-        const invocation = await invokeTool(
-          registry,
+        const budgeted = await invokeBudgetedTool(
+          state.agentState,
           'evaluate_policy',
-          toolContext,
           {
             jurisdictionCode: loanCase.jurisdictionCode,
             productCode: loanTypeToProductCode(loanCase.loanType),
             lifecycleEvent: UNDERWRITING_REVIEW_LIFECYCLE_EVENT,
           },
         );
+        if (!budgeted.ok) {
+          return routeMandatoryReview(budgeted.agentState, budgeted.trigger);
+        }
+        const invocation = budgeted.invocation;
         const nextState = recordAttempt(
-          consumeStep(state.agentState),
+          budgeted.agentState,
           'evaluate_policy',
           invocation.outcome,
           invocation.error,
@@ -410,10 +605,17 @@ export function createLendingOperationsAgentRuntime(
       async function resolveOutcomeNode(
         state: RuntimeState,
       ): Promise<Partial<RuntimeState>> {
-        const exceeded = budgetExceeded(state.agentState, input.runDeadlineAt);
-        if (exceeded) return routeMandatoryReview(state.agentState, exceeded);
-
-        const stepped = consumeStep(state.agentState);
+        const budgetedStep = await consumeBudgetedRuntimeStep(
+          state.agentState,
+          'resolve-outcome',
+        );
+        if (!budgetedStep.ok) {
+          return routeMandatoryReview(
+            budgetedStep.agentState,
+            budgetedStep.trigger,
+          );
+        }
+        const stepped = budgetedStep.agentState;
         const evaluation = state.policyEvaluation!;
 
         // Section 20's exit evidence F / Section 18.3 ("evaluations
@@ -504,10 +706,9 @@ export function createLendingOperationsAgentRuntime(
           return { agentState: stepped, route: 'PROPOSED_ACTION' };
         }
 
-        const invocation = await invokeTool(
-          registry,
+        const budgetedCondition = await invokeBudgetedTool(
+          stepped,
           'create_condition',
-          toolContext,
           {
             code: match.version.rule.outcome.condition,
             description: match.result.reason,
@@ -518,8 +719,15 @@ export function createLendingOperationsAgentRuntime(
             evaluationManifestId: manifest.id,
           },
         );
+        if (!budgetedCondition.ok) {
+          return routeMandatoryReview(
+            budgetedCondition.agentState,
+            budgetedCondition.trigger,
+          );
+        }
+        const invocation = budgetedCondition.invocation;
         const nextState = recordAttempt(
-          stepped,
+          budgetedCondition.agentState,
           'create_condition',
           invocation.outcome,
           invocation.error,
@@ -555,10 +763,9 @@ export function createLendingOperationsAgentRuntime(
         // contact-preference model exists yet, so EMAIL/en-US/BORROWER
         // are the only defaults available — a real gap, not silently
         // assumed correct (Known gaps).
-        const draftInvocation = await invokeTool(
-          registry,
+        const budgetedDraft = await invokeBudgetedTool(
+          nextState,
           'draft_information_request',
-          toolContext,
           {
             recipientRelationship: 'BORROWER',
             channel: 'EMAIL',
@@ -568,8 +775,15 @@ export function createLendingOperationsAgentRuntime(
             hasAttachments: false,
           },
         );
+        if (!budgetedDraft.ok) {
+          return routeMandatoryReview(
+            budgetedDraft.agentState,
+            budgetedDraft.trigger,
+          );
+        }
+        const draftInvocation = budgetedDraft.invocation;
         const withDraftAttempt = recordAttempt(
-          consumeStep(nextState),
+          budgetedDraft.agentState,
           'draft_information_request',
           draftInvocation.outcome,
           draftInvocation.error,
@@ -620,7 +834,7 @@ export function createLendingOperationsAgentRuntime(
         .compile();
 
       const finalState = await graph.invoke({
-        agentState: input.initialState,
+        agentState: authoritativeInitialState,
         route: undefined,
         policyEvaluation: undefined,
       });

@@ -78,6 +78,8 @@ export interface LendingOperationsAgentState {
   remainingProviderCallBudget: number;
   budgetCurrency: string;
   remainingCostBudgetMinorUnits: number;
+  /** PostgreSQL authority row; absent only before runtime initialization. */
+  budgetLedgerId?: string;
   budgetLedgerVersion: number;
   runStartedAt: string;
   runDeadlineAt: string;

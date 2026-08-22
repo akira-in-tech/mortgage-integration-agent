@@ -52,6 +52,7 @@ export function evaluatePolicyTool(
     name: 'evaluate_policy',
     purpose: 'Request guarded evaluation of current applicable policy',
     sideEffect: 'CREATES_ASSESSMENT',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'Mandatory policy-binding validation',
     async execute({ tenantId, caseId }, args) {
       const evaluation = await deps.policyEvaluationService.evaluate(

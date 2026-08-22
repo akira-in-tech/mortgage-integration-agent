@@ -13,6 +13,7 @@ function makeTool(
     name,
     purpose: 'test tool',
     sideEffect: 'NONE',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'No',
     execute,
   };
@@ -42,6 +43,14 @@ describe('buildToolRegistry', () => {
     expect(() => buildToolRegistry([excludedTool])).toThrow(
       /structurally excluded/,
     );
+  });
+
+  it('rejects an invalid conservative usage declaration at registration', () => {
+    const invalid = {
+      ...makeTool('invalid-budget', async () => 'result'),
+      budget: { tokenUnits: -1, providerCallUnits: 0, costMinorUnits: 0 },
+    };
+    expect(() => buildToolRegistry([invalid])).toThrow(/invalid tokenUnits/);
   });
 });
 

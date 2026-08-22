@@ -52,6 +52,7 @@ export interface AgentBudgetSnapshot {
   remainingCostMinorUnits: number;
   remainingDurationMs: number;
   currency: string;
+  startedAt: string;
   deadlineAt: string;
   closed: boolean;
 }
@@ -62,6 +63,8 @@ export interface AgentBudgetReservationReceipt {
   status: AgentBudgetReservationStatus;
   units: AgentBudgetUnits;
   actualCostMinorUnits: number | null;
+  /** True when this idempotency key resolved to a pre-existing claim. */
+  replayed: boolean;
   ledger: AgentBudgetSnapshot;
 }
 
@@ -157,7 +160,7 @@ export class AgentBudgetLedgerService {
             });
           if (existing) {
             this.assertSameUnits(existing, input.units);
-            return this.receiptFor(manager, existing);
+            return this.receiptFor(manager, existing, true);
           }
 
           const [ledgers] = (await manager.query(
@@ -202,7 +205,7 @@ export class AgentBudgetLedgerService {
                 resolvedAt: null,
               }),
             );
-          return this.receipt(reservation, ledgers[0]);
+          return this.receipt(reservation, ledgers[0], false);
         },
       );
     } catch (error) {
@@ -219,7 +222,7 @@ export class AgentBudgetLedgerService {
               idempotencyKey: input.idempotencyKey,
             });
           this.assertSameUnits(existing, input.units);
-          return this.receiptFor(manager, existing);
+          return this.receiptFor(manager, existing, true);
         },
       );
     }
@@ -238,7 +241,7 @@ export class AgentBudgetLedgerService {
       input.reservationId,
       async (manager, reservation, ledger) => {
         if (reservation.status === AgentBudgetReservationStatus.Committed) {
-          return this.receipt(reservation, ledger);
+          return this.receipt(reservation, ledger, false);
         }
         if (reservation.status === AgentBudgetReservationStatus.Released) {
           throw new AgentBudgetError(
@@ -283,7 +286,7 @@ export class AgentBudgetLedgerService {
         reservation.actualCostMinorUnits = actualCost;
         reservation.resolvedAt = new Date();
         await manager.getRepository(AgentBudgetReservation).save(reservation);
-        return this.receipt(reservation, rows[0]);
+        return this.receipt(reservation, rows[0], false);
       },
     );
   }
@@ -297,7 +300,7 @@ export class AgentBudgetLedgerService {
       reservationId,
       async (manager, reservation, ledger) => {
         if (reservation.status === AgentBudgetReservationStatus.Released) {
-          return this.receipt(reservation, ledger);
+          return this.receipt(reservation, ledger, false);
         }
         if (reservation.status === AgentBudgetReservationStatus.Committed) {
           throw new AgentBudgetError(
@@ -326,7 +329,7 @@ export class AgentBudgetLedgerService {
         reservation.status = AgentBudgetReservationStatus.Released;
         reservation.resolvedAt = new Date();
         await manager.getRepository(AgentBudgetReservation).save(reservation);
-        return this.receipt(reservation, rows[0]);
+        return this.receipt(reservation, rows[0], false);
       },
     );
   }
@@ -350,7 +353,7 @@ export class AgentBudgetLedgerService {
             'Only an unresolved reservation can become outcome-unknown',
           );
         }
-        return this.receipt(reservation, ledger);
+        return this.receipt(reservation, ledger, false);
       },
     );
   }
@@ -395,6 +398,7 @@ export class AgentBudgetLedgerService {
   private async receiptFor(
     manager: EntityManager,
     reservation: AgentBudgetReservation,
+    replayed: boolean,
   ): Promise<AgentBudgetReservationReceipt> {
     const ledger = await manager
       .getRepository(AgentBudgetLedger)
@@ -402,12 +406,13 @@ export class AgentBudgetLedgerService {
         id: reservation.ledgerId,
         tenantId: reservation.tenantId,
       });
-    return this.receipt(reservation, ledger);
+    return this.receipt(reservation, ledger, replayed);
   }
 
   private receipt(
     reservation: AgentBudgetReservation,
     ledger: AgentBudgetLedger,
+    replayed: boolean,
   ): AgentBudgetReservationReceipt {
     return {
       reservationId: reservation.id,
@@ -420,6 +425,7 @@ export class AgentBudgetLedgerService {
         costMinorUnits: reservation.costMinorUnits,
       },
       actualCostMinorUnits: reservation.actualCostMinorUnits,
+      replayed,
       ledger: this.snapshot(ledger),
     };
   }
@@ -453,6 +459,7 @@ export class AgentBudgetLedgerService {
         new Date(ledger.deadlineAt).getTime() - Date.now(),
       ),
       currency: ledger.currency.trim(),
+      startedAt: new Date(ledger.startedAt).toISOString(),
       deadlineAt: new Date(ledger.deadlineAt).toISOString(),
       closed: ledger.closedAt !== null,
     };

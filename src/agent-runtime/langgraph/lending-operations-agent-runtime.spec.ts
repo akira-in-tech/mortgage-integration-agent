@@ -23,6 +23,8 @@ import { PolicyCatalogGeneration } from '../../database/entities/policy-catalog-
 import { EvaluationInputManifest } from '../../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../../database/entities/agent-run.entity';
 import { ToolAttempt } from '../../database/entities/tool-attempt.entity';
+import { AgentBudgetLedger } from '../../database/entities/agent-budget-ledger.entity';
+import { AgentBudgetReservation } from '../../database/entities/agent-budget-reservation.entity';
 import { CommunicationMessage } from '../../database/entities/communication-message.entity';
 import { CommunicationTemplate } from '../../database/entities/communication-template.entity';
 import {
@@ -87,6 +89,8 @@ describeOrSkip(
           EvaluationInputManifest,
           AgentRun,
           ToolAttempt,
+          AgentBudgetLedger,
+          AgentBudgetReservation,
           CommunicationMessage,
           CommunicationTemplate,
         ],
@@ -198,6 +202,7 @@ describeOrSkip(
 
     afterAll(async () => {
       if (dataSource?.isInitialized) {
+        await dataSource.getRepository(AgentBudgetLedger).delete({ tenantId });
         // ToolAttempt cascades on AgentRun's delete.
         await dataSource.getRepository(AgentRun).delete({ tenantId });
         await dataSource
@@ -296,7 +301,7 @@ describeOrSkip(
         tenantId,
         caseId,
         caseVersion: 1,
-        workflowRunId: 'lgr-spec-run',
+        workflowRunId: `lgr-spec-run-${caseId}`,
         workflowStatus: 'RUNNING',
         consentStatus: 'VALID',
         evidenceSummary: [],
@@ -607,9 +612,34 @@ describeOrSkip(
       );
     });
 
+    it('stops before a second tool when the authoritative ledger has only one step', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const state = makeInitialState(caseId, { remainingStepBudget: 1 });
+
+      const result = await runtime.run(makeInput(state));
+
+      expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
+      expect(
+        result.finalState.attemptedTools.map((tool) => tool.toolName),
+      ).toEqual(['check_case_completeness']);
+      expect(result.finalState.reviewState?.category).toBe(
+        'BUDGET_OR_DEADLINE_EXHAUSTED',
+      );
+      const ledger = await dataSource
+        .getRepository(AgentBudgetLedger)
+        .findOneByOrFail({ tenantId, workflowRunId: state.workflowRunId });
+      expect(ledger.stepUsed).toBe(1);
+      expect(ledger.stepReserved).toBe(0);
+    });
+
     it('fails closed to ROUTED_TO_MANUAL_REVIEW when the run deadline has already passed', async () => {
       const caseId = await makeCase();
+      const expiredStart = new Date(Date.now() - 60_000);
       const state = makeInitialState(caseId, {
+        runStartedAt: expiredStart.toISOString(),
         runDeadlineAt: new Date(Date.now() - 1_000).toISOString(),
       });
 

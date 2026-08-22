@@ -41,6 +41,7 @@ export function checkPolicyChangeImpactTool(
     name: 'check_policy_change_impact',
     purpose: 'Compare an approved policy change with open cases',
     sideEffect: 'CREATES_ASSESSMENT',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'No; cannot change case applicability',
     async execute({ tenantId, caseId }, args) {
       const assessment =

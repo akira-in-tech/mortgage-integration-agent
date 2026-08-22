@@ -9835,3 +9835,60 @@ The ledger service is authoritative and concurrency-tested, but the current Lang
 ### Next safe step
 
 Integrate the ledger with the LangGraph runtime so every tool boundary consumes one authoritative step reservation, copies only returned snapshots into graph state, and routes stale, expired, exhausted, or unknown outcomes to mandatory human review.
+
+## M7-003: LangGraph authoritative budget enforcement
+
+### Status
+
+Implemented and verified through the real LangGraph.js runtime, PostgreSQL, and workflow activity. Every registered tool invocation now reserves authoritative capacity before execution and settles it afterward; graph state is a returned observation rather than a writable budget source.
+
+### Acceptance criterion
+
+The runtime creates or resumes one immutable budget ledger per workflow run, never executes a tool after a failed reservation, propagates only database snapshots into Agent state, charges failed tool attempts, stops exactly at the step limit, enforces trusted duration in PostgreSQL, and quarantines replayed unfinished or completed side-effect reservations instead of blindly duplicating the effect.
+
+### Implementation
+
+- Added required conservative usage declarations to every Agent tool for token, provider-call, and minor-unit cost. Registry construction rejects negative, fractional, or otherwise unsafe declarations before a graph can run.
+- Initialized the ledger before graph execution from the server-issued tenant budget and trusted start/deadline. An existing workflow loads its persisted limits and time boundary rather than accepting recomputed retry values.
+- Added one `invokeBudgetedTool` path and routed all four live graph tools through it. Reservation identity includes workflow, case version, tool, and ordered attempt position; downstream tools receive the reservation id for provider-operation idempotency linkage.
+- Reserved one step for internal outcome resolution as well, so the existing bounded-loop semantics do not leave non-tool evaluation work unmetered.
+- Committed capacity after both successful and known-failed tool returns. A thrown tool is converted by the existing invocation boundary into a known failed attempt and still consumes the work budget.
+- Added a replay marker to reservation receipts. Replayed read-only work may reconstruct state safely; replayed state-changing work routes to manual review, and an unfinished reservation becomes `UNKNOWN` so its capacity remains held for reconciliation.
+- Recomputed step, duration, token, provider-call, cost, currency, ledger id/version, and trusted timestamps only from each database receipt. Local checks are an optimization; the atomic database predicate remains authoritative.
+- Added the budget entities to direct-DataSource runtime/activity integration fixtures and explicit cleanup, preserving the same real-database coverage those suites had before the new dependency.
+- Extended evaluation-corpus cleanup to delete the run's budget ledger before its cases, so repeating a named synthetic corpus cannot inherit consumed capacity or replay markers from an earlier run.
+
+### Decisions and alternatives
+
+- The runtime does not infer token or provider usage from a model response. Each registered tool must declare a conservative maximum before execution; a future provider adapter can settle lower or higher actual cost only within remaining authoritative capacity.
+- A replayed side-effect reservation is not automatically released. The runtime cannot prove whether a process died before or after the effect, so retrying would trade availability for a duplicate-effect risk. Manual reconciliation is the safe terminal route until an effect-specific receipt proves the outcome.
+- Read-only replay remains allowed because it can reconstruct graph state without duplicating an external or case mutation. This avoids routing harmless recovery reads to an operator.
+- Consent is checked before capacity is consumed. Invalid authority stops processing without spending an Agent work unit; every subsequent work/tool boundary is metered.
+
+### Verification
+
+```text
+npm run lint — passed with zero warnings
+npm run build — passed
+tool registry + budget ledger + real LangGraph + workflow activity suites —
+  4 suites / 41 tests passed against isolated PostgreSQL
+authoritative one-step runtime case — first tool committed, second tool not
+  invoked, stepUsed=1, stepReserved=0, manual-review category persisted
+git diff --check — passed
+```
+
+### Security, privacy, cost, and compatibility
+
+The runtime still makes no model or outbound provider call, so all current tools truthfully reserve zero token, provider-call, and cost units while consuming steps and duration. Tests use synthetic records only. Existing workflow inputs and direct API behavior remain compatible; the new optional state ledger id is populated by the runtime before any tool can execute.
+
+The first full CI-equivalent backend run also exposed stale evaluation-corpus ledgers from prior local executions. That failure was accurate—the new authority correctly refused to reset them. Cleanup now removes those tenant-scoped synthetic ledgers; unrelated OIDC fixture collisions found in the same run are handled in a separate test-isolation commit rather than folded into this feature.
+
+### Known gaps
+
+- Tenant-level aggregate cost ceilings are not yet layered above per-workflow ledgers.
+- No operator API/console queue resolves `UNKNOWN` budget reservations; provider operation reconciliation exists separately but is not linked to budget reservation resolution.
+- Current deterministic tools report no variable actual usage. A future model/provider adapter must supply a trusted adapter-side usage receipt and corresponding tests before its nonzero declaration can be enabled.
+
+### Next safe step
+
+Add tenant aggregate limits and a least-privilege reservation reconciliation API/console queue, then address policy-source freshness and jurisdiction inheritance.

@@ -91,6 +91,7 @@ export function createConditionTool(
     name: 'create_condition',
     purpose: 'Materialize a policy-supported operational condition',
     sideEffect: 'CASE_MUTATION',
+    budget: { tokenUnits: 0, providerCallUnits: 0, costMinorUnits: 0 },
     approvalBoundary: 'Validated binding and evaluation required',
     async execute({ tenantId, caseId }, args) {
       return runInTenantContext(deps.dataSource, tenantId, async (manager) => {

@@ -18,6 +18,8 @@ import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-gen
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
+import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
+import { AgentBudgetReservation } from '../database/entities/agent-budget-reservation.entity';
 import { ProviderAuthorizationGrant } from '../database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ProviderAdapterStatus } from '../database/entities/provider-adapter-status.entity';
@@ -84,6 +86,8 @@ describeOrSkip('runCorpus', () => {
         EvaluationInputManifest,
         AgentRun,
         ToolAttempt,
+        AgentBudgetLedger,
+        AgentBudgetReservation,
         ProviderAuthorizationGrant,
         ProviderOperationIntent,
         ProviderAdapterStatus,
