@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavRail, type ConsoleView } from './components/NavRail';
 import { CaseList } from './components/CaseList';
 import { CaseDetail } from './components/CaseDetail';
@@ -7,15 +7,54 @@ import { OpsDashboard } from './components/OpsDashboard';
 import { LiveStream } from './components/LiveStream';
 import { ConnectScreen } from './components/ConnectScreen';
 import { getStoredActorId, getStoredToken, clearSession } from './auth';
+import {
+  tryHandleOidcCallback,
+  hasOidcSession,
+  clearOidcSession,
+} from './oidc';
 import { SearchIcon } from './components/icons';
 
 export function App() {
-  const [connected, setConnected] = useState(() =>
-    Boolean(getStoredToken() && getStoredActorId()),
+  const [checkingOidcCallback, setCheckingOidcCallback] = useState(true);
+  const [connected, setConnected] = useState(
+    () => Boolean(getStoredToken() && getStoredActorId()) || hasOidcSession(),
   );
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [dossierCaseId, setDossierCaseId] = useState<string | null>(null);
   const [view, setView] = useState<ConsoleView>('queue');
+
+  useEffect(() => {
+    tryHandleOidcCallback()
+      .then((handled) => {
+        if (handled) setConnected(true);
+      })
+      .finally(() => setCheckingOidcCallback(false));
+  }, []);
+
+  function disconnect() {
+    clearSession();
+    clearOidcSession();
+    setConnected(false);
+    setSelectedCaseId(null);
+  }
+
+  if (checkingOidcCallback) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--page)',
+        }}
+      >
+        <div style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
+          Signing in…
+        </div>
+      </div>
+    );
+  }
 
   if (!connected) {
     return <ConnectScreen onConnected={() => setConnected(true)} />;
@@ -109,11 +148,7 @@ export function App() {
             <button
               className="btn"
               style={{ fontSize: 12, padding: '5px 10px' }}
-              onClick={() => {
-                clearSession();
-                setConnected(false);
-                setSelectedCaseId(null);
-              }}
+              onClick={disconnect}
             >
               Disconnect
             </button>

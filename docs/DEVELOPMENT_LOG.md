@@ -9249,3 +9249,116 @@ No new backend surface — `recentActivity` (M6-010) already existed and is alre
 ### Next safe step
 
 OIDC login (the last named console gap) — real, testable Keycloak infrastructure already exists in this repo (`keycloak/realm-export.json`, a real public client, a real test user, `src/manage-user.ts`) but the console has never used it; bearer-token-only remains the only way in today.
+
+## M6-015: console OIDC login — a real Authorization Code + PKCE flow
+
+### Status
+
+Implemented and verified end to end against a real running Keycloak instance, including a real interactive login submitted through Keycloak's own hosted login page. Closes the last named console gap.
+
+### Acceptance criterion
+
+A human can sign in to the console with a real Keycloak account (no bearer token) via the standard Authorization Code + PKCE flow, land on a working, authenticated console session, and have every GraphQL request carry a real, currently-valid access token plus the tenant they signed in as — all against `OidcGuard`, unchanged.
+
+### Implementation
+
+**Keycloak realm** (`keycloak/realm-export.json`): added the console's dev origin (`http://localhost:5173/*`) to `redirectUris`/`webOrigins` alongside the backend's own `:3000`, and added `"attributes": {"pkce.code.challenge.method": "S256"}` to the public client — enforcing PKCE server-side, not just hoping the client sends it, since a public client (no client secret a browser could ever keep safe) depends on PKCE, not a secret, to prove the code-redeeming browser is the one that started the flow.
+
+**`console/src/oidc.ts`** (new) — the whole client-side protocol, no library:
+
+- `beginOidcLogin(tenantId)`: generates a real PKCE pair (`crypto.getRandomValues` + `crypto.subtle.digest('SHA-256', ...)`, base64url-encoded — no library, the Web Crypto API is enough), a random `state`, stashes `{verifier, state, tenantId}` in `sessionStorage`, and redirects the whole browser to Keycloak's real `/protocol/openid-connect/auth`.
+- `tryHandleOidcCallback()`: called once on app mount; if the URL carries `?code&state`, validates `state` against the stashed value (failing closed — no token exchange — on a mismatch, rather than trusting a forged or replayed callback), exchanges the code for real tokens at Keycloak's token endpoint with the matching `code_verifier`, stores them, and strips `?code&state` from the URL so a page refresh can't replay the exchange.
+- `getValidOidcAccessToken()`: returns the stored access token, or refreshes it first (via the real `refresh_token` grant) if within 30s of its real expiry — checked, and refreshed if needed, on every GraphQL request via Apollo's own async `setContext`, not a background timer, so a request firing right at the skew boundary still gets a token valid for the request it's actually attached to.
+- The ID token's own claims (never signature-verified client-side — the console makes no authorization decision from them; the backend's `OidcGuard` independently re-verifies every access token against the issuer's real JWKS on every request, the only verification that matters) supply a real `email`/`preferred_username` for the same `meridian.actorId` bearer-mode already uses — the human's own real identity, not a name they have to re-type.
+
+**`console/src/apollo-client.ts`**: `authLink` became async — checks for an active OIDC session first (refreshing if needed) and sends `Authorization`/`X-Tenant-Id`; falls back to the existing bearer-token path otherwise. Both credential shapes coexist; nothing about the bearer-token connect screen changed.
+
+**`console/src/components/ConnectScreen.tsx`**: gained a real second mode — a tab toggle between "Bearer token" (unchanged) and "Sign in with SSO" (a tenant-id field + a real redirect button). **`console/src/App.tsx`**: awaits `tryHandleOidcCallback()` on mount (a brief "Signing in…" state while that resolves), and `Disconnect` now clears both credential shapes.
+
+### Affected files
+
+- `keycloak/realm-export.json`: console origin + PKCE enforcement
+- `console/src/oidc.ts` (+`.test.ts`, new)
+- `console/src/apollo-client.ts`: async authLink, OIDC-aware
+- `console/src/components/ConnectScreen.tsx`: bearer/SSO mode toggle
+- `console/src/App.tsx`: callback handling, disconnect clears both modes
+- `console/src/vite-env.d.ts`: `VITE_OIDC_ISSUER_URL`/`VITE_OIDC_CLIENT_ID`
+
+### Decisions and alternatives
+
+- **No OIDC client library**: the whole protocol (PKCE generation, the redirect, the token exchange, refresh) is well inside what the Web Crypto API and `fetch` cover directly; a library would replace ~200 readable lines with a dependency and its own configuration surface for no real capability gain at this scope.
+- **Tenant id typed in at sign-in, not discovered**: `OidcGuard` requires an explicit `X-Tenant-Id` (a real human can hold `tenant_memberships` in more than one tenant) and there is no self-service "list my tenants" query anywhere in this codebase. Building one would be real, separate backend scope of its own; asking for the tenant id once at sign-in is the same honest limitation the bearer-token connect screen's `actorId` field already has, not a new one.
+- **Per-request async refresh check over a background timer**: simpler (no timer lifecycle to manage across mount/unmount, tab visibility, multiple tabs) and correct by construction — a request literally cannot fire with a token about to expire mid-flight, since the check happens in the same async chain as the request itself.
+- **PKCE enforced server-side (`pkce.code.challenge.method: S256` on the Keycloak client)**, not just sent by the console and hoped-for: a public client's whole security model depends on it; leaving it optional server-side would mean a client that forgot to send it could still complete the flow insecurely.
+
+### Errors and fixes
+
+- **A real scratch-DB collision during final re-verification, not a bug in this slice**: `npm test` (run for the first time this session with `OIDC_ISSUER_URL` actually set, which unlocks `src/auth/oidc.guard.spec.ts` — a real integration suite gated on that env var and skipped in every earlier verification pass this session) failed 7 tests with `duplicate key value violates unique constraint "UQ_users_subject"`. Root cause: this slice's own live verification had already inserted a real `User` row (via `manage-user create-user`) with the exact same real `subject` a fresh ROPC grant against the same Keycloak realm/user produces — the same row `oidc.guard.spec.ts`'s own setup then tried to insert again. Fixed by clearing the scratch `users`/`tenant_memberships` tables (disposable scratch data, not a schema or code problem) before re-running; confirmed clean afterward, and this run was strictly more complete than every earlier pass this session, since the OIDC-gated suite had never actually executed until now.
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean
+  npx vitest run — 40/40 tests passing (+8 new: real PKCE challenge/state
+    generation, code+state exchange with a real POST body shape, state-
+    mismatch fails closed with zero network calls, token-not-near-expiry
+    short-circuits with zero network calls, real refresh_token grant,
+    refresh failure clears the session, full session-key cleanup)
+  npm run lint — 0 errors, 2 pre-existing warnings
+  npm run build — clean
+
+Backend (unchanged by this slice — keycloak/realm-export.json is config,
+  not code — but this was the first pass this session to actually run
+  with OIDC_ISSUER_URL/OIDC_AUDIENCE set, unlocking the previously-always-
+  skipped oidc.guard.spec.ts):
+  npm test -- --runInBand — 89/90 suites, 690/693 tests passed
+  npm run test:e2e — 4/4 suites, 39/39 tests passed
+  npm run lint:check — clean
+  npm run generate:openapi — zero diff
+
+Live end to end, real Keycloak (26.0, this repo's own updated
+  realm-export.json) + real running API + real console dev server,
+  driven by headless-Chrome CDP:
+  1. Fresh page load, no stored session — connect screen shown.
+  2. Switched to "Sign in with SSO", entered a real tenant id, submitted
+     — real redirect to Keycloak's own hosted /protocol/openid-connect/
+     auth with a real S256 code_challenge and state in the URL.
+  3. Keycloak's own real login form (screenshotted) — filled with
+     reviewer@example.com / reviewer-dev-password (this repo's own
+     seeded Keycloak user) and submitted.
+  4. Keycloak redirected back to the console with a real authorization
+     code + matching state; the console exchanged it for real tokens,
+     stripped ?code&state from the URL, and landed on the authenticated
+     app with zero further manual steps.
+  5. localStorage held a real access token, the real tenant id entered
+     at sign-in, and actorId correctly derived from the ID token as
+     "reviewer@example.com" — confirmed via a direct read, not inferred.
+  6. The Cases view rendered real data (3 real cases) fetched with the
+     real OIDC-sourced Authorization + X-Tenant-Id headers, screenshotted
+     — confirming OidcGuard accepted the token and resolved the correct
+     AuthContext, end to end through the browser, not just via curl.
+  7. Disconnect cleared both the OIDC session and the (unused, in this
+     run) bearer-token keys, correctly returning to the connect screen.
+  Separately, direct curl verification before the browser flow: a real
+  ROPC-issued Keycloak access token, decoded for its real `sub` claim,
+  provisioned via `manage-user create-user`/`grant-membership`, then
+  used directly against a real GraphQL query with a real X-Tenant-Id
+  header — confirmed OidcGuard's own server-side acceptance path
+  independent of the browser flow, before building the browser flow
+  around it.
+```
+
+### Security, privacy, cost, and compatibility
+
+PKCE (S256, enforced on the Keycloak client, not just sent optionally) is the correct real defense for a public client with no client secret. `state` is checked and the token exchange fails closed on any mismatch — CSRF/callback-injection protection, not just a formality. Tokens live in `localStorage` (same as the existing bearer-token credential; a genuinely more secure httpOnly-cookie-based flow would need a backend-for-frontend the console doesn't have — a disclosed, unchanged trade-off, not new to this slice). The ID token's claims are read for display only, never for an authorization decision — the backend's own signature/issuer/audience/expiry verification via `OidcGuard`/`OidcService` remains the only thing that actually grants access, unchanged by this slice.
+
+### Known gaps
+
+- No self-service tenant discovery — a human must be told their tenant id out of band (the same limitation `manage-user`'s own lack of a "list my grants" command already has on the backend side).
+- No silent/background re-authentication if a refresh token itself expires (`refresh_expires_in`, 1800s in this realm's dev-mode default) — the user is simply signed out and returns to the connect screen; a real UX gap at real session lengths beyond 30 minutes of inactivity, not fixed this slice.
+- No logout propagation to Keycloak itself (`Disconnect` clears the console's own local session only, not Keycloak's SSO session) — a real, separate `end_session_endpoint` round trip that wasn't in this slice's scope.
+
+### Next safe step
+
+All five console gaps named across M6-007/M6-009 are now closed (automated tests, Ops Dashboard, Case Dossier, Live Stream, OIDC login). Remaining real, disclosed gaps across the whole console: no GraphQL codegen CI enforcement (M6-012), client-side-only search, no self-service tenant discovery (this slice), no Keycloak-side logout propagation (this slice).

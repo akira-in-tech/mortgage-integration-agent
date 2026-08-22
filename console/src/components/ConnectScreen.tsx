@@ -1,16 +1,33 @@
 import { useState } from 'react';
 import { setStoredToken, setStoredActorId } from '../auth';
+import { beginOidcLogin } from '../oidc';
+
+type Mode = 'bearer' | 'oidc';
 
 export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
+  const [mode, setMode] = useState<Mode>('bearer');
   const [token, setToken] = useState('');
   const [actorId, setActorId] = useState('');
+  const [tenantId, setTenantId] = useState('');
+  const [redirecting, setRedirecting] = useState(false);
 
-  function connect(e: React.FormEvent) {
+  function connectWithBearer(e: React.FormEvent) {
     e.preventDefault();
     if (!token.trim() || !actorId.trim()) return;
     setStoredToken(token.trim());
     setStoredActorId(actorId.trim());
     onConnected();
+  }
+
+  function connectWithOidc(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tenantId.trim()) return;
+    setRedirecting(true);
+    // Real redirect to this repo's own Keycloak realm — the browser
+    // leaves the app entirely until Keycloak sends it back with a real
+    // authorization code (handled by App.tsx's tryHandleOidcCallback()
+    // on the next load).
+    void beginOidcLogin(tenantId.trim());
   }
 
   return (
@@ -23,82 +40,146 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
         background: 'var(--page)',
       }}
     >
-      <form
-        onSubmit={connect}
-        className="card-elevated"
-        style={{ padding: 32, width: 380 }}
-      >
+      <div className="card-elevated" style={{ padding: 32, width: 380 }}>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
           Connect to Meridian
         </div>
-        <div
-          style={{
-            fontSize: 13,
-            color: 'var(--ink-muted)',
-            marginBottom: 22,
-            lineHeight: 1.5,
-          }}
-        >
-          Paste an API client bearer token (from{' '}
-          <code>npm run create-api-client</code>) and your name — actions you
-          take are recorded under it, distinct from the credential itself.
+
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+          <ModeTab active={mode === 'bearer'} onClick={() => setMode('bearer')}>
+            Bearer token
+          </ModeTab>
+          <ModeTab active={mode === 'oidc'} onClick={() => setMode('oidc')}>
+            Sign in with SSO
+          </ModeTab>
         </div>
-        <label
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            display: 'block',
-            marginBottom: 6,
-          }}
-        >
-          Bearer token
-        </label>
-        <input
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="00000000-0000-0000-0000-000000000000.…"
-          className="mono"
-          style={{
-            width: '100%',
-            fontSize: 13,
-            padding: '9px 11px',
-            borderRadius: 7,
-            border: '1px solid var(--border)',
-            marginBottom: 16,
-          }}
-        />
-        <label
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            display: 'block',
-            marginBottom: 6,
-          }}
-        >
-          Your name
-        </label>
-        <input
-          value={actorId}
-          onChange={(e) => setActorId(e.target.value)}
-          placeholder="reviewer-1"
-          style={{
-            width: '100%',
-            fontSize: 13,
-            fontFamily: 'var(--font-sans)',
-            padding: '9px 11px',
-            borderRadius: 7,
-            border: '1px solid var(--border)',
-            marginBottom: 22,
-          }}
-        />
-        <button
-          type="submit"
-          className="btn btn-primary"
-          style={{ width: '100%', justifyContent: 'center' }}
-        >
-          Connect
-        </button>
-      </form>
+
+        {mode === 'bearer' ? (
+          <form onSubmit={connectWithBearer}>
+            <div
+              style={{
+                fontSize: 13,
+                color: 'var(--ink-muted)',
+                marginBottom: 18,
+                lineHeight: 1.5,
+              }}
+            >
+              Paste an API client bearer token (from{' '}
+              <code>npm run create-api-client</code>) and your name — actions
+              you take are recorded under it, distinct from the credential
+              itself.
+            </div>
+            <FieldLabel>Bearer token</FieldLabel>
+            <input
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000.…"
+              className="mono"
+              style={inputStyle}
+            />
+            <FieldLabel>Your name</FieldLabel>
+            <input
+              value={actorId}
+              onChange={(e) => setActorId(e.target.value)}
+              placeholder="reviewer-1"
+              style={{ ...inputStyle, marginBottom: 22 }}
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              Connect
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={connectWithOidc}>
+            <div
+              style={{
+                fontSize: 13,
+                color: 'var(--ink-muted)',
+                marginBottom: 18,
+                lineHeight: 1.5,
+              }}
+            >
+              Sign in with your real Keycloak account. There is no self-service
+              tenant lookup yet — enter the tenant id an administrator gave you.
+            </div>
+            <FieldLabel>Tenant ID</FieldLabel>
+            <input
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="mono"
+              style={{ ...inputStyle, marginBottom: 22 }}
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={redirecting}
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              {redirecting ? 'Redirecting…' : 'Sign in'}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
+  );
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  fontSize: 13,
+  fontFamily: 'var(--font-sans)',
+  padding: '9px 11px',
+  borderRadius: 7,
+  border: '1px solid var(--border)',
+  marginBottom: 16,
+  boxSizing: 'border-box',
+};
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label
+      style={{
+        fontSize: 12,
+        fontWeight: 600,
+        display: 'block',
+        marginBottom: 6,
+      }}
+    >
+      {children}
+    </label>
+  );
+}
+
+function ModeTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1,
+        fontSize: 12.5,
+        fontWeight: 600,
+        padding: '7px 0',
+        borderRadius: 7,
+        border: 'none',
+        cursor: 'pointer',
+        background: active ? 'var(--accent-wash)' : 'transparent',
+        color: active ? 'var(--accent)' : 'var(--ink-muted)',
+      }}
+    >
+      {children}
+    </button>
   );
 }
