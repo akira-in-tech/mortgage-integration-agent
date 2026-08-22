@@ -8,10 +8,18 @@ import {
 function baseConfig(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  return {
+  const config: Record<string, unknown> = {
     DATABASE_URL: 'postgresql://localhost:5432/mortgage_agent',
     ...overrides,
   };
+  if (
+    ['staging', 'production'].includes(String(overrides.NODE_ENV)) &&
+    !Object.hasOwn(overrides, 'APP_DATABASE_URL')
+  ) {
+    config.APP_DATABASE_URL =
+      'postgresql://mortgage_app@localhost:5432/mortgage_agent';
+  }
+  return config;
 }
 
 describe('validateEnvironment', () => {
@@ -181,7 +189,7 @@ describe('validateEnvironment', () => {
   });
 
   describe('App runtime database role (APP_DATABASE_URL, M5-003)', () => {
-    it('is undefined when unset — production falls back to DATABASE_URL with a warning, not a hard failure', () => {
+    it('is optional for local development', () => {
       const result = validateEnvironment(baseConfig());
       expect(result.APP_DATABASE_URL).toBeUndefined();
     });
@@ -204,6 +212,23 @@ describe('validateEnvironment', () => {
           baseConfig({ APP_DATABASE_URL: 'mysql://localhost:3306/db' }),
         ),
       ).toThrow(/APP_DATABASE_URL/);
+    });
+
+    it('requires a separate restricted runtime credential in staging and production', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ NODE_ENV: 'staging', APP_DATABASE_URL: undefined }),
+        ),
+      ).toThrow(/APP_DATABASE_URL is required/);
+
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            NODE_ENV: 'production',
+            APP_DATABASE_URL: 'postgresql://localhost:5432/mortgage_agent',
+          }),
+        ),
+      ).toThrow(/separate restricted runtime credential/);
     });
   });
 

@@ -1555,7 +1555,7 @@ Scope:
 - TypeScript 6 bridge and Jest migration;
 - patched dependencies and lockfile review;
 - environment schema validation;
-- explicit TypeORM migrations and production `synchronize: false`;
+- explicit TypeORM migrations and staging/production `synchronize: false` with a required restricted runtime role;
 - secure headers, CORS allowlist, rate limiting, body limits, and graceful shutdown;
 - liveness and dependency-aware readiness endpoints;
 - production GraphQL explorer and broad introspection controls.

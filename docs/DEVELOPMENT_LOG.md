@@ -9734,3 +9734,46 @@ No real borrower data or paid provider is used. Browser fixtures contain synthet
 ### Next safe step
 
 Add launch infrastructure and observability: one-origin ingress, managed secret injection, session/error metrics, live-stack identity smoke evidence, rollback/runbooks, and a deployed staging proof before claiming production readiness.
+
+## M7-001: fail-closed deployment database role and migration boundary
+
+### Status
+
+Implemented and locally verified. Staging can no longer auto-synchronize a schema or silently run application traffic through the migration/superuser credential. Production's prior warning-and-fallback behavior is also removed.
+
+### Acceptance criterion
+
+Development retains the zero-setup auto-sync path. Staging and production require an explicit restricted runtime PostgreSQL URL distinct from the migration URL, always set `synchronize: false`, and fail before opening a listener when the boundary is incomplete.
+
+### Implementation
+
+- Classified both `staging` and `production` as deployment environments in `createTypeOrmOptions`.
+- Selected `APP_DATABASE_URL` and disabled schema synchronization in both environments; retained query logging and migration-role auto-sync only for local development/test behavior.
+- Added a defensive factory-level failure for direct callers that bypass validated configuration.
+- Added startup validation requiring `APP_DATABASE_URL` in staging/production and rejecting an exact reuse of `DATABASE_URL`.
+- Updated environment guidance, the current charter baseline, README, and the original runtime-role migration commentary without rewriting the historical M5 development-log record.
+
+### Verification
+
+```text
+npm run lint:check — passed with zero warnings
+npm run build — passed
+npm test -- --runInBand src/config/env.validation.spec.ts src/database/typeorm-options.factory.spec.ts — 37 tests passed
+git diff --check — passed
+```
+
+### Error and fix
+
+The first focused test run correctly exposed an old staging logging test that instantiated the database factory without the now-required runtime URL. The fixture was updated to model a valid staging deployment; no production fallback was restored.
+
+### Security and compatibility
+
+This is intentionally fail-closed. A missing deployment secret now causes a visible startup/configuration failure instead of quietly disabling effective row-level isolation. Development behavior and migration CLI credentials are unchanged; deployments must supply a separate runtime connection before upgrade.
+
+### Known gap
+
+The validator can prove that the two connection strings differ, but only a live database authorization test can prove the selected runtime role is actually `NOSUPERUSER NOBYPASSRLS` and lacks DDL. Existing migration/RLS integration tests cover the repository-provisioned `mortgage_app` role; deployed evidence remains environment-specific.
+
+### Next safe step
+
+Create the authoritative Agent budget ledger and reservation boundary before any cost-bearing or provider-calling tool is enabled in the graph.

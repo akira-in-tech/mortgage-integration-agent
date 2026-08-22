@@ -12,12 +12,12 @@ const APP_ROLE = 'mortgage_app';
  * restricted role for the application's own runtime traffic to connect
  * as, so RLS actually protects something in a real deployment.
  *
- * Deliberately scoped to `NODE_ENV=production` only (see
+ * Deliberately scoped to `NODE_ENV=staging|production` (see
  * `createTypeOrmOptions`), matching this codebase's own pre-existing
  * `synchronize`-vs-migrations split (README: local development
  * auto-synchronizes the schema from entities, which needs DDL rights;
- * only `NODE_ENV=production` requires running migrations first and
- * therefore can require a non-DDL runtime role too). Local
+ * deployment environments require running migrations first and therefore
+ * can require a non-DDL runtime role too). Local
  * `docker-compose up`/`npm run start:dev` are unaffected — they keep
  * connecting as `mortgage` exactly as before.
  *

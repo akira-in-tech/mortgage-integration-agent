@@ -271,6 +271,23 @@ export function validateEnvironment(
     throw new Error(`Invalid environment configuration:\n  - ${details}`);
   }
 
+  const productionLike =
+    validatedConfig.NODE_ENV === NodeEnvironment.Production ||
+    validatedConfig.NODE_ENV === NodeEnvironment.Staging;
+  if (productionLike && !validatedConfig.APP_DATABASE_URL) {
+    throw new Error(
+      'Invalid environment configuration:\n  - APP_DATABASE_URL is required in staging and production',
+    );
+  }
+  if (
+    productionLike &&
+    validatedConfig.APP_DATABASE_URL === validatedConfig.DATABASE_URL
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - APP_DATABASE_URL must use a separate restricted runtime credential',
+    );
+  }
+
   const issuerConfigured = Boolean(validatedConfig.OIDC_ISSUER_URL);
   const audienceConfigured = Boolean(validatedConfig.OIDC_AUDIENCE);
   const oidcSupplementConfigured = Boolean(
@@ -288,9 +305,6 @@ export function validateEnvironment(
       'Invalid environment configuration:\n  - OIDC_ISSUER_URL and OIDC_AUDIENCE must be configured together',
     );
   }
-  const productionLike =
-    validatedConfig.NODE_ENV === NodeEnvironment.Production ||
-    validatedConfig.NODE_ENV === NodeEnvironment.Staging;
   if (productionLike && issuerConfigured) {
     const productionErrors: string[] = [];
     if (!validatedConfig.OIDC_SESSION_ENCRYPTION_KEY) {
