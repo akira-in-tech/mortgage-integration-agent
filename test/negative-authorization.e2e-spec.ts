@@ -210,7 +210,14 @@ describeOrSkip('Negative authorization suite (Section 16.4, M5-020)', () => {
     );
 
     const tenant = await tenantRepo.save(
-      tenantRepo.create({ name: 'Negative Authorization E2E Tenant' }),
+      tenantRepo.create({
+        name: 'Negative Authorization E2E Tenant',
+        // The reconciliation scenario intentionally reserves paid-provider
+        // capacity, so its synthetic tenant must opt in explicitly.
+        agentMonthlyProviderCallLimit: 1,
+        agentMonthlyCostLimitMinorUnits: 10,
+        agentBudgetCurrency: 'USD',
+      }),
     );
     tenantId = tenant.id;
     const { client, token } = await apiClientService.create({

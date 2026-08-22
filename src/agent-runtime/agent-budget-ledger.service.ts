@@ -216,6 +216,12 @@ export class AgentBudgetLedgerService {
           if (!ledgers[0]) {
             await this.throwReservationFailure(manager, input);
           }
+          const aggregateWindowStart = await this.reserveTenantAggregate(
+            manager,
+            input.tenantId,
+            ledgers[0].currency.trim(),
+            input.units,
+          );
           const reservation = await manager
             .getRepository(AgentBudgetReservation)
             .save(
@@ -224,6 +230,7 @@ export class AgentBudgetLedgerService {
                 ledgerId: input.ledgerId,
                 idempotencyKey: input.idempotencyKey,
                 ...input.units,
+                aggregateWindowStart,
                 actualCostMinorUnits: null,
                 status: AgentBudgetReservationStatus.Reserved,
                 resolvedAt: null,
@@ -327,6 +334,7 @@ export class AgentBudgetLedgerService {
             'Actual provider cost exceeds the authoritative budget',
           );
         }
+        await this.commitTenantAggregate(manager, reservation, actualCost);
         reservation.status = AgentBudgetReservationStatus.Committed;
         reservation.actualCostMinorUnits = actualCost;
         reservation.resolvedAt = new Date();
@@ -399,6 +407,13 @@ export class AgentBudgetLedgerService {
             reservation.costMinorUnits,
           ],
         )) as [AgentBudgetLedger[], number];
+        if (!rows[0]) {
+          throw new AgentBudgetError(
+            'RESERVATION_CONFLICT',
+            'The reservation ledger could not release capacity',
+          );
+        }
+        await this.releaseTenantAggregate(manager, reservation);
         reservation.status = AgentBudgetReservationStatus.Released;
         reservation.resolvedAt = new Date();
         reservation.resolvedBy = resolution?.resolvedBy ?? null;
@@ -482,6 +497,137 @@ export class AgentBudgetLedgerService {
         tenantId: reservation.tenantId,
       });
     return this.receipt(reservation, ledger, replayed);
+  }
+
+  /**
+   * Claims the tenant's UTC calendar-month allowance in the same transaction
+   * as the workflow claim. A missing configuration is deliberate fail-closed
+   * behavior for any tool that declares provider calls or monetary cost.
+   */
+  private async reserveTenantAggregate(
+    manager: EntityManager,
+    tenantId: string,
+    currency: string,
+    units: AgentBudgetUnits,
+  ): Promise<string | null> {
+    if (units.providerCallUnits === 0 && units.costMinorUnits === 0)
+      return null;
+
+    await manager.query(
+      `INSERT INTO "tenant_agent_budget_usage" (
+         "tenantId", "windowStart", "currency"
+       )
+       SELECT t."id", date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date,
+              t."agentBudgetCurrency"
+         FROM "tenants" t
+        WHERE t."id" = $1
+          AND t."agentMonthlyProviderCallLimit" IS NOT NULL
+          AND t."agentMonthlyCostLimitMinorUnits" IS NOT NULL
+          AND btrim(t."agentBudgetCurrency") = $2
+       ON CONFLICT ("tenantId", "windowStart") DO NOTHING`,
+      [tenantId, currency],
+    );
+    const [rows] = (await manager.query(
+      `UPDATE "tenant_agent_budget_usage" u
+          SET "providerCallReserved" = u."providerCallReserved" + $3,
+              "costReservedMinorUnits" = u."costReservedMinorUnits" + $4,
+              "updatedAt" = now()
+         FROM "tenants" t
+        WHERE u."tenantId" = $1
+          AND u."windowStart" = date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date
+          AND t."id" = u."tenantId"
+          AND btrim(u."currency") = $2
+          AND btrim(t."agentBudgetCurrency") = $2
+          AND u."providerCallUsed" + u."providerCallReserved" + $3
+                <= t."agentMonthlyProviderCallLimit"
+          AND u."costUsedMinorUnits" + u."costReservedMinorUnits" + $4
+                <= t."agentMonthlyCostLimitMinorUnits"
+       RETURNING u."windowStart"`,
+      [tenantId, currency, units.providerCallUnits, units.costMinorUnits],
+    )) as [Array<{ windowStart: string | Date }>, number];
+    if (!rows[0]) {
+      throw new AgentBudgetError(
+        'BUDGET_EXHAUSTED',
+        'Tenant aggregate Agent budget is unavailable or exhausted',
+      );
+    }
+    const windowStart = rows[0].windowStart;
+    return windowStart instanceof Date
+      ? windowStart.toISOString().slice(0, 10)
+      : windowStart;
+  }
+
+  /** Finalizes the same aggregate window reserved before external work. */
+  private async commitTenantAggregate(
+    manager: EntityManager,
+    reservation: AgentBudgetReservation,
+    actualCostMinorUnits: number,
+  ): Promise<void> {
+    if (!reservation.aggregateWindowStart) return;
+    const [rows] = (await manager.query(
+      `UPDATE "tenant_agent_budget_usage" u
+          SET "providerCallReserved" = u."providerCallReserved" - $3,
+              "providerCallUsed" = u."providerCallUsed" + $3,
+              "costReservedMinorUnits" = u."costReservedMinorUnits" - $4,
+              "costUsedMinorUnits" = u."costUsedMinorUnits" + $5,
+              "updatedAt" = now()
+        WHERE u."tenantId" = $1 AND u."windowStart" = $2
+          AND u."providerCallReserved" >= $3
+          AND u."costReservedMinorUnits" >= $4
+          AND (
+            $5 <= $4 OR EXISTS (
+              SELECT 1 FROM "tenants" t
+               WHERE t."id" = u."tenantId"
+                 AND btrim(t."agentBudgetCurrency") = btrim(u."currency")
+                 AND u."costUsedMinorUnits" + u."costReservedMinorUnits" - $4 + $5
+                       <= t."agentMonthlyCostLimitMinorUnits"
+            )
+          )
+       RETURNING u."tenantId"`,
+      [
+        reservation.tenantId,
+        reservation.aggregateWindowStart,
+        reservation.providerCallUnits,
+        reservation.costMinorUnits,
+        actualCostMinorUnits,
+      ],
+    )) as [Array<{ tenantId: string }>, number];
+    if (!rows[0]) {
+      throw new AgentBudgetError(
+        'BUDGET_EXHAUSTED',
+        'Actual provider cost exceeds the tenant aggregate Agent budget',
+      );
+    }
+  }
+
+  /** Releases aggregate capacity only after the external effect is disproved. */
+  private async releaseTenantAggregate(
+    manager: EntityManager,
+    reservation: AgentBudgetReservation,
+  ): Promise<void> {
+    if (!reservation.aggregateWindowStart) return;
+    const [rows] = (await manager.query(
+      `UPDATE "tenant_agent_budget_usage"
+          SET "providerCallReserved" = "providerCallReserved" - $3,
+              "costReservedMinorUnits" = "costReservedMinorUnits" - $4,
+              "updatedAt" = now()
+        WHERE "tenantId" = $1 AND "windowStart" = $2
+          AND "providerCallReserved" >= $3
+          AND "costReservedMinorUnits" >= $4
+       RETURNING "tenantId"`,
+      [
+        reservation.tenantId,
+        reservation.aggregateWindowStart,
+        reservation.providerCallUnits,
+        reservation.costMinorUnits,
+      ],
+    )) as [Array<{ tenantId: string }>, number];
+    if (!rows[0]) {
+      throw new AgentBudgetError(
+        'RESERVATION_CONFLICT',
+        'Tenant aggregate reservation no longer exists',
+      );
+    }
   }
 
   private receipt(

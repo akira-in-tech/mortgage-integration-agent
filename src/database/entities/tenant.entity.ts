@@ -44,6 +44,17 @@ export class Tenant {
   @Column({ type: 'integer', nullable: true })
   agentRunDurationBudgetMsOverride!: number | null;
 
+  /** Null means cost-bearing Agent work is not authorized for this tenant. */
+  @Column({ type: 'integer', nullable: true })
+  agentMonthlyProviderCallLimit!: number | null;
+
+  /** Calendar-month UTC ceiling in the configured currency's minor units. */
+  @Column({ type: 'integer', nullable: true })
+  agentMonthlyCostLimitMinorUnits!: number | null;
+
+  @Column({ type: 'char', length: 3, nullable: true })
+  agentBudgetCurrency!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 

@@ -123,6 +123,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'provider_certification_records',
       'provider_operation_intents',
       'provider_promotion_manifests',
+      'tenant_agent_budget_usage',
       'tenant_memberships',
       'tenants',
       'tool_attempts',
@@ -177,8 +178,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // communication_approvals -> communication_messages, tool_attempts ->
     // agent_runs, webhook_deliveries -> webhook_endpoints,
     // webhook_deliveries -> outbox_events, OIDC sessions -> users, agent
-    // budget reservations -> the tenant-matching authoritative budget ledger
-    expect(foreignKeys).toHaveLength(19);
+    // budget reservations -> the tenant-matching authoritative budget ledger,
+    // aggregate usage -> tenants, reservations -> their aggregate month
+    expect(foreignKeys).toHaveLength(21);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -200,6 +202,45 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts tenant aggregate Agent authority without leaving configuration or usage state', async () => {
+    const tenantColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'tenants'
+           AND column_name IN (
+             'agentMonthlyProviderCallLimit',
+             'agentMonthlyCostLimitMinorUnits',
+             'agentBudgetCurrency'
+           )
+         ORDER BY column_name`,
+      );
+    expect(tenantColumns).toHaveLength(3);
+    expect(await tableNames()).toContain('tenant_agent_budget_usage');
+    await expect(
+      scratchDataSource.query(
+        `INSERT INTO "tenants" (
+           "name", "agentMonthlyProviderCallLimit",
+           "agentMonthlyCostLimitMinorUnits", "agentBudgetCurrency"
+         ) VALUES ('partial aggregate config must fail', 10, NULL, 'USD')`,
+      ),
+    ).rejects.toThrow();
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('tenant_agent_budget_usage');
+    const removedColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'tenants'
+           AND column_name IN (
+             'agentMonthlyProviderCallLimit',
+             'agentMonthlyCostLimitMinorUnits',
+             'agentBudgetCurrency'
+           )`,
+      );
+    expect(removedColumns).toEqual([]);
   });
 
   it('reverts Agent budget reconciliation evidence and its partial queue index', async () => {

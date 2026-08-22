@@ -10029,3 +10029,59 @@ The React console does not yet render this queue, and a reservation is not yet f
 ### Next safe step
 
 Add tenant-wide aggregate provider-call/cost ceilings atomically coupled to each workflow reservation, then expose this existing queue in the operations console.
+
+## M7-007: tenant aggregate Agent provider-call and cost authority
+
+### Status
+
+Implemented and verified at the PostgreSQL transaction boundary. Per-workflow limits can no longer be multiplied across parallel workflows to bypass a tenant's monthly provider-call or monetary ceiling.
+
+### Acceptance criterion
+
+Any reservation declaring a nonzero provider call or cost must have explicit tenant authority for the current UTC calendar month. Workflow and tenant capacity are claimed or rolled back together; concurrent workflows cannot exceed the shared ceiling; an unknown result keeps both claims reserved; release restores both; commit moves both to used capacity; and a trusted actual-cost overage is rejected if the tenant lacks remaining authority.
+
+### Implementation
+
+- Added nullable tenant configuration for monthly provider-call limit, monthly cost limit in minor units, and three-letter currency. All three fields must be enabled or disabled together; null is deliberately fail closed for cost-bearing Agent work.
+- Added `tenant_agent_budget_usage`, keyed by tenant and UTC month, with used/reserved provider-call and cost counters, nonnegative constraints, tenant foreign key, forced RLS, and an explicit reservation link to the month originally charged.
+- Coupled the aggregate update to the existing workflow conditional update and reservation insert in one tenant-scoped transaction. A failed aggregate claim rolls the workflow version/counters back; two workflows racing for the last tenant capacity cannot both succeed.
+- Pinned settlement to `aggregateWindowStart` on the reservation instead of recomputing the current month. A provider response or manual reconciliation after month rollover therefore adjusts the month that authorized the external action.
+- Preserved conservative ambiguity semantics: `UNKNOWN` changes no counter; `RELEASED` decrements both reserved counters; `COMMITTED` transfers provider calls and actual cost to used counters. Actual cost at or below the reservation remains recordable after authority is disabled, while an overage needs current remaining authority.
+- Added an operator-only CLI, `set-tenant-agent-aggregate-budget`, rather than inventing an organization administrator permission inside the existing PARTNER/REVIEWER vocabulary.
+- Added the 42nd migration with full cumulative apply/revert coverage and service tests against real PostgreSQL for missing configuration, concurrent workflows, release, commit, and actual-cost overage rollback.
+
+### Error and fix
+
+The first real PostgreSQL run exposed that TypeORM returns `UPDATE ... RETURNING` as `[rows, affected]`. Treating that tuple as the row array made an empty update truthy and would have bypassed the new limit. The failing concurrency and fail-closed tests caught this before commit; all three aggregate update helpers now destructure the row array explicitly.
+
+A final SQL review caught PostgreSQL's rule that a `CHECK` expression evaluating to null passes. The enabled configuration branch now requires all three fields `IS NOT NULL`, and a migration-level negative test proves a partial direct-SQL configuration is rejected rather than relying only on CLI validation.
+
+The shared local verification database also contained six synthetic reservation rows from a previous failed run after a synchronize-based test had rebuilt the table without the migration foreign key. Cleanup now explicitly deletes test-owned reservations before ledgers and tenants. The cumulative migration test remains the authoritative schema check; staging and production keep `synchronize: false` and apply migrations.
+
+The same shared-schema drift made a local rollback encounter an already-missing reservation-to-usage foreign key. The down migration now uses `IF EXISTS` for that constraint and its companion column, allowing recovery from a partially altered development schema while the clean cumulative migration test still proves both objects are created normally.
+
+The first complete E2E rerun stalled because the reconciliation scenario now correctly failed closed when its synthetic tenant attempted a nonzero provider/cost reservation without aggregate authority. Running all four suites separately isolated that fixture: loan (4), cases (23), and webhooks (7) passed, while negative authorization reported the missing budget. The fixture now opts into exactly one provider call and 10 USD minor units; its isolated 6 tests and the complete 40-test E2E suite both pass.
+
+### Verification
+
+```text
+npm run lint + npm run build — passed
+real PostgreSQL aggregate service + cumulative 42-migration apply/revert —
+  2 suites / 52 tests passed
+complete backend CI-equivalent suite with PostgreSQL 16 and Temporal 1.29.7 —
+  96 suites / 737 tests passed; 1 suite / 3 credential-gated tests skipped
+complete backend E2E with PostgreSQL 16, Temporal 1.29.7, and Keycloak 26 —
+  4 suites / 40 tests passed
+```
+
+### Security, privacy, cost, and compatibility
+
+The aggregate row contains only tenant id, month, currency, and integer counters; it contains no borrower or provider payload. Tests use synthetic identifiers and make no paid calls. Existing zero-provider/zero-cost tools do not require aggregate configuration, while any future tool declaring cost-bearing capacity is denied until an operator grants an explicit ceiling.
+
+### Known gap
+
+The console still lacks the reservation queue and aggregate usage view. Aggregate token, storage, and concurrency quotas are not implemented; the new enforcement scope is provider calls and money, the two dimensions that can create immediate third-party spend.
+
+### Next safe step
+
+Expose read-only aggregate usage and UNKNOWN reservations in the console, then prioritize policy-source freshness and jurisdiction inheritance before expanding policy coverage.

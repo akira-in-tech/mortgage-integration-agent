@@ -37,11 +37,21 @@ describeOrSkip('AgentBudgetLedgerService', () => {
   afterAll(async () => {
     if (dataSource?.isInitialized) {
       for (const tenantId of tenantIds) {
+        // Delete the child explicitly: shared synchronize-based test suites
+        // may rebuild this table without the migration's cascade constraint.
+        await dataSource.query(
+          `DELETE FROM "agent_budget_reservations" WHERE "tenantId" = $1`,
+          [tenantId],
+        );
         await dataSource.query(
           `DELETE FROM "agent_budget_ledgers" WHERE "tenantId" = $1`,
           [tenantId],
         );
       }
+      await dataSource.query(
+        `DELETE FROM "tenants" WHERE "id" = ANY($1::uuid[])`,
+        [tenantIds],
+      );
       await dataSource.destroy();
     }
   });
@@ -49,7 +59,7 @@ describeOrSkip('AgentBudgetLedgerService', () => {
   function input(
     overrides: Partial<AgentBudgetLedgerInput> = {},
   ): AgentBudgetLedgerInput {
-    const tenantId = randomUUID();
+    const tenantId = overrides.tenantId ?? randomUUID();
     tenantIds.push(tenantId);
     const startedAt = new Date(Date.now() - 1_000);
     return {
@@ -67,8 +77,32 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     };
   }
 
+  async function authorizeCostBearingWork(
+    tenantId: string,
+    providerCallLimit = 100,
+    costLimitMinorUnits = 10_000,
+  ): Promise<void> {
+    await dataSource.query(
+      `INSERT INTO "tenants" (
+         "id", "name", "agentMonthlyProviderCallLimit",
+         "agentMonthlyCostLimitMinorUnits", "agentBudgetCurrency"
+       ) VALUES ($1, $2, $3, $4, 'USD')
+       ON CONFLICT ("id") DO UPDATE SET
+         "agentMonthlyProviderCallLimit" = EXCLUDED."agentMonthlyProviderCallLimit",
+         "agentMonthlyCostLimitMinorUnits" = EXCLUDED."agentMonthlyCostLimitMinorUnits",
+         "agentBudgetCurrency" = EXCLUDED."agentBudgetCurrency"`,
+      [
+        tenantId,
+        `Agent budget spec ${tenantId}`,
+        providerCallLimit,
+        costLimitMinorUnits,
+      ],
+    );
+  }
+
   it('does not reset consumed capacity or the trusted deadline on workflow retry', async () => {
     const initial = input();
+    await authorizeCostBearingWork(initial.tenantId);
     const created = await service.createOrLoad(initial);
     const reservation = await service.reserve({
       tenantId: initial.tenantId,
@@ -173,6 +207,7 @@ describeOrSkip('AgentBudgetLedgerService', () => {
 
   it('keeps outcome-unknown capacity reserved until explicit reconciliation', async () => {
     const ledgerInput = input({ costLimitMinorUnits: 10 });
+    await authorizeCostBearingWork(ledgerInput.tenantId);
     const ledger = await service.createOrLoad(ledgerInput);
     const reserved = await service.reserve({
       tenantId: ledgerInput.tenantId,
@@ -207,6 +242,13 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     expect(released.status).toBe(AgentBudgetReservationStatus.Released);
     expect(released.ledger.remainingCostMinorUnits).toBe(10);
     expect(await service.listUnknown(ledgerInput.tenantId)).toEqual([]);
+    expect(
+      await dataSource.query(
+        `SELECT "providerCallReserved", "costReservedMinorUnits"
+           FROM "tenant_agent_budget_usage" WHERE "tenantId" = $1`,
+        [ledgerInput.tenantId],
+      ),
+    ).toEqual([{ providerCallReserved: 0, costReservedMinorUnits: 0 }]);
     const resolved = await dataSource
       .getRepository(AgentBudgetReservation)
       .findOneByOrFail({ id: reserved.reservationId });
@@ -218,6 +260,7 @@ describeOrSkip('AgentBudgetLedgerService', () => {
 
   it('commits UNKNOWN work with reviewer evidence and rejects repeat disposition', async () => {
     const ledgerInput = input({ costLimitMinorUnits: 10 });
+    await authorizeCostBearingWork(ledgerInput.tenantId);
     const ledger = await service.createOrLoad(ledgerInput);
     const reserved = await service.reserve({
       tenantId: ledgerInput.tenantId,
@@ -245,6 +288,21 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     expect(committed.status).toBe(AgentBudgetReservationStatus.Committed);
     expect(committed.actualCostMinorUnits).toBe(7);
     expect(committed.ledger.remainingCostMinorUnits).toBe(3);
+    expect(
+      await dataSource.query(
+        `SELECT "providerCallUsed", "providerCallReserved",
+                "costUsedMinorUnits", "costReservedMinorUnits"
+           FROM "tenant_agent_budget_usage" WHERE "tenantId" = $1`,
+        [ledgerInput.tenantId],
+      ),
+    ).toEqual([
+      {
+        providerCallUsed: 1,
+        providerCallReserved: 0,
+        costUsedMinorUnits: 7,
+        costReservedMinorUnits: 0,
+      },
+    ]);
     await expect(
       service.commit({
         tenantId: ledgerInput.tenantId,
@@ -283,6 +341,7 @@ describeOrSkip('AgentBudgetLedgerService', () => {
     });
 
     const costInput = input({ costLimitMinorUnits: 5 });
+    await authorizeCostBearingWork(costInput.tenantId);
     const costLedger = await service.createOrLoad(costInput);
     const reservation = await service.reserve({
       tenantId: costInput.tenantId,
@@ -316,5 +375,124 @@ describeOrSkip('AgentBudgetLedgerService', () => {
         id: reservation.reservationId,
       });
     expect(row.status).toBe(AgentBudgetReservationStatus.Reserved);
+  });
+
+  it('fails closed for cost-bearing work without tenant aggregate authority', async () => {
+    const ledgerInput = input();
+    const ledger = await service.createOrLoad(ledgerInput);
+
+    await expect(
+      service.reserve({
+        tenantId: ledgerInput.tenantId,
+        ledgerId: ledger.ledgerId,
+        idempotencyKey: 'unconfigured-provider',
+        expectedVersion: ledger.version,
+        units: {
+          stepUnits: 1,
+          tokenUnits: 0,
+          providerCallUnits: 1,
+          costMinorUnits: 1,
+        },
+      }),
+    ).rejects.toMatchObject<Partial<AgentBudgetError>>({
+      code: 'BUDGET_EXHAUSTED',
+    });
+    expect(
+      await service.observe(ledgerInput.tenantId, ledger.ledgerId),
+    ).toMatchObject({ version: 1, remainingSteps: 2 });
+  });
+
+  it('atomically shares one monthly tenant allowance across concurrent workflows', async () => {
+    const tenantId = randomUUID();
+    tenantIds.push(tenantId);
+    await authorizeCostBearingWork(tenantId, 1, 10);
+    const firstInput = input({
+      tenantId,
+      workflowRunId: `first-${randomUUID()}`,
+    });
+    const secondInput = input({
+      tenantId,
+      workflowRunId: `second-${randomUUID()}`,
+    });
+    const [first, second] = await Promise.all([
+      service.createOrLoad(firstInput),
+      service.createOrLoad(secondInput),
+    ]);
+    const results = await Promise.allSettled([
+      service.reserve({
+        tenantId,
+        ledgerId: first.ledgerId,
+        idempotencyKey: 'tenant-final-capacity-a',
+        expectedVersion: first.version,
+        units: {
+          stepUnits: 1,
+          tokenUnits: 0,
+          providerCallUnits: 1,
+          costMinorUnits: 10,
+        },
+      }),
+      service.reserve({
+        tenantId,
+        ledgerId: second.ledgerId,
+        idempotencyKey: 'tenant-final-capacity-b',
+        expectedVersion: second.version,
+        units: {
+          stepUnits: 1,
+          tokenUnits: 0,
+          providerCallUnits: 1,
+          costMinorUnits: 10,
+        },
+      }),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === 'fulfilled'),
+    ).toHaveLength(1);
+    expect(
+      (
+        results.find(
+          (result) => result.status === 'rejected',
+        ) as PromiseRejectedResult
+      ).reason,
+    ).toMatchObject({ code: 'BUDGET_EXHAUSTED' });
+    const usage = await dataSource.query(
+      `SELECT "providerCallReserved", "costReservedMinorUnits"
+         FROM "tenant_agent_budget_usage" WHERE "tenantId" = $1`,
+      [tenantId],
+    );
+    expect(usage).toEqual([
+      { providerCallReserved: 1, costReservedMinorUnits: 10 },
+    ]);
+  });
+
+  it('rolls back a known actual-cost overage against the tenant cap', async () => {
+    const ledgerInput = input({ costLimitMinorUnits: 20 });
+    await authorizeCostBearingWork(ledgerInput.tenantId, 2, 10);
+    const ledger = await service.createOrLoad(ledgerInput);
+    const reservation = await service.reserve({
+      tenantId: ledgerInput.tenantId,
+      ledgerId: ledger.ledgerId,
+      idempotencyKey: 'tenant-cost-overage',
+      expectedVersion: ledger.version,
+      units: {
+        stepUnits: 1,
+        tokenUnits: 0,
+        providerCallUnits: 1,
+        costMinorUnits: 10,
+      },
+    });
+
+    await expect(
+      service.commit({
+        tenantId: ledgerInput.tenantId,
+        reservationId: reservation.reservationId,
+        actualCostMinorUnits: 11,
+      }),
+    ).rejects.toMatchObject<Partial<AgentBudgetError>>({
+      code: 'BUDGET_EXHAUSTED',
+    });
+    expect(
+      await service.observe(ledgerInput.tenantId, ledger.ledgerId),
+    ).toMatchObject({ remainingCostMinorUnits: 10 });
   });
 });

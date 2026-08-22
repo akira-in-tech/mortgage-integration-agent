@@ -49,6 +49,10 @@ export class AgentBudgetReservation {
   @Column({ type: 'integer', default: 0 })
   costMinorUnits!: number;
 
+  /** UTC month charged by the tenant aggregate ledger; null for free work. */
+  @Column({ type: 'date', nullable: true })
+  aggregateWindowStart!: string | null;
+
   @Column({ type: 'integer', nullable: true })
   actualCostMinorUnits!: number | null;
 
