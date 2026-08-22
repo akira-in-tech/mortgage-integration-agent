@@ -9513,3 +9513,48 @@ The endpoint returns tenant id, display name, and current role only for the veri
 ### Next safe step
 
 Add the browser E2E/accessibility harness, then implement a same-origin session boundary before any real-data deployment.
+
+## M6-018: Deterministic webhook SSRF DNS tests
+
+### Status
+
+Implemented and verified. The full backend suite had one environment-dependent failure because a unit test resolved `example.com` through live DNS. The production guard was behaving correctly by failing closed; the test was incorrectly treating external network availability as a prerequisite for proving address classification.
+
+### Acceptance criterion
+
+Webhook SSRF unit tests exercise public, loopback, and resolution-failure branches with deterministic DNS answers and pass on an offline runner. Production callers continue using Node's live DNS resolver, and the resolver test seam cannot be selected by request data.
+
+### Implementation
+
+- Added an optional `resolveHostname` seam to `AssertPublicWebhookTargetOptions`; when absent, production behavior remains the existing `node:dns/promises.lookup(..., { all: true })` path.
+- Replaced live `localhost`, `example.com`, and nonexistent-domain lookups in the unit suite with explicit DNS answer fixtures.
+- Kept literal-IP tests on the direct parsing path so they cannot accidentally rely on or exercise the resolver seam.
+- Documented at the interface that production callers omit the seam and application request data must never configure it.
+
+### Decisions and alternatives
+
+- The test does not mock away `assertPublicWebhookTarget`. It supplies only the untrusted DNS answer, then exercises the real scheme parsing, IP classification, loopback exception, empty/error handling, and fail-closed result.
+- Retrying the public DNS request would preserve flakiness and could mask a genuinely offline CI environment. Deterministic input is the correct unit-test boundary; live DNS behavior belongs in an explicitly network-enabled integration test.
+
+### Verification
+
+```text
+npm test -- --runInBand src/webhooks/webhook-url-guard.spec.ts — 42 tests passed
+npm test -- --runInBand — 48 suites / 366 tests passed; 45 credential-
+  gated suites skipped
+npm run lint:check — passed
+git diff --check — passed
+```
+
+### Security, privacy, cost, and compatibility
+
+Runtime SSRF protection is unchanged: production still resolves all live answers and rejects the target if any answer is private or reserved. The seam is supplied only by trusted in-process callers, is never populated from DTOs or environment strings, makes no external request in tests, and adds no dependency or service cost.
+
+### Known gaps
+
+- The dispatch client still follows HTTP redirects, so redirect-hop revalidation remains a separate SSRF hardening slice already disclosed in the guard's code comment.
+- A network-enabled integration test for resolver behavior is still useful, but it must be explicitly gated rather than part of the offline unit suite.
+
+### Next safe step
+
+Run the complete local CI-equivalent suite, then continue with browser E2E/accessibility and the same-origin console session boundary.

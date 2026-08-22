@@ -93,16 +93,23 @@ describe('assertPublicWebhookTarget', () => {
     });
   });
 
-  describe('hostname targets (real DNS resolution)', () => {
+  describe('hostname targets', () => {
     it('blocks "localhost", which resolves to a loopback address', async () => {
+      // DNS is an untrusted input to the SSRF decision. Supplying the answer
+      // directly keeps the security test deterministic on offline CI runners
+      // while exercising the same production classification path.
       await expect(
-        assertPublicWebhookTarget('http://localhost/hook'),
+        assertPublicWebhookTarget('http://localhost/hook', {
+          resolveHostname: async () => ['127.0.0.1'],
+        }),
       ).rejects.toThrow(WebhookTargetBlockedError);
     });
 
-    it('allows a real public hostname', async () => {
+    it('allows a hostname resolving only to public addresses', async () => {
       await expect(
-        assertPublicWebhookTarget('https://example.com/hook'),
+        assertPublicWebhookTarget('https://example.com/hook', {
+          resolveHostname: async () => ['93.184.216.34'],
+        }),
       ).resolves.toBeUndefined();
     });
 
@@ -110,6 +117,13 @@ describe('assertPublicWebhookTarget', () => {
       await expect(
         assertPublicWebhookTarget(
           'https://this-subdomain-does-not-exist.example.com/hook',
+          {
+            resolveHostname: async () => {
+              throw Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+                code: 'ENOTFOUND',
+              });
+            },
+          },
         ),
       ).rejects.toThrow(WebhookTargetBlockedError);
     });
@@ -142,6 +156,7 @@ describe('assertPublicWebhookTarget', () => {
       await expect(
         assertPublicWebhookTarget('http://localhost:4000/inbound', {
           allowLoopbackForSandbox: true,
+          resolveHostname: async () => ['127.0.0.1'],
         }),
       ).resolves.toBeUndefined();
     });

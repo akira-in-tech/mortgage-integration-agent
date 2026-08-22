@@ -199,6 +199,13 @@ export interface AssertPublicWebhookTargetOptions {
    * deterministically without mutating `process.env`.
    */
   allowLoopbackForSandbox?: boolean;
+
+  /**
+   * DNS resolver seam for deterministic security tests. Production callers
+   * omit this value and always use Node's live resolver; application request
+   * data must never choose or configure it.
+   */
+  resolveHostname?: (hostname: string) => Promise<string[]>;
 }
 
 /**
@@ -241,8 +248,12 @@ export async function assertPublicWebhookTarget(
     addresses = [bareHostname];
   } else {
     try {
-      const results = await dnsLookup(hostname, { all: true });
-      addresses = results.map((r) => r.address);
+      if (options.resolveHostname) {
+        addresses = await options.resolveHostname(hostname);
+      } else {
+        const results = await dnsLookup(hostname, { all: true });
+        addresses = results.map((r) => r.address);
+      }
     } catch (error) {
       // A hostname that doesn't resolve at all (typo, decommissioned
       // domain, an attacker-controlled name deliberately left
