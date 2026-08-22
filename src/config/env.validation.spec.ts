@@ -162,6 +162,42 @@ describe('validateEnvironment', () => {
     });
   });
 
+  describe('OpenTelemetry', () => {
+    it('defaults to disabled local OTLP export', () => {
+      const result = validateEnvironment(baseConfig());
+
+      expect(result.OTEL_ENABLED).toBe(false);
+      expect(result.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://127.0.0.1:4318');
+      expect(result.OTEL_TRACE_SAMPLE_RATIO).toBe(1);
+    });
+
+    it('parses explicit exporter settings without treating false as true', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          OTEL_ENABLED: 'false',
+          OTEL_SERVICE_NAME: 'mortgage-api',
+          OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318/',
+          OTEL_METRIC_EXPORT_INTERVAL_MS: '30000',
+          OTEL_TRACE_SAMPLE_RATIO: '0.25',
+        }),
+      );
+
+      expect(result.OTEL_ENABLED).toBe(false);
+      expect(result.OTEL_EXPORTER_OTLP_ENDPOINT).toBe('http://collector:4318');
+      expect(result.OTEL_METRIC_EXPORT_INTERVAL_MS).toBe(30_000);
+      expect(result.OTEL_TRACE_SAMPLE_RATIO).toBe(0.25);
+    });
+
+    it('rejects ambiguous enable flags and out-of-range sampling', () => {
+      expect(() =>
+        validateEnvironment(baseConfig({ OTEL_ENABLED: 'yes' })),
+      ).toThrow(/OTEL_ENABLED/);
+      expect(() =>
+        validateEnvironment(baseConfig({ OTEL_TRACE_SAMPLE_RATIO: '1.1' })),
+      ).toThrow(/OTEL_TRACE_SAMPLE_RATIO/);
+    });
+  });
+
   describe('Outbox signing (OUTBOX_SIGNING_SECRET)', () => {
     it('defaults to the local development secret', () => {
       const result = validateEnvironment(baseConfig());

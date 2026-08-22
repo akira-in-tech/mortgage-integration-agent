@@ -1,8 +1,10 @@
 import { plainToInstance, Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUrl,
@@ -245,6 +247,51 @@ export class EnvironmentVariables {
   @Min(300)
   @Max(2_592_000)
   OIDC_SESSION_MAX_AGE_SECONDS: number = 28_800;
+
+  // ── OpenTelemetry (src/instrumentation.ts) ──────────────────────────────
+  // Export is opt-in and OTLP-only, keeping the runtime independent from a
+  // specific hosted observability vendor or paid API key.
+  @IsOptional()
+  @Transform(({ obj }: { obj: Record<string, unknown> }) => {
+    const value = obj.OTEL_ENABLED;
+    if (typeof value !== 'string') return value;
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  OTEL_ENABLED: boolean = false;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  OTEL_SERVICE_NAME: string = 'mortgage-integration-agent';
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.replace(/\/+$/, '') : value,
+  )
+  @IsUrl(
+    {
+      protocols: ['http', 'https'],
+      require_protocol: true,
+      require_tld: false,
+    },
+    { message: 'OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL' },
+  )
+  OTEL_EXPORTER_OTLP_ENDPOINT: string = 'http://127.0.0.1:4318';
+
+  @IsOptional()
+  @IsInt()
+  @Min(1_000)
+  @Max(300_000)
+  OTEL_METRIC_EXPORT_INTERVAL_MS: number = 15_000;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  OTEL_TRACE_SAMPLE_RATIO: number = 1;
 }
 
 // ─── Validator ──────────────────────────────────────────────────────────────

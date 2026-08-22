@@ -10313,3 +10313,32 @@ git diff --check — passed
 ### Compatibility and recovery
 
 No runtime, API, schema, generated artifact, or package script changed. Git retains the removed walkthrough and can recover it from history if historical comparison is required. The three pre-existing untracked console conflict copies were not modified, staged, or deleted.
+
+## M7-014a: vendor-neutral telemetry runtime foundation
+
+### Status
+
+Implemented and verified. API and worker processes can now export OpenTelemetry traces and metrics through OTLP/HTTP without requiring a paid service or changing the default synthetic development path.
+
+### Implementation
+
+- Added an early process preload for the Node OpenTelemetry SDK, OTLP protobuf trace and metric exporters, parent-aware ratio sampling, and automatic HTTP, Express, and PostgreSQL instrumentation.
+- Kept export explicitly opt-in with `OTEL_ENABLED=false` by default. Invalid configuration fails normal environment validation, while Collector startup/export failure degrades observability without denying a business request.
+- Added bounded exporter, interval, service-name, and sampling configuration. API and worker deployments can use separate service names while sharing the same vendor-neutral OTLP contract.
+- Removed query parameters and fragments from HTTP targets, disabled header capture, replaced PostgreSQL statement text with its SQL verb, disabled parameter reporting and SQL trace-comment injection, and excluded health probes from request traces.
+- Added opaque `X-Trace-Id` response correlation and a reusable active-trace helper that exposes no tenant, case, borrower, payload, token, or credential values.
+- Added graceful SDK shutdown through Nest lifecycle handling for the API and the existing worker shutdown path.
+
+### Verification
+
+```text
+telemetry configuration + environment validation — 2 suites / 38 tests passed
+npm run lint:check — passed
+npm run build — passed
+git diff --check — passed
+root dependency audit at installation — 0 vulnerabilities
+```
+
+### Boundaries and next step
+
+This slice proves safe initialization, export configuration, automatic framework/database spans, trace correlation, and data-minimizing sanitization. It does not yet claim domain metric coverage, a running Collector/dashboard, alert behavior, or SLO attainment. The next independent slice adds low-cardinality provider, policy, Agent, workflow, and webhook signals before the local observability stack consumes them.

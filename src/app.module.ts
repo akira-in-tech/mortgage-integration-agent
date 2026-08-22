@@ -23,6 +23,7 @@ import { AuthModule } from './auth/auth.module';
 import { ConsentModule } from './consent/consent.module';
 import { AuditModule } from './audit/audit.module';
 import { AgentBudgetModule } from './agent-runtime/agent-budget.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { AgentBudgetModule } from './agent-runtime/agent-budget.module';
     ConsentModule,
     AuditModule,
     AgentBudgetModule,
+    ObservabilityModule,
     CasesModule,
     PolicyModule,
     CommunicationsModule,

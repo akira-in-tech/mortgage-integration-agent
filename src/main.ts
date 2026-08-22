@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './instrumentation';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
@@ -8,6 +9,7 @@ import { AppModule } from './app.module';
 import { NodeEnvironment } from './config/env.validation';
 import { resolveCorsOrigin } from './config/cors';
 import { buildOpenApiDocument } from './openapi.config';
+import { getActiveTraceFields } from './observability/trace-context';
 
 // Explicit, not Express's implicit default — the charter (16.1) requires
 // request-size limits to be a deliberate decision, not an accident of
@@ -21,6 +23,22 @@ async function bootstrap(): Promise<void> {
   // an invalid or missing variable throws here, before any HTTP listener
   // or database connection is attempted.
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Return the opaque trace id to operators and API clients without exposing
+  // any tenant, case, borrower, credential, query, or request-body data.
+  app.use(
+    (
+      _request: unknown,
+      response: { setHeader(name: string, value: string): void },
+      next: () => void,
+    ) => {
+      const traceFields = getActiveTraceFields();
+      if (traceFields) {
+        response.setHeader('X-Trace-Id', traceFields.traceId);
+      }
+      next();
+    },
+  );
 
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<NodeEnvironment>(
@@ -89,4 +107,8 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-bootstrap();
+bootstrap().catch(async (error) => {
+  console.error('API failed to start:', error);
+  await shutdownTelemetry();
+  process.exitCode = 1;
+});

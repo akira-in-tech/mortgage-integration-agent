@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './instrumentation';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
@@ -118,10 +119,13 @@ async function bootstrap(): Promise<void> {
     clearInterval(providerReconciliationTimer);
     await connection.close();
     await appContext.close();
+    await shutdownTelemetry();
   }
 }
 
 bootstrap().catch((error) => {
   console.error('Worker failed to start:', error);
-  process.exit(1);
+  void shutdownTelemetry().finally(() => {
+    process.exitCode = 1;
+  });
 });
