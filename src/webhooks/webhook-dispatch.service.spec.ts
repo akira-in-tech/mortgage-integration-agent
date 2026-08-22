@@ -46,12 +46,14 @@ interface TestReceiver {
   url: string;
   requests: RecordedRequest[];
   responseQueue: number[];
+  responseHeadersQueue: Record<string, string>[];
   close: () => Promise<void>;
 }
 
 async function startTestReceiver(): Promise<TestReceiver> {
   const requests: RecordedRequest[] = [];
   const responseQueue: number[] = [];
+  const responseHeadersQueue: Record<string, string>[] = [];
 
   const server: Server = createServer((req: IncomingMessage, res) => {
     const chunks: Buffer[] = [];
@@ -62,7 +64,11 @@ async function startTestReceiver(): Promise<TestReceiver> {
         rawBody: Buffer.concat(chunks).toString('utf8'),
       });
       const status = responseQueue.shift() ?? 200;
-      res.writeHead(status, { 'content-type': 'application/json' });
+      const responseHeaders = responseHeadersQueue.shift() ?? {};
+      res.writeHead(status, {
+        'content-type': 'application/json',
+        ...responseHeaders,
+      });
       res.end(JSON.stringify({ received: true }));
     });
   });
@@ -74,6 +80,7 @@ async function startTestReceiver(): Promise<TestReceiver> {
     url: `http://127.0.0.1:${port}`,
     requests,
     responseQueue,
+    responseHeadersQueue,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
@@ -395,6 +402,40 @@ describeOrSkip('WebhookDispatchService', () => {
       expect(receiver.requests).toHaveLength(0);
     } finally {
       await receiver.close();
+    }
+  });
+
+  it('refuses redirects instead of forwarding a signed request to an unchecked target', async () => {
+    const tenantId = newTenantId();
+    const redirector = await startTestReceiver();
+    const redirectTarget = await startTestReceiver();
+    try {
+      const endpoint = await endpointService.create(tenantId, {
+        targetUrl: redirector.url,
+        eventTypes: ['case.escalated'],
+      });
+      await makeOutboxEvent(tenantId, 'case.escalated', {
+        caseId: 'case-redirect',
+      });
+      redirector.responseQueue.push(302);
+      redirector.responseHeadersQueue.push({ location: redirectTarget.url });
+
+      await dispatchService.dispatchPendingEvents();
+
+      const delivery = await dataSource
+        .getRepository(WebhookDelivery)
+        .findOneByOrFail({ webhookEndpointId: endpoint.id });
+      expect(redirector.requests).toHaveLength(1);
+      expect(redirectTarget.requests).toHaveLength(0);
+      expect(delivery.status).toBe('PENDING');
+      expect(delivery.attempts).toHaveLength(1);
+      expect(delivery.attempts[0]).toMatchObject({
+        httpStatusCode: null,
+        outcome: 'FAILED',
+      });
+    } finally {
+      await redirector.close();
+      await redirectTarget.close();
     }
   });
 });

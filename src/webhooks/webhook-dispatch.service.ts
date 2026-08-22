@@ -210,6 +210,11 @@ export class WebhookDispatchService {
       });
       const response = await fetch(endpoint.targetUrl, {
         method: 'POST',
+        // Webhook destinations are stable integration contracts, not browser
+        // navigation. Refusing redirects prevents a public URL from pivoting
+        // this signed request to an unchecked private address and prevents
+        // credentials intended for one receiver from crossing origins.
+        redirect: 'error',
         headers: {
           'content-type': 'application/json',
           'x-webhook-id': delivery.id,

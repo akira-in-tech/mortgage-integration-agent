@@ -9552,9 +9552,52 @@ Runtime SSRF protection is unchanged: production still resolves all live answers
 
 ### Known gaps
 
-- The dispatch client still follows HTTP redirects, so redirect-hop revalidation remains a separate SSRF hardening slice already disclosed in the guard's code comment.
 - A network-enabled integration test for resolver behavior is still useful, but it must be explicitly gated rather than part of the offline unit suite.
 
 ### Next safe step
 
 Run the complete local CI-equivalent suite, then continue with browser E2E/accessibility and the same-origin console session boundary.
+
+## M6-019: Reject webhook redirects at the outbound trust boundary
+
+### Status
+
+Implemented and verified against real local HTTP receivers and PostgreSQL. Webhook delivery no longer follows a receiver-controlled redirect after the original destination passed DNS/SSRF validation.
+
+### Acceptance criterion
+
+A redirect response is recorded as a failed delivery attempt and no request reaches the redirect target. Normal 2xx delivery, retry/backoff, and final-failure behavior remain unchanged.
+
+### Implementation
+
+- Set the dispatcher fetch policy to `redirect: 'error'` at the only outbound webhook call site.
+- Added a two-server real-HTTP integration case: the registered receiver returns `302 Location` to a second listener, and the second listener must receive zero requests.
+- Extended the test receiver's scripted response fixture with per-response headers while preserving all existing status-queue behavior.
+- Updated the guard comment and current README so redirect protection is no longer described as open.
+
+### Decisions and alternatives
+
+- Redirects are rejected rather than manually followed and revalidated. A webhook URL is a stable partner endpoint, not browser navigation; silently changing destination can leak the per-delivery signature and payload to a different origin and makes delivery ownership ambiguous even when the next address is public.
+- Redirect responses enter the existing retry/final-failure lifecycle. The system does not treat them as success and does not invent a separate terminal state for one HTTP policy failure.
+
+### Verification
+
+```text
+DATABASE_URL=postgres://...@127.0.0.1:55432/mortgage_agent
+npm test -- --runInBand src/webhooks/webhook-dispatch.service.spec.ts — 6 tests passed
+npm run build — passed
+npm run lint:check — passed
+git diff --check — passed
+```
+
+### Security, privacy, cost, and compatibility
+
+The signed body and signature never cross to a receiver-selected redirect target. This is a deliberate compatibility tightening: integrations that previously depended on 3xx forwarding must register the canonical final URL. It adds no service, dependency, or network cost.
+
+### Known gaps
+
+- DNS is validated immediately before fetch, but DNS resolution and the socket connection are still separate operations; a hostile resolver with rebinding control can exploit that time-of-check/time-of-use window unless outbound egress is also enforced at the network layer.
+
+### Next safe step
+
+Add browser E2E/accessibility coverage for the console identity and operational flow.

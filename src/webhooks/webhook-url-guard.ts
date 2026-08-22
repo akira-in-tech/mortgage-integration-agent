@@ -15,12 +15,9 @@ import { NodeEnvironment } from '../config/env.validation';
  * returned address checked, not just the first) to a private, loopback,
  * link-local, or otherwise non-public range.
  *
- * Deliberately not a complete "cloud SSRF" defense — no redirect
- * following is involved (this only validates the URL string itself, not
- * what a malicious server might later redirect a request to; the actual
- * `fetch()` call in `webhook-dispatch.service.ts` uses the platform
- * default of following redirects, a known, separately-scoped residual
- * gap), and IPv6 range coverage is the common, security-relevant subset
+ * Redirect following is disabled by `webhook-dispatch.service.ts`, so a
+ * validated public receiver cannot pivot a signed request to an unchecked
+ * location. IPv6 range coverage is the common, security-relevant subset
  * (loopback, link-local, unique-local, IPv4-mapped) rather than
  * exhaustive. Proportionate to a synthetic/demo product's real threat
  * model, not a claim of complete SSRF immunity.
