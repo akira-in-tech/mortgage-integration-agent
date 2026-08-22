@@ -1,66 +1,64 @@
 # mortgage-integration-agent
 
-A vendor-neutral lending orchestration MVP that pulls simulated income, credit, and document-verification data in parallel and produces a structured loan-readiness result. It supports a deterministic rules provider and an optional local open-weight model through Ollama.
+A vendor-neutral lending-operations platform for durable case workflows, policy-governed Agent actions, provider integrations, and human review. The repository runs with deterministic synthetic data by default and can optionally use a local open-weight model through Ollama.
 
-Built with NestJS, GraphQL, TypeORM, PostgreSQL, and Ollama-compatible local models. No paid AI API key is required.
+Built with NestJS, REST/OpenAPI, GraphQL/Apollo, Temporal, LangGraph.js, PostgreSQL/TypeORM, React, and OIDC. No paid AI API key is required.
 
 > The current integrations and decisions are simulations for development and demonstration. They are not official lender, GSE, or automated underwriting system findings.
+
+## Current delivery status
+
+The durable synthetic workflow, policy engine, bounded Agent runtime, provider gateway, tenant security controls, signed webhooks, generated client, and React operations console are implemented on the active development branch. The repository is not yet represented as production-approved: infrastructure-as-code, deployed staging evidence, full operations queues, observability, recovery exercises, and provider-specific authorization remain release gates.
+
+The older `evaluateLoan` GraphQL query remains available as a compatibility demo. It is not the authoritative case workflow and its `APPROVED`/`CONDITIONAL`/`DENIED` vocabulary must not be interpreted as a formal credit decision.
 
 ## Architecture
 
 ```text
-                          ┌─────────────────────────────────────────────────┐
-                          │           mortgage-integration-agent            │
-                          │                                                 │
-  Client (GraphQL)        │   ┌────────────┐      ┌──────────────────────┐  │
-  ─────────────────────►  │   │   Loan     │      │    Agent Service     │  │
-                          │   │  Resolver  │─────►│  (Orchestration      │  │
-  query {                 │   └────────────┘      │   Core)              │  │
-    evaluateLoan(input) { │                       └──────────┬───────────┘  │
-      decision            │                                  │              │
-      confidence          │              ┌───────────────────┼────────────┐ │
-      reasoning           │              │      Promise.all  │            │ │
-      conditions          │              ▼                   ▼            ▼ │
-    }                     │   ┌──────────────┐  ┌────────────────┐  ┌──────────────┐ │
-  }                       │   │   Plaid      │  │ Credit Bureau  │  │  Document    │ │
-                          │   │  Service     │  │   Service      │  │  Service     │ │
-                          │   │ (Income)     │  │ (FICO/DTI)     │  │  (IDP/OCR)   │ │
-                          │   └──────┬───────┘  └───────┬────────┘  └──────┬───────┘ │
-                          │          └──────────────────┼───────────────────┘ │
-                          │                             │                     │
-                          │                             ▼                      │
-                          │              ┌─────────────────────────┐           │
-                          │              │ Decision Provider       │           │
-                          │              │ rules | local Ollama    │           │
-                          │              │                         │           │
-                          │              │  Underwriting prompt +  │           │
-                          │              │  borrower data ->       │           │
-                          │              │  JSON decision          │           │
-                          │              └────────────┬────────────┘           │
-                          │                           │                        │
-                          │                           ▼                        │
-                          │              ┌─────────────────────────┐           │
-                          │              │   PostgreSQL (TypeORM)  │           │
-                          │              │   loan_applications     │           │
-                          │              │   + raw JSONB audit log │           │
-                          │              └─────────────────────────┘           │
-                          └─────────────────────────────────────────────────────┘
+ React operations console       Partner REST / generated TypeScript client
+            │                                      │
+            └──────────────┬───────────────────────┘
+                           ▼
+                 NestJS API control plane
+              GraphQL + REST/OpenAPI + OIDC
+                           │
+             ┌─────────────┼──────────────┐
+             ▼             ▼              ▼
+       Case domain    Policy-as-Code   Provider gateway
+       + outbox       + snapshots      + signed webhooks
+             │             │              │
+             └─────────────┼──────────────┘
+                           ▼
+                 Temporal durable workflow
+                           │
+                           ▼
+               Bounded LangGraph.js Agent
+              deterministic tools + review gates
+                           │
+              ┌────────────┴─────────────┐
+              ▼                          ▼
+     PostgreSQL + RLS           Simulator / authorized
+     audit and lineage          sandbox adapters
 ```
 
 ## Tech Stack
 
 | Layer | Technology |
 | --- | --- |
-| API | GraphQL (code-first), Apollo Server |
+| Console | React, Apollo Client, Vite, Vitest |
+| API | REST/OpenAPI and GraphQL/Apollo Server |
 | Framework | NestJS 11 |
 | Language | TypeScript 6 (strict mode) |
-| Decisioning | Deterministic rules or local Ollama + Qwen3.5 |
+| Workflow | Temporal |
+| Agent runtime | LangGraph.js behind `AgentRuntimePort` |
+| Decisioning | Deterministic policy tools; compatibility demo can use local Ollama + Qwen3.5 |
 | ORM | TypeORM 0.3 |
-| Database | PostgreSQL 15+ |
+| Database | PostgreSQL 16 with row-level security |
+| Identity | OIDC/OAuth 2.0 or scoped API clients |
 | Validation | class-validator, class-transformer |
-| Testing | Jest |
+| Testing | Jest, Supertest, Temporal integration tests, Vitest |
 
-## Demo
+## Compatibility demo
 
 **No API key, no database, no setup:**
 
@@ -94,7 +92,7 @@ npm run demo
   ...
 ```
 
-**Full GraphQL playground via Docker (recommended):**
+**Full platform via Docker Compose (recommended):**
 
 ```bash
 # Deterministic rules — no model or API key required
@@ -104,7 +102,7 @@ docker-compose up
 DECISION_PROVIDER=ollama docker-compose up
 ```
 
-Open **<http://localhost:3000/graphql>** once the app is running.
+The stack starts PostgreSQL, Temporal, Keycloak, the API, and the worker. Open **<http://localhost:3000/graphql>** for the development GraphQL explorer. Run the React console separately from `console/` with `npm install && npm run dev`.
 
 ## Setup (local, without Docker)
 

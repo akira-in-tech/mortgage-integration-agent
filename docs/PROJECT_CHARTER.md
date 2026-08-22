@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.10 |
+| Version | 2.11 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -19,6 +19,7 @@ The project is designed for the broader lending and Fintech ecosystem. It is not
 Capability status is expressed consistently:
 
 - **Implemented**: present in the repository.
+- **Partially implemented**: a usable vertical slice is present, but one or more scope items or exit gates remain open and are named explicitly.
 - **Verified**: implemented and supported by current, recorded test or operational evidence.
 - **Deployed**: running in an identified environment with a reproducible source revision.
 - **Provider-integration-ready**: a named provider, capability, adapter version, schema profile, and sandbox environment use the same domain workflow and canonical contract as the simulator; certification evidence exists, but production credentials and real consumer data remain disabled.
@@ -47,50 +48,42 @@ A developer or operations user can create a synthetic loan case, add evidence, s
 
 ## 3. Current implementation baseline
 
-The repository currently contains:
+The repository currently contains verified local vertical slices for:
 
-- **Implemented**: NestJS and TypeScript backend.
-- **Implemented**: GraphQL/Apollo `evaluateLoan` request path.
-- **Implemented**: deterministic income, credit, and document simulators.
-- **Implemented**: concurrent integration retrieval through `Promise.all`.
-- **Implemented**: deterministic decision rules.
-- **Implemented**: provider-neutral rules and local Ollama/Qwen decision modes.
-- **Implemented**: schema-constrained local-model responses with application validation.
-- **Implemented**: TypeORM/PostgreSQL persistence with JSONB integration payloads.
-- **Implemented**: Jest unit and end-to-end foundations.
-- **Implemented**: Docker and Docker Compose development path.
-- **Implemented**: no-paid-model default execution.
+- NestJS REST/OpenAPI and GraphQL/Apollo APIs;
+- tenant-keyed loan cases, versioned evidence, conditions, timelines, and audit events;
+- explicit PostgreSQL migrations, restricted runtime role, and row-level security on tenant data;
+- Temporal workflows with wait, signal, resume, retry classification, and transactional outbox events;
+- a versioned policy DSL, applicability resolution, immutable snapshots and bindings, dependency-generation validation, change-impact assessment, and transition approval;
+- a bounded LangGraph.js Agent runtime with registered tools, mandatory-review routing, immutable evaluation manifests, and persisted run history;
+- simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
+- provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks, deterministic failure scenarios, and a generated TypeScript client;
+- API-client and OIDC authentication, two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
+- a React operations console with case queue, dashboard, dossier, communications review, live activity polling, and Authorization Code + PKCE login;
+- no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
 
-The current implementation remains an MVP. The following target capabilities are **Planned**:
+The following release boundaries remain open and are not represented as implemented:
 
-- case, evidence, condition, policy, workflow, and review domain models;
-- explicit database migrations and tenant-first schema design;
-- durable Temporal workflows, transactional outbox, safe replay, and signed webhooks;
-- versioned policy-as-code DSL with validation, approval, and regression testing;
-- stateful, tool-using Agent execution with budgets and human interruption;
-- provider registry, normalized contracts, fault injection, sandbox, and BYOC modes;
-- OIDC, API clients, RBAC, row-level security, consent, PII controls, and retention;
-- React operations console and developer sandbox;
-- OpenTelemetry, release evaluation, CI/CD, infrastructure as code, and restore drills;
-- real provider or official underwriting integrations.
+- authoritative token, provider-call, and cost budget ledgers and reservations for future cost-bearing Agent tools;
+- jurisdiction ancestry, policy-source freshness automation, grandfathering, and transition-rule execution;
+- per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
+- complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and automated browser accessibility coverage;
+- infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, runbooks, and release artifacts;
+- production provider adapters, real-data approval, or official underwriting integrations.
 
-The legacy `APPROVED`, `CONDITIONAL`, and `DENIED` demo vocabulary is not the target product contract and will be migrated before launch.
-
-The implemented `evaluateLoan` path is a one-shot synthetic readiness demo, not an end-to-end mortgage origination or production underwriting workflow. It does not currently implement policy-binding validation, regulated milestone clocks, disclosures, appraisal, formal action notices, closing, funding, or post-closing quality control.
-
-The current simulator services also predate the target `ProviderAdapter` contract. They have not passed reusable adapter contracts or an authorized provider sandbox, so the repository is not yet provider-integration-ready.
+The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPROVED`, `CONDITIONAL`, and `DENIED` labels are not the target product contract and are never formal credit actions.
 
 ### 3.1 Current workflow audit
 
 | Area | Implemented behavior | Production implication |
 | --- | --- | --- |
-| Intake | GraphQL receives borrower identifier, requested amount, and loan type. | Insufficient to establish a complete application, legal milestone, jurisdiction, property, purpose, occupancy, or consent context. |
-| Evidence | Three deterministic simulators return income, credit, and document summaries concurrently. | Useful for a demo; not authorized, complete, normalized, freshness-governed provider evidence. |
-| Policy | Thresholds exist in source code and a local-model prompt. | No immutable release, jurisdiction scope, effective dating, approval, binding validation, or exception governance. |
-| Evaluation | One request performs retrieval and returns a readiness-shaped decision. | No durable wait/resume, re-evaluation, workflow recovery, or mandatory current-policy guard. |
-| Outcome | Legacy `APPROVED`, `CONDITIONAL`, and `DENIED` labels are persisted. | These labels are not supported as formal credit actions and must be migrated to readiness vocabulary. |
-| Persistence | A single application row is saved after evaluation with raw simulator payloads. | No case aggregate, evidence lineage, condition history, policy binding, outbox, review record, or true request idempotency. |
-| Coverage | Income, credit, documents, DTI, and loan-to-income are simulated. | Assets, property and collateral, appraisal, title, insurance, disclosures, formal notices, closing, funding, and post-close QC are absent. |
+| Intake | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations. | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks. |
+| Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence. | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated. |
+| Policy | Released versions resolve by exact jurisdiction/product/lifecycle context and bind immutable snapshots before evaluation. | Jurisdiction ancestry, automated source freshness, and grandfathering remain open. |
+| Agent | A bounded LangGraph runtime invokes allowlisted deterministic tools and routes designated ambiguity/failure states to review. | Token/provider-call/cost ledgers remain deferred until cost-bearing tools enter the graph. |
+| Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
+| Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
+| Trust | OIDC/API clients, RBAC, consent, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Purpose-level consent, complete lineage, encrypted object storage, and deployed control evidence remain open. |
 
 ## 4. Product position
 
@@ -1533,10 +1526,10 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 | M0 | Stable free model baseline and independent product charter | Implemented |
 | M1 | Supported runtime, migrations, and security baseline | Implemented |
 | M2 | Durable loan case, evidence, and condition workflow | Implemented |
-| M3 | Temporal policy resolution, bounded Agent tools, and human review | Planned |
-| M4 | Provider gateway, partner API, webhooks, and sandbox | Planned |
-| M5 | Tenant trust boundary and audit controls | Planned |
-| M6 | Operations console and release evaluation | Planned |
+| M3 | Temporal policy resolution, bounded Agent tools, and human review | Partially implemented |
+| M4 | Provider gateway, partner API, webhooks, and sandbox | Partially implemented |
+| M5 | Tenant trust boundary and audit controls | Partially implemented |
+| M6 | Operations console and release evaluation | Partially implemented |
 | M7 | Synthetic staging and provider-integration-readiness evidence | Planned |
 
 ### M0 — Product foundation
@@ -1965,18 +1958,16 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 
 ## 29. Immediate next implementation slice
 
-The next implementation milestone is **M1: supported runtime and security baseline**. It remains separate from the domain and workflow migration.
+The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Each item remains an independent acceptance-criterion commit:
 
-Recommended first acceptance-criterion commits:
+1. Enforce console lint, tests, build, and GraphQL-codegen drift in CI; add dependency, secret, and container scanning without inventing a green result.
+2. Add browser end-to-end and accessibility coverage for login, triage, review, communication approval, and disconnected/degraded states.
+3. Add least-privilege provider reconciliation, provider promotion, data-disposition, policy-impact, and Agent-budget operations surfaces.
+4. Add policy-source freshness monitoring, jurisdiction ancestry, transition rules, and authoritative Agent budget ledgers before any cost-bearing tool enters the graph.
+5. Add OpenTelemetry traces/metrics, SLOs, alerts, runbooks, and downloadable evaluation/release evidence.
+6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.
 
-1. Upgrade Node.js and NestJS/Express/Apollo runtime packages with compatibility tests.
-2. Migrate TypeScript and Jest tooling without changing product behavior.
-3. Add startup environment validation and production-safe defaults.
-4. Add explicit initial TypeORM migration and disable production schema synchronization.
-5. Add liveness, readiness, graceful shutdown, secure headers, CORS, rate limiting, and request limits.
-6. Record clean-install, build, lint, test, migration, Docker, and dependency evidence.
-
-M2 begins only after the supported baseline is verified. Its first vertical slice is a tenant-keyed `LoanCase -> Evidence -> Condition -> Temporal wait -> Signal -> Resume` workflow using synthetic data.
+Provider-integration-ready status remains tuple-specific and requires authorized sandbox credentials and current certification evidence. Production-approved status additionally requires external security, privacy, compliance, legal, operational, and provider authorization; source code alone cannot establish it.
 
 ## 30. Reference baseline
 

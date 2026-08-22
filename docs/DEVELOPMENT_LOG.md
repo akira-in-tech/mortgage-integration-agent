@@ -9362,3 +9362,44 @@ PKCE (S256, enforced on the Keycloak client, not just sent optionally) is the co
 ### Next safe step
 
 All five console gaps named across M6-007/M6-009 are now closed (automated tests, Ops Dashboard, Case Dossier, Live Stream, OIDC login). Remaining real, disclosed gaps across the whole console: no GraphQL codegen CI enforcement (M6-012), client-side-only search, no self-service tenant discovery (this slice), no Keycloak-side logout propagation (this slice).
+
+## M0-012: Release-truth reconciliation after M6-015
+
+### Status
+
+Implemented and locally verified. This documentation slice corrects a release-governance failure: the charter milestone table and immediate-next section still described M3 through M6 as unstarted even though the active branch contains independently committed implementations through M6-015. The README opening architecture also still presented the legacy one-shot `evaluateLoan` compatibility path as the whole product.
+
+### Acceptance criterion
+
+A reader who opens the repository can distinguish what is implemented, what is only partially complete against the charter, what remains a release gate, and what requires external authorization. No target-state control is presented as verified merely because a type, table, or historical development-log entry exists.
+
+### Implementation
+
+- Updated the README opening description, architecture, stack, and demo label around the durable case/Temporal/Policy/LangGraph/provider/console system that actually exists.
+- Kept the legacy `evaluateLoan` path visible and explicitly labeled it as a compatibility demo rather than deleting a working public entry point.
+- Added `Partially implemented` to the charter's status vocabulary and rewrote the current implementation baseline against the active source tree.
+- Corrected M3 through M6 milestone status from `Planned` to `Partially implemented`; their remaining scope and exit gates are still visible instead of being declared complete prematurely.
+- Replaced the stale M1 immediate-next plan with the M6-completion/M7 synthetic-launch sequence.
+
+### Verification
+
+```text
+npm run build — passed
+npm run lint:check — passed
+console/npm run build — passed
+console/npm run test -- --run — 8 files, 40 tests passed
+git status --short before the slice — clean
+```
+
+### Security, privacy, cost, and compatibility
+
+Documentation only. No runtime, schema, credential, provider, data, or deployment behavior changed. The wording preserves the structural exclusion on formal credit decisions, notices, rate locks, funds movement, closing, settlement, and funding.
+
+### Known gaps
+
+- The active development branch is not the repository default branch; publication requires a reviewed integration with `origin/main`.
+- GitHub CLI authentication for `akira-in-tech` is currently invalid, so remote PR and hosted-CI status cannot be refreshed until Akira re-authenticates.
+
+### Next safe step
+
+Extend CI to verify the React console and generated GraphQL client, then add security checks that produce real artifacts rather than documentation-only claims.
