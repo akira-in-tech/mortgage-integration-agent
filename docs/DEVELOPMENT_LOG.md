@@ -10222,3 +10222,54 @@ Provider-operation intent is not yet foreign-key-linked to the budget reservatio
 ### Next safe step
 
 Add OpenTelemetry traces/metrics, SLO definitions, and downloadable evaluation/release evidence before moving to infrastructure-as-code staging.
+
+## M7-012: production container runtime compatibility and full launch-gate rerun
+
+### Status
+
+Implemented and verified. The production image now uses the same glibc ABI required by Temporal's native bridge, the migration rollback contract includes the latest policy-source seed, and all local launch gates pass against the resulting Node 24 artifact.
+
+### Acceptance criterion
+
+The final image must build without development dependencies, load and execute the real Temporal worker bridge, apply and fully revert all 43 migrations in order, boot with the restricted PostgreSQL runtime role, and report successful liveness and database readiness. Resolver-version evidence in tests must match the implementation rather than silently asserting the superseded contract.
+
+### Implementation
+
+- Changed both Docker stages from Alpine/musl to `node:24-bookworm-slim`. Keeping build and runtime on the same Debian/glibc family prevents an artifact from compiling successfully and then failing while loading `@temporalio/core-bridge` with a missing `gnu_get_libc_version` symbol.
+- Extended the cumulative migration suite with an explicit rollback step for migration 43. It proves the synthetic federal coverage source and freshness objective exist, removes only that seed and its revision, and leaves the policy schema intact before the older rollback assertions continue.
+- Updated the evaluation-report contract to resolver version `2.0.0`, matching the policy semantic release introduced in M7-010.
+
+### Errors found and fixed
+
+The first full-suite run used the earlier Alpine builder image. The Temporal suite could not load its native bridge, while the new migration shifted every cumulative `undoLastMigration()` assertion by one step and the evaluation report still expected resolver `1.0.0`. The failures were independent and reproducible. Switching to glibc and adding the missing migration/test contract restored the real workflow suite and complete reverse-migration chain; no failure was hidden or excluded.
+
+A first production smoke attempt correctly refused `DATABASE_URL` as the application runtime credential. The successful run used the separately provisioned `mortgage_app` role through `APP_DATABASE_URL`, preserving the RLS boundary instead of weakening startup validation for a smoke test.
+
+### Verification
+
+```text
+npm run lint:check + npm run build — passed
+targeted cumulative migration + evaluation + real Temporal workflow —
+  3 suites / 57 tests passed
+complete backend CI-equivalent suite in Node 24 bookworm-slim with
+PostgreSQL 16 and Temporal 1.29.7 —
+  96 suites / 746 tests passed; 1 suite / 3 credential-gated tests skipped
+complete backend E2E with PostgreSQL 16, Temporal 1.29.7, and Keycloak 26 —
+  4 suites / 40 tests passed
+root and console production dependency audits — 0 vulnerabilities
+final production-stage Docker build — passed
+final image boot with restricted mortgage_app credential — passed
+GET /health/live + GET /health/ready — both returned {"status":"ok"}
+```
+
+### Security, privacy, cost, and compatibility
+
+The base-image change adds glibc compatibility without adding an application privilege or external service. The production smoke used only synthetic local infrastructure and the restricted database role; it made no paid or real-provider calls. Debian slim is larger than Alpine, but avoiding a deterministic native-module crash is the required reliability tradeoff for the current Temporal dependency.
+
+### Known gap
+
+This proves a local production artifact and real local dependencies, not cloud deployment, backup recovery, horizontal scaling, load/soak behavior, provider certification, or production SLO attainment. OpenTelemetry and deployable infrastructure-as-code remain separate launch slices.
+
+### Next safe step
+
+Add OpenTelemetry traces and metrics with explicit SLO dashboards, then codify a staging deployment and rollback path without changing the simulated-provider default.

@@ -204,6 +204,32 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts federal policy source coverage without removing policy schema', async () => {
+    const coveredSources: Array<{
+      jurisdictionCode: string;
+      freshnessObjectiveHours: number;
+    }> = await scratchDataSource.query(
+      `SELECT "jurisdictionCode", "freshnessObjectiveHours"
+       FROM policy_sources
+       WHERE "id" = 'e784e4d7-6311-4f99-98d0-c89f8109703d'`,
+    );
+    expect(coveredSources).toEqual([
+      { jurisdictionCode: 'US', freshnessObjectiveHours: 720 },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(
+      await scratchDataSource.query(
+        `SELECT "id" FROM policy_sources
+         WHERE "id" = 'e784e4d7-6311-4f99-98d0-c89f8109703d'`,
+      ),
+    ).toEqual([]);
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['policy_sources', 'policy_source_revisions']),
+    );
+  });
+
   it('reverts tenant aggregate Agent authority without leaving configuration or usage state', async () => {
     const tenantColumns: Array<{ column_name: string }> =
       await scratchDataSource.query(

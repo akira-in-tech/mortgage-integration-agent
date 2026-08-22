@@ -99,7 +99,7 @@ describeOrSkip('buildReport', () => {
     expect(report.summary.failed).toBe(2);
     expect(report.modelAndPromptRevisions).toBeNull();
     expect(report.modelAndPromptRevisionsNote).toContain('no model calls');
-    expect(report.policyDataset.resolverVersion).toBe('1.0.0');
+    expect(report.policyDataset.resolverVersion).toBe('2.0.0');
   });
 
   it('reports null precision/recall when no case involves an opened condition', async () => {
