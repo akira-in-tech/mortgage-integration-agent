@@ -9931,3 +9931,46 @@ No credential, tenant membership, or session outside the exact fixture-owned row
 ### Next safe step
 
 Rerun the complete backend and browser CI-equivalent matrix from the now-repeatable shared local stack.
+
+## M7-005: local launch-gate evidence refresh
+
+### Status
+
+The complete repository CI-equivalent matrix is green for the current committed revision. This is local evidence against repository-pinned services, not a claim that GitHub-hosted CI or a deployed environment passed.
+
+### Verification
+
+```text
+backend CI suite with PostgreSQL 16, Temporal 1.29.7, and Keycloak 26 —
+  95 suites / 728 tests passed; 1 suite / 3 credential-gated tests skipped
+backend E2E — 4 suites / 39 tests passed
+backend lint:check + build — passed
+tracked-only console lint — passed
+tracked-only console unit — 9 files / 42 tests passed
+tracked-only console production build — passed
+tracked-only Chromium — 2 deterministic journeys passed; 1 live journey
+  skipped because RUN_LIVE_OIDC was not enabled for this gate
+OpenAPI + TypeScript client + GraphQL codegen drift — zero diff
+root and console production npm audit at high severity — 0 vulnerabilities
+Node 24 production container build — passed
+git diff --check — passed
+```
+
+### Environment findings
+
+- Three untracked conflict copies (`console/src/oidc 2.ts`, `console/src/oidc.test 2.ts`, and `console/src/components/TenantSelectionScreen.test 2.tsx`) are stale browser-token-era files and make an in-place TypeScript build fail. They were neither deleted nor committed because their ownership is ambiguous. Console release gates therefore ran from a disposable `git archive HEAD` tracked-only checkout, proving the committed product while preserving those files for explicit owner disposition.
+- The local shell is Node 22.23.2 while the repository and CI require Node 24. The console install emitted the expected engine warning, but lint, tests, build, and Chromium still passed; the production container gate used Node 24.
+- `pg` warns that overlapping queries on one client will be unsupported in version 9. A traced run locates this inside TypeORM's development/test `synchronize` schema introspection (`PostgresQueryRunner.getTables`), not application query code. Staging and production always use explicit migrations with `synchronize: false`, so no production workaround or dependency patch was introduced.
+- A failed attempt to use `localhost:5432` reached the existing macOS PostgreSQL listener before Docker's mapping. All database evidence above used the isolated PostgreSQL 16 verification container on port 55432.
+
+### Security, privacy, cost, and compatibility
+
+All workflows and browser fixtures are synthetic. No paid model/provider call, external reviewer, hosted CI, cloud deployment, or real borrower data was used. The verification container and temporary tracked-only checkout are local artifacts; they do not alter release claims.
+
+### Remaining launch boundaries
+
+The green matrix proves the repository's implemented controls, not production readiness by itself. Tenant-wide Agent aggregate limits/reconciliation, policy freshness and jurisdiction inheritance, purpose-level consent/lineage/object storage, operational telemetry/runbooks, infrastructure as code, deployed staging, backup/restore and load/soak evidence, and authorized real-provider certification remain open.
+
+### Next safe step
+
+Implement tenant-wide Agent aggregate budget authority and reservation reconciliation before introducing any cost-bearing tool.
