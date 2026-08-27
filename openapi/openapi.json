@@ -1,6 +1,106 @@
 {
   "openapi": "3.0.0",
   "paths": {
+    "/v1/provider-operation-intents/reconciling": {
+      "get": {
+        "operationId": "listProviderOperationIntentsNeedingReconciliation",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderOperationIntentQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List provider calls whose outcome is still unclear",
+        "tags": [
+          "provider-operations"
+        ]
+      }
+    },
+    "/v1/provider-operation-intents/{intentId}/resolve": {
+      "post": {
+        "operationId": "resolveProviderOperationIntent",
+        "parameters": [
+          {
+            "name": "intentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveProviderOperationIntentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The now-resolved provider call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOperationIntentQueueItemDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record what actually happened for an unclear provider call",
+        "tags": [
+          "provider-operations"
+        ]
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "HealthController_live",
@@ -172,6 +272,106 @@
         "summary": "List the authenticated human user's tenant memberships",
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/open": {
+      "get": {
+        "operationId": "listOpenDataDispositionTasks",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataDispositionTaskQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List data-disposition tasks still waiting on a decision",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/{taskId}/resolve": {
+      "post": {
+        "operationId": "resolveDataDispositionTask",
+        "parameters": [
+          {
+            "name": "taskId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveDataDispositionTaskDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The now-resolved task.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataDispositionTaskQueueItemDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete, anonymize, or retain the evidence a task covers",
+        "tags": [
+          "data-disposition"
         ]
       }
     },
@@ -1062,6 +1262,63 @@
       }
     },
     "schemas": {
+      "ProviderOperationIntentQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "providerId",
+          "capability",
+          "state",
+          "createdAt"
+        ]
+      },
+      "ResolveProviderOperationIntentDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED_FINAL",
+              "CANCELLED"
+            ]
+          },
+          "resolutionNote": {
+            "type": "string",
+            "description": "Why the reviewer picked this outcome.",
+            "minLength": 10,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "outcome",
+          "resolutionNote"
+        ]
+      },
       "TenantMembershipSummaryDto": {
         "type": "object",
         "properties": {
@@ -1121,6 +1378,57 @@
             "type": "object"
           }
         }
+      },
+      "DataDispositionTaskQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "taskType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this task was opened."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "taskType",
+          "status",
+          "reason",
+          "createdAt"
+        ]
+      },
+      "ResolveDataDispositionTaskDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "DELETE",
+              "ANONYMIZE",
+              "RETAIN"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
       },
       "AgentBudgetAggregateUsageDto": {
         "type": "object",

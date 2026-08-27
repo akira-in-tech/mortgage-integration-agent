@@ -161,4 +161,19 @@ export class DataDispositionService {
       return taskRepo.findOneByOrFail({ id: taskId });
     });
   }
+
+  /**
+   * Every task still waiting on a decision (status PENDING), across
+   * every case, oldest first — the list a reviewer works through.
+   */
+  async listOpen(tenantId: string, limit = 50): Promise<DataDispositionTask[]> {
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(DataDispositionTask).find({
+        where: { tenantId, status: DataDispositionTaskStatus.PENDING },
+        order: { createdAt: 'ASC' },
+        take: boundedLimit,
+      }),
+    );
+  }
 }

@@ -13,6 +13,7 @@ import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-promotion.service';
 import { ProviderReconciliationService } from './provider-reconciliation.service';
+import { ProviderOperationIntentController } from './provider-operation-intent.controller';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ProviderReconciliationService } from './provider-reconciliation.service
       ProviderActivation,
     ]),
   ],
+  controllers: [ProviderOperationIntentController],
   providers: [
     ProviderRegistryService,
     ProviderAuthorizationService,

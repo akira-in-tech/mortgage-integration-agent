@@ -150,8 +150,8 @@ export class ProviderOperationIntentService {
       | ProviderOperationIntentStatus.CANCELLED,
     resolvedBy: string,
     resolutionNote: string,
-  ): Promise<void> {
-    await runInTenantContext(this.dataSource, tenantId, async (manager) => {
+  ): Promise<ProviderOperationIntentEntity> {
+    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
       const repo = manager.getRepository(ProviderOperationIntentEntity);
       const current = await repo.findOneByOrFail({ id, tenantId });
       if (
@@ -163,6 +163,30 @@ export class ProviderOperationIntentService {
         );
       }
       await repo.update({ id }, { state: outcome, resolvedBy, resolutionNote });
+      return repo.findOneByOrFail({ id });
     });
+  }
+
+  /**
+   * Every provider-call intent this tenant hasn't gotten a clear answer
+   * for yet ("OUTCOME_UNKNOWN" or "RECONCILING"), across every case, so
+   * a reviewer can look at one list instead of checking case by case.
+   * Oldest first, so the longest-waiting one shows up at the top.
+   */
+  async listNeedingReconciliation(
+    tenantId: string,
+    limit = 50,
+  ): Promise<ProviderOperationIntentEntity[]> {
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(ProviderOperationIntentEntity).find({
+        where: [
+          { tenantId, state: ProviderOperationIntentStatus.OUTCOME_UNKNOWN },
+          { tenantId, state: ProviderOperationIntentStatus.RECONCILING },
+        ],
+        order: { createdAt: 'ASC' },
+        take: boundedLimit,
+      }),
+    );
   }
 }

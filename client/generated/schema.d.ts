@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/provider-operation-intents/reconciling": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List provider calls whose outcome is still unclear */
+        get: operations["listProviderOperationIntentsNeedingReconciliation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/provider-operation-intents/{intentId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record what actually happened for an unclear provider call */
+        post: operations["resolveProviderOperationIntent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -115,6 +149,40 @@ export interface paths {
         get: operations["listMyTenantMemberships"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data-disposition-tasks/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List data-disposition tasks still waiting on a decision */
+        get: operations["listOpenDataDispositionTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data-disposition-tasks/{taskId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete, anonymize, or retain the evidence a task covers */
+        post: operations["resolveDataDispositionTask"];
         delete?: never;
         options?: never;
         head?: never;
@@ -415,6 +483,23 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProviderOperationIntentQueueItemDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            caseId: string;
+            providerId: string;
+            capability: string;
+            state: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ResolveProviderOperationIntentDto: {
+            /** @enum {string} */
+            outcome: "SUCCEEDED" | "FAILED_FINAL" | "CANCELLED";
+            /** @description Why the reviewer picked this outcome. */
+            resolutionNote: string;
+        };
         TenantMembershipSummaryDto: {
             /** Format: uuid */
             tenantId: string;
@@ -432,6 +517,22 @@ export interface components {
         };
         OidcLogoutResultDto: {
             logoutUrl?: Record<string, never>;
+        };
+        DataDispositionTaskQueueItemDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            caseId: string;
+            taskType: string;
+            status: string;
+            /** @description Why this task was opened. */
+            reason: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ResolveDataDispositionTaskDto: {
+            /** @enum {string} */
+            action: "DELETE" | "ANONYMIZE" | "RETAIN";
         };
         AgentBudgetAggregateUsageDto: {
             /** Format: date */
@@ -654,6 +755,82 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listProviderOperationIntentsNeedingReconciliation: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderOperationIntentQueueItemDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolveProviderOperationIntent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intentId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveProviderOperationIntentDto"];
+            };
+        };
+        responses: {
+            /** @description The now-resolved provider call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderOperationIntentQueueItemDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     HealthController_live: {
         parameters: {
             query?: never;
@@ -784,6 +961,82 @@ export interface operations {
             };
             /** @description Missing, invalid, or unprovisioned OIDC identity. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listOpenDataDispositionTasks: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataDispositionTaskQueueItemDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolveDataDispositionTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveDataDispositionTaskDto"];
+            };
+        };
+        responses: {
+            /** @description The now-resolved task. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataDispositionTaskQueueItemDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description REVIEWER role required. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

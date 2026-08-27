@@ -10502,3 +10502,93 @@ None new. The real, still-open items are the ones now correctly listed in the ch
 ### Next safe step
 
 Pick one of the now-accurately-listed open items and build it for real — Agent-budget usage/reconciliation already got a console screen this way; provider reconciliation/promotion/data-disposition/policy-impact are the next-most-natural console screens to add, since their backend/CLI paths already exist.
+
+## M7-017: Admin Queues console — real reviewer surfaces for provider reconciliation and data disposition
+
+### Status
+
+Implemented and verified against a real running API, PostgreSQL, and the console, including a full real click-through (not mocked) of both queues.
+
+### What this closes
+
+Two of the four items M7-016's own charter reconciliation named as still open: "provider reconciliation... and data-disposition... operations surfaces." Before this slice, the only way to resolve one of these was `npm run resolve-provider-operation-intent`/`npm run resolve-data-disposition-task` — direct CLI scripts with no REST route and no console screen. `checkPolicyChangeImpact` (per-case) already has a mutation, and provider promotion is a larger multi-step process (propose/certify/approve/activate) — both left for a later slice, so this one stays focused and finishable.
+
+### What a reviewer can now do
+
+Sign in, open "Admin Queues" (a new nav icon), and see two real lists:
+
+- **Provider calls needing reconciliation** — provider operations stuck at `OUTCOME_UNKNOWN` or `RECONCILING` because the real outcome was never clear. A reviewer checks the provider's own records and records `SUCCEEDED`, `FAILED_FINAL`, or `CANCELLED` with a short note explaining what they found.
+- **Data disposition** — evidence a borrower's consent revocation left waiting on a decision. A reviewer picks `DELETE`, `ANONYMIZE`, or `RETAIN` (retain only works if a legal hold is already active on the case — the backend already enforced that, this slice just surfaces it).
+
+Both write a real audit event (`PROVIDER_OPERATION_INTENT_RESOLVED` / `DATA_DISPOSITION_TASK_RESOLVED`) with the real reviewer's identity, not a value the client could fake.
+
+### Implementation
+
+**Backend** — new REST routes only (matches the existing pattern for this kind of reviewer queue — Agent Budget Operations, M7-006/M7-011 — used REST, not GraphQL, so this follows the same shape rather than introducing a second style):
+
+- `ProviderOperationIntentService.listNeedingReconciliation(tenantId, limit)` — every intent in this tenant stuck at `OUTCOME_UNKNOWN`/`RECONCILING`, oldest first.
+- `ProviderOperationIntentService.resolveManually(...)` now returns the updated row instead of nothing, so the new REST route can hand the real result back instead of guessing what changed.
+- `DataDispositionService.listOpen(tenantId, limit)` — every task still `PENDING`, oldest first.
+- `ProviderOperationIntentController` (`GET /v1/provider-operation-intents/reconciling`, `POST /v1/provider-operation-intents/:intentId/resolve`) and `DataDispositionController` (`GET /v1/data-disposition-tasks/open`, `POST /v1/data-disposition-tasks/:taskId/resolve`) — both REVIEWER-only, both record the audit event themselves (neither service did before).
+- The reviewer's own identity (`auth.actorId`) is what gets recorded as `resolvedBy`/the audit actor — never something the request body supplies, so a client can't put someone else's name on a decision it made.
+
+**Console**:
+
+- `console/src/api-client.ts` (new) — the small `request()` helper that adds the right auth headers (bearer token, or the OIDC session's tenant/CSRF headers) was previously copied inside `agent-budget-api.ts`; pulled out into its own file so there's exactly one copy of that logic, and `agent-budget-api.ts` now imports it instead of keeping its own.
+- `console/src/admin-queues-api.ts` (new) — the four calls to the new REST routes.
+- `console/src/components/AdminQueues.tsx` (new) — one screen, two independent sections. Each section loads its own list and shows its own error if that one queue fails to load, so a problem with one queue never hides the other.
+- Wired into the nav rail (a new "Admin Queues" icon) and the view switch in `App.tsx`.
+
+### Decisions and alternatives
+
+- **REST, not GraphQL, for these routes**: matches what Agent Budget Operations already established for this exact kind of screen (a REVIEWER queue with a resolve action) — one consistent shape for "reviewer queue" screens, not two.
+- **`resolveManually()` now returns the updated row instead of `void`**: the controller needs to hand real data back to the console, not fabricate a response. The one existing caller (the CLI script) never used the return value, so this is a safe, backward-compatible change — confirmed by re-running its own existing test.
+- **One combined "Admin Queues" screen for both lists, not two separate nav items**: they're both short "check a list, make a decision" reviewer workflows; one screen keeps the nav rail from growing an icon per queue as more of these get built later (policy-impact, provider promotion).
+- **Provider promotion left out of this slice**: it's a real multi-step approval chain (propose → certify → approve → activate), not a "list and resolve one row" queue like the other two — different enough to deserve its own screen and its own slice rather than being forced into this one's shape.
+
+### Errors and fixes
+
+- **First attempt at the resolve controller fabricated the response** — after calling `resolveManually()` (which used to return nothing), the first draft returned a hand-built object with empty strings for `caseId`/`providerId`/`capability` instead of the real resolved row. Caught before it ever ran, by noticing the returned data couldn't possibly be real. Fixed properly by changing `resolveManually()` to return the actual updated database row.
+- **A pre-existing, unrelated test file (`data-disposition-tenant-isolation.spec.ts`) failed on the first full-suite run** with a Jest hook timeout connecting as the restricted `mortgage_app` database role. Confirmed this was not a real regression: the same role/password/connection worked instantly via a direct `psql` connection, and re-running that one spec file by itself (not alongside 89 other suites) passed cleanly in well under a second. This was the test environment briefly under load, not a bug in this slice.
+
+### Verification
+
+```text
+Backend:
+  npm run build / npm run lint:check — clean
+  new + existing provider-platform/data-disposition Jest suites — 90
+    tests, 83 passed on the first full run, the other 7 (all in the
+    unrelated pre-existing RLS spec above) passed on an isolated rerun
+  full backend suite (npm test), fresh scratch PostgreSQL + Temporal — passed
+
+Console:
+  npx tsc --noEmit — clean
+  npx eslint . — 0 errors, 0 warnings
+  npx vitest run — 11 files / 48 tests passed (+4 new)
+  npm run build — clean
+
+Live end to end, real running API (fresh scratch PostgreSQL + Temporal):
+  REVIEWER token: both queues return real (empty) lists; PARTNER token:
+    both correctly return 403.
+  Seeded one real OUTCOME_UNKNOWN provider_operation_intent row directly
+    in the database — it appeared in the real queue, was resolved as
+    SUCCEEDED via the real REST route, disappeared from the queue
+    afterward, and left a real PROVIDER_OPERATION_INTENT_RESOLVED audit
+    row with the real reviewer's actorId and note.
+  Seeded one real PENDING data_disposition_task the same way — appeared
+    in its queue, resolved as DELETE, disappeared afterward, left a real
+    DATA_DISPOSITION_TASK_RESOLVED audit row.
+```
+
+### Security, privacy, cost, and compatibility
+
+Both routes are REVIEWER-only (confirmed live: PARTNER gets a real 403, not just a documented intent). Queue rows expose only operational fields (ids, provider/capability names, status, timestamps, the task's own reason text) — no raw evidence content. The reviewer identity recorded on every resolution comes from the authenticated request, never the request body.
+
+### Known gaps
+
+- Provider promotion (propose/certify/approve/activate) and per-case policy-impact still have no console screen — real, disclosed, left for a later slice.
+- No pagination on either queue beyond the 100-row cap — fine at synthetic-launch volume, a real gap at real scale.
+
+### Next safe step
+
+Provider promotion's own console screen (propose/certify/approve/activate), or policy-impact — the two remaining items from the same charter list this slice started closing.

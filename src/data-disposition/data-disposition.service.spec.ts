@@ -365,5 +365,21 @@ describeOrSkip('DataDispositionService', () => {
         ),
       ).rejects.toThrow(/already VERIFIED/);
     });
+
+    it('listOpen() finds a real PENDING task but not one already resolved', async () => {
+      const { taskId: pendingTaskId } = await makeCaseWithTask();
+      const { taskId: resolvedTaskId } = await makeCaseWithTask();
+      await service.resolve(
+        tenantId,
+        resolvedTaskId,
+        'DELETE',
+        'disposition-spec-operator',
+      );
+
+      const open = await service.listOpen(tenantId);
+
+      expect(open.map((t) => t.id)).toContain(pendingTaskId);
+      expect(open.map((t) => t.id)).not.toContain(resolvedTaskId);
+    });
   });
 });

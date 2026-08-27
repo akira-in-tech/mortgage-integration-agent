@@ -1,7 +1,4 @@
-import { getStoredToken } from './auth';
-import { getOidcCsrfToken, getOidcTenantId, hasOidcSession } from './oidc';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { request } from './api-client';
 
 export interface AgentBudgetAggregateUsage {
   windowStart: string;
@@ -35,38 +32,6 @@ interface ReconcileInput {
   outcome: 'COMMITTED' | 'RELEASED';
   resolutionNote: string;
   actualCostMinorUnits?: number;
-}
-
-/** REST requests share the same cookie/tenant/CSRF boundary as Apollo. */
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  if (hasOidcSession()) {
-    const tenantId = getOidcTenantId();
-    const csrfToken = getOidcCsrfToken();
-    if (tenantId) headers.set('x-tenant-id', tenantId);
-    if (csrfToken) headers.set('x-csrf-token', csrfToken);
-  } else {
-    const token = getStoredToken();
-    if (token) headers.set('authorization', `Bearer ${token}`);
-  }
-  if (init.body) headers.set('content-type', 'application/json');
-
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers,
-    credentials: 'include',
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      message?: unknown;
-    } | null;
-    const message =
-      typeof body?.message === 'string'
-        ? body.message
-        : `Request failed with status ${response.status}`;
-    throw new Error(message);
-  }
-  return (await response.json()) as T;
 }
 
 export function getAgentBudgetAggregateUsage() {

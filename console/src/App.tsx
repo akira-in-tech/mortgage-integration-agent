@@ -6,6 +6,7 @@ import { CaseDossier } from './components/CaseDossier';
 import { OpsDashboard } from './components/OpsDashboard';
 import { LiveStream } from './components/LiveStream';
 import { BudgetOperations } from './components/BudgetOperations';
+import { AdminQueues } from './components/AdminQueues';
 import { ConnectScreen } from './components/ConnectScreen';
 import { TenantSelectionScreen } from './components/TenantSelectionScreen';
 import { getStoredActorId, getStoredToken, clearSession } from './auth';
@@ -169,7 +170,9 @@ export function App() {
                   ? 'Live Stream'
                   : view === 'budgets'
                     ? 'Agent Budget Operations'
-                    : 'Cases'}
+                    : view === 'admin'
+                      ? 'Admin Queues'
+                      : 'Cases'}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
@@ -197,6 +200,8 @@ export function App() {
             <LiveStream />
           ) : view === 'budgets' ? (
             <BudgetOperations />
+          ) : view === 'admin' ? (
+            <AdminQueues />
           ) : (
             <>
               <CaseList

@@ -1,6 +1,14 @@
-import { BrandMark, GridIcon, FolderIcon, ChartIcon, GearIcon } from './icons';
+import {
+  BrandMark,
+  GridIcon,
+  FolderIcon,
+  ChartIcon,
+  GearIcon,
+  PolicyIcon,
+} from './icons';
 
-export type ConsoleView = 'dashboard' | 'queue' | 'stream' | 'budgets';
+export type ConsoleView =
+  'dashboard' | 'queue' | 'stream' | 'budgets' | 'admin';
 
 interface NavRailProps {
   initials: string;
@@ -110,6 +118,24 @@ export function NavRail({ initials, activeView, onNavigate }: NavRailProps) {
           <GearIcon
             color={
               activeView === 'budgets' ? 'var(--accent)' : 'var(--ink-muted)'
+            }
+          />
+        </button>
+        <button
+          type="button"
+          aria-label="Admin Queues"
+          aria-pressed={activeView === 'admin'}
+          className="navicon"
+          style={{
+            border: 'none',
+            cursor: 'pointer',
+            background: activeView === 'admin' ? 'var(--accent-wash)' : 'none',
+          }}
+          onClick={() => onNavigate('admin')}
+        >
+          <PolicyIcon
+            color={
+              activeView === 'admin' ? 'var(--accent)' : 'var(--ink-muted)'
             }
           />
         </button>

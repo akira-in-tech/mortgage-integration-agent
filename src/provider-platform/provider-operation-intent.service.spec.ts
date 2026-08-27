@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
@@ -150,5 +151,30 @@ describeOrSkip('ProviderOperationIntentService', () => {
         'trying to resolve an already-resolved intent',
       ),
     ).rejects.toThrow(/not in a reconcilable state/);
+  });
+
+  it('listNeedingReconciliation() finds OUTCOME_UNKNOWN and RECONCILING intents but not ones with a real answer, oldest first', async () => {
+    // A tenant of its own, so nothing another test in this file already
+    // created can sneak into the results and make the assertions flaky.
+    const tenantId = randomUUID();
+    const input = { ...baseInput, tenantId };
+
+    const unclear = await service.prepare(input);
+    intentIds.push(unclear.id);
+    await service.markOutcomeUnknown(tenantId, unclear.id);
+
+    const beingChecked = await service.prepare(input);
+    intentIds.push(beingChecked.id);
+    await service.markOutcomeUnknown(tenantId, beingChecked.id);
+    await service.markReconciling(tenantId, beingChecked.id);
+
+    const alreadyAnswered = await service.prepare(input);
+    intentIds.push(alreadyAnswered.id);
+    await service.markSucceeded(tenantId, alreadyAnswered.id);
+
+    const results = await service.listNeedingReconciliation(tenantId);
+
+    expect(results.map((r) => r.id)).toEqual([unclear.id, beingChecked.id]);
+    expect(results.map((r) => r.id)).not.toContain(alreadyAnswered.id);
   });
 });
