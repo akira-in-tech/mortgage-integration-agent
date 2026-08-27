@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.11 |
+| Version | 2.12 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -55,19 +55,21 @@ The repository currently contains verified local vertical slices for:
 - explicit PostgreSQL migrations, restricted runtime role, and row-level security on tenant data;
 - Temporal workflows with wait, signal, resume, retry classification, and transactional outbox events;
 - a versioned policy DSL, ancestry-aware applicability resolution, source-freshness enforcement, application-time transition execution, immutable snapshots and bindings, dependency-generation validation, change-impact assessment, and transition approval;
-- a bounded LangGraph.js Agent runtime with registered tools, PostgreSQL-authoritative per-tool budget reservations, mandatory-review routing, immutable evaluation manifests, and persisted run history;
+- a bounded LangGraph.js Agent runtime with registered tools, PostgreSQL-authoritative per-tool budget reservations, tool-boundary enforcement, REVIEWER-only reconciliation for unresolved outcomes, tenant UTC-month aggregate provider-call/cost ceilings, mandatory-review routing, immutable evaluation manifests, and persisted run history;
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
-- provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks, deterministic failure scenarios, and a generated TypeScript client;
-- API-client and OIDC authentication, two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
-- a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, live activity polling, and a same-origin Authorization Code + PKCE backend-for-frontend session;
+- provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks with SSRF/redirect protection at dispatch, deterministic failure scenarios, and a generated TypeScript client;
+- API-client and OIDC authentication (same-origin Authorization Code + PKCE backend-for-frontend session, tenant discovery, and upstream logout propagation), two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
+- a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, and live activity polling;
+- CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, and dependency audits, plus an automated Playwright/axe browser and accessibility gate (a separate credential-gated live-Keycloak browser journey stays opt-in, not enforced by default);
+- an opt-in local OpenTelemetry stack (Collector, Tempo, Prometheus, Grafana) with SLO recording rules, alerts, a provisioned dashboard, and an operator runbook (`docs/OPERATIONS.md`);
 - no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
 
 The following release boundaries remain open and are not represented as implemented:
 
 - external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage;
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
-- complete administration and recovery queues, downloadable evaluation evidence, OpenTelemetry dashboards, and manual plus live-stack accessibility evidence;
-- infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, runbooks, and release artifacts;
+- complete administration and recovery queues, and downloadable evaluation evidence;
+- infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, and release artifacts;
 - production provider adapters, real-data approval, or official underwriting integrations.
 
 The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPROVED`, `CONDITIONAL`, and `DENIED` labels are not the target product contract and are never formal credit actions.
@@ -1529,7 +1531,7 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 | M4 | Provider gateway, partner API, webhooks, and sandbox | Partially implemented |
 | M5 | Tenant trust boundary and audit controls | Partially implemented |
 | M6 | Operations console and release evaluation | Partially implemented |
-| M7 | Synthetic staging and provider-integration-readiness evidence | Planned |
+| M7 | Synthetic staging and provider-integration-readiness evidence | Partially implemented |
 
 ### M0 — Product foundation
 
@@ -1692,6 +1694,8 @@ Exit evidence:
 - accessibility and unhappy-path checks pass;
 - no sensitive fixture content appears in telemetry or unauthorized views.
 
+Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation has a real console screen. Still open: reconciliation/promotion/data-disposition/policy-impact console surfaces, the evaluation dashboard and downloadable release report, and operational replay/cancellation/recovery controls.
+
 ### M7 — Synthetic staging and provider-integration readiness
 
 **Outcome:** the product is reproducibly deployed with synthetic data and production-like controls, and the same artifact is certifiably ready for authorized real-provider configuration.
@@ -1714,6 +1718,8 @@ Exit evidence:
 - provider-integration-ready status is claimed only for each named provider, capability, adapter version, schema profile, and authorized sandbox that passes the same contract suite and end-to-end workflow as its simulator;
 - absence of optional provider credentials does not block synthetic-launch-ready status, but it prevents a provider-integration-ready claim and remains an explicit unverified boundary;
 - the release remains explicitly synthetic and is not represented as approved for real borrower data.
+
+Real progress so far: SLO dashboards, alerts, and a runbook (`docs/OPERATIONS.md`) are built, running on a free local OpenTelemetry stack. CI enforces console/backend tests, generated-contract drift, a container build, and dependency audits; a browser and automated-accessibility gate runs by default (a separate live-Keycloak browser journey stays opt-in). Still fully open: Terraform/OpenTofu, GitHub Actions OIDC deployment, deployed synthetic staging, load/soak, backup/restore, and the provider certification/kill-switch exercise.
 
 ## 21. Product and operational metrics
 
@@ -1959,11 +1965,11 @@ Implementation creates focused ADRs for decisions with durable consequences, beg
 
 The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Each item remains an independent acceptance-criterion commit:
 
-1. Enforce console lint, tests, build, and GraphQL-codegen drift in CI; add dependency, secret, and container scanning without inventing a green result.
-2. Add browser end-to-end and accessibility coverage for login, triage, review, communication approval, and disconnected/degraded states.
-3. Add least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces.
+1. **Done**: enforce console lint, tests, build, generated-contract drift, container build, and dependency audits in CI. **Still open**: secret scanning and SAST — do not invent a green result for either.
+2. **Done**: automated browser end-to-end and accessibility coverage for the console's own default-fixture journeys. **Still open**: the same coverage running by default against a live Keycloak/PostgreSQL stack — that journey exists but stays opt-in, skipped unless explicitly requested.
+3. Add least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces (console screens — the backend/CLI paths for these already exist).
 4. Add external policy-source monitoring/ingestion and reviewed jurisdiction packs before policy coverage expands.
-5. Add OpenTelemetry traces/metrics, SLOs, alerts, runbooks, and downloadable evaluation/release evidence.
+5. **Done**: OpenTelemetry traces/metrics, SLOs, alerts, and a runbook, on a free opt-in local stack. **Still open**: downloadable evaluation/release evidence.
 6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.
 
 Provider-integration-ready status remains tuple-specific and requires authorized sandbox credentials and current certification evidence. Production-approved status additionally requires external security, privacy, compliance, legal, operational, and provider authorization; source code alone cannot establish it.

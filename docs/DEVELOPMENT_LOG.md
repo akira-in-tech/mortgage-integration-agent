@@ -10462,3 +10462,43 @@ first M7-014 remote CI before this maintenance slice — all 10 push/PR jobs pas
 ```
 
 This is CI-runner maintenance only. It changes no application runtime, API, schema, generated client, provider behavior, or deployment authority. The follow-up remote run is the acceptance evidence for the v7 action environment.
+
+## M7-016: charter reconciliation and workspace cleanup
+
+### Status
+
+Implemented and verified. This is a documentation and housekeeping pass, not an application change.
+
+### What was wrong
+
+`docs/PROJECT_CHARTER.md`'s own "what's done vs. still open" sections (Section 3, the Section 20 milestone table, Section 29) hadn't been touched since commit `4d732d9`, which is before the CI-enforcement, browser/accessibility, OIDC tenant-discovery/logout, and OpenTelemetry work landed. Reading the charter today would have told someone that CI enforcement, browser accessibility testing, and OpenTelemetry dashboards were still missing, when they were actually built and verified several commits ago. The open draft PR's own description had the same problem — it still listed "policy freshness and jurisdiction inheritance" and "console views for Agent budget reconciliation" as remaining work, both already done.
+
+Separately, three stray files were sitting in the working tree with a trailing " 2" in their filename (`console/src/oidc 2.ts`, `console/src/oidc.test 2.ts`, `console/src/components/TenantSelectionScreen.test 2.tsx`) — a leftover from an earlier save conflict, already noted but not removed in M7-013/M7-014c. Diffed each against its real counterpart: all three were an old, already-superseded draft of the OIDC work (the browser-side PKCE version, before it was rebuilt as a backend-for-frontend session) with nothing unique left in them.
+
+### What changed
+
+- `docs/PROJECT_CHARTER.md`: updated Section 3's "what's implemented" and "what's still open" lists, the Section 20 milestone table (M7 moved from "Planned" to "Partially implemented", since real M7 work — the OpenTelemetry stack — is done), and Section 29's roadmap items to say plainly which parts are done and which parts remain. Version bumped 2.11 → 2.12.
+- GitHub PR #2's description updated to match: the Summary section now lists the OTel stack, policy freshness/ancestry, and the Agent-budget console screen; verification numbers updated to the most recent recorded run; the "remaining work" list now matches what's actually still open.
+- Deleted the three stray duplicate files.
+
+### Verification
+
+```text
+grep for the numbered section sequence — 1 through 30, no gaps
+git diff --check — no trailing-whitespace or line-ending problems
+code-fence count unchanged (40, same as before the edit)
+npm run lint:check — passed
+gh pr edit — PR #2 description updated successfully
+```
+
+### Why this matters
+
+A charter that says something is missing when it's actually built is just as misleading as claiming something works when it doesn't — someone reading it to decide what to build next would waste time re-verifying (or re-building) something that's already there. This pass didn't change what the platform does; it made the record match reality again.
+
+### Known gaps
+
+None new. The real, still-open items are the ones now correctly listed in the charter itself: purpose-level consent and complete data lineage, console screens for provider reconciliation/promotion/data-disposition/policy-impact, external policy-source monitoring, downloadable evaluation evidence, and everything under real deployment (IaC, staging, load/soak, backup/restore).
+
+### Next safe step
+
+Pick one of the now-accurately-listed open items and build it for real — Agent-budget usage/reconciliation already got a console screen this way; provider reconciliation/promotion/data-disposition/policy-impact are the next-most-natural console screens to add, since their backend/CLI paths already exist.
