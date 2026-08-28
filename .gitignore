@@ -49,3 +49,14 @@ client/*.js
 client/*.js.map
 client/index.d.ts
 client/quickstart.d.ts
+
+# Terraform local state/plan artifacts and backend config with real
+# bucket/table names. .terraform.lock.hcl IS committed (real provider
+# version pinning, same reasoning as package-lock.json).
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/*.tfplan
+terraform/**/backend.hcl
+terraform/**/*.auto.tfvars
+terraform/**/crash.log

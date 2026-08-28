@@ -1,0 +1,9 @@
+# Copy to backend.hcl (gitignored) and fill in with terraform/bootstrap's
+# own outputs, or pass the same values as -backend-config flags to
+# `terraform init` directly (this is what the GitHub Actions workflow
+# does — it never writes backend.hcl to disk).
+bucket         = "REPLACE_WITH_bootstrap_output.state_bucket_name"
+key            = "staging/terraform.tfstate"
+region         = "REPLACE_WITH_bootstrap_output.aws_region"
+dynamodb_table = "REPLACE_WITH_bootstrap_output.state_lock_table_name"
+encrypt        = true

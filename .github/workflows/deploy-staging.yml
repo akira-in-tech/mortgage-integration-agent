@@ -1,0 +1,95 @@
+name: Deploy staging
+
+# Manual only — this touches real AWS resources and costs real money
+# while running, unlike every other workflow in this repository.
+# Charter Section 29 item 6's own Phase 1 (see docs/DEVELOPMENT_LOG.md's
+# M7-024 entry): API + Worker + a self-hosted Temporal server behind a
+# public HTTP load balancer, no domain/TLS yet, no Keycloak/console
+# deployed yet.
+on:
+  workflow_dispatch: {}
+
+# id-token: write is what lets this workflow assume an AWS IAM role via
+# OIDC federation — no long-lived AWS access key is stored in this
+# repository at any point, in any secret.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false # Never cancel a deploy mid-flight — a half-applied Terraform run is a worse state than a queued one waiting its turn.
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No `environment:` here on purpose — a GitHub Environment changes
+    # the OIDC sub claim to "repo:OWNER/REPO:environment:NAME" instead
+    # of the branch-ref form terraform/bootstrap/oidc.tf's trust policy
+    # checks. Adding one later (for required-reviewer approval gates)
+    # is a real Phase 2 hardening step, not free to bolt on without
+    # also updating that trust policy to match.
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Repository variables (Settings -> Secrets and variables ->
+      # Actions -> Variables), set once from terraform/bootstrap's own
+      # outputs — none of these are secrets, they're identifiers, which
+      # is exactly why they're `vars.*` and not `secrets.*`.
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build and push the image (tagged with this commit's SHA - never "latest")
+        env:
+          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+        run: |
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
+          docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
+          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: terraform/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      - name: terraform apply
+        working-directory: terraform/staging
+        run: |
+          terraform apply -auto-approve \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="image_tag=${{ github.sha }}"
+        # A migration failure (see ecs.tf's null_resource.migrate) fails
+        # this step directly — Terraform never proceeds to update
+        # api/worker with a schema they don't match.
+
+      # The real verification step. A clean `terraform apply` proves
+      # the infrastructure exists; it does not prove the new deploy is
+      # actually serving traffic. This does.
+      - name: Verify the deployed API is actually serving
+        working-directory: terraform/staging
+        run: |
+          alb_dns=$(terraform output -raw alb_dns_name)
+          echo "Checking http://$alb_dns/health/ready ..."
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' "http://$alb_dns/health/ready" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "Real 200 from the deployed staging API."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Staging API never returned a real 200 from /health/ready" >&2
+          exit 1
