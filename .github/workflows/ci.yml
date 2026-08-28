@@ -21,9 +21,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
           cache: 'npm'
@@ -38,7 +38,7 @@ jobs:
       - run: npm --prefix console exec playwright install --with-deps chromium
       - run: npm --prefix console run test:e2e
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:
           name: console-playwright-report
@@ -50,9 +50,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
           cache: 'npm'
@@ -71,7 +71,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # Parse the complete profile first, then validate each backend's native
       # configuration with the exact pinned release image used at runtime.
@@ -95,8 +95,51 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: docker build --tag mortgage-integration-agent:ci .
+
+  secret-scanning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # gitleaks needs full history, not this run's default shallow
+          # checkout, to scan every commit ever pushed — a secret removed
+          # in a later commit but still readable from an earlier one is a
+          # real leak, not something a shallow scan gets to call clean.
+          fetch-depth: 0
+
+      # A plain binary, not `docker run zricethezav/gitleaks` — that image
+      # was tried first while building this job and, against this exact
+      # repository, silently corrupted a scan (the underlying `git log
+      # --all` crashed with a bus error partway through, invisible unless
+      # run at debug verbosity) while still exiting 0 with "no leaks
+      # found". A scanner that can fail silently and still report clean is
+      # worse than no scanner — downloaded directly instead, checksum
+      # verified, pinned to the exact version this was verified against.
+      - run: |
+          curl -sL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source=. --log-opts=--all --redact -v
+
+  sast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Semgrep's own free `p/ci` ruleset (curated for low false-positive
+      # CI gating, not the noisier full community set) needs no build step
+      # for JS/TS — it parses source directly. Scans only files tracked by
+      # git by default, so generated/vendored output (node_modules, dist,
+      # the checked-in GraphQL codegen output) is already excluded without
+      # a hand-maintained ignore list to keep in sync.
+      - run: pip install semgrep==1.175.0
+      - run: semgrep scan --config=p/ci --error --metrics=off
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -129,9 +172,9 @@ jobs:
       OIDC_AUDIENCE: mortgage-agent-app
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
           cache: 'npm'

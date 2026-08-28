@@ -10862,3 +10862,67 @@ The whole point of this slice: `PlatformAdminGuard` and `TenantAuthGuard` share 
 ### Next safe step
 
 None of this session's own charter-tracked gap list remains open from the original four-item Section 29 list. The next candidate would need a fresh look at what's still genuinely missing — not assumed without asking first, the same way this slice's own direction was chosen.
+
+## M7-021: real secret scanning and SAST in CI
+
+### Status
+
+Implemented and verified — both scanners run for real against this repository's own history and source, not a synthetic fixture.
+
+### What this closes
+
+Section 29 item 1's other still-open half: "secret scanning and SAST — do not invent a green result for either." Console lint/tests/build, generated-contract drift, container build, and dependency audits were already enforced (M7-015/earlier); this was the one piece of that item genuinely not started.
+
+### What it does
+
+Two new CI jobs, both real gates (a finding fails the job, not just a passive dashboard entry):
+
+- **`secret-scanning`**: `gitleaks` against this repository's *entire* commit history (`--log-opts=--all`, full `fetch-depth: 0` checkout) — a secret that was removed in a later commit but is still readable from an earlier one is a real leak, not something a shallow scan gets to call clean.
+- **`sast`**: `semgrep`, the free `p/ci` ruleset — curated for low false positives in exactly this kind of blocking-CI use, not the noisier full community rule set. No build step needed for JS/TS; it parses source directly, and only scans files tracked by git (so `node_modules`/`dist`/generated codegen output are already excluded with no hand-maintained ignore list to keep in sync with reality).
+
+### A scanner that lies is worse than no scanner
+
+First attempt ran gitleaks via `docker run zricethezav/gitleaks:latest -v $PWD:/repo`, matching this repo's own established pattern for one-off scanning tools (`observability-config`'s `docker run ... promtool`/OTel Collector `validate`). Locally, this reported "101 commits scanned, no leaks found" — but this repository actually has 149 commits (147 non-merge). Running at debug verbosity surfaced the real cause: the container's own `git -C /repo log -p -U0 --all` crashed with a bus error partway through (a real Docker-Desktop-for-Mac bind-mount/mmap issue against this exact repository), and gitleaks treated the truncated partial output as a completed, clean scan — exit code 0, "no leaks found," while having silently scanned only two-thirds of history. Exactly the "invent a green result" failure the charter warns against, just from a well-known third-party tool rather than anything hand-written here.
+
+Fixed by downloading the plain gitleaks binary directly (checksum-verified against the published release checksums, no Docker layer at all) instead. The same command then correctly reported "147 commits scanned" (149 total minus the repo's 2 merge commits, which carry no diff of their own to scan — their content is already covered by their non-merge parents) — genuinely clean, not silently truncated.
+
+### A real, fixed finding — not tuned away
+
+`semgrep`'s `p/ci` ruleset immediately flagged 9 real findings, all one rule: every `uses: actions/...@v7`/`@v4` reference in `ci.yml` used a mutable tag rather than a pinned commit SHA — the exact supply-chain weakness behind real incidents like the `tj-actions/changed-files` compromise (a tag silently repointed by a compromised maintainer account, changing what every consumer's next CI run executes with no code change of their own). Fixed by resolving `actions/checkout@v7`, `actions/setup-node@v7`, and `actions/upload-artifact@v4` to their real commit SHAs (via the GitHub API, not guessed) and pinning every `uses:` line to that SHA with a `# v7`/`# v4` comment for readability. Re-ran semgrep: 0 findings. The gate went green because the real issue was fixed, not because the rule was disabled or excluded.
+
+### Implementation
+
+- `.github/workflows/ci.yml`: two new jobs (`secret-scanning`, `sast`), plus every existing `uses:` reference repinned to its resolved commit SHA.
+
+### Verification
+
+```text
+gitleaks (native binary, not Docker — see above):
+  147/147 non-merge commits scanned (full --all history) — 0 leaks,
+  confirmed by directly comparing the reported commit count against
+  `git rev-list --all --count` (149) minus `git log --all --merges
+  --oneline | wc -l` (2), not just trusting the tool's own summary line.
+
+semgrep (p/ci ruleset):
+  Before the SHA-pinning fix: 9 real findings (one rule, listed above).
+  After: 0 findings, 31 rules run, 511 files scanned, ~100% parsed.
+
+Both verified locally against this repository's real history/source
+before being wired into CI, specifically because a scanner tool itself
+was caught lying about its own result once already in this same slice —
+its CI debut is not the first time either one has actually run here.
+```
+
+### Security, privacy, cost, and compatibility
+
+No runtime/application changes — this is CI-only. The SHA-pinning fix has a real, if narrow, security benefit independent of satisfying the scanner: a compromised `actions/*` maintainer account (or a compromised marketplace publisher generally) can no longer silently change what this workflow executes on its next run without a visible diff to this repository's own `ci.yml`.
+
+### Known gaps
+
+- Both scanners run as independent jobs, not blocking merges via branch protection — a repository setting outside this codebase's own files, not verified as part of this slice.
+- `semgrep`'s free `p/ci` ruleset is intentionally narrow (low false-positive, CI-safe); it is not the same coverage as `p/security-audit`, `p/owasp-top-ten`, or a paid Semgrep Supply Chain/paid ruleset — a deliberate scope choice for a first real gate, not a claim of exhaustive SAST coverage.
+- Only the three actions this workflow already used (`checkout`/`setup-node`/`upload-artifact`) are SHA-pinned; any action added later needs the same treatment or semgrep's own gate catches it at that point.
+
+### Next safe step
+
+Section 29 item 2's still-open half (the live Keycloak/PostgreSQL browser journey running by default in CI, not opt-in) or item 5's (downloadable evaluation/release evidence) are the next genuine candidates — not started without asking first.
