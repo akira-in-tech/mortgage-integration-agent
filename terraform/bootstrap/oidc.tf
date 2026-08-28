@@ -226,6 +226,25 @@ data "aws_iam_policy_document" "deploy_permissions" {
     resources = ["*"]
   }
 
+  # A Cloud Map *private DNS* namespace is backed by an actual Route 53
+  # private hosted zone under the hood - creating one silently also
+  # creates/manages a hosted zone, discovered only by the real
+  # AccessDeniedException this caused. Route 53 hosted zones aren't
+  # scoped to this stack's name (the zone ID is assigned by AWS, not
+  # chosen), so this is Resource "*" the same way the other
+  # no-resource-to-scope-to statements above are.
+  statement {
+    sid    = "Route53ForServiceDiscovery"
+    effect = "Allow"
+    actions = [
+      "route53:CreateHostedZone", "route53:DeleteHostedZone", "route53:GetHostedZone",
+      "route53:ListHostedZones", "route53:ListHostedZonesByName",
+      "route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets",
+      "route53:GetChange", "route53:ChangeTagsForResource", "route53:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid       = "TerraformStateBucket"
     effect    = "Allow"
