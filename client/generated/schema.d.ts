@@ -599,6 +599,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform-admin/evaluation-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List saved evaluation runs, most recent first */
+        get: operations["listEvaluationReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/evaluation-reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One saved evaluation run, every per-case result included */
+        get: operations["getEvaluationReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/evaluation-reports/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The same report as a downloadable JSON file */
+        get: operations["downloadEvaluationReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -972,6 +1023,24 @@ export interface components {
             nextAttemptAt?: Record<string, never>;
             /** Format: date-time */
             createdAt: string;
+        };
+        EvaluationReportSummaryDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            generatedAt: string;
+            gitCommit: Record<string, never> | null;
+            gitBranch: Record<string, never> | null;
+            totalCases: number;
+            passed: number;
+            failed: number;
+            conditionRecall: Record<string, never> | null;
+            conditionPrecision: Record<string, never> | null;
+        };
+        EvaluationReportDetailDto: {
+            /** Format: uuid */
+            id: string;
+            report: Record<string, never>;
         };
     };
     responses: never;
@@ -2191,6 +2260,89 @@ export interface operations {
             };
             /** @description No delivery with this id owned by the authenticated tenant. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listEvaluationReports: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationReportSummaryDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getEvaluationReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationReportDetailDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadEvaluationReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report, with a Content-Disposition attachment header. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

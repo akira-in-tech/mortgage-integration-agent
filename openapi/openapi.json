@@ -1572,6 +1572,123 @@
           "webhooks"
         ]
       }
+    },
+    "/v1/platform-admin/evaluation-reports": {
+      "get": {
+        "operationId": "listEvaluationReports",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluationReportSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List saved evaluation runs, most recent first",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/evaluation-reports/{id}": {
+      "get": {
+        "operationId": "getEvaluationReport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationReportDetailDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One saved evaluation run, every per-case result included",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/evaluation-reports/{id}/download": {
+      "get": {
+        "operationId": "downloadEvaluationReport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report, with a Content-Disposition attachment header."
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The same report as a downloadable JSON file",
+        "tags": [
+          "platform-admin"
+        ]
+      }
     }
   },
   "info": {
@@ -2912,6 +3029,71 @@
           "status",
           "attempts",
           "createdAt"
+        ]
+      },
+      "EvaluationReportSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "gitCommit": {
+            "type": "object",
+            "nullable": true
+          },
+          "gitBranch": {
+            "type": "object",
+            "nullable": true
+          },
+          "totalCases": {
+            "type": "number"
+          },
+          "passed": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "conditionRecall": {
+            "type": "object",
+            "nullable": true
+          },
+          "conditionPrecision": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "generatedAt",
+          "gitCommit",
+          "gitBranch",
+          "totalCases",
+          "passed",
+          "failed",
+          "conditionRecall",
+          "conditionPrecision"
+        ]
+      },
+      "EvaluationReportDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "report"
         ]
       }
     }

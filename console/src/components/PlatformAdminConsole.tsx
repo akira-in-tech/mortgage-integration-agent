@@ -13,9 +13,12 @@ import {
   approveManifest,
   activateManifest,
   deactivateProvider,
+  listEvaluationReports,
+  downloadEvaluationReport,
   type ProviderPromotionManifest,
   type ProviderActivation,
   type ProviderPromotionManifestDetail,
+  type EvaluationReportSummary,
 } from '../platform-admin-api';
 import { DataTable } from './DataTable';
 import { GearIcon } from './icons';
@@ -207,7 +210,7 @@ function PlatformAdminMain({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <GearIcon size={15} color="var(--ink-2)" />
           <span style={{ fontSize: 13.5, fontWeight: 600 }}>
-            Platform Admin — Provider Promotion
+            Platform Admin
           </span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -375,8 +378,132 @@ function PlatformAdminMain({
             ])}
           />
         </section>
+
+        <section style={{ marginTop: 28 }}>
+          <h2 style={{ fontSize: 15, margin: '0 0 4px' }}>
+            Evaluation reports
+          </h2>
+          <p
+            style={{
+              fontSize: 12.5,
+              color: 'var(--ink-muted)',
+              margin: '0 0 8px',
+            }}
+          >
+            Real runs of the release evaluation corpus (
+            <code>npm run evaluate</code>) — platform-wide, not any one
+            tenant&rsquo;s data.
+          </p>
+          <EvaluationReportsSection />
+        </section>
       </div>
     </div>
+  );
+}
+
+function EvaluationReportsSection() {
+  const [reports, setReports] = useState<EvaluationReportSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    listEvaluationReports()
+      .then((result) => {
+        setReports(result);
+        setError(null);
+      })
+      .catch((err) => {
+        setError(
+          err instanceof Error ? err.message : 'Could not load reports.',
+        );
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function download(id: string) {
+    setDownloadingId(id);
+    try {
+      const { blob, filename } = await downloadEvaluationReport(id);
+      // Standard authenticated-download pattern: the browser has no way
+      // to attach an Authorization header to a plain <a href> click, so
+      // fetch the bytes ourselves and hand the browser a local blob URL
+      // to save instead.
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Could not download report.',
+      );
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div
+        className="card"
+        style={{ padding: 24, fontSize: 13, color: 'var(--ink-muted)' }}
+      >
+        Loading…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div
+        role="alert"
+        className="card"
+        style={{ padding: 14, color: 'var(--critical)', fontSize: 12.5 }}
+      >
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable
+      columns={[
+        'Generated',
+        'Commit',
+        'Total',
+        'Passed',
+        'Failed',
+        'Recall',
+        'Precision',
+        'Action',
+      ]}
+      emptyLabel="No evaluation reports saved yet — run npm run evaluate."
+      rows={reports.map((report) => [
+        new Date(report.generatedAt).toLocaleString(),
+        <span className="mono" key={`${report.id}-c`}>
+          {report.gitCommit ? report.gitCommit.slice(0, 8) : '—'}
+        </span>,
+        report.totalCases,
+        report.passed,
+        report.failed,
+        report.conditionRecall != null
+          ? `${Math.round(report.conditionRecall * 100)}%`
+          : '—',
+        report.conditionPrecision != null
+          ? `${Math.round(report.conditionPrecision * 100)}%`
+          : '—',
+        <button
+          key={`${report.id}-d`}
+          type="button"
+          className="btn"
+          disabled={downloadingId === report.id}
+          onClick={() => void download(report.id)}
+        >
+          {downloadingId === report.id ? 'Downloading…' : 'Download'}
+        </button>,
+      ])}
+    />
   );
 }
 

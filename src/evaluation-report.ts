@@ -22,6 +22,9 @@ import { CasePolicyBinding } from './database/entities/case-policy-binding.entit
 import { PolicyCatalogGeneration } from './database/entities/policy-catalog-generation.entity';
 import { EvaluationInputManifest } from './database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from './database/entities/agent-run.entity';
+import { AgentBudgetLedger } from './database/entities/agent-budget-ledger.entity';
+import { AgentBudgetReservation } from './database/entities/agent-budget-reservation.entity';
+import { TenantAgentBudgetUsage } from './database/entities/tenant-agent-budget-usage.entity';
 import { ToolAttempt } from './database/entities/tool-attempt.entity';
 import { ProviderAuthorizationGrant } from './database/entities/provider-authorization-grant.entity';
 import { ProviderOperationIntent } from './database/entities/provider-operation-intent.entity';
@@ -58,6 +61,8 @@ import { DocumentVerificationAdapter } from './integrations/document/document-ve
 import { loadCorpus } from './evaluation/load-corpus';
 import { runCorpus, cleanupEvaluationRun } from './evaluation/runner';
 import { buildReport } from './evaluation/report';
+import { EvaluationReportRecord } from './database/entities/evaluation-report-record.entity';
+import { EvaluationReportRecordService } from './evaluation/evaluation-report-record.service';
 
 const CASES_DIR = join(__dirname, '..', 'evaluation', 'cases');
 const REPORTS_DIR = join(__dirname, '..', 'evaluation', 'reports');
@@ -104,6 +109,9 @@ async function main(): Promise<void> {
       PolicyCatalogGeneration,
       EvaluationInputManifest,
       AgentRun,
+      AgentBudgetLedger,
+      AgentBudgetReservation,
+      TenantAgentBudgetUsage,
       ToolAttempt,
       ProviderAuthorizationGrant,
       ProviderOperationIntent,
@@ -116,6 +124,7 @@ async function main(): Promise<void> {
       CommunicationMessage,
       CommunicationTemplate,
       DataDispositionTask,
+      EvaluationReportRecord,
     ],
   });
   await dataSource.initialize();
@@ -204,6 +213,17 @@ async function main(): Promise<void> {
       `report-${report.generatedAt.replace(/[:.]/g, '-')}.json`,
     );
     writeFileSync(reportPath, JSON.stringify(report, null, 2));
+
+    // Same report, saved as a real row too — so it can be listed and
+    // downloaded over REST (v1/platform-admin/evaluation-reports)
+    // instead of needing shell access to whatever machine ran this.
+    const reportRecordService = new EvaluationReportRecordService(
+      dataSource.getRepository(EvaluationReportRecord),
+    );
+    const savedRecord = await reportRecordService.record(report);
+    console.log(
+      `Report also saved as evaluation_report_records/${savedRecord.id}`,
+    );
 
     console.log('');
     for (const result of report.results) {

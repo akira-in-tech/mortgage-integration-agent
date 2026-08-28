@@ -24,6 +24,7 @@ import { ConsentModule } from './consent/consent.module';
 import { AuditModule } from './audit/audit.module';
 import { AgentBudgetModule } from './agent-runtime/agent-budget.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { EvaluationReportsModule } from './evaluation/evaluation-reports.module';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { ObservabilityModule } from './observability/observability.module';
     PolicyModule,
     CommunicationsModule,
     WebhooksModule,
+    EvaluationReportsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: GqlThrottlerGuard }],
 })

@@ -60,6 +60,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
       routeFetch({
         manifests: () => jsonResponse([]),
         activations: () => jsonResponse([]),
+        'evaluation-reports': () => jsonResponse([]),
       }),
     );
 
@@ -85,6 +86,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
       routeFetch({
         manifests: () => jsonResponse([manifest]),
         activations: () => jsonResponse([]),
+        'evaluation-reports': () => jsonResponse([]),
       }),
     );
 
@@ -100,6 +102,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
     let proposed = false;
     const fetchMock = routeFetch({
       activations: () => jsonResponse([]),
+      'evaluation-reports': () => jsonResponse([]),
       manifests: (init) => {
         if (init?.method === 'POST') {
           proposed = true;
@@ -146,6 +149,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
     setStoredPlatformAdminToken(TOKEN);
     const fetchMock = routeFetch({
       activations: () => jsonResponse([]),
+      'evaluation-reports': () => jsonResponse([]),
       certifications: () =>
         jsonResponse({
           id: 'cert-1',
@@ -213,6 +217,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
     let deactivated = false;
     const fetchMock = routeFetch({
       manifests: () => jsonResponse([]),
+      'evaluation-reports': () => jsonResponse([]),
       deactivate: () => {
         deactivated = true;
         return jsonResponse({ ...activation, state: 'DEACTIVATED' });
@@ -255,6 +260,7 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
       routeFetch({
         manifests: () => jsonResponse([]),
         activations: () => jsonResponse([]),
+        'evaluation-reports': () => jsonResponse([]),
       }),
     );
     const user = userEvent.setup();
@@ -268,5 +274,92 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
         /00000000-0000-0000-0000-000000000000/,
       ),
     ).toBeInTheDocument();
+  });
+
+  it('loads and renders real evaluation reports, not a guess', async () => {
+    setStoredPlatformAdminToken(TOKEN);
+    vi.stubGlobal(
+      'fetch',
+      routeFetch({
+        manifests: () => jsonResponse([]),
+        activations: () => jsonResponse([]),
+        'evaluation-reports': () =>
+          jsonResponse([
+            {
+              id: 'report-1',
+              generatedAt: '2026-08-01T00:00:00.000Z',
+              gitCommit: 'abc1234def',
+              gitBranch: 'main',
+              totalCases: 12,
+              passed: 11,
+              failed: 1,
+              conditionRecall: 0.9,
+              conditionPrecision: null,
+            },
+          ]),
+      }),
+    );
+
+    render(<PlatformAdminConsole onExit={() => {}} />);
+
+    expect(await screen.findByText('abc1234d')).toBeInTheDocument();
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getByText('90%')).toBeInTheDocument();
+  });
+
+  it('downloading a report fetches the real file with the admin credential and hands the browser a real filename', async () => {
+    setStoredPlatformAdminToken(TOKEN);
+    const reportBody = JSON.stringify({ some: 'real report content' });
+    let downloadAuthHeader: string | null = null;
+    vi.stubGlobal(
+      'fetch',
+      routeFetch({
+        manifests: () => jsonResponse([]),
+        activations: () => jsonResponse([]),
+        'evaluation-reports/report-1/download': (init) => {
+          downloadAuthHeader =
+            new Headers(init?.headers).get('authorization') ?? null;
+          return new Response(reportBody, {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'content-disposition':
+                'attachment; filename="evaluation-report-report-1.json"',
+            },
+          });
+        },
+        'evaluation-reports': () =>
+          jsonResponse([
+            {
+              id: 'report-1',
+              generatedAt: '2026-08-01T00:00:00.000Z',
+              gitCommit: null,
+              gitBranch: null,
+              totalCases: 1,
+              passed: 1,
+              failed: 0,
+              conditionRecall: null,
+              conditionPrecision: null,
+            },
+          ]),
+      }),
+    );
+    const createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {});
+    const user = userEvent.setup();
+
+    render(<PlatformAdminConsole onExit={() => {}} />);
+    await user.click(await screen.findByRole('button', { name: 'Download' }));
+
+    await waitFor(() => expect(clickSpy).toHaveBeenCalled());
+    expect(downloadAuthHeader).toBe(`Bearer ${TOKEN}`);
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+
+    clickSpy.mockRestore();
   });
 });

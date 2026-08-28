@@ -9,9 +9,9 @@ A real React operations console for the mortgage-integration-agent GraphQL API. 
 - **Agent Budget Operations** — UTC-month provider-call/cost authority plus the reviewer queue for outcome-unknown Agent budget reservations.
 - **Admin Queues** — two reviewer queues: provider calls whose real outcome is still unclear, and evidence waiting on a delete/anonymize/retain decision after a consent revocation.
 
-Plus **Platform Admin** — reached from a link on the connect screen, not the nav rail: the provider promotion chain (propose/certify/approve/activate a provider adapter). It's deliberately not one of the six tenant screens above — providers aren't scoped to any tenant, so this uses its own platform-admin credential (`npm run create-platform-admin`, from the repo root) that a tenant session can never satisfy and vice versa. See `src/components/PlatformAdminConsole.tsx`.
+Plus **Platform Admin** — reached from a link on the connect screen, not the nav rail: the provider promotion chain (propose/certify/approve/activate a provider adapter) and a list of saved evaluation reports (real `npm run evaluate` runs, each downloadable as a real file). Neither is one of the six tenant screens above — providers and evaluation runs aren't scoped to any tenant, so this uses its own platform-admin credential (`npm run create-platform-admin`, from the repo root) that a tenant session can never satisfy and vice versa. See `src/components/PlatformAdminConsole.tsx`.
 
-See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-022 entries for what was built, how it was verified, and its known gaps.
+See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-023 entries for what was built, how it was verified, and its known gaps.
 
 ## Run it
 

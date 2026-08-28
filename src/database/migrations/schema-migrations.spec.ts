@@ -101,6 +101,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'consent_records',
       'data_disposition_tasks',
       'evaluation_input_manifests',
+      'evaluation_report_records',
       'evidence_facts',
       'jurisdictions',
       'legal_holds',
@@ -203,6 +204,14 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the evaluation reports migration, dropping only that table', async () => {
+    expect(await tableNames()).toContain('evaluation_report_records');
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('evaluation_report_records');
   });
 
   it('reverts the platform admins migration, dropping the table and its enum', async () => {

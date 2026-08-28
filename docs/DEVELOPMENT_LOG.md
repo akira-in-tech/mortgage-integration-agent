@@ -11002,3 +11002,87 @@ The seeded tenant/user/membership are synthetic, scoped to this one CI run's own
 ### Next safe step
 
 Section 29 item 5's still-open half — downloadable evaluation/release evidence — is the next genuine candidate on that list, not started without asking first.
+
+## M7-023: downloadable evaluation reports
+
+### Status
+
+Implemented and verified — a real `npm run evaluate` run, saved as a real row, listed and downloaded over REST and through the console, all checked against real data, not fixtures.
+
+### What this closes
+
+Section 29 item 5's other still-open half: "downloadable evaluation/release evidence." `npm run evaluate` (M3-019) already ran the real evaluation corpus against a real database and wrote a JSON report — but only to local disk, which meant "downloadable" in practice meant "you already have shell access to whatever machine ran it." This slice makes that report a real, queryable database row, reachable over REST and from the console with an actual file download.
+
+### Implementation
+
+- `evaluation_report_records` (new table, no tenant dimension, no RLS): same "this isn't any one tenant's data" reasoning `provider_promotion_manifests`/`platform_admins` already established — an evaluation run isn't owned by a tenant, it uses a disposable synthetic one of its own. `EvaluationReportRecordService.record()` saves the exact same `EvaluationReport` object `evaluation-report.ts` already writes to `evaluation/reports/*.json`, plus a few duplicated summary columns so listing doesn't need to parse the full JSON blob just to show totals.
+- `src/evaluation-report.ts`: one addition — call `EvaluationReportRecordService.record(report)` right after writing the local JSON file, so every real run is saved both ways.
+- `v1/platform-admin/evaluation-reports` (list / get / `:id/download`), guarded by `PlatformAdminGuard` — the same platform-wide, non-tenant credential M7-020 built, for the same reason: no single tenant's reviewer should be the audience for every other tenant's release evidence either. `download` sets a real `Content-Disposition: attachment` header; the console fetches the bytes with the admin's own credential (a plain `<a href>` can't carry an Authorization header) and hands the browser a local blob URL to save.
+- `EvaluationReportsModule` registers `PlatformAdmin`/`PlatformAdminGuard` locally rather than relying on the shared `AuthModule` — same proven pattern `ProviderPlatformModule` uses (M7-020's own dev log entry has the full story of why). Verified this still boots the real `AppModule` cleanly with *two* independent local registrations of the same guard, not just one.
+- Console: a new "Evaluation reports" section on the Platform Admin screen — a table of real runs (generated time, commit, totals, recall/precision) with a real Download button per row.
+
+### Errors and fixes
+
+Two real, pre-existing bugs surfaced while trying to generate a real report to verify this feature against — neither introduced by this slice, both blocking honest verification of it, both fixed:
+
+1. `src/evaluation-report.ts`'s own standalone `DataSource` never registered `AgentBudgetLedger`, `AgentBudgetReservation`, or `TenantAgentBudgetUsage` — so every single case in the corpus failed with `No metadata for "AgentBudgetReservation" was found` the moment the real Agent runtime tried to open a budget ledger, and `cleanupEvaluationRun()` itself then crashed on the same gap trying to clean up afterward, silently leaving its disposable synthetic tenant (and every row under it) behind in the database. Traced to `lending-operations-agent-runtime.ts`'s own `new AgentBudgetLedgerService(deps.dataSource)` needing those three entities registered on whatever DataSource it's handed. Fixed by adding all three to the same entity list every other real dependency of this script already sits in. Found real leftover synthetic tenants from past runs (dated well before this slice) still in the database as a direct consequence of this bug — cleaned up by hand once, now that a real run can clean up after itself again.
+2. Separately, this session's own local development database (built up over a very long session via `synchronize: true` side effects rather than always replaying migrations in strict order — see M7-021/M7-022's own entries for the same root cause hitting other things) was simply missing the `policy_catalog_generation` singleton row a real migration seeds on a properly-migrated database (confirmed via `schema-migrations.spec.ts`'s own passing assertion against a fresh scratch database) — a local data gap, not a code defect, repaired by hand for this one machine.
+
+Also, proactively rather than after a CI failure this time: `src/database/migrations/schema-migrations.spec.ts` needed `evaluation_report_records` added to the full-schema table list and its own dedicated revert test, positioned first among the revert tests — the exact same fix M7-020 needed for `PlatformAdmins`, applied up front now that the pattern is known.
+
+### Verification
+
+```text
+Backend:
+  npx tsc --noEmit / eslint — clean
+  npx jest evaluation-report-record.service.spec.ts
+    evaluation-report.controller.spec.ts --runInBand — 7/7 passed against
+    a real Postgres, including get() throwing for an unknown id rather
+    than returning something fabricated
+  npx jest schema-migrations.spec.ts --runInBand — 46/46 passed
+  npm run build — clean
+  Full jest suite (local) — 14 failed, all already-documented
+    mortgage_app-role/full-suite-shared-state gaps (down from 17 before
+    this slice's own local data repairs above — nothing this slice added
+    is among them)
+
+Console:
+  npx tsc --noEmit / eslint — clean
+  npx vitest run — 12 files / 58 tests passed (+2 new: real evaluation
+    reports render; downloading fetches the real file with the real
+    admin credential and hands the browser a real filename)
+  npm run build — clean
+
+Live end to end, real running API + real npm run evaluate:
+  A real evaluation run (12 real cases, git commit/branch captured from
+    this actual checkout) saved as evaluation_report_records/26671c3b-...
+  GET .../evaluation-reports (unauthenticated) -> 401.
+  GET .../evaluation-reports with a real platform-admin token -> the
+    real saved summary, real gitCommit/gitBranch from this checkout.
+  A real tenant-shaped bearer token against the same route -> 401.
+  GET .../evaluation-reports/:id -> the full real report, all 12
+    per-case results included.
+  GET .../evaluation-reports/:id/download -> real 200, real
+    Content-Disposition naming this exact report id, real file content
+    matching the saved report exactly.
+  GET .../evaluation-reports/00000000-...-000099 -> 404.
+  Headless-Chrome click-through (real vite dev server + real API):
+    the Platform Admin screen's Evaluation reports table showed the
+    exact same real totals/commit; clicking Download fired the real
+    authenticated request and returned the button to its normal state
+    with no error.
+```
+
+### Security, privacy, cost, and compatibility
+
+No new attack surface beyond what M7-020 already established for `PlatformAdminGuard` — a tenant credential still cannot reach this route, and a platform-admin credential still cannot reach any tenant route. Evaluation reports contain only synthetic corpus data (borrower ids like `EVAL-CASE-006`, never real borrower data), so there is nothing sensitive in what becomes downloadable.
+
+### Known gaps
+
+- No pagination on the list endpoint beyond the existing 100-row bound — fine at today's real scale (one row per manual `npm run evaluate` run).
+- No way to delete an old report — an append-only table, matching this codebase's general "immutable evidence" preference, but genuinely means the table only grows.
+- The corpus itself still shows real `INTERRUPTED` outcomes for most non-provider-failure cases in this local environment, because this machine's synthetic seed data has no real `policy_sources` row for jurisdiction `US` (a pre-existing, already-documented gap — see the M7-018 dev log entry's own note on `scenario-catalog`'s synthetic seeds) — not something this slice attempted to fix, and not something that makes the *saved report* dishonest: it correctly and completely records whatever the real run actually did.
+
+### Next safe step
+
+None of the charter's Section 29 items are still open in a way this session identified without asking first. The remaining item (6 — Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, load/soak, backup/restore) is real infrastructure work of a different kind than everything else in this list — likely not achievable honestly from this environment, and worth asking about explicitly rather than assuming, the same way every other direction this session took was chosen.

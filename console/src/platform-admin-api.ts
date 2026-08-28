@@ -175,3 +175,46 @@ export function deactivateProvider(input: {
     },
   );
 }
+
+export interface EvaluationReportSummary {
+  id: string;
+  generatedAt: string;
+  gitCommit: string | null;
+  gitBranch: string | null;
+  totalCases: number;
+  passed: number;
+  failed: number;
+  conditionRecall: number | null;
+  conditionPrecision: number | null;
+}
+
+export function listEvaluationReports(): Promise<EvaluationReportSummary[]> {
+  return platformAdminRequest('/v1/platform-admin/evaluation-reports');
+}
+
+// Not platformAdminRequest — that helper always parses the response as
+// JSON, but a download needs the raw bytes (as a Blob) so the browser
+// can be handed a real file to save, plus the filename the server
+// actually chose (from its own Content-Disposition header) rather than
+// one guessed on the client side.
+export async function downloadEvaluationReport(
+  id: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const token = getStoredPlatformAdminToken();
+  const headers = new Headers();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+
+  const response = await fetch(
+    `${API_URL}/v1/platform-admin/evaluation-reports/${id}/download`,
+    { headers },
+  );
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? `evaluation-report-${id}.json`,
+  };
+}
