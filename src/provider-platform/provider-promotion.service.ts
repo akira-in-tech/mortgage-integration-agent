@@ -220,13 +220,19 @@ export class ProviderPromotionService {
     );
   }
 
-  /** Section 11.4's own single-actor "emergency disable" — no dual control, matching `ProviderKillSwitchService.disable()`'s own precedent. */
+  /**
+   * Section 11.4's own single-actor "emergency disable" — no dual
+   * control, matching `ProviderKillSwitchService.disable()`'s own
+   * precedent. Returns the now-deactivated row (not void) so a caller —
+   * the console included — can show the real result instead of assuming
+   * it worked.
+   */
   async deactivate(
     providerId: string,
     capability: ProviderCapability,
     mode: ProviderMode,
     actorId: string,
-  ): Promise<void> {
+  ): Promise<ProviderActivation> {
     const existing = await this.activationRepository.findOneByOrFail({
       providerId,
       capability: capability as unknown as ProviderActivation['capability'],
@@ -236,6 +242,7 @@ export class ProviderPromotionService {
       { id: existing.id },
       { state: ProviderActivationState.DEACTIVATED, activatedBy: actorId },
     );
+    return this.activationRepository.findOneByOrFail({ id: existing.id });
   }
 
   /** The real dispatch-time gate — `dispatchProviderRequest` calls this for every non-`SIMULATOR` mode. No row means never activated (fail closed, opposite of the kill switch's own "no row means ACTIVE" default — an unpromoted manifest must never be reachable). */
@@ -250,6 +257,57 @@ export class ProviderPromotionService {
       mode,
     });
     return !!row && row.state === ProviderActivationState.ACTIVE;
+  }
+
+  /** Most recently proposed first — what a platform admin sees when opening the console screen. */
+  async listManifests(limit = 50): Promise<ProviderPromotionManifest[]> {
+    const boundedLimit = Math.min(Math.max(limit, 1), 100);
+    return this.manifestRepository.find({
+      order: { proposedAt: 'DESC' },
+      take: boundedLimit,
+    });
+  }
+
+  async getManifest(manifestId: string): Promise<ProviderPromotionManifest> {
+    return this.manifestRepository.findOneByOrFail({ id: manifestId });
+  }
+
+  /** Every certification this manifest has ever received, newest first — the full append-only history, not just the current decision. */
+  async listCertifications(
+    manifestId: string,
+  ): Promise<ProviderCertificationRecord[]> {
+    return this.certificationRepository.find({
+      where: { manifestId },
+      order: { decidedAt: 'DESC' },
+    });
+  }
+
+  /** Every approval decision this manifest has ever received, newest first. */
+  async listApprovals(manifestId: string): Promise<ProviderApprovalRecord[]> {
+    return this.approvalRepository.find({
+      where: { manifestId },
+      order: { decidedAt: 'DESC' },
+    });
+  }
+
+  /** The current activation row for one {providerId, capability, mode} tuple, or null if it has never been activated. */
+  async getActivation(
+    providerId: string,
+    capability: ProviderCapability,
+    mode: ProviderMode,
+  ): Promise<ProviderActivation | null> {
+    return this.activationRepository.findOneBy({
+      providerId,
+      capability: capability as unknown as ProviderActivation['capability'],
+      mode,
+    });
+  }
+
+  /** Every tuple that has ever been activated, current state included (ACTIVE or DEACTIVATED) — this table is current-state-only, so this is the whole activation picture, not a page of a longer history. */
+  async listActivations(): Promise<ProviderActivation[]> {
+    return this.activationRepository.find({
+      order: { activatedAt: 'DESC' },
+    });
   }
 
   private isExpired(expiresAt: Date | null): boolean {

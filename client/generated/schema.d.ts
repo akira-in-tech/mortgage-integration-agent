@@ -38,6 +38,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform-admin/provider-promotions/manifests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List proposed provider manifests, most recent first */
+        get: operations["listProviderPromotionManifests"];
+        put?: never;
+        /** Propose a new provider adapter manifest */
+        post: operations["proposeProviderPromotionManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One manifest with its full certification/approval history and current activation */
+        get: operations["getProviderPromotionManifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/certifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a certification test result for a manifest */
+        post: operations["certifyProviderPromotionManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record an approval decision for a manifest */
+        post: operations["approveProviderPromotionManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate a certified, approved manifest */
+        post: operations["activateProviderPromotionManifest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/activations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List every provider tuple that has ever been activated */
+        get: operations["listProviderActivations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform-admin/provider-promotions/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Emergency-stop an activated provider tuple (single-actor, no dual control) */
+        post: operations["deactivateProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -500,6 +620,113 @@ export interface components {
             /** @description Why the reviewer picked this outcome. */
             resolutionNote: string;
         };
+        ProviderPromotionManifestDto: {
+            /** Format: uuid */
+            id: string;
+            providerId: string;
+            capability: string;
+            mode: string;
+            version: number;
+            adapterVersion: string;
+            endpointAllowlist: string[];
+            dataClassifications: string[];
+            contentHash: string;
+            proposedBy: string;
+            /** Format: date-time */
+            proposedAt: string;
+            /** Format: date-time */
+            validFrom: string;
+            /** Format: date-time */
+            validUntil: Record<string, never> | null;
+        };
+        ProviderCertificationRecordDto: {
+            /** Format: uuid */
+            id: string;
+            environment: string;
+            certifiedBy: string;
+            /** @enum {string} */
+            decision: "PASSED" | "FAILED" | "REVOKED";
+            evidenceRef: string;
+            /** Format: date-time */
+            decidedAt: string;
+            /** Format: date-time */
+            expiresAt: Record<string, never> | null;
+        };
+        ProviderApprovalRecordDto: {
+            /** Format: uuid */
+            id: string;
+            approvalRole: string;
+            approvedBy: string;
+            /** @enum {string} */
+            decision: "APPROVED" | "REJECTED" | "REVOKED";
+            /** Format: date-time */
+            decidedAt: string;
+            /** Format: date-time */
+            expiresAt: Record<string, never> | null;
+        };
+        ProviderActivationDto: {
+            /** Format: uuid */
+            id: string;
+            providerId: string;
+            capability: string;
+            mode: string;
+            /** Format: uuid */
+            manifestId: string;
+            manifestVersion: number;
+            state: string;
+            activatedBy: string;
+            /** Format: date-time */
+            activatedAt: string;
+        };
+        ProviderPromotionManifestDetailDto: {
+            manifest: components["schemas"]["ProviderPromotionManifestDto"];
+            certifications: components["schemas"]["ProviderCertificationRecordDto"][];
+            approvals: components["schemas"]["ProviderApprovalRecordDto"][];
+            currentActivation: components["schemas"]["ProviderActivationDto"] | null;
+        };
+        ProposeManifestDto: {
+            providerId: string;
+            /** @enum {string} */
+            capability: "INCOME" | "ASSET" | "CREDIT" | "IDENTITY" | "DOCUMENT";
+            /** @enum {string} */
+            mode: "SIMULATOR" | "AUTHORIZED_SANDBOX" | "PRODUCTION_BYOC";
+            adapterVersion: string;
+            endpointAllowlist: string[];
+            dataClassifications: string[];
+            /** Format: date-time */
+            validUntil?: string;
+        };
+        CertifyManifestDto: {
+            /** @description e.g. "sandbox", "staging". */
+            environment: string;
+            /** @enum {string} */
+            decision: "PASSED" | "FAILED" | "REVOKED";
+            /** @description A link or reference to the test evidence. */
+            evidenceRef: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        ApproveManifestDto: {
+            /** @description e.g. "compliance", "security". */
+            approvalRole: string;
+            /** @enum {string} */
+            decision: "APPROVED" | "REJECTED" | "REVOKED";
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        ActivateManifestDto: {
+            /** @description e.g. "sandbox", "staging". */
+            environment: string;
+            /** @description The manifestVersion this admin last saw active for this tuple (null if never activated) — an optimistic lock against two admins racing to activate two different manifests. */
+            expectedCurrentManifestVersion: Record<string, never> | null;
+        };
+        DeactivateProviderDto: {
+            providerId: string;
+            /** @enum {string} */
+            capability: "INCOME" | "ASSET" | "CREDIT" | "IDENTITY" | "DOCUMENT";
+            /** @enum {string} */
+            mode: "SIMULATOR" | "AUTHORIZED_SANDBOX" | "PRODUCTION_BYOC";
+        };
         TenantMembershipSummaryDto: {
             /** Format: uuid */
             tenantId: string;
@@ -824,6 +1051,244 @@ export interface operations {
             };
             /** @description REVIEWER role required. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listProviderPromotionManifests: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderPromotionManifestDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    proposeProviderPromotionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposeManifestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderPromotionManifestDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getProviderPromotionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                manifestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderPromotionManifestDetailDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    certifyProviderPromotionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                manifestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CertifyManifestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCertificationRecordDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approveProviderPromotionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                manifestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveManifestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderApprovalRecordDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    activateProviderPromotionManifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                manifestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ActivateManifestDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderActivationDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listProviderActivations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderActivationDto"][];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deactivateProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeactivateProviderDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderActivationDto"];
+                };
+            };
+            /** @description Missing or invalid credentials. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

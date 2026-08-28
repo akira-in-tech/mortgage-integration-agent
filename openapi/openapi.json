@@ -101,6 +101,351 @@
         ]
       }
     },
+    "/v1/platform-admin/provider-promotions/manifests": {
+      "get": {
+        "operationId": "listProviderPromotionManifests",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List proposed provider manifests, most recent first",
+        "tags": [
+          "platform-admin"
+        ]
+      },
+      "post": {
+        "operationId": "proposeProviderPromotionManifest",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Propose a new provider adapter manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}": {
+      "get": {
+        "operationId": "getProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPromotionManifestDetailDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One manifest with its full certification/approval history and current activation",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/certifications": {
+      "post": {
+        "operationId": "certifyProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertifyManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCertificationRecordDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record a certification test result for a manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/approvals": {
+      "post": {
+        "operationId": "approveProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderApprovalRecordDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record an approval decision for a manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/activate": {
+      "post": {
+        "operationId": "activateProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderActivationDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Activate a certified, approved manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/activations": {
+      "get": {
+        "operationId": "listProviderActivations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderActivationDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List every provider tuple that has ever been activated",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/deactivate": {
+      "post": {
+        "operationId": "deactivateProvider",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeactivateProviderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderActivationDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Emergency-stop an activated provider tuple (single-actor, no dual control)",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "HealthController_live",
@@ -1317,6 +1662,398 @@
         "required": [
           "outcome",
           "resolutionNote"
+        ]
+      },
+      "ProviderPromotionManifestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "adapterVersion": {
+            "type": "string"
+          },
+          "endpointAllowlist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataClassifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "proposedBy": {
+            "type": "string"
+          },
+          "proposedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validFrom": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validUntil": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "providerId",
+          "capability",
+          "mode",
+          "version",
+          "adapterVersion",
+          "endpointAllowlist",
+          "dataClassifications",
+          "contentHash",
+          "proposedBy",
+          "proposedAt",
+          "validFrom",
+          "validUntil"
+        ]
+      },
+      "ProviderCertificationRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "certifiedBy": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "REVOKED"
+            ]
+          },
+          "evidenceRef": {
+            "type": "string"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "certifiedBy",
+          "decision",
+          "evidenceRef",
+          "decidedAt",
+          "expiresAt"
+        ]
+      },
+      "ProviderApprovalRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approvalRole": {
+            "type": "string"
+          },
+          "approvedBy": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "REVOKED"
+            ]
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "approvalRole",
+          "approvedBy",
+          "decision",
+          "decidedAt",
+          "expiresAt"
+        ]
+      },
+      "ProviderActivationDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "manifestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "manifestVersion": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string"
+          },
+          "activatedBy": {
+            "type": "string"
+          },
+          "activatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "providerId",
+          "capability",
+          "mode",
+          "manifestId",
+          "manifestVersion",
+          "state",
+          "activatedBy",
+          "activatedAt"
+        ]
+      },
+      "ProviderPromotionManifestDetailDto": {
+        "type": "object",
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+          },
+          "certifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCertificationRecordDto"
+            }
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderApprovalRecordDto"
+            }
+          },
+          "currentActivation": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProviderActivationDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "manifest",
+          "certifications",
+          "approvals",
+          "currentActivation"
+        ]
+      },
+      "ProposeManifestDto": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string",
+            "enum": [
+              "INCOME",
+              "ASSET",
+              "CREDIT",
+              "IDENTITY",
+              "DOCUMENT"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SIMULATOR",
+              "AUTHORIZED_SANDBOX",
+              "PRODUCTION_BYOC"
+            ]
+          },
+          "adapterVersion": {
+            "type": "string"
+          },
+          "endpointAllowlist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataClassifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "validUntil": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "providerId",
+          "capability",
+          "mode",
+          "adapterVersion",
+          "endpointAllowlist",
+          "dataClassifications"
+        ]
+      },
+      "CertifyManifestDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "e.g. \"sandbox\", \"staging\"."
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "REVOKED"
+            ]
+          },
+          "evidenceRef": {
+            "type": "string",
+            "description": "A link or reference to the test evidence."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "environment",
+          "decision",
+          "evidenceRef"
+        ]
+      },
+      "ApproveManifestDto": {
+        "type": "object",
+        "properties": {
+          "approvalRole": {
+            "type": "string",
+            "description": "e.g. \"compliance\", \"security\"."
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "REVOKED"
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "approvalRole",
+          "decision"
+        ]
+      },
+      "ActivateManifestDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "e.g. \"sandbox\", \"staging\"."
+          },
+          "expectedCurrentManifestVersion": {
+            "type": "object",
+            "nullable": true,
+            "description": "The manifestVersion this admin last saw active for this tuple (null if never activated) — an optimistic lock against two admins racing to activate two different manifests."
+          }
+        },
+        "required": [
+          "environment",
+          "expectedCurrentManifestVersion"
+        ]
+      },
+      "DeactivateProviderDto": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string",
+            "enum": [
+              "INCOME",
+              "ASSET",
+              "CREDIT",
+              "IDENTITY",
+              "DOCUMENT"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SIMULATOR",
+              "AUTHORIZED_SANDBOX",
+              "PRODUCTION_BYOC"
+            ]
+          }
+        },
+        "required": [
+          "providerId",
+          "capability",
+          "mode"
         ]
       },
       "TenantMembershipSummaryDto": {

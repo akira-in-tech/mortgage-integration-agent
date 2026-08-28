@@ -4,7 +4,13 @@ import { beginOidcLogin } from '../oidc';
 
 type Mode = 'bearer' | 'oidc';
 
-export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
+export function ConnectScreen({
+  onConnected,
+  onPlatformAdmin,
+}: {
+  onConnected: () => void;
+  onPlatformAdmin: () => void;
+}) {
   const [mode, setMode] = useState<Mode>('bearer');
   const [token, setToken] = useState('');
   const [actorId, setActorId] = useState('');
@@ -120,6 +126,29 @@ export function ConnectScreen({ onConnected }: { onConnected: () => void }) {
             </button>
           </form>
         )}
+
+        <div
+          style={{
+            marginTop: 18,
+            paddingTop: 14,
+            borderTop: '1px solid var(--gridline)',
+            textAlign: 'center',
+          }}
+        >
+          <button
+            type="button"
+            className="btn"
+            style={{ fontSize: 12 }}
+            onClick={onPlatformAdmin}
+          >
+            Platform admin sign-in
+          </button>
+          <div
+            style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 6 }}
+          >
+            Not a tenant — drives provider promotion across every tenant.
+          </div>
+        </div>
       </section>
     </main>
   );

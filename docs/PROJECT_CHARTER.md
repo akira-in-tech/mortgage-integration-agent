@@ -1694,7 +1694,7 @@ Exit evidence:
 - accessibility and unhappy-path checks pass;
 - no sensitive fixture content appears in telemetry or unauthorized views.
 
-Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation has a real console screen. Still open: reconciliation/promotion/data-disposition/policy-impact console surfaces, the evaluation dashboard and downloadable release report, and operational replay/cancellation/recovery controls.
+Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation, provider reconciliation, data-disposition, policy-impact, and provider promotion all have real console screens (the last behind its own separate platform-admin credential, not the tenant one — see M7-020). Still open: the evaluation dashboard and downloadable release report, and operational replay/cancellation/recovery controls.
 
 ### M7 — Synthetic staging and provider-integration readiness
 
@@ -1967,7 +1967,7 @@ The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Ea
 
 1. **Done**: enforce console lint, tests, build, generated-contract drift, container build, and dependency audits in CI. **Still open**: secret scanning and SAST — do not invent a green result for either.
 2. **Done**: automated browser end-to-end and accessibility coverage for the console's own default-fixture journeys. **Still open**: the same coverage running by default against a live Keycloak/PostgreSQL stack — that journey exists but stays opt-in, skipped unless explicitly requested.
-3. Add least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces (console screens — the backend/CLI paths for these already exist).
+3. **Done**: least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces now all have console screens (M7-017/M7-018/M7-020). Provider promotion needed more than a screen: its manifests/certifications/approvals/activations have no tenant dimension (M4-007's own design — a provider adapter is registered once, shared by every tenant), so gating it behind the normal tenant `REVIEWER` role would have let any tenant's reviewer promote providers platform-wide. M7-020 built a separate, non-tenant `PlatformAdmin` credential and guard for it instead of reusing the tenant one.
 4. Add external policy-source monitoring/ingestion and reviewed jurisdiction packs before policy coverage expands.
 5. **Done**: OpenTelemetry traces/metrics, SLOs, alerts, and a runbook, on a free opt-in local stack. **Still open**: downloadable evaluation/release evidence.
 6. Add Terraform/OpenTofu synthetic staging, GitHub OIDC deployment, immutable release artifacts, supply-chain evidence, backup/restore, load/soak, and failure-recovery exercises.

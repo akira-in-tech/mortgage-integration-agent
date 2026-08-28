@@ -379,4 +379,116 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
       ),
     ).toBe(false);
   });
+
+  it('listManifests() returns manifests most-recently-proposed first, and getManifest() fetches one by id', async () => {
+    const providerId = uniqueProviderId();
+    const first = await proposeManifest(providerId);
+    const second = await proposeManifest(providerId);
+
+    const listed = await service.listManifests(100);
+    const ids = listed.map((m) => m.id);
+    // second was proposed after first, so it must sort earlier.
+    expect(ids.indexOf(second.id)).toBeLessThan(ids.indexOf(first.id));
+
+    const fetched = await service.getManifest(first.id);
+    expect(fetched.id).toBe(first.id);
+    expect(fetched.providerId).toBe(providerId);
+  });
+
+  it('listCertifications() and listApprovals() return the full append-only history for one manifest, newest first', async () => {
+    const providerId = uniqueProviderId();
+    const manifest = await proposeManifest(providerId);
+
+    await service.certify(
+      manifest.id,
+      'sandbox',
+      'certifier-1',
+      ProviderCertificationDecision.FAILED,
+      'evidence://spec-run-1',
+    );
+    await service.certify(
+      manifest.id,
+      'sandbox',
+      'certifier-1',
+      ProviderCertificationDecision.PASSED,
+      'evidence://spec-run-2',
+    );
+    await service.approve(
+      manifest.id,
+      'compliance',
+      'approver-1',
+      ProviderApprovalDecision.APPROVED,
+    );
+
+    const certifications = await service.listCertifications(manifest.id);
+    expect(certifications).toHaveLength(2);
+    // Newest (the PASSED re-run) first — the append-only history is not
+    // just "the latest decision," a reviewer can see the FAILED run too.
+    expect(certifications[0].decision).toBe(
+      ProviderCertificationDecision.PASSED,
+    );
+    expect(certifications[1].decision).toBe(
+      ProviderCertificationDecision.FAILED,
+    );
+
+    const approvals = await service.listApprovals(manifest.id);
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].decision).toBe(ProviderApprovalDecision.APPROVED);
+  });
+
+  it('getActivation() and listActivations() reflect the real current state, including after deactivate()', async () => {
+    const providerId = uniqueProviderId();
+    const manifest = await proposeManifest(providerId);
+
+    expect(
+      await service.getActivation(
+        providerId,
+        ProviderCapability.INCOME,
+        'AUTHORIZED_SANDBOX',
+      ),
+    ).toBeNull();
+
+    await service.certify(
+      manifest.id,
+      'sandbox',
+      'certifier-1',
+      ProviderCertificationDecision.PASSED,
+      'evidence://spec-run-1',
+    );
+    await service.approve(
+      manifest.id,
+      'compliance',
+      'approver-1',
+      ProviderApprovalDecision.APPROVED,
+    );
+    await service.activate(manifest.id, 'sandbox', 'activator', null);
+
+    const active = await service.getActivation(
+      providerId,
+      ProviderCapability.INCOME,
+      'AUTHORIZED_SANDBOX',
+    );
+    expect(active?.state).toBe('ACTIVE');
+
+    const allActivations = await service.listActivations();
+    expect(allActivations.some((a) => a.id === active?.id)).toBe(true);
+
+    const deactivated = await service.deactivate(
+      providerId,
+      ProviderCapability.INCOME,
+      'AUTHORIZED_SANDBOX',
+      'emergency-operator',
+    );
+    // deactivate() now returns the real updated row instead of void, so a
+    // caller can show the actual result rather than assuming it worked.
+    expect(deactivated.state).toBe('DEACTIVATED');
+    expect(deactivated.id).toBe(active?.id);
+
+    const afterDeactivate = await service.getActivation(
+      providerId,
+      ProviderCapability.INCOME,
+      'AUTHORIZED_SANDBOX',
+    );
+    expect(afterDeactivate?.state).toBe('DEACTIVATED');
+  });
 });

@@ -7,6 +7,7 @@ import { OpsDashboard } from './components/OpsDashboard';
 import { LiveStream } from './components/LiveStream';
 import { BudgetOperations } from './components/BudgetOperations';
 import { AdminQueues } from './components/AdminQueues';
+import { PlatformAdminConsole } from './components/PlatformAdminConsole';
 import { ConnectScreen } from './components/ConnectScreen';
 import { TenantSelectionScreen } from './components/TenantSelectionScreen';
 import { getStoredActorId, getStoredToken, clearSession } from './auth';
@@ -24,6 +25,7 @@ export function App() {
   const [connected, setConnected] = useState(() =>
     Boolean(getStoredToken() && getStoredActorId()),
   );
+  const [platformAdminMode, setPlatformAdminMode] = useState(false);
   const [selectingTenant, setSelectingTenant] = useState(false);
   const [memberships, setMemberships] = useState<
     import('./oidc').OidcTenantMembership[]
@@ -60,6 +62,13 @@ export function App() {
     }
   }
 
+  // Platform admin is a completely separate credential world from the
+  // tenant session above — checked first, before the OIDC-callback wait,
+  // since it never touches OIDC at all.
+  if (platformAdminMode) {
+    return <PlatformAdminConsole onExit={() => setPlatformAdminMode(false)} />;
+  }
+
   if (checkingOidcCallback) {
     return (
       <div
@@ -91,7 +100,12 @@ export function App() {
         />
       );
     }
-    return <ConnectScreen onConnected={() => setConnected(true)} />;
+    return (
+      <ConnectScreen
+        onConnected={() => setConnected(true)}
+        onPlatformAdmin={() => setPlatformAdminMode(true)}
+      />
+    );
   }
 
   if (dossierCaseId) {

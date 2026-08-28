@@ -38,6 +38,7 @@
     "evaluate": "ts-node -r tsconfig-paths/register src/evaluation-report.ts",
     "generate:openapi": "ts-node -r tsconfig-paths/register src/generate-openapi-spec.ts",
     "create-api-client": "ts-node -r tsconfig-paths/register src/create-api-client.ts",
+    "create-platform-admin": "ts-node -r tsconfig-paths/register src/create-platform-admin.ts",
     "set-tenant-agent-budget": "ts-node -r tsconfig-paths/register src/set-tenant-agent-budget.ts",
     "set-tenant-agent-aggregate-budget": "ts-node -r tsconfig-paths/register src/set-tenant-agent-aggregate-budget.ts",
     "set-provider-status": "ts-node -r tsconfig-paths/register src/set-provider-status.ts",

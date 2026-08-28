@@ -10705,3 +10705,142 @@ None new. The underlying cause — real Temporal round trips taking longer under
 ### Next safe step
 
 Provider promotion's own console screen (unchanged from M7-018 — this slice was purely a CI reliability fix, not a new gap-closing feature).
+
+## M7-020: Provider Promotion console — a real platform-admin credential, not a tenant one
+
+### Status
+
+Implemented and verified against a real running API, including a real click-through in the browser.
+
+### What this closes
+
+The last item from the charter's Section 29 four-item operations-surface list: "provider reconciliation, provider promotion, data-disposition, and policy-impact." The other three (M7-017, M7-018) were straightforward — real REST routes gated by the existing tenant `TenantAuthGuard`/`RoleGuard(REVIEWER)` pattern. Provider promotion could not honestly follow that same pattern, and figuring out why — and what to do about it — was most of this slice.
+
+### The real problem this slice had to solve first
+
+`ProviderPromotionManifest`/`ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation` are, by original design (M4-007), **not tenant-scoped** — a provider adapter is registered once, globally, shared identically by every tenant, so there is no tenant dimension to gate promotion decisions by. `manage-provider-promotion.ts`'s own comment already said this plainly: "this codebase's two-role tenant RBAC has no admin tier."
+
+Building this as a normal tenant console screen — reusing `TenantAuthGuard`/`@RequireRole(REVIEWER)`, the same pattern M7-017/M7-018 used — would have been a real, serious bug: any tenant's own REVIEWER credential would then be able to certify, approve, and activate providers for **every other tenant on the platform**, not just its own. That's a cross-tenant privilege escalation, not a UX mismatch.
+
+Asked the user directly (this decision has real security consequences, not something to assume): build a genuinely separate platform-admin credential type, or leave the gap documented and move to something else. Chose to build it.
+
+### What it does
+
+A brand-new credential type, `PlatformAdmin` (`platform_admins` table, no tenant column, no RLS — same "no tenant dimension" precedent `provider_promotion_manifests` itself already set), checked by its own `PlatformAdminGuard` — never combined with, and never satisfiable by, a tenant's `ApiClient` or OIDC session. A tenant's bearer token simply isn't a row in `platform_admins`; there is no shared table or shared secret space for one to accidentally satisfy the other (proven directly — see Verification).
+
+`npm run create-platform-admin -- <name>` mints one, printing the bearer token exactly once, the same "no REST endpoint mints this — an endpoint that could create it would need its own answer for who's allowed to call it first" reasoning `create-api-client.ts` already established.
+
+The REST surface, `v1/platform-admin/provider-promotions/*`, guarded only by `PlatformAdminGuard`:
+
+- `GET manifests` / `GET manifests/:id` (the second bundles its certification history, approval history, and current activation into one response)
+- `POST manifests` (propose), `POST manifests/:id/certifications` (certify), `POST manifests/:id/approvals` (approve), `POST manifests/:id/activate` (activate)
+- `GET activations` (every tuple ever activated, platform-wide)
+- `POST deactivate` (the existing single-actor emergency stop)
+
+`proposedBy`/`certifiedBy`/`approvedBy`/`activatedBy` all come from the authenticated admin's own name, never the request body — the same "actorId from auth, not client input" discipline every prior admin-queue slice this session followed.
+
+### Where it lives in the console
+
+Its own, deliberately separate world — not a nav-rail tab inside the tenant shell. A small "Platform admin sign-in" link on the tenant connect screen leads to its own sign-in (paste the bearer token from the CLI script) and its own full-screen console: propose a manifest, view one with its full certification/approval history and current activation inline, record a certification or approval, activate, and a platform-wide "Active providers" table with an emergency-stop button. `platform-admin-auth.ts`/`platform-admin-api.ts` are separate files from `auth.ts`/`api-client.ts` on purpose — the request helper sends only the platform-admin bearer token, never a tenant header, and vice versa.
+
+### A real NestJS DI bug this slice found and fixed along the way
+
+First attempt registered `PlatformAdmin`/`PlatformAdminService`/`PlatformAdminGuard` in the existing `@Global() AuthModule`, mirroring `ApiClient`/`ApiKeyGuard` exactly. Booting the real `AppModule` (not a hand-wired test module) failed with `UnknownDependenciesException: Nest can't resolve dependencies of the PlatformAdminGuard... available in the ProviderPlatformModule module` — even with `ProviderPlatformModule` explicitly importing `AuthModule`. `TenantAuthGuard`/`RoleGuard`, referenced the exact same way (`@UseGuards(ClassRef)`) from the same consuming module, resolve fine via the same `@Global()` mechanism, so this wasn't a general limitation — something about resolving a *fresh* `@UseGuards()`-referenced class's *own* constructor dependencies across an unrelated module boundary specifically didn't work the way passing an already-satisfied dependency through a chain of provider constructors does.
+
+Rather than fight the framework further, moved `PlatformAdmin`'s `TypeOrmModule.forFeature` registration and `PlatformAdminGuard`'s own provider registration directly into `ProviderPlatformModule` — its only real consumer anyway. This is arguably the more correct design regardless of the DI mystery: `PlatformAdminGuard` has exactly one consumer, so it never needed to live in the shared, `@Global()`, tenant-oriented `AuthModule` in the first place. `PlatformAdminService` (only ever constructed directly by the CLI script, never DI-injected) moved with it.
+
+### Implementation
+
+- `src/database/enums/platform-admin.enum.ts`, `src/database/entities/platform-admin.entity.ts`, `src/database/migrations/1787178600000-PlatformAdmins.ts` — the new credential table.
+- `src/auth/platform-admin-context.ts`, `src/auth/platform-admin.guard.ts`, `src/auth/current-platform-admin.decorator.ts`, `src/auth/platform-admin.service.ts` — its own context shape (no `tenantId` field at all, so it can't be confused with `AuthContext`), guard, decorator, and creation service.
+- `src/create-platform-admin.ts` (+ `npm run create-platform-admin` script) — the only way to mint one.
+- `src/provider-platform/provider-promotion.service.ts` — added `listManifests()`, `getManifest()`, `listCertifications()`, `listApprovals()`, `getActivation()`, `listActivations()`. Changed `deactivate()`'s return type from `Promise<void>` to `Promise<ProviderActivation>` — the same "return the real updated row, don't make the caller assume it worked" fix `resolveManually()` got in M7-017.
+- `src/provider-platform/dto/provider-promotion.dto.ts`, `src/provider-platform/provider-promotion.controller.ts` — the REST surface described above.
+- `src/provider-platform/provider-platform.module.ts` — registers `PlatformAdmin`/`PlatformAdminGuard`/`PlatformAdminService` locally (see the DI section above).
+- `console/src/platform-admin-auth.ts`, `console/src/platform-admin-api.ts`, `console/src/components/PlatformAdminConsole.tsx` — the console side, plus a small entry link added to `ConnectScreen.tsx` and a `platformAdminMode` branch in `App.tsx` checked before the tenant/OIDC flow entirely.
+- `openapi/openapi.json`, `client/generated/schema.d.ts` — regenerated; the diff includes some pre-existing paths shifting position (a side effect of `ProviderPlatformModule`'s own registration order changing, not a real change to any of them — verified by exact path-count and operationId-count comparison, not just eyeballing the diff) plus the 8 new real operations.
+
+### Verification
+
+```text
+Backend:
+  npx tsc --noEmit — clean (for all touched files; a handful of
+    pre-existing, unrelated spec-file errors elsewhere are untouched)
+  npx eslint . — 0 errors, 0 warnings on every touched file
+  npx jest src/auth/platform-admin.guard.spec.ts
+    src/provider-platform/provider-promotion.service.spec.ts
+    src/provider-platform/provider-promotion.controller.spec.ts
+    --runInBand — 25/25 passed, against a real Postgres, including:
+    "rejects a real tenant ApiClient bearer token — a tenant credential
+    is not a platform-admin credential" (the actual security property
+    this slice exists for, proven directly, not just asserted in a
+    comment)
+  npm run build — clean
+  Full jest suite — no failures attributable to this slice (the ~18
+    pre-existing environmental failures are the already-documented
+    missing-mortgage_app-role/local-schema-drift gap, confirmed absent
+    from a full run before this slice too)
+
+Console:
+  npx tsc --noEmit — clean
+  npx eslint . — 0 errors, 0 warnings
+  npx vitest run — 12 files / 56 tests passed (+6 new: sign-in stores a
+    real token; real manifests/activations render; propose sends the
+    real typed fields; viewing a manifest loads its real detail and
+    certifying calls the real endpoint; emergency-stop calls the real
+    endpoint with the real identity; disconnect clears the token)
+  npm run build — clean
+```
+
+```text
+Live end to end, real running API (npm run create-platform-admin, then curl):
+  Unauthenticated GET /v1/platform-admin/provider-promotions/manifests -> 401.
+  Real platform-admin token -> [] (empty, real, not fabricated).
+  POST manifests (propose) -> real 201-shaped body, proposedBy correctly
+    "live-verify-admin" from the authenticated admin, not the request body.
+  A real tenant REVIEWER ApiClient bearer token against the same route -> 401.
+  The platform-admin token against a real tenant route
+    (GET /v1/provider-operation-intents/reconciling) -> 401.
+    Both directions of the cross-credential boundary proven live, not just
+    unit-tested.
+  activate() before any certification -> 400, real message naming the
+    missing PASSED certification.
+  certify() -> real 201-shaped body. activate() again -> 400, now naming
+    the missing approval.
+  approve() with the SAME admin who proposed it -> 400 "self-approval is
+    not permitted" (a real, live self-approval rejection, not a
+    hypothetical). A second platform admin approved instead -> real 200.
+  activate() now succeeds -> real ACTIVE row.
+  GET manifests/:id -> one response bundling the real certification,
+    the real approval, and the real current activation.
+  GET activations -> the real platform-wide list, this tuple ACTIVE.
+  POST deactivate -> real DEACTIVATED row. GET activations reflects it.
+
+Headless-Chrome click-through (real vite dev server + real API, no
+mocks): opened the console, clicked "Platform admin sign-in", typed the
+real minted token, connected — the Manifests table showed the exact same
+real manifest. Clicked "View" — the detail panel showed the exact same
+real certifiedBy ("live-verify-admin"), evidenceRef
+("evidence://live-verify-run-1"), approvedBy ("live-verify-approver"),
+and current activation state (DEACTIVATED, matching the curl deactivate
+moments earlier) — confirming the console is genuinely wired to the real
+backend response, not a hardcoded example.
+
+All live-verification rows (manifest, certification, approval,
+activation, both platform admins, the scratch tenant/ApiClient) deleted
+afterward — nothing left behind in the database.
+```
+
+### Security, privacy, cost, and compatibility
+
+The whole point of this slice: `PlatformAdminGuard` and `TenantAuthGuard` share no table, no token format overlap beyond the generic `{uuid}.{secret}` shape, and no code path — a tenant credential (even a REVIEWER one) cannot reach `v1/platform-admin/*`, and a platform-admin credential is never accepted by any `v1/loan-cases/*`/`v1/provider-operation-intents/*`/etc. route, since those all require `TenantAuthGuard` specifically. No new attack surface on the tenant side at all.
+
+### Known gaps
+
+- No key rotation or expiry for platform-admin credentials — same gap `ApiClient` bearer tokens already have, now shared by a second, more powerful credential type.
+- No audit-event trail for platform-admin actions — `AuditEventService.record()` is tenant-scoped (`runInTenantContext`) and these actions have no tenant, so it was not reused (that would have meant inventing a fake tenantId, which is exactly the kind of fabrication this session's standing discipline rules out). The append-only manifest/certification/approval/activation rows themselves are the audit trail — each already records who and when — but there's no unified cross-action log the way tenant `audit_events` gives reviewers.
+- No list-filtering/pagination on `GET manifests` (returns up to 100, newest first) — fine at today's real scale, would need real pagination if the number of proposed manifests grows much larger.
+
+### Next safe step
+
+None of this session's own charter-tracked gap list remains open from the original four-item Section 29 list. The next candidate would need a fresh look at what's still genuinely missing — not assumed without asking first, the same way this slice's own direction was chosen.

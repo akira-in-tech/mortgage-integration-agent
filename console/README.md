@@ -1,6 +1,6 @@
 # Meridian — Underwriting Ops Console
 
-A real React operations console for the mortgage-integration-agent GraphQL API. Four real screens:
+A real React operations console for the mortgage-integration-agent GraphQL API. Six real tenant screens, plus a separate platform-admin console outside the tenant shell entirely:
 
 - **Triage Queue** — case list with cursor pagination and status filtering, and a six-tab case detail pane (overview, evidence, conditions, timeline, communications, audit) with working mutations (resolve condition, escalate, approve/send communications). The Overview tab's Policy binding card can also check whether a given policy version would require re-evaluating that case.
 - **Ops Dashboard** — KPI stat tiles and a status-breakdown bar chart, backed by the real `caseStatusCounts` GraphQL aggregate query.
@@ -9,7 +9,9 @@ A real React operations console for the mortgage-integration-agent GraphQL API. 
 - **Agent Budget Operations** — UTC-month provider-call/cost authority plus the reviewer queue for outcome-unknown Agent budget reservations.
 - **Admin Queues** — two reviewer queues: provider calls whose real outcome is still unclear, and evidence waiting on a delete/anonymize/retain decision after a consent revocation.
 
-See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-018 entries for what was built, how it was verified, and its known gaps.
+Plus **Platform Admin** — reached from a link on the connect screen, not the nav rail: the provider promotion chain (propose/certify/approve/activate a provider adapter). It's deliberately not one of the six tenant screens above — providers aren't scoped to any tenant, so this uses its own platform-admin credential (`npm run create-platform-admin`, from the repo root) that a tenant session can never satisfy and vice versa. See `src/components/PlatformAdminConsole.tsx`.
+
+See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-020 entries for what was built, how it was verified, and its known gaps.
 
 ## Run it
 
@@ -64,4 +66,5 @@ npm run codegen
 - The live Keycloak/API/PostgreSQL journey is opt-in and locally verified, but is not yet enforced by hosted CI.
 - Key rotation currently requires invalidating existing OIDC sessions; a versioned multi-key decrypt window is not implemented.
 - No way to browse or search existing policy versions — the policy-impact check needs a version id typed in, from whoever published it.
-- Provider promotion (propose/certify/approve/activate) is the one remaining operations surface with no console screen.
+- No key rotation or expiry for either bearer-token credential type (`ApiClient` or the newer `PlatformAdmin`).
+- No unified audit-event trail for platform-admin actions specifically — the manifest/certification/approval/activation rows themselves record who and when, but there's no cross-action log the way tenant `audit_events` gives reviewers.
