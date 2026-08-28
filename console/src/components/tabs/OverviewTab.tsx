@@ -1,5 +1,8 @@
+import { useState } from 'react';
+import { useMutation } from '@apollo/client';
 import type { LoanCase } from '../../graphql/types';
 import { useCaseMutations } from '../../useCaseMutations';
+import { CHECK_POLICY_CHANGE_IMPACT_MUTATION } from '../../graphql/mutations';
 import { AlertTriangleIcon, PolicyIcon } from '../icons';
 import {
   formatDateTime,
@@ -142,6 +145,10 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
               />
             )}
           </div>
+          {/* key={loanCase.id}: forces a fresh form when the reviewer
+              switches cases, so a result from a different case can never
+              stay on screen looking like it belongs to this one. */}
+          <PolicyImpactCheck key={loanCase.id} caseId={loanCase.id} />
         </div>
       )}
 
@@ -213,6 +220,131 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Lets a reviewer check whether a specific policy version (usually one
+// that was just published) would change how this case resolves, without
+// actually re-running or changing anything on the case. There's no
+// screen anywhere yet to browse existing policy versions and pick one —
+// the reviewer has to already have the id from whoever published it.
+function PolicyImpactCheck({ caseId }: { caseId: string }) {
+  const [open, setOpen] = useState(false);
+  const [policyVersionId, setPolicyVersionId] = useState('');
+  const [checkImpact, { data, loading, error }] = useMutation(
+    CHECK_POLICY_CHANGE_IMPACT_MUTATION,
+  );
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!policyVersionId.trim()) return;
+    void checkImpact({
+      variables: { caseId, input: { policyVersionId: policyVersionId.trim() } },
+    });
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="btn"
+        style={{ fontSize: 11.5, padding: '4px 10px', marginTop: 12 }}
+        onClick={() => setOpen(true)}
+      >
+        Check impact of a policy version
+      </button>
+    );
+  }
+
+  const result = data?.checkPolicyChangeImpact;
+
+  return (
+    <div
+      style={{
+        marginTop: 14,
+        paddingTop: 14,
+        borderTop: '1px solid var(--gridline)',
+      }}
+    >
+      <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 8 }}>
+        Check whether a policy version would require re-evaluating this case.
+        There's no list to pick from yet — paste the id you were given.
+      </div>
+      <form
+        onSubmit={submit}
+        style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+      >
+        <input
+          className="mono"
+          value={policyVersionId}
+          onChange={(event) => setPolicyVersionId(event.target.value)}
+          placeholder="policy version id"
+          style={{
+            flex: 1,
+            fontSize: 12,
+            padding: '6px 9px',
+            borderRadius: 7,
+            border: '1px solid var(--border)',
+          }}
+        />
+        <button
+          type="submit"
+          className="btn btn-primary"
+          style={{ fontSize: 12, padding: '6px 12px' }}
+          disabled={loading || !policyVersionId.trim()}
+        >
+          Check
+        </button>
+      </form>
+
+      {error && (
+        <div style={{ fontSize: 12, color: 'var(--critical)', marginTop: 8 }}>
+          {error.message}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ fontSize: 12.5, marginTop: 10 }}>
+          {result.assessed ? (
+            <>
+              <ImpactBadge impact={result.impact} />
+              {result.details && (
+                <div style={{ color: 'var(--ink-2)', marginTop: 6 }}>
+                  {result.details}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: 'var(--ink-muted)' }}>
+              Not assessed{result.reason ? `: ${result.reason}` : '.'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImpactBadge({ impact }: { impact: string | null | undefined }) {
+  const tone =
+    impact === 'NO_IMPACT'
+      ? 'good'
+      : impact === 'REQUIRES_REEVALUATION'
+        ? 'warning'
+        : 'critical'; // AMBIGUOUS, or anything unexpected — treat as the most cautious case
+  const label =
+    impact === 'NO_IMPACT'
+      ? 'No impact'
+      : impact === 'REQUIRES_REEVALUATION'
+        ? 'Requires re-evaluation'
+        : 'Ambiguous';
+  return (
+    <span
+      className="pill"
+      style={{ background: `var(--${tone}-wash)`, color: `var(--${tone})` }}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -18,6 +18,7 @@ type Documents = {
     "\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n": typeof types.EscalateCaseDocument,
     "\n  mutation ApproveCommunicationMessage(\n    $messageId: ID!\n    $input: ApproveCommunicationMessageDto!\n  ) {\n    approveCommunicationMessage(messageId: $messageId, input: $input) {\n      id\n      approvedAt\n    }\n  }\n": typeof types.ApproveCommunicationMessageDocument,
     "\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n": typeof types.SendCommunicationMessageDocument,
+    "\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n": typeof types.CheckPolicyChangeImpactDocument,
     "\n  query Cases($status: CaseStatus, $after: String, $first: Int) {\n    cases(status: $status, after: $after, first: $first) {\n      edges {\n        cursor\n        node {\n          id\n          borrowerId\n          requestedAmount\n          loanType\n          status\n          createdAt\n        }\n      }\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n    }\n  }\n": typeof types.CasesDocument,
     "\n  query CaseStatusCounts {\n    caseStatusCounts {\n      status\n      count\n    }\n  }\n": typeof types.CaseStatusCountsDocument,
     "\n  query RecentActivity($limit: Int) {\n    recentActivity(limit: $limit) {\n      id\n      action\n      actorId\n      resourceType\n      resourceId\n      reason\n      createdAt\n    }\n  }\n": typeof types.RecentActivityDocument,
@@ -28,6 +29,7 @@ const documents: Documents = {
     "\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n": types.EscalateCaseDocument,
     "\n  mutation ApproveCommunicationMessage(\n    $messageId: ID!\n    $input: ApproveCommunicationMessageDto!\n  ) {\n    approveCommunicationMessage(messageId: $messageId, input: $input) {\n      id\n      approvedAt\n    }\n  }\n": types.ApproveCommunicationMessageDocument,
     "\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n": types.SendCommunicationMessageDocument,
+    "\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n": types.CheckPolicyChangeImpactDocument,
     "\n  query Cases($status: CaseStatus, $after: String, $first: Int) {\n    cases(status: $status, after: $after, first: $first) {\n      edges {\n        cursor\n        node {\n          id\n          borrowerId\n          requestedAmount\n          loanType\n          status\n          createdAt\n        }\n      }\n      pageInfo {\n        hasNextPage\n        endCursor\n      }\n    }\n  }\n": types.CasesDocument,
     "\n  query CaseStatusCounts {\n    caseStatusCounts {\n      status\n      count\n    }\n  }\n": types.CaseStatusCountsDocument,
     "\n  query RecentActivity($limit: Int) {\n    recentActivity(limit: $limit) {\n      id\n      action\n      actorId\n      resourceType\n      resourceId\n      reason\n      createdAt\n    }\n  }\n": types.RecentActivityDocument,
@@ -64,6 +66,10 @@ export function graphql(source: "\n  mutation ApproveCommunicationMessage(\n    
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n"): (typeof documents)["\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n"): (typeof documents)["\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

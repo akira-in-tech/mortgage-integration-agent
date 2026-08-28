@@ -3,7 +3,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MockedProvider, type MockedResponse } from '@apollo/client/testing';
 import { OverviewTab } from './OverviewTab';
-import { SUBMIT_REVIEW_MUTATION } from '../../graphql/mutations';
+import {
+  SUBMIT_REVIEW_MUTATION,
+  CHECK_POLICY_CHANGE_IMPACT_MUTATION,
+} from '../../graphql/mutations';
 import { CASE_QUERY } from '../../graphql/queries';
 import { setStoredActorId } from '../../auth';
 import type { LoanCase } from '../../graphql/types';
@@ -103,5 +106,130 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     expect(
       screen.queryByRole('button', { name: 'Mark satisfied' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('checking a policy version’s impact shows the real result, not a guess', async () => {
+    const user = userEvent.setup();
+    const caseWithBinding: LoanCase = {
+      ...BASE_CASE,
+      policyBinding: {
+        id: 'binding-1',
+        dependencyDigest: 'digest-1',
+        contextKey: 'US-CA:CONVENTIONAL',
+        boundAt: '2026-01-01T00:00:00Z',
+        revalidateAfter: '2026-02-01T00:00:00Z',
+        invalidatedAt: null,
+        policySnapshot: {
+          id: 'snapshot-1',
+          resolutionStatus: 'RESOLVED',
+          resolverVersion: '1',
+          contextHash: 'hash-1',
+          resolvedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+    };
+    const mocks: MockedResponse[] = [
+      {
+        request: {
+          query: CHECK_POLICY_CHANGE_IMPACT_MUTATION,
+          variables: {
+            caseId: CASE_ID,
+            input: { policyVersionId: 'new-version-1' },
+          },
+        },
+        result: {
+          data: {
+            checkPolicyChangeImpact: {
+              __typename: 'PolicyChangeImpactResult',
+              assessed: true,
+              assessmentId: 'assessment-1',
+              impact: 'REQUIRES_REEVALUATION',
+              reason: null,
+              details: 'resolved policy version set changed from [v1] to [v2]',
+            },
+          },
+        },
+      },
+    ];
+
+    render(
+      <MockedProvider mocks={mocks}>
+        <OverviewTab loanCase={caseWithBinding} />
+      </MockedProvider>,
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: 'Check impact of a policy version' }),
+    );
+    await user.type(
+      screen.getByPlaceholderText('policy version id'),
+      'new-version-1',
+    );
+    await user.click(screen.getByRole('button', { name: 'Check' }));
+
+    expect(
+      await screen.findByText('Requires re-evaluation'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('resolved policy version set changed from [v1] to [v2]'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows why a check was not assessed, instead of a fabricated impact', async () => {
+    const user = userEvent.setup();
+    const caseWithBinding: LoanCase = {
+      ...BASE_CASE,
+      policyBinding: {
+        id: 'binding-1',
+        dependencyDigest: 'digest-1',
+        contextKey: 'US-CA:CONVENTIONAL',
+        boundAt: '2026-01-01T00:00:00Z',
+        revalidateAfter: '2026-02-01T00:00:00Z',
+        invalidatedAt: null,
+        policySnapshot: null,
+      },
+    };
+    const mocks: MockedResponse[] = [
+      {
+        request: {
+          query: CHECK_POLICY_CHANGE_IMPACT_MUTATION,
+          variables: {
+            caseId: CASE_ID,
+            input: { policyVersionId: 'unknown-version' },
+          },
+        },
+        result: {
+          data: {
+            checkPolicyChangeImpact: {
+              __typename: 'PolicyChangeImpactResult',
+              assessed: false,
+              assessmentId: null,
+              impact: null,
+              reason: 'no active policy binding exists for this case',
+              details: null,
+            },
+          },
+        },
+      },
+    ];
+
+    render(
+      <MockedProvider mocks={mocks}>
+        <OverviewTab loanCase={caseWithBinding} />
+      </MockedProvider>,
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: 'Check impact of a policy version' }),
+    );
+    await user.type(
+      screen.getByPlaceholderText('policy version id'),
+      'unknown-version',
+    );
+    await user.click(screen.getByRole('button', { name: 'Check' }));
+
+    expect(
+      await screen.findByText(/no active policy binding exists for this case/),
+    ).toBeInTheDocument();
   });
 });

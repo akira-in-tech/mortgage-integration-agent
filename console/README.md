@@ -2,14 +2,14 @@
 
 A real React operations console for the mortgage-integration-agent GraphQL API. Four real screens:
 
-- **Triage Queue** — case list with cursor pagination and status filtering, and a six-tab case detail pane (overview, evidence, conditions, timeline, communications, audit) with working mutations (resolve condition, escalate, approve/send communications).
+- **Triage Queue** — case list with cursor pagination and status filtering, and a six-tab case detail pane (overview, evidence, conditions, timeline, communications, audit) with working mutations (resolve condition, escalate, approve/send communications). The Overview tab's Policy binding card can also check whether a given policy version would require re-evaluating that case.
 - **Ops Dashboard** — KPI stat tiles and a status-breakdown bar chart, backed by the real `caseStatusCounts` GraphQL aggregate query.
 - **Case Dossier** — a single continuous, printable document view of one case (reached from its detail pane's "View dossier" button, not the nav rail — it's per-case, not a tenant-wide section).
 - **Live Stream** — a polling (8s) tenant-wide activity feed backed by `recentActivity`, newest first, with newly-arrived events visually distinguished from ones already seen.
 - **Agent Budget Operations** — UTC-month provider-call/cost authority plus the reviewer queue for outcome-unknown Agent budget reservations.
 - **Admin Queues** — two reviewer queues: provider calls whose real outcome is still unclear, and evidence waiting on a delete/anonymize/retain decision after a consent revocation.
 
-See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-017 entries for what was built, how it was verified, and its known gaps.
+See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-018 entries for what was built, how it was verified, and its known gaps.
 
 ## Run it
 
@@ -63,4 +63,5 @@ npm run codegen
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
 - The live Keycloak/API/PostgreSQL journey is opt-in and locally verified, but is not yet enforced by hosted CI.
 - Key rotation currently requires invalidating existing OIDC sessions; a versioned multi-key decrypt window is not implemented.
-- Provider promotion (propose/certify/approve/activate) and per-case policy-impact still have no console screen.
+- No way to browse or search existing policy versions — the policy-impact check needs a version id typed in, from whoever published it.
+- Provider promotion (propose/certify/approve/activate) is the one remaining operations surface with no console screen.

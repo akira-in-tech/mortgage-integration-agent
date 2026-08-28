@@ -37,3 +37,23 @@ export const SEND_COMMUNICATION_MESSAGE_MUTATION = graphql(`
     }
   }
 `);
+
+// Checks whether a specific policy version (usually one that was just
+// published) would change how this one case resolves — without
+// actually changing anything on the case. There's no query anywhere
+// yet to browse existing policy versions, so the reviewer has to
+// already know the id they want to check (from whoever published it).
+export const CHECK_POLICY_CHANGE_IMPACT_MUTATION = graphql(`
+  mutation CheckPolicyChangeImpact(
+    $caseId: ID!
+    $input: CheckPolicyChangeImpactDto!
+  ) {
+    checkPolicyChangeImpact(caseId: $caseId, input: $input) {
+      assessed
+      assessmentId
+      impact
+      reason
+      details
+    }
+  }
+`);

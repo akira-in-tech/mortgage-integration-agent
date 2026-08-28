@@ -10592,3 +10592,74 @@ Both routes are REVIEWER-only (confirmed live: PARTNER gets a real 403, not just
 ### Next safe step
 
 Provider promotion's own console screen (propose/certify/approve/activate), or policy-impact — the two remaining items from the same charter list this slice started closing.
+
+## M7-018: policy-impact check in the console
+
+### Status
+
+Implemented and verified against a real running API, including a real click-through in the browser.
+
+### What this closes
+
+The last of the four items the charter's Section 29 groups as "provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces." Unlike the other three, this one already had both a REST route (`POST /v1/loan-cases/{caseId}/policy-change-impact`, M6-004) and a GraphQL mutation (`checkPolicyChangeImpact`) — it just had no console UI calling either one yet.
+
+### What it does
+
+`checkPolicyChangeImpact(caseId, policyVersionId)` answers one question: if this specific policy version were applied, would this specific case need to be re-run through policy? It doesn't change anything on the case — it's a dry-run comparison against the case's current policy snapshot. The three real answers: `NO_IMPACT` (the resolved version set wouldn't change), `REQUIRES_REEVALUATION` (it would), or `AMBIGUOUS` (the dry run itself couldn't resolve cleanly). A fourth outcome, `assessed: false`, means the check couldn't even run — usually because the case has no active policy binding to compare against.
+
+### Where it lives
+
+A small "Check impact of a policy version" control on the case's own Overview tab, inside the existing Policy binding card — not a new tab, since this is one action with one result, not a list to work through. Collapsed behind a button by default so it doesn't clutter the card for the common case of nobody needing it.
+
+### A real, disclosed gap this surfaced
+
+There is no query anywhere in this codebase — GraphQL or REST — that lists existing policy versions. A reviewer using this feature has to already know the policy version id they want to check, from whoever published it. The UI says this plainly rather than pretending a picker exists. This mirrors the same shape of gap the OIDC tenant-id field already has (no self-service tenant discovery either) — a real missing piece, not something this slice tried to paper over.
+
+### Implementation
+
+- `console/src/graphql/mutations.ts`: `CHECK_POLICY_CHANGE_IMPACT_MUTATION` — the schema already had this mutation (M6-004); this is the console's first time calling it.
+- `console/src/components/tabs/OverviewTab.tsx`: a `PolicyImpactCheck` component — reveal button, a plain text input for the policy version id (no picker, see above), and the real result rendered as a colored badge (`NO_IMPACT` green, `REQUIRES_REEVALUATION` amber, anything else — `AMBIGUOUS` or unexpected — red, the more cautious default) plus the real `details`/`reason` text underneath.
+- `key={loanCase.id}` on that component: without it, switching to a different case while the form was still showing a result from the previous one would leave that stale result on screen, looking like it belonged to the new case. React reuses a component instance across prop changes unless told otherwise by a changing key.
+
+### Errors and fixes
+
+None in the code itself. Verifying it for real took more steps than usual: this environment's synthetic scenario seeds don't wire up any real policy applicability rule for the tenant's jurisdiction/product combination (`scenario-catalog`'s own log says so directly — "no policy applicability row for CONVENTIONAL"), so no case anywhere in a fresh scratch stack actually has a real `CasePolicyBinding`. To verify the feature against real data rather than skip verification, a real `case_policy_snapshots` row and a real `case_policy_bindings` row were inserted directly (the same seed-a-real-row approach already used for the Admin Queues verification) so a real case would have something to compare against.
+
+### Verification
+
+```text
+console/:
+  npx tsc --noEmit — clean
+  npx eslint . — 0 errors, 0 warnings
+  npx vitest run — 11 files / 50 tests passed (+2 new: a real
+    REQUIRES_REEVALUATION result renders correctly; an unassessed
+    result shows the real reason instead of a fabricated impact)
+  npm run build — clean
+
+Live end to end, real running API:
+  curl checkPolicyChangeImpact directly against a real case with no
+    policy binding — {assessed: false, reason: "case has no live
+    policy binding to compare against"}, confirming the "not assessed"
+    UI path matches a real response, not a guess.
+  Seeded a real case_policy_snapshots + case_policy_bindings row for a
+    real case, curled the same mutation again — now assessed: true,
+    a real REQUIRES_REEVALUATION with real comparison details.
+  Headless-Chrome click-through: selected that same real case, opened
+    the check form, submitted the same real policy version id — the
+    console showed the exact same real result text the curl call
+    returned, confirming the UI is genuinely wired to the real backend
+    response, not a hardcoded example.
+```
+
+### Security, privacy, cost, and compatibility
+
+No new backend surface — reuses an already-authenticated, already-tenant-scoped mutation unchanged. The check is read-only; nothing about the case is modified by running it.
+
+### Known gaps
+
+- No way to browse or search existing policy versions from the console or API — disclosed above, not fixed this slice.
+- Provider promotion (propose/certify/approve/activate) remains the one item from the original four-item list with no console screen.
+
+### Next safe step
+
+Provider promotion's own console screen — the last remaining item from that list, and the largest, since it's a real multi-step approval chain rather than a single action.
