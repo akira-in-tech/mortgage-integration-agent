@@ -92,6 +92,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     actions = [
       "ecr:CreateRepository", "ecr:DeleteRepository", "ecr:DescribeRepositories",
       "ecr:SetRepositoryPolicy", "ecr:GetRepositoryPolicy", "ecr:TagResource",
+      "ecr:ListTagsForResource",
       "ecr:PutLifecyclePolicy", "ecr:GetLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
       "ecr:BatchDeleteImage", "ecr:ListImages", "ecr:DescribeImages",
       "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability",
@@ -114,7 +115,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:DescribeClusters",
       "ecs:CreateService", "ecs:UpdateService", "ecs:DeleteService", "ecs:DescribeServices",
       "ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks", "ecs:ListTasks",
-      "ecs:TagResource", "ecs:UntagResource",
+      "ecs:TagResource", "ecs:UntagResource", "ecs:ListTagsForResource",
     ]
     resources = [
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/mortgage-agent-staging*",
@@ -164,7 +165,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "IamForEcsTaskRoles"
     effect = "Allow"
     actions = [
-      "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole",
+      "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:ListRoleTags",
       "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
       "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
       "iam:ListRolePolicies",
@@ -189,7 +190,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     effect = "Allow"
     actions = [
       "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:DescribeLogGroups",
-      "logs:PutRetentionPolicy", "logs:TagResource",
+      "logs:PutRetentionPolicy", "logs:TagResource", "logs:ListTagsForResource",
     ]
     resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/ecs/mortgage-agent-staging*"]
   }
