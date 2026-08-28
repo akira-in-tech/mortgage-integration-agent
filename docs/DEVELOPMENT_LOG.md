@@ -10663,3 +10663,45 @@ No new backend surface — reuses an already-authenticated, already-tenant-scope
 ### Next safe step
 
 Provider promotion's own console screen — the last remaining item from that list, and the largest, since it's a real multi-step approval chain rather than a single action.
+
+## M7-019: fixed a real, recurring CI timeout in the case-conditions workflow tests
+
+### Status
+
+Fixed and verified against a real Temporal test server.
+
+### What was wrong
+
+CI for M7-018 (run 33147873250) failed one test: `caseConditionsWorkflow › durably waits when evaluation is interrupted, then re-evaluates and completes once resumed`, with "Exceeded timeout of 5000 ms for a test." This is the same file that flaked once before under a different test in an earlier full-suite run (documented in M7-017's own "Errors and fixes" section as environmental, not a code defect, at the time). Seeing it flake a second time, in the same file, under the same kind of load, changed the read: this isn't bad luck, it's the file consistently needing more time than Jest's default gives it.
+
+Every test in this file talks to a real Temporal test server — start a workflow, run a real worker, wait ~500ms for it to settle, signal it, wait for the result. That's inherently slower and less predictable than an ordinary unit test. One test in the file (the heaviest one, three round trips) already carried its own `20_000`ms override with a comment explaining exactly this reasoning — but the comment's own assumption, "every sibling test here does at most one such wait" implying one wait is safely under 5s, turned out to be wrong under real CI load.
+
+### What changed
+
+`src/workflows/case-conditions.workflow.spec.ts`: replaced the one test's local `20_000` override with a single file-wide `jest.setTimeout(20_000)`, so every test that does a real Temporal round trip gets the same headroom instead of relying on a guess about which one needs it next.
+
+### Why this matters
+
+A flaky CI run erodes trust in the whole suite — the next real regression looks the same as this one did (a lone red test in an otherwise green run) until someone actually reads the failure. Fixing the timeout for the whole file, rather than re-running CI and hoping, closes the actual gap: none of these tests do less real work than the Temporal round trip they're built around, so none of them should be trusted to finish in 5 seconds under load.
+
+### Verification
+
+```text
+TEMPORAL_ADDRESS=localhost:7233 npx jest src/workflows/case-conditions.workflow.spec.ts --runInBand
+  10/10 passed, 12.977s, against a real Temporal server (not mocked)
+
+TEMPORAL_ADDRESS=localhost:7233 npx jest --runInBand
+  58/58 non-skipped suites passed (rest skip on missing local DB/Keycloak
+  env, same as always outside the full docker-compose stack)
+
+npx eslint src/workflows/case-conditions.workflow.spec.ts — 0 errors, 0 warnings
+npx prettier --check src/workflows/case-conditions.workflow.spec.ts — clean
+```
+
+### Known gaps
+
+None new. The underlying cause — real Temporal round trips taking longer under CI load than on a quiet machine — isn't eliminated, just given enough budget to not be mistaken for a bug.
+
+### Next safe step
+
+Provider promotion's own console screen (unchanged from M7-018 — this slice was purely a CI reliability fix, not a new gap-closing feature).

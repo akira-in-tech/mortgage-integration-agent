@@ -58,6 +58,16 @@ function makeMockActivities(
   } as unknown as CaseConditionsActivities;
 }
 
+// Every test in this file talks to a real Temporal test server (start a
+// workflow, run a real worker, wait ~500ms for it to settle, signal it,
+// wait for the result). That's slower and less predictable than a normal
+// unit test, and CI has twice been seen to blow past Jest's 5000ms default
+// under load even on tests that only do one such round trip — not just the
+// heaviest one. Raising it here, once, for the whole file is simpler and
+// safer than guessing in advance which individual test will be the next to
+// need it.
+jest.setTimeout(20_000);
+
 describeOrSkip('caseConditionsWorkflow', () => {
   let env: TestWorkflowEnvironment;
 
@@ -382,13 +392,11 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markManualReview).not.toHaveBeenCalled();
   });
 
-  // Two sequential 500ms settle-waits plus three real evaluateConditions
-  // round trips make this the heaviest real-Temporal-round-trip test in
-  // the file — the bare 5000ms Jest default has been observed to time out
-  // under real CI load (a Worker left running by a timed-out test then
-  // makes env.teardown() itself throw in afterAll, hanging the whole
-  // process indefinitely with no --forceExit); every sibling test here
-  // does at most one such wait.
+  // The heaviest test in the file: two sequential 500ms settle-waits plus
+  // three real evaluateConditions round trips. Covered by the file-wide
+  // jest.setTimeout(20_000) above — a Worker left running by a timed-out
+  // test makes env.teardown() itself throw in afterAll, hanging the whole
+  // process indefinitely with no --forceExit, so it's worth avoiding.
   it('supports multiple interrupt cycles before the evaluation finally resolves', async () => {
     const evaluateConditions = jest
       .fn()
@@ -428,7 +436,7 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(result).toEqual({ finalStatus: CaseStatus.READY_FOR_UNDERWRITING });
     expect(evaluateConditions).toHaveBeenCalledTimes(3);
     expect(activities.markWaitingForReview).toHaveBeenCalledTimes(2);
-  }, 20_000);
+  });
 
   it('retries a transient (retryable) activity failure up to the configured policy, then routes to MANUAL_REVIEW', async () => {
     const fetchIncomeEvidence = jest
