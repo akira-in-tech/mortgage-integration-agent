@@ -1,0 +1,3101 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/v1/provider-operation-intents/reconciling": {
+      "get": {
+        "operationId": "listProviderOperationIntentsNeedingReconciliation",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderOperationIntentQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List provider calls whose outcome is still unclear",
+        "tags": [
+          "provider-operations"
+        ]
+      }
+    },
+    "/v1/provider-operation-intents/{intentId}/resolve": {
+      "post": {
+        "operationId": "resolveProviderOperationIntent",
+        "parameters": [
+          {
+            "name": "intentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveProviderOperationIntentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The now-resolved provider call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderOperationIntentQueueItemDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record what actually happened for an unclear provider call",
+        "tags": [
+          "provider-operations"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests": {
+      "get": {
+        "operationId": "listProviderPromotionManifests",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List proposed provider manifests, most recent first",
+        "tags": [
+          "platform-admin"
+        ]
+      },
+      "post": {
+        "operationId": "proposeProviderPromotionManifest",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Propose a new provider adapter manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}": {
+      "get": {
+        "operationId": "getProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderPromotionManifestDetailDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One manifest with its full certification/approval history and current activation",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/certifications": {
+      "post": {
+        "operationId": "certifyProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertifyManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCertificationRecordDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record a certification test result for a manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/approvals": {
+      "post": {
+        "operationId": "approveProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderApprovalRecordDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Record an approval decision for a manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/manifests/{manifestId}/activate": {
+      "post": {
+        "operationId": "activateProviderPromotionManifest",
+        "parameters": [
+          {
+            "name": "manifestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivateManifestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderActivationDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Activate a certified, approved manifest",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/activations": {
+      "get": {
+        "operationId": "listProviderActivations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderActivationDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List every provider tuple that has ever been activated",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/provider-promotions/deactivate": {
+      "post": {
+        "operationId": "deactivateProvider",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeactivateProviderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderActivationDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Emergency-stop an activated provider tuple (single-actor, no dual control)",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "operationId": "HealthController_live",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/v1/auth/session/login": {
+      "get": {
+        "operationId": "beginOidcSessionLogin",
+        "parameters": [
+          {
+            "name": "returnTo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Start server-side Authorization Code + PKCE login",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session/callback": {
+      "get": {
+        "operationId": "completeOidcSessionLogin",
+        "parameters": [
+          {
+            "name": "code",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Complete OIDC login and issue an HttpOnly session",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "operationId": "getOidcSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcSessionStatusDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "meridian_session": []
+          }
+        ],
+        "summary": "Resolve and refresh the current HttpOnly OIDC session",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/session/logout": {
+      "post": {
+        "operationId": "endOidcSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OidcLogoutResultDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "meridian_session": []
+          }
+        ],
+        "summary": "Delete the server session and return the provider logout URL",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/auth/me/tenants": {
+      "get": {
+        "operationId": "listMyTenantMemberships",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TenantMembershipSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, or unprovisioned OIDC identity."
+          }
+        },
+        "security": [
+          {
+            "meridian_session": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the authenticated human user's tenant memberships",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/open": {
+      "get": {
+        "operationId": "listOpenDataDispositionTasks",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataDispositionTaskQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List data-disposition tasks still waiting on a decision",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/{taskId}/resolve": {
+      "post": {
+        "operationId": "resolveDataDispositionTask",
+        "parameters": [
+          {
+            "name": "taskId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveDataDispositionTaskDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The now-resolved task.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataDispositionTaskQueueItemDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete, anonymize, or retain the evidence a task covers",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/agent-budget-reservations/aggregate-usage": {
+      "get": {
+        "operationId": "getAgentBudgetAggregateUsage",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Current tenant limits and used/reserved capacity. Null limits mean cost-bearing Agent work is disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentBudgetAggregateUsageDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get current UTC-month Agent aggregate usage",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
+    "/v1/agent-budget-reservations/unknown": {
+      "get": {
+        "operationId": "listUnknownAgentBudgetReservations",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Oldest unresolved reservations first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentBudgetReservationQueueItemDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List outcome-unknown Agent budget reservations",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
+    "/v1/agent-budget-reservations/{reservationId}/reconcile": {
+      "post": {
+        "operationId": "reconcileAgentBudgetReservation",
+        "parameters": [
+          {
+            "name": "reservationId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileAgentBudgetReservationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The committed or released reservation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentBudgetReservationReceiptDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resolve an outcome-unknown Agent budget reservation",
+        "tags": [
+          "agent-budgets"
+        ]
+      }
+    },
+    "/v1/loan-cases": {
+      "post": {
+        "operationId": "createCase",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A caller-generated key, unique per case creation attempt. A retried request with the same key returns the original case rather than creating a second one.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoanCase"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing Idempotency-Key header, or a request-body validation failure."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "jurisdictionCode does not exist."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a loan case (idempotent on Idempotency-Key)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}": {
+      "get": {
+        "operationId": "getCase",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoanCase"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a loan case by id",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/timeline": {
+      "get": {
+        "operationId": "getCaseTimeline",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TimelineEntry"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the chronological event/Agent-run timeline for a case",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs": {
+      "post": {
+        "operationId": "startWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowRunResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start the case-conditions workflow for a case (idempotent per case)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}": {
+      "get": {
+        "operationId": "getWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRunStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant, or no such workflow run."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get the status of one workflow run",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/reviews": {
+      "post": {
+        "operationId": "submitReview",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Signal delivered; the workflow applies it asynchronously."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "403": {
+            "description": "The authenticated API client does not have the REVIEWER role (Section 6.3, M5-017)."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant, or no running workflow for it."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Submit a reviewer decision (condition resolution or evaluation resume)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/consents": {
+      "post": {
+        "operationId": "submitConsentAction",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant, or (REVOKE) no active consent record for it."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Grant or revoke consent for a case",
+        "tags": [
+          "loan-cases"
+        ]
+      },
+      "get": {
+        "operationId": "listConsents",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConsentRecord"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List a case's consent history",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/escalate": {
+      "post": {
+        "operationId": "escalateCase",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscalateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Escalated."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          },
+          "409": {
+            "description": "The case changed since it was last read, or is already at a status escalation cannot apply to (already WAITING_FOR_REVIEW, or a terminal status)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pause a case for human review (escalate_to_reviewer)",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/policy-change-impact": {
+      "post": {
+        "operationId": "checkPolicyChangeImpact",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckPolicyChangeImpactDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assessment result (advisory only)."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No case with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Check whether a policy version affects this case's own live binding",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/communication-messages": {
+      "get": {
+        "operationId": "listCommunicationMessages",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CommunicationMessage"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List a case's communication messages",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/approve": {
+      "post": {
+        "operationId": "approveCommunicationMessage",
+        "parameters": [
+          {
+            "name": "messageId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveCommunicationMessageDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommunicationApproval"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The message is not PROTECTED, or is already approved."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "403": {
+            "description": "The authenticated API client does not have the REVIEWER role (Section 6.3/6.4, M5-017)."
+          },
+          "404": {
+            "description": "No communication message with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a PROTECTED communication message for delivery",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/communication-messages/{messageId}/send": {
+      "post": {
+        "operationId": "sendCommunicationMessage",
+        "parameters": [
+          {
+            "name": "messageId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivered."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No communication message with this id owned by the authenticated tenant."
+          },
+          "409": {
+            "description": "The message is not yet ready to send (ROUTINE+DRAFTED or PROTECTED+APPROVED only)."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Deliver a ready-to-send communication message",
+        "tags": [
+          "communication-messages"
+        ]
+      }
+    },
+    "/v1/webhook-endpoints": {
+      "post": {
+        "operationId": "createWebhookEndpoint",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4)."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/webhook-deliveries/{deliveryId}": {
+      "get": {
+        "operationId": "getWebhookDelivery",
+        "parameters": [
+          {
+            "name": "deliveryId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No delivery with this id owned by the authenticated tenant."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get one webhook delivery and its full attempt history",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/platform-admin/evaluation-reports": {
+      "get": {
+        "operationId": "listEvaluationReports",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluationReportSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List saved evaluation runs, most recent first",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/evaluation-reports/{id}": {
+      "get": {
+        "operationId": "getEvaluationReport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationReportDetailDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One saved evaluation run, every per-case result included",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
+    "/v1/platform-admin/evaluation-reports/{id}/download": {
+      "get": {
+        "operationId": "downloadEvaluationReport",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report, with a Content-Disposition attachment header."
+          },
+          "401": {
+            "description": "Missing or invalid credentials."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The same report as a downloadable JSON file",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Mortgage Integration Agent — Partner API",
+    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions; webhook endpoint registration and delivery lookup) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations, audit-export) is not yet built and is not represented here.",
+    "version": "1.0.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "loan-cases",
+      "description": ""
+    },
+    {
+      "name": "webhooks",
+      "description": ""
+    }
+  ],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "description": "A Section 20 M5 scoped API-client credential, \"{clientId}.{secret}\" — minted via `npm run create-api-client` (no self-service REST endpoint exists yet). The tenant is always the one this credential belongs to; no request body or query parameter can specify a different one."
+      },
+      "cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "meridian_session",
+        "description": "Opaque HttpOnly human-session handle issued by the OIDC BFF. Unsafe requests also require the session CSRF value in X-CSRF-Token."
+      }
+    },
+    "schemas": {
+      "ProviderOperationIntentQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "providerId",
+          "capability",
+          "state",
+          "createdAt"
+        ]
+      },
+      "ResolveProviderOperationIntentDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED_FINAL",
+              "CANCELLED"
+            ]
+          },
+          "resolutionNote": {
+            "type": "string",
+            "description": "Why the reviewer picked this outcome.",
+            "minLength": 10,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "outcome",
+          "resolutionNote"
+        ]
+      },
+      "ProviderPromotionManifestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "adapterVersion": {
+            "type": "string"
+          },
+          "endpointAllowlist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataClassifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "proposedBy": {
+            "type": "string"
+          },
+          "proposedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validFrom": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validUntil": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "providerId",
+          "capability",
+          "mode",
+          "version",
+          "adapterVersion",
+          "endpointAllowlist",
+          "dataClassifications",
+          "contentHash",
+          "proposedBy",
+          "proposedAt",
+          "validFrom",
+          "validUntil"
+        ]
+      },
+      "ProviderCertificationRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "certifiedBy": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "REVOKED"
+            ]
+          },
+          "evidenceRef": {
+            "type": "string"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "certifiedBy",
+          "decision",
+          "evidenceRef",
+          "decidedAt",
+          "expiresAt"
+        ]
+      },
+      "ProviderApprovalRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "approvalRole": {
+            "type": "string"
+          },
+          "approvedBy": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "REVOKED"
+            ]
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "approvalRole",
+          "approvedBy",
+          "decision",
+          "decidedAt",
+          "expiresAt"
+        ]
+      },
+      "ProviderActivationDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "manifestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "manifestVersion": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string"
+          },
+          "activatedBy": {
+            "type": "string"
+          },
+          "activatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "providerId",
+          "capability",
+          "mode",
+          "manifestId",
+          "manifestVersion",
+          "state",
+          "activatedBy",
+          "activatedAt"
+        ]
+      },
+      "ProviderPromotionManifestDetailDto": {
+        "type": "object",
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/ProviderPromotionManifestDto"
+          },
+          "certifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderCertificationRecordDto"
+            }
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderApprovalRecordDto"
+            }
+          },
+          "currentActivation": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProviderActivationDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "manifest",
+          "certifications",
+          "approvals",
+          "currentActivation"
+        ]
+      },
+      "ProposeManifestDto": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string",
+            "enum": [
+              "INCOME",
+              "ASSET",
+              "CREDIT",
+              "IDENTITY",
+              "DOCUMENT"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SIMULATOR",
+              "AUTHORIZED_SANDBOX",
+              "PRODUCTION_BYOC"
+            ]
+          },
+          "adapterVersion": {
+            "type": "string"
+          },
+          "endpointAllowlist": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataClassifications": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "validUntil": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "providerId",
+          "capability",
+          "mode",
+          "adapterVersion",
+          "endpointAllowlist",
+          "dataClassifications"
+        ]
+      },
+      "CertifyManifestDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "e.g. \"sandbox\", \"staging\"."
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "REVOKED"
+            ]
+          },
+          "evidenceRef": {
+            "type": "string",
+            "description": "A link or reference to the test evidence."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "environment",
+          "decision",
+          "evidenceRef"
+        ]
+      },
+      "ApproveManifestDto": {
+        "type": "object",
+        "properties": {
+          "approvalRole": {
+            "type": "string",
+            "description": "e.g. \"compliance\", \"security\"."
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED",
+              "REVOKED"
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "approvalRole",
+          "decision"
+        ]
+      },
+      "ActivateManifestDto": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "description": "e.g. \"sandbox\", \"staging\"."
+          },
+          "expectedCurrentManifestVersion": {
+            "type": "object",
+            "nullable": true,
+            "description": "The manifestVersion this admin last saw active for this tuple (null if never activated) — an optimistic lock against two admins racing to activate two different manifests."
+          }
+        },
+        "required": [
+          "environment",
+          "expectedCurrentManifestVersion"
+        ]
+      },
+      "DeactivateProviderDto": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string",
+            "enum": [
+              "INCOME",
+              "ASSET",
+              "CREDIT",
+              "IDENTITY",
+              "DOCUMENT"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "SIMULATOR",
+              "AUTHORIZED_SANDBOX",
+              "PRODUCTION_BYOC"
+            ]
+          }
+        },
+        "required": [
+          "providerId",
+          "capability",
+          "mode"
+        ]
+      },
+      "TenantMembershipSummaryDto": {
+        "type": "object",
+        "properties": {
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantName": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "PARTNER",
+              "REVIEWER"
+            ]
+          }
+        },
+        "required": [
+          "tenantId",
+          "tenantName",
+          "role"
+        ]
+      },
+      "OidcSessionStatusDto": {
+        "type": "object",
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string"
+          },
+          "csrfToken": {
+            "type": "string"
+          },
+          "memberships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TenantMembershipSummaryDto"
+            }
+          }
+        },
+        "required": [
+          "authenticated",
+          "memberships"
+        ]
+      },
+      "OidcLogoutResultDto": {
+        "type": "object",
+        "properties": {
+          "logoutUrl": {
+            "type": "object"
+          }
+        }
+      },
+      "DataDispositionTaskQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "taskType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this task was opened."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "taskType",
+          "status",
+          "reason",
+          "createdAt"
+        ]
+      },
+      "ResolveDataDispositionTaskDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "DELETE",
+              "ANONYMIZE",
+              "RETAIN"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "AgentBudgetAggregateUsageDto": {
+        "type": "object",
+        "properties": {
+          "windowStart": {
+            "type": "string",
+            "format": "date"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "currency": {
+            "type": "object",
+            "nullable": true,
+            "example": "USD"
+          },
+          "providerCallLimit": {
+            "type": "object",
+            "nullable": true
+          },
+          "providerCallUsed": {
+            "type": "number"
+          },
+          "providerCallReserved": {
+            "type": "number"
+          },
+          "remainingProviderCalls": {
+            "type": "object",
+            "nullable": true
+          },
+          "costLimitMinorUnits": {
+            "type": "object",
+            "nullable": true
+          },
+          "costUsedMinorUnits": {
+            "type": "number"
+          },
+          "costReservedMinorUnits": {
+            "type": "number"
+          },
+          "remainingCostMinorUnits": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "windowStart",
+          "enabled",
+          "providerCallUsed",
+          "providerCallReserved",
+          "costUsedMinorUnits",
+          "costReservedMinorUnits"
+        ]
+      },
+      "AgentBudgetUnitsDto": {
+        "type": "object",
+        "properties": {
+          "stepUnits": {
+            "type": "number"
+          },
+          "tokenUnits": {
+            "type": "number"
+          },
+          "providerCallUnits": {
+            "type": "number"
+          },
+          "costMinorUnits": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "stepUnits",
+          "tokenUnits",
+          "providerCallUnits",
+          "costMinorUnits"
+        ]
+      },
+      "AgentBudgetReservationQueueItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ledgerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "units": {
+            "$ref": "#/components/schemas/AgentBudgetUnitsDto"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "COMMITTED",
+              "RELEASED",
+              "UNKNOWN"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "ledgerId",
+          "idempotencyKey",
+          "units",
+          "status",
+          "createdAt"
+        ]
+      },
+      "ReconcileAgentBudgetReservationDto": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "COMMITTED",
+              "RELEASED"
+            ]
+          },
+          "resolutionNote": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "actualCostMinorUnits": {
+            "type": "number",
+            "description": "Trusted actual provider cost in integer minor units; COMMITTED only.",
+            "minimum": 0,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "outcome",
+          "resolutionNote"
+        ]
+      },
+      "AgentBudgetSnapshotDto": {
+        "type": "object",
+        "properties": {
+          "ledgerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "version": {
+            "type": "number"
+          },
+          "remainingSteps": {
+            "type": "number"
+          },
+          "remainingTokens": {
+            "type": "number"
+          },
+          "remainingProviderCalls": {
+            "type": "number"
+          },
+          "remainingCostMinorUnits": {
+            "type": "number"
+          },
+          "remainingDurationMs": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string",
+            "example": "USD"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deadlineAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ledgerId",
+          "version",
+          "remainingSteps",
+          "remainingTokens",
+          "remainingProviderCalls",
+          "remainingCostMinorUnits",
+          "remainingDurationMs",
+          "currency",
+          "startedAt",
+          "deadlineAt",
+          "closed"
+        ]
+      },
+      "AgentBudgetReservationReceiptDto": {
+        "type": "object",
+        "properties": {
+          "reservationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "COMMITTED",
+              "RELEASED",
+              "UNKNOWN"
+            ]
+          },
+          "units": {
+            "$ref": "#/components/schemas/AgentBudgetUnitsDto"
+          },
+          "actualCostMinorUnits": {
+            "type": "object",
+            "nullable": true
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "ledger": {
+            "$ref": "#/components/schemas/AgentBudgetSnapshotDto"
+          }
+        },
+        "required": [
+          "reservationId",
+          "idempotencyKey",
+          "status",
+          "units",
+          "replayed",
+          "ledger"
+        ]
+      },
+      "CreateCaseDto": {
+        "type": "object",
+        "properties": {
+          "borrowerId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "requestedAmount": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "loanType": {
+            "type": "string",
+            "enum": [
+              "CONVENTIONAL",
+              "FHA",
+              "VA",
+              "JUMBO"
+            ]
+          },
+          "statedMonthlyIncome": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "jurisdictionCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20,
+            "example": "US-CA"
+          }
+        },
+        "required": [
+          "borrowerId",
+          "requestedAmount",
+          "loanType",
+          "statedMonthlyIncome",
+          "jurisdictionCode"
+        ]
+      },
+      "LoanCase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "borrowerId": {
+            "type": "string"
+          },
+          "requestedAmount": {
+            "type": "number"
+          },
+          "loanType": {
+            "type": "string",
+            "enum": [
+              "CONVENTIONAL",
+              "FHA",
+              "VA",
+              "JUMBO"
+            ]
+          },
+          "statedMonthlyIncome": {
+            "type": "number"
+          },
+          "jurisdictionCode": {
+            "type": "string",
+            "example": "US-CA"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "COLLECTING_EVIDENCE",
+              "CONDITIONS_OPEN",
+              "WAITING_FOR_INFORMATION",
+              "WAITING_FOR_REVIEW",
+              "READY_FOR_UNDERWRITING",
+              "MANUAL_REVIEW",
+              "CLOSED"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "idempotencyKey",
+          "borrowerId",
+          "requestedAmount",
+          "loanType",
+          "statedMonthlyIncome",
+          "jurisdictionCode",
+          "status",
+          "version",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "TimelineEntry": {
+        "type": "object",
+        "properties": {
+          "timestamp": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "DOMAIN_EVENT",
+              "AGENT_RUN"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "timestamp",
+          "kind",
+          "summary",
+          "detail"
+        ]
+      },
+      "StartWorkflowRunResult": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId"
+        ]
+      },
+      "WorkflowRunStatus": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId",
+          "status"
+        ]
+      },
+      "ReviewDto": {
+        "type": "object",
+        "properties": {
+          "reviewType": {
+            "type": "string",
+            "enum": [
+              "CONDITION_RESOLUTION",
+              "RESUME_EVALUATION"
+            ]
+          },
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "SATISFIED",
+              "WAIVED"
+            ],
+            "description": "Required when reviewType is CONDITION_RESOLUTION."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "reviewType",
+          "actorId"
+        ]
+      },
+      "ConsentActionDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "GRANT",
+              "REVOKE"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "Only meaningful for REVOKE — the revocation reason."
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "ConsentRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "grantedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "object"
+          },
+          "revokedAt": {
+            "type": "object"
+          },
+          "revocationReason": {
+            "type": "object"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "caseId",
+          "purpose",
+          "scope",
+          "grantedAt",
+          "createdAt"
+        ]
+      },
+      "EscalateDto": {
+        "type": "object",
+        "properties": {
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "actorId",
+          "reason"
+        ]
+      },
+      "CheckPolicyChangeImpactDto": {
+        "type": "object",
+        "properties": {
+          "policyVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "policyVersionId"
+        ]
+      },
+      "CommunicationMessage": {
+        "type": "object",
+        "properties": {}
+      },
+      "ApproveCommunicationMessageDto": {
+        "type": "object",
+        "properties": {
+          "actorId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "actorId"
+        ]
+      },
+      "CommunicationApproval": {
+        "type": "object",
+        "properties": {}
+      },
+      "CreateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "targetUrl": {
+            "type": "string",
+            "description": "Where signed delivery attempts are POSTed.",
+            "example": "https://partner.example.com/webhooks/mortgage-agent"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "loan_case.created",
+                "workflow_run.started",
+                "workflow_run.waiting_for_review",
+                "workflow_run.completed",
+                "workflow_run.failed",
+                "evidence.updated",
+                "condition.opened",
+                "condition.satisfied",
+                "condition.waived",
+                "evaluation.interrupted",
+                "case.escalated",
+                "communication.delivered"
+              ]
+            }
+          }
+        },
+        "required": [
+          "targetUrl",
+          "eventTypes"
+        ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetUrl": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it."
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "targetUrl",
+          "secret",
+          "eventTypes",
+          "status",
+          "createdAt"
+        ]
+      },
+      "WebhookDeliveryAttempt": {
+        "type": "object",
+        "properties": {
+          "attemptNumber": {
+            "type": "number"
+          },
+          "attemptedAt": {
+            "type": "string"
+          },
+          "httpStatusCode": {
+            "type": "object",
+            "description": "null on a network-level failure (timeout, connection refused) — no HTTP response was ever received."
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED"
+            ]
+          },
+          "errorMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attemptNumber",
+          "attemptedAt",
+          "httpStatusCode",
+          "outcome"
+        ]
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "webhookEndpointId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outboxEventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "SUCCEEDED",
+              "FAILED_FINAL"
+            ]
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookDeliveryAttempt"
+            }
+          },
+          "nextAttemptAt": {
+            "type": "object"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "webhookEndpointId",
+          "outboxEventId",
+          "eventType",
+          "status",
+          "attempts",
+          "createdAt"
+        ]
+      },
+      "EvaluationReportSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "gitCommit": {
+            "type": "object",
+            "nullable": true
+          },
+          "gitBranch": {
+            "type": "object",
+            "nullable": true
+          },
+          "totalCases": {
+            "type": "number"
+          },
+          "passed": {
+            "type": "number"
+          },
+          "failed": {
+            "type": "number"
+          },
+          "conditionRecall": {
+            "type": "object",
+            "nullable": true
+          },
+          "conditionPrecision": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "generatedAt",
+          "gitCommit",
+          "gitBranch",
+          "totalCases",
+          "passed",
+          "failed",
+          "conditionRecall",
+          "conditionPrecision"
+        ]
+      },
+      "EvaluationReportDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "report": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "report"
+        ]
+      }
+    }
+  }
+}

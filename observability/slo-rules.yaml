@@ -1,0 +1,27 @@
+groups:
+  - name: lending-slo-recording
+    interval: 30s
+    rules:
+      - record: lending:slo:api_availability:ratio_5m
+        expr: |
+          1 - (
+            sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_server_request_duration_seconds_count[5m])), 0.000001)
+          )
+      - record: lending:slo:api_latency_p95_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket[5m]))
+          )
+      - record: lending:slo:workflow_client_latency_p95_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(lending_workflow_client_duration_seconds_bucket[5m]))
+          )
+      - record: lending:slo:provider_unknown_outcomes:increase_15m
+        expr: sum(increase(lending_provider_operations_total{outcome="outcome_unknown"}[15m]))
+      - record: lending:slo:webhook_terminal_failures:increase_15m
+        expr: sum(increase(lending_webhook_deliveries_total{outcome="failed",terminal="true"}[15m]))

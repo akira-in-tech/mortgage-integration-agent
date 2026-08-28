@@ -1,0 +1,13 @@
+{
+  "id": "NORMAL-001",
+  "description": "Stated income closely matches Plaid-verified income (4.9% difference) — no condition should open.",
+  "category": "normal",
+  "borrowerId": "EVAL-CASE-001",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 14000,
+  "requestedAmount": 400000,
+  "expected": {
+    "outcome": "NO_CONDITION"
+  }
+}

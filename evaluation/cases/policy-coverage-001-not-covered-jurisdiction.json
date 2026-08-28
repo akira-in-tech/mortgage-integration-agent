@@ -1,0 +1,13 @@
+{
+  "id": "POLICY-COVERAGE-001",
+  "description": "The case's jurisdiction exists in the catalog but has never been reviewed for coverage — the resolver must fail closed and interrupt for review rather than silently proceeding with no applicable policy.",
+  "category": "policy-coverage",
+  "borrowerId": "EVAL-CASE-NC-001",
+  "jurisdictionCode": "US-EVAL-NC",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 9000,
+  "requestedAmount": 300000,
+  "expected": {
+    "outcome": "REVIEW_REQUIRED"
+  }
+}

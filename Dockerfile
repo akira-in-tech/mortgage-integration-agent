@@ -1,14 +1,17 @@
-FROM node:20-alpine AS builder
+# Temporal's native bridge publishes glibc-compatible binaries. Keeping both
+# stages on Debian slim prevents a build that succeeds but fails at runtime on
+# Alpine's musl libc with a missing gnu_get_libc_version symbol.
+FROM node:24-bookworm-slim AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npx tsc -p tsconfig.build.json --incremental false && test -f dist/main.js
+RUN npm run build
 
-FROM node:20-alpine
+FROM node:24-bookworm-slim
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 EXPOSE 3000
-CMD ["sh", "-c", "npm run migration:run:prod && node dist/main"]
+CMD ["node", "dist/main"]

@@ -25,12 +25,38 @@ npm-debug.log*
 
 # Coverage
 coverage/
+console/playwright-report/
+console/test-results/
 
 # Jest cache
 .jest-cache/
 
-# Claude Code session state
+# Local agent session state
 .claude/
 
 # GraphQL generated schema (regenerated on start)
 src/schema.gql
+
+# Generated evaluation reports (Section 18.2) — reproducible from
+# evaluation/cases/ + npm run evaluate, not durable source content.
+evaluation/reports/*.json
+
+# Stray compiled output if client/*.ts is ever accidentally run through
+# tsc directly instead of ts-node — client/generated/schema.d.ts (the
+# real generated artifact) is unaffected, it isn't a compiled sibling of
+# a .ts file.
+client/*.js
+client/*.js.map
+client/index.d.ts
+client/quickstart.d.ts
+
+# Terraform local state/plan artifacts and backend config with real
+# bucket/table names. .terraform.lock.hcl IS committed (real provider
+# version pinning, same reasoning as package-lock.json).
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/*.tfplan
+terraform/**/backend.hcl
+terraform/**/*.auto.tfvars
+terraform/**/crash.log

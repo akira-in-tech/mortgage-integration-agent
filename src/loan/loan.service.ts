@@ -7,16 +7,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { AgentService } from '../agent/agent.service';
-import {
-  LoanApplication,
-  LoanTypeEntity,
-  LoanDecisionEntity,
-} from '../database/entities/loan-application.entity';
-import {
-  EvaluateLoanInput,
-  LoanEvaluationResult,
-  LoanDecisionStatus,
-} from './loan.model';
+import { LoanApplication } from '../database/entities/loan-application.entity';
+import { EvaluateLoanInput, LoanEvaluationResult } from './loan.model';
 
 @Injectable()
 export class LoanService {
@@ -37,14 +29,12 @@ export class LoanService {
     // Delegate all orchestration — data fetching, AI decisioning — to AgentService
     const agentResult = await this.agentService.runUnderwritingAgent(input);
 
-    // The GraphQL enums and TypeORM enums share the same string values;
-    // explicit casting bridges the two type domains without runtime conversion.
     const application = this.loanApplicationRepository.create({
       id: applicationId,
       borrowerId: input.borrowerId,
       requestedAmount: input.requestedAmount,
-      loanType: input.loanType as unknown as LoanTypeEntity,
-      decision: agentResult.decision as unknown as LoanDecisionEntity,
+      loanType: input.loanType,
+      decision: agentResult.decision,
       confidence: agentResult.confidence,
       reasoning: agentResult.reasoning,
       incomeVerified: agentResult.incomeVerified,
@@ -66,7 +56,7 @@ export class LoanService {
 
     return {
       applicationId,
-      decision: agentResult.decision as LoanDecisionStatus,
+      decision: agentResult.decision,
       confidence: agentResult.confidence,
       reasoning: agentResult.reasoning,
       incomeVerified: agentResult.incomeVerified,

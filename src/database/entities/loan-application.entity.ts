@@ -8,20 +8,8 @@ import {
 import { PlaidIncomeData } from '../../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../../integrations/document/document.types';
-
-export enum LoanTypeEntity {
-  CONVENTIONAL = 'CONVENTIONAL',
-  FHA = 'FHA',
-  VA = 'VA',
-  JUMBO = 'JUMBO',
-}
-
-export enum LoanDecisionEntity {
-  APPROVED = 'APPROVED',
-  CONDITIONAL = 'CONDITIONAL',
-  DENIED = 'DENIED',
-  PENDING = 'PENDING',
-}
+import { LoanType } from '../enums/loan-type.enum';
+import { LoanDecisionStatus } from '../enums/loan-decision.enum';
 
 interface RawIntegrationData {
   plaid: PlaidIncomeData;
@@ -44,17 +32,17 @@ export class LoanApplication {
 
   @Column({
     type: 'enum',
-    enum: LoanTypeEntity,
-    default: LoanTypeEntity.CONVENTIONAL,
+    enum: LoanType,
+    default: LoanType.CONVENTIONAL,
   })
-  loanType!: LoanTypeEntity;
+  loanType!: LoanType;
 
   @Column({
     type: 'enum',
-    enum: LoanDecisionEntity,
-    default: LoanDecisionEntity.PENDING,
+    enum: LoanDecisionStatus,
+    default: LoanDecisionStatus.PENDING,
   })
-  decision!: LoanDecisionEntity;
+  decision!: LoanDecisionStatus;
 
   @Column({ type: 'decimal', precision: 4, scale: 3, nullable: true })
   confidence!: number | null;

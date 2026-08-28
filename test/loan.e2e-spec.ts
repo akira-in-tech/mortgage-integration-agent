@@ -5,6 +5,10 @@ require('dotenv').config();
 
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+// supertest's CJS export is the request function itself (no `.default`,
+// no `__esModule` flag) — a namespace import (`import * as request`) gets
+// wrapped into a plain object by the esModuleInterop helper and is not
+// callable; only a default import resolves to the actual function.
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 
@@ -20,11 +24,10 @@ if (missingVars.length > 0) {
 
 const describeOrSkip = missingVars.length > 0 ? describe.skip : describe;
 
-describeOrSkip('Loan Evaluation GraphQL API (e2e)', () => {
+describeOrSkip('Loan Evaluation — configured decision provider (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    process.env.DEMO_MODE ??= 'true';
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();

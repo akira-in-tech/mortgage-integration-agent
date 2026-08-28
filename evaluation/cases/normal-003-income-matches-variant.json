@@ -1,0 +1,13 @@
+{
+  "id": "NORMAL-003",
+  "description": "A second income-match case with different numbers (4.0% difference) — no condition should open.",
+  "category": "normal",
+  "borrowerId": "EVAL-CASE-005",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 14200,
+  "requestedAmount": 275000,
+  "expected": {
+    "outcome": "NO_CONDITION"
+  }
+}

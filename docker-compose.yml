@@ -13,16 +13,154 @@ services:
       timeout: 5s
       retries: 5
 
+  # Temporal development service (Section 19.1): auto-setup runs its own
+  # schema migration against the same Postgres server on first boot, into
+  # separate `temporal`/`temporal_visibility` databases — it never touches
+  # the app's own mortgage_agent database.
+  temporal:
+    image: temporalio/auto-setup:1.29.7
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: mortgage
+      POSTGRES_PWD: mortgage_demo
+      POSTGRES_SEEDS: postgres
+    ports:
+      - '7233:7233'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Self-hosted OIDC issuer (Section 16.1: "OIDC/OAuth 2.0 for people",
+  # M5-024) — start-dev's own embedded dev database, not the app's
+  # Postgres server: this is a local-only convenience service (Section 19's
+  # real target is a managed OIDC provider), so provisioning a second
+  # persistent datastore for it would be ceremony with no real deployment
+  # counterpart. --import-realm loads keycloak/realm-export.json on first
+  # boot: a real realm, a public client (`mortgage-agent-app`, direct
+  # access grants enabled for curl-based local testing without a browser),
+  # and one real test user.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ['start-dev', '--import-realm']
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+
   app:
     build: .
     ports:
       - '3000:3000'
     environment:
       DATABASE_URL: postgres://mortgage:mortgage_demo@postgres:5432/mortgage_agent
-      DEMO_MODE: ${DEMO_MODE:-true}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      DECISION_PROVIDER: ${DECISION_PROVIDER:-rules}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-60000}
+      TEMPORAL_ADDRESS: temporal:7233
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/mortgage-agent
+      OIDC_AUDIENCE: mortgage-agent-app
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: mortgage-integration-agent-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       NODE_ENV: development
-      RUN_MIGRATIONS: 'true'
     depends_on:
       postgres:
         condition: service_healthy
+      temporal:
+        condition: service_started
+      keycloak:
+        condition: service_started
+
+  worker:
+    build: .
+    command: ['node', 'dist/worker']
+    environment:
+      DATABASE_URL: postgres://mortgage:mortgage_demo@postgres:5432/mortgage_agent
+      TEMPORAL_ADDRESS: temporal:7233
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_SERVICE_NAME: mortgage-integration-agent-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  # Free, self-hosted development observability. These services are isolated
+  # behind an explicit profile; the default application stack stays small and
+  # makes no telemetry connection unless OTEL_ENABLED=true is also supplied.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    profiles: [observability]
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - '127.0.0.1:4317:4317'
+      - '127.0.0.1:4318:4318'
+      - '127.0.0.1:13133:13133'
+    depends_on:
+      - tempo
+
+  # Tempo 2.10 is the maintained pre-Kafka line and keeps this laptop profile
+  # useful without adding a broker. Production tracing storage remains an
+  # environment choice behind the Collector's OTLP exporter.
+  tempo:
+    image: grafana/tempo:2.10.7
+    profiles: [observability]
+    command: ['-config.file=/etc/tempo.yaml']
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - '127.0.0.1:3200:3200'
+
+  prometheus:
+    image: prom/prometheus:v3.10.0-distroless
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./observability/slo-rules.yaml:/etc/prometheus/slo-rules.yaml:ro
+      - ./observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - '127.0.0.1:9090:9090'
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_PLUGINS_PREINSTALL_DISABLED: 'true'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+      GF_ANALYTICS_CHECK_FOR_UPDATES: 'false'
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: 'false'
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - '127.0.0.1:3001:3000'
+    depends_on:
+      - prometheus
+      - tempo
+
+volumes:
+  tempo-data:
+  prometheus-data:
+  grafana-data:

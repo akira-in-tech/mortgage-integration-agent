@@ -1,0 +1,14 @@
+{
+  "id": "MISSING-DATA-001",
+  "description": "An INCOME evidence fact exists (satisfying check_case_completeness) but its value is missing the monthlyIncome field a real Plaid response would have — the DSL evaluator's own missing-fact fail-safe should report \"cannot evaluate\" and open no condition, rather than crashing or false-triggering.",
+  "category": "missing-data",
+  "borrowerId": "EVAL-CASE-MISSING-001",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 9000,
+  "requestedAmount": 300000,
+  "incomeEvidenceOverride": {},
+  "expected": {
+    "outcome": "NO_CONDITION"
+  }
+}

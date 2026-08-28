@@ -1,0 +1,13 @@
+{
+  "id": "BOUNDARY-001",
+  "description": "Income difference is 9.90%, just under the rule's \"greater than 10%\" threshold — no condition should open.",
+  "category": "boundary",
+  "borrowerId": "EVAL-CASE-003",
+  "jurisdictionCode": "US-CA",
+  "loanType": "CONVENTIONAL",
+  "statedMonthlyIncome": 13404,
+  "requestedAmount": 300000,
+  "expected": {
+    "outcome": "NO_CONDITION"
+  }
+}

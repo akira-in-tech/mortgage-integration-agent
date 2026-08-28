@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DocumentVerificationResult } from './document.types';
+import { maybeThrowSyntheticProviderFailure } from '../synthetic-provider-failures';
 
 /**
  * Mock document parsing service.
@@ -14,6 +15,10 @@ export class DocumentService {
     borrowerId: string,
   ): Promise<DocumentVerificationResult> {
     this.logger.debug(`Verifying document package for borrower ${borrowerId}`);
+    maybeThrowSyntheticProviderFailure(
+      borrowerId,
+      'document-verification-simulator',
+    );
 
     // Document parsing is the most latency-intensive step — 200–600 ms in production
     await this.simulateLatency(200, 600);

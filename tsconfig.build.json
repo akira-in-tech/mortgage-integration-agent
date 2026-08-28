@@ -1,7 +1,14 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // nest-cli.json sets deleteOutDir: true, which wipes dist/ before every
+    // build. Incremental compilation's .tsbuildinfo cache lives outside
+    // dist/ and survives that wipe, so tsc can wrongly conclude nothing
+    // changed and skip writing output entirely — a build that reports
+    // success while producing nothing. Not worth the speedup at this
+    // project's size.
+    "incremental": false
   },
-  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "test", "client", "console", "**/*.spec.ts"]
 }

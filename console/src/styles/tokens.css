@@ -1,0 +1,35 @@
+/* Design tokens — matches the approved Triage Queue mockup (Stripe-inspired
+   palette: Manrope, violet accent #635bff, moderate radii, soft elevation). */
+:root {
+  --font-sans: 'Manrope', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --surface: #ffffff;
+  --page: #f6f6f8;
+  --ink: #0a0e17;
+  --ink-2: #4f5461;
+  --ink-muted: #68707e;
+
+  --gridline: #e5e6ea;
+  --border: rgba(10, 14, 23, 0.09);
+
+  --rail: #ffffff;
+  --rail-border: rgba(10, 14, 23, 0.07);
+
+  --accent: #5148e5;
+  --accent-dark: #4b42e0;
+  --accent-wash: #efeeff;
+
+  --good: #0a8a5c;
+  --good-wash: #e3f5ee;
+  --warning: #976000;
+  --warning-wash: #fdf3dc;
+  --critical: #c0123c;
+  --critical-wash: #fbe7ec;
+
+  --blue-300: #a79dff;
+  --blue-500: #8177ff;
+
+  --elev-card: 0 2px 5px -2px rgba(10, 14, 23, 0.1), 0 1px 1px rgba(10, 14, 23, 0.04);
+  --elev-btn: 0 1px 2px rgba(99, 91, 255, 0.35), 0 2px 5px -1px rgba(99, 91, 255, 0.25);
+}

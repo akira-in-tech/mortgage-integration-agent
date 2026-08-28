@@ -1,5 +1,9 @@
 import 'reflect-metadata';
 import { DocumentService } from './document.service';
+import {
+  SyntheticProviderTimeoutError,
+  SyntheticProviderRejectionError,
+} from '../synthetic-provider-failures';
 
 describe('DocumentService', () => {
   let service: DocumentService;
@@ -60,5 +64,17 @@ describe('DocumentService', () => {
       if (!result.taxReturnValid) expectedFailed.push('Tax Return');
       expect(result.failedDocuments).toEqual(expectedFailed);
     }
+  });
+
+  it('throws a synthetic timeout for a SYNTHETIC-TRANSIENT-FAILURE- borrowerId', async () => {
+    await expect(
+      service.verifyDocuments('SYNTHETIC-TRANSIENT-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderTimeoutError);
+  });
+
+  it('throws a synthetic rejection for a SYNTHETIC-TERMINAL-FAILURE- borrowerId', async () => {
+    await expect(
+      service.verifyDocuments('SYNTHETIC-TERMINAL-FAILURE-x'),
+    ).rejects.toBeInstanceOf(SyntheticProviderRejectionError);
   });
 });

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PlaidIncomeData, EmploymentStatus } from './plaid.types';
+import { maybeThrowSyntheticProviderFailure } from '../synthetic-provider-failures';
 
 /**
  * Mock Plaid income verification service.
@@ -12,6 +13,7 @@ export class PlaidService {
 
   async getIncomeData(borrowerId: string): Promise<PlaidIncomeData> {
     this.logger.debug(`Fetching Plaid income data for borrower ${borrowerId}`);
+    maybeThrowSyntheticProviderFailure(borrowerId, 'plaid-simulator');
 
     // Simulate realistic API latency (50–200 ms)
     await this.simulateLatency(50, 200);

@@ -2,35 +2,159 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
+# Validation jobs do not need repository write access. Deployment workflows,
+# when introduced, receive their own narrowly-scoped OIDC permissions instead
+# of expanding the trust boundary of every pull-request run.
 permissions:
   contents: read
 
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20.19.0
-          cache: npm
-      - run: npm ci
-      - run: npm run check
-      - run: npm audit --omit=dev --audit-level=high
-      - run: docker build -t mortgage-integration-agent:ci .
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-  postgres-e2e:
+jobs:
+  console:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: console/package-lock.json
+
+      - run: npm --prefix console ci
+      - run: npm --prefix console run lint
+      - run: npm --prefix console test
+      - run: npm --prefix console run build
+      # Install only the launch browser and its Linux dependencies. Playwright
+      # uses one worker in CI for stable resource consumption.
+      - run: npm --prefix console exec playwright install --with-deps chromium
+      - run: npm --prefix console run test:e2e
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: console-playwright-report
+          path: console/playwright-report/
+          retention-days: 14
+
+  production-dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            console/package-lock.json
+
+      # Release blocking is scoped to shipped dependencies. Development-only
+      # tool findings remain visible in normal audit output but do not make a
+      # synthetic release unavailable without a production exploit path.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm --prefix console audit --omit=dev --audit-level=high
+
+  observability-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Parse the complete profile first, then validate each backend's native
+      # configuration with the exact pinned release image used at runtime.
+      - run: docker compose --profile observability config --quiet
+      - run: |
+          docker run --rm \
+            -v "$PWD/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+            otel/opentelemetry-collector-contrib:0.159.0 \
+            validate --config=/etc/otelcol-contrib/config.yaml
+      - run: |
+          docker run --rm --entrypoint /bin/promtool \
+            -v "$PWD/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro" \
+            -v "$PWD/observability/slo-rules.yaml:/etc/prometheus/slo-rules.yaml:ro" \
+            -v "$PWD/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro" \
+            prom/prometheus:v3.10.0-distroless \
+            check config /etc/prometheus/prometheus.yaml
+      - run: jq empty observability/grafana/dashboards/lending-operations.json
+
+  container-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: docker build --tag mortgage-integration-agent:ci .
+
+  secret-scanning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # gitleaks needs full history, not this run's default shallow
+          # checkout, to scan every commit ever pushed — a secret removed
+          # in a later commit but still readable from an earlier one is a
+          # real leak, not something a shallow scan gets to call clean.
+          fetch-depth: 0
+
+      # A plain binary, not `docker run zricethezav/gitleaks` — that image
+      # was tried first while building this job and, against this exact
+      # repository, silently corrupted a scan (the underlying `git log
+      # --all` crashed with a bus error partway through, invisible unless
+      # run at debug verbosity) while still exiting 0 with "no leaks
+      # found". A scanner that can fail silently and still report clean is
+      # worse than no scanner — downloaded directly instead, checksum
+      # verified, pinned to the exact version this was verified against.
+      - run: |
+          curl -sL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source=. --log-opts=--all --redact -v
+
+  sast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Semgrep's own free `p/ci` ruleset (curated for low false-positive
+      # CI gating, not the noisier full community set) needs no build step
+      # for JS/TS — it parses source directly. Scans only files tracked by
+      # git by default, so generated/vendored output (node_modules, dist,
+      # the checked-in GraphQL codegen output) is already excluded without
+      # a hand-maintained ignore list to keep in sync.
+      - run: pip install semgrep==1.175.0
+      - run: semgrep scan --config=p/ci --error --metrics=off
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Mirrors docker-compose.yml's postgres and temporal services so CI
+    # exercises the same images, credentials, and health check as local
+    # development.
     services:
       postgres:
         image: postgres:16-alpine
         env:
           POSTGRES_DB: mortgage_agent
           POSTGRES_USER: mortgage
-          POSTGRES_PASSWORD: mortgage_ci
+          POSTGRES_PASSWORD: mortgage_demo
         ports:
           - 5432:5432
         options: >-
@@ -38,16 +162,175 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     env:
-      DATABASE_URL: postgres://mortgage:mortgage_ci@localhost:5432/mortgage_agent
-      DEMO_MODE: 'true'
+      DATABASE_URL: postgres://mortgage:mortgage_demo@localhost:5432/mortgage_agent
       NODE_ENV: test
+      DECISION_PROVIDER: rules
+      TEMPORAL_ADDRESS: localhost:7233
+      OIDC_ISSUER_URL: http://localhost:8080/realms/mortgage-agent
+      OIDC_AUDIENCE: mortgage-agent-app
+      # Matches keycloak/realm-export.json's own registered public client
+      # and redirect URIs exactly — real values the live OIDC browser
+      # journey below actually exchanges a code against, not placeholders.
+      OIDC_CLIENT_ID: mortgage-agent-app
+      OIDC_CALLBACK_URL: http://localhost:5173/v1/auth/session/callback
+      CONSOLE_ORIGIN: http://localhost:5173
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 20.19.0
-          cache: npm
+          node-version: '24'
+          cache: 'npm'
+
       - run: npm ci
+
+      # No --fix here: CI must fail on a violation, not silently rewrite it.
+      - run: npm run lint:check
+
+      - run: npm run build
+
+      # Real-DB spec files each open their own standalone DataSource
+      # (never through AppModule), so they never benefit from
+      # `synchronize: true` — only a process that actually boots AppModule
+      # (e2e specs, below) gets the schema for free. Without this step,
+      # every unit spec that touches Postgres directly fails with
+      # "relation ... does not exist" against this run's brand-new,
+      # never-migrated service container.
       - run: npm run migration:run
-      - run: npm run test:e2e -- --runInBand
+
+      # Temporal's own auto-setup image needs the postgres service above,
+      # so it can't be declared as a `services:` container (those all start
+      # together with no ordering) — run it directly instead, and poll its
+      # gRPC port before continuing since auto-setup runs a schema
+      # migration on first boot and takes a few seconds to become ready.
+      - run: |
+          # NOT --network host: on this runner's Docker setup that leaves
+          # the container on its own private bridge IP regardless (its own
+          # frontend logs its reachable address as a 10.x address, not
+          # 127.0.0.1) — host mode silently not applying, not just slow to
+          # apply. Explicit publish + --add-host=host.docker.internal
+          # works everywhere host mode does and everywhere it doesn't:
+          # the container reaches the postgres service (bound to this
+          # runner's own localhost:5432) via the real host-gateway address,
+          # and 7233 is really published to this runner's own localhost.
+          docker run -d --name temporal \
+            --add-host=host.docker.internal:host-gateway \
+            -p 7233:7233 \
+            -e DB=postgres12 \
+            -e DB_PORT=5432 \
+            -e POSTGRES_USER=mortgage \
+            -e POSTGRES_PWD=mortgage_demo \
+            -e POSTGRES_SEEDS=host.docker.internal \
+            temporalio/auto-setup:1.29.7
+          # auto-setup runs its own schema migration and search-attribute
+          # setup on first boot before it ever opens 7233 — a runner under
+          # load can genuinely take longer than a short budget, not just
+          # hang, so this polls for up to 3 minutes. `docker logs` on
+          # failure/timeout means the next real problem here is visible
+          # instead of another silent "did not become ready" guess.
+          for i in $(seq 1 90); do
+            (echo > /dev/tcp/127.0.0.1/7233) 2>/dev/null && exit 0
+            sleep 2
+          done
+          echo "Temporal server did not become ready in time" >&2
+          docker logs temporal
+          exit 1
+
+      # Real, self-hosted OIDC (M5-024) — same reasoning as Temporal above:
+      # it needs a file from this run's own checkout (keycloak/realm-
+      # export.json), which doesn't exist yet when `services:` containers
+      # start, so it's run directly instead. No Postgres dependency of its
+      # own (start-dev's embedded dev database), so no readiness ordering
+      # against the postgres service is needed here.
+      - run: |
+          docker run -d --name keycloak \
+            -p 8080:8080 \
+            -e KEYCLOAK_ADMIN=admin \
+            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -v "$GITHUB_WORKSPACE/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro" \
+            quay.io/keycloak/keycloak:26.0 start-dev --import-realm
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null -w '' "$OIDC_ISSUER_URL/.well-known/openid-configuration" \
+              && curl -s "$OIDC_ISSUER_URL/.well-known/openid-configuration" | grep -q issuer \
+              && exit 0
+            sleep 2
+          done
+          echo "Keycloak did not become ready in time" >&2
+          docker logs keycloak
+          exit 1
+
+      # DATABASE_URL and TEMPORAL_ADDRESS are set above, so this also runs
+      # the migration integration test (src/database/migrations/*.spec.ts)
+      # and the Temporal workflow/activities tests
+      # (src/workflows/*.spec.ts) — all of which create and clean up their
+      # own disposable state, never touching the service's own databases.
+      # --forceExit: a real Temporal Worker/connection left open by a test
+      # that failed or timed out mid-flight (case-conditions.workflow.spec.ts
+      # talks to a real server) otherwise keeps the whole Jest process alive
+      # indefinitely with no further output — a single flaky real-service
+      # test turning into a job that silently runs until this workflow's
+      # own multi-hour ceiling, instead of failing fast. Local `npm test`
+      # deliberately keeps Jest's own open-handle warning instead, since a
+      # developer investigating a hang wants to see it, not have it hidden.
+      - run: npm test -- --ci --runInBand --forceExit
+
+      - run: npm run test:e2e
+
+      # Real credential-backed release evidence for the complete browser
+      # identity path (Section 29 item 2) — previously opt-in only
+      # (RUN_LIVE_OIDC=true, run manually), now the same real Keycloak
+      # realm/PostgreSQL/API this job already stood up above for its own
+      # tests. keycloak/realm-export.json pins the reviewer account's own
+      # Keycloak id (see that file's own comment) specifically so this
+      # step's seeded `sub` always matches what a real login actually
+      # presents — a random id assigned at import time would make this
+      # step non-reproducible from one run to the next.
+      - run: |
+          psql "$DATABASE_URL" -c \
+            "INSERT INTO tenants (id, name) VALUES ('20000000-0000-4000-8000-000000000002', 'Live OIDC E2E Tenant')"
+          npm run manage-user -- create-user 40000000-0000-4000-8000-000000000004 reviewer@example.com
+          reviewer_user_id=$(psql "$DATABASE_URL" -tAc \
+            "SELECT id FROM users WHERE subject = '40000000-0000-4000-8000-000000000004'")
+          npm run manage-user -- grant-membership "$reviewer_user_id" 20000000-0000-4000-8000-000000000002 REVIEWER
+
+      # A real running API for the console's dev-server proxy to reach.
+      # ts-node, not `node dist/main.js` — the compiled entry point was
+      # observed hanging indefinitely on one development machine (0% CPU,
+      # no output, cause unidentified) while this exact ts-node invocation
+      # booted normally every time it was tried; not worth the risk of a
+      # silent 30-minute job timeout to save the few seconds ts-node costs.
+      - run: |
+          npx ts-node -r tsconfig-paths/register src/main.ts > /tmp/api-server.log 2>&1 &
+          echo $! > /tmp/api-server.pid
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null -w '' http://localhost:3000/health/ready && exit 0
+            sleep 2
+          done
+          echo "API server did not become ready in time" >&2
+          cat /tmp/api-server.log
+          exit 1
+
+      - run: npm --prefix console ci
+      - run: npm --prefix console exec playwright install --with-deps chromium
+      - run: RUN_LIVE_OIDC=true npm --prefix console run test:e2e -- e2e/oidc-live.spec.ts
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: console-oidc-live-report
+          path: console/playwright-report/
+          retention-days: 14
+
+      - if: ${{ !cancelled() }}
+        run: kill "$(cat /tmp/api-server.pid)" 2>/dev/null || true
+
+      # API and console clients are checked-in release artifacts. Regenerate
+      # them from the bootable application schema and fail when a contributor
+      # changed a controller/resolver without committing the matching client.
+      - run: npm run generate:openapi
+      - run: npm run generate:client
+      - run: npm --prefix console run codegen
+      - run: git diff --exit-code -- openapi/openapi.json client/generated/schema.d.ts console/src/gql

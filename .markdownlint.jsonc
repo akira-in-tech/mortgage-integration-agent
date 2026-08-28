@@ -1,0 +1,11 @@
+{
+  // Prose-heavy architecture and journal docs intentionally use long lines;
+  // not enforced.
+  "MD013": false,
+  // docs/DEVELOPMENT_LOG.md repeats the same subsection headings
+  // (### Status, ### Implementation, ...) under every milestone entry by
+  // design (see PROJECT_CHARTER.md Section 26) — only flag a duplicate
+  // heading against its true siblings under the same parent, not against
+  // every other entry in the file.
+  "MD024": { "siblings_only": true }
+}
