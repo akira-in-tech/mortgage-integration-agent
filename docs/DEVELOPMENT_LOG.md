@@ -10759,6 +10759,15 @@ Rather than fight the framework further, moved `PlatformAdmin`'s `TypeOrmModule.
 - `src/provider-platform/provider-platform.module.ts` — registers `PlatformAdmin`/`PlatformAdminGuard`/`PlatformAdminService` locally (see the DI section above).
 - `console/src/platform-admin-auth.ts`, `console/src/platform-admin-api.ts`, `console/src/components/PlatformAdminConsole.tsx` — the console side, plus a small entry link added to `ConnectScreen.tsx` and a `platformAdminMode` branch in `App.tsx` checked before the tenant/OIDC flow entirely.
 - `openapi/openapi.json`, `client/generated/schema.d.ts` — regenerated; the diff includes some pre-existing paths shifting position (a side effect of `ProviderPlatformModule`'s own registration order changing, not a real change to any of them — verified by exact path-count and operationId-count comparison, not just eyeballing the diff) plus the 8 new real operations.
+- `src/database/migrations/schema-migrations.spec.ts` — added `platform_admins` to the "applies every migration" table list and a new revert test for it, positioned first among the revert tests so every later one keeps reverting the migration it was always meant to (see "Errors and fixes" below for why this needed a second pass).
+
+### Errors and fixes
+
+Pushed once, then had to push a fix: `schema-migrations.spec.ts` (a cumulative test that applies every migration, then walks backward one `undoLastMigration()` per `it()` block) broke, because the new `PlatformAdmins` migration is timestamped *last* — every subsequent "undo the most recent migration" call in that file was silently reverting the wrong migration once it ran, one step off from what each test actually meant to check.
+
+The real miss was in how this got verified locally before pushing: the full local `npx jest` run was already showing this exact failure, but it was checked against the known pre-existing-failure *count* (18 failed suites, matching the already-documented `mortgage_app`-role local-environment gap) rather than the actual *set* of failing suite names — the count happened to match by coincidence (one pre-existing failure had been separately fixed via `npm run generate:openapi`'s `synchronize` side effect earlier in this same session, and this new one took its place), so a shortcut check said "looks the same as before" when it wasn't. Fixed the real test-ordering bug (above), and re-verified properly the second time: named the specific 17 failing suites and confirmed every one of them was `mortgage_app`-role-related, not just counted them.
+
+Also: `node dist/main.js` (or `nest start --watch`) would not boot at all in this environment for live verification — the process started, opened zero sockets, used 0% CPU, and produced no output indefinitely, both backgrounded and in the foreground. `npx ts-node -r tsconfig-paths/register src/main.ts` booted normally and was used instead for the live curl/browser verification below. Root cause not identified — noted here in case it recurs.
 
 ### Verification
 
@@ -10776,10 +10785,19 @@ Backend:
     this slice exists for, proven directly, not just asserted in a
     comment)
   npm run build — clean
-  Full jest suite — no failures attributable to this slice (the ~18
-    pre-existing environmental failures are the already-documented
-    missing-mortgage_app-role/local-schema-drift gap, confirmed absent
-    from a full run before this slice too)
+  Full jest suite (local) — 17 failed suites: 11 are the already-documented
+    missing-mortgage_app-role gap; the other 6 (runner.spec.ts,
+    case-conditions.activities.spec.ts,
+    lending-operations-agent-runtime.spec.ts, policy-activation/
+    policy-evaluation.service.spec.ts, audit-event.service.spec.ts) are a
+    different, also pre-existing category — shared state across specs when
+    the whole suite runs together against one long-lived local database,
+    the same kind of full-suite-only flakiness M7-017's own dev log entry
+    already documented. Named and checked every one of the 17 individually
+    this time (see "Errors and fixes" below for why that mattered).
+  CI itself — the real, authoritative gate, a fresh isolated environment
+    that hits neither local issue — showed zero failures beyond the one
+    real bug below, now fixed.
 
 Console:
   npx tsc --noEmit — clean

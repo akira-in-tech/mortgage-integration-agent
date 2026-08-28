@@ -109,6 +109,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_conditions',
       'oidc_sessions',
       'outbox_events',
+      'platform_admins',
       'policy_applicability',
       'policy_catalog_generation',
       'policy_change_impact_assessments',
@@ -202,6 +203,18 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts the platform admins migration, dropping the table and its enum', async () => {
+    expect(await tableNames()).toContain('platform_admins');
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('platform_admins');
+    const enumRows: Array<{ typname: string }> = await scratchDataSource.query(
+      `SELECT typname FROM pg_type WHERE typname = 'platform_admins_status_enum'`,
+    );
+    expect(enumRows).toEqual([]);
   });
 
   it('reverts federal policy source coverage without removing policy schema', async () => {
