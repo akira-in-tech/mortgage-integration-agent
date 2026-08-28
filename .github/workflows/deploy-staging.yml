@@ -43,15 +43,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Build and push the image (tagged with this commit's SHA - never "latest")
-        env:
-          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
-        run: |
-          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
-          docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
-          docker push "$ECR_REPOSITORY:${{ github.sha }}"
-
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
@@ -64,6 +55,27 @@ jobs:
             -backend-config="key=staging/terraform.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      # A first-ever deploy has no ECR repository yet - it's a resource this
+      # same terraform apply would normally create. Create just that one
+      # resource before the image build/push step needs it. On every later
+      # run the repository already exists, so this -target apply is a no-op.
+      - name: terraform apply (ECR repository only, so the image push below has somewhere to push to)
+        working-directory: terraform/staging
+        run: |
+          terraform apply -auto-approve \
+            -target=aws_ecr_repository.app \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="image_tag=${{ github.sha }}"
+
+      - name: Build and push the image (tagged with this commit's SHA - never "latest")
+        env:
+          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+        run: |
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
+          docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
+          docker push "$ECR_REPOSITORY:${{ github.sha }}"
 
       - name: terraform apply
         working-directory: terraform/staging
