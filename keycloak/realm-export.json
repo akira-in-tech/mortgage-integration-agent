@@ -35,6 +35,7 @@
   ],
   "users": [
     {
+      "id": "40000000-0000-4000-8000-000000000004",
       "username": "reviewer@example.com",
       "email": "reviewer@example.com",
       "emailVerified": true,

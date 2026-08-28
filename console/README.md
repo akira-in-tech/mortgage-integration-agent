@@ -11,7 +11,7 @@ A real React operations console for the mortgage-integration-agent GraphQL API. 
 
 Plus **Platform Admin** — reached from a link on the connect screen, not the nav rail: the provider promotion chain (propose/certify/approve/activate a provider adapter). It's deliberately not one of the six tenant screens above — providers aren't scoped to any tenant, so this uses its own platform-admin credential (`npm run create-platform-admin`, from the repo root) that a tenant session can never satisfy and vice versa. See `src/components/PlatformAdminConsole.tsx`.
 
-See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-020 entries for what was built, how it was verified, and its known gaps.
+See the main repo's `README.md` ("Operations console" section) and `docs/DEVELOPMENT_LOG.md`'s M6-007 through M7-022 entries for what was built, how it was verified, and its known gaps.
 
 ## Run it
 
@@ -46,9 +46,9 @@ npm run lint     # real ESLint flat config — TS, React hooks, prettier
 npm run test:e2e # Playwright Chromium journeys + axe WCAG scan
 ```
 
-Install the local browser once with `npx playwright install chromium`. The browser gate exercises Bearer and OIDC tenant-session orchestration, cookie-session GraphQL headers, CSRF, RP-initiated logout, absence of provider tokens in browser storage, keyboard-addressable controls, and automated WCAG checks. Its network responses are deterministic fixtures; a complete browser redirect through live Keycloak/PostgreSQL remains a separate release-evidence gate.
+Install the local browser once with `npx playwright install chromium`. The browser gate exercises Bearer and OIDC tenant-session orchestration, cookie-session GraphQL headers, CSRF, RP-initiated logout, absence of provider tokens in browser storage, keyboard-addressable controls, and automated WCAG checks. Its network responses are deterministic fixtures — a real, complete browser redirect through live Keycloak/PostgreSQL is a separate journey (below).
 
-`RUN_LIVE_OIDC=true npm run test:e2e -- e2e/oidc-live.spec.ts` runs that credential-backed gate when the local API, migrated PostgreSQL, Keycloak realm, and synthetic user membership are provisioned. It is skipped by default rather than silently replacing live services with mocks.
+`RUN_LIVE_OIDC=true npm run test:e2e -- e2e/oidc-live.spec.ts` runs that credential-backed gate when the local API, migrated PostgreSQL, Keycloak realm, and synthetic user membership are provisioned — real Keycloak login form, real GraphQL tenant/CSRF headers, real session cookies, real logout. As of M7-022 this also runs by default on every CI push/PR (`build-and-test`, not just locally): `keycloak/realm-export.json` pins the seeded reviewer account's own Keycloak id, so its `sub` claim is the same deterministic value on every fresh realm import, letting CI seed a real matching `User`/`TenantMembership` row with `npm run manage-user` before the browser ever logs in.
 
 ## GraphQL codegen
 
@@ -63,7 +63,7 @@ npm run codegen
 ## Known gaps
 
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
-- The live Keycloak/API/PostgreSQL journey is opt-in and locally verified, but is not yet enforced by hosted CI.
+- The live Keycloak/API/PostgreSQL journey now runs in hosted CI by default (M7-022) as well as locally via `RUN_LIVE_OIDC=true`.
 - Key rotation currently requires invalidating existing OIDC sessions; a versioned multi-key decrypt window is not implemented.
 - No way to browse or search existing policy versions — the policy-impact check needs a version id typed in, from whoever published it.
 - No key rotation or expiry for either bearer-token credential type (`ApiClient` or the newer `PlatformAdmin`).

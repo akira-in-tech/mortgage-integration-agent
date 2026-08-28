@@ -170,6 +170,12 @@ jobs:
       TEMPORAL_ADDRESS: localhost:7233
       OIDC_ISSUER_URL: http://localhost:8080/realms/mortgage-agent
       OIDC_AUDIENCE: mortgage-agent-app
+      # Matches keycloak/realm-export.json's own registered public client
+      # and redirect URIs exactly — real values the live OIDC browser
+      # journey below actually exchanges a code against, not placeholders.
+      OIDC_CLIENT_ID: mortgage-agent-app
+      OIDC_CALLBACK_URL: http://localhost:5173/v1/auth/session/callback
+      CONSOLE_ORIGIN: http://localhost:5173
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -273,11 +279,58 @@ jobs:
 
       - run: npm run test:e2e
 
+      # Real credential-backed release evidence for the complete browser
+      # identity path (Section 29 item 2) — previously opt-in only
+      # (RUN_LIVE_OIDC=true, run manually), now the same real Keycloak
+      # realm/PostgreSQL/API this job already stood up above for its own
+      # tests. keycloak/realm-export.json pins the reviewer account's own
+      # Keycloak id (see that file's own comment) specifically so this
+      # step's seeded `sub` always matches what a real login actually
+      # presents — a random id assigned at import time would make this
+      # step non-reproducible from one run to the next.
+      - run: |
+          psql "$DATABASE_URL" -c \
+            "INSERT INTO tenants (id, name) VALUES ('20000000-0000-4000-8000-000000000002', 'Live OIDC E2E Tenant')"
+          npm run manage-user -- create-user 40000000-0000-4000-8000-000000000004 reviewer@example.com
+          reviewer_user_id=$(psql "$DATABASE_URL" -tAc \
+            "SELECT id FROM users WHERE subject = '40000000-0000-4000-8000-000000000004'")
+          npm run manage-user -- grant-membership "$reviewer_user_id" 20000000-0000-4000-8000-000000000002 REVIEWER
+
+      # A real running API for the console's dev-server proxy to reach.
+      # ts-node, not `node dist/main.js` — the compiled entry point was
+      # observed hanging indefinitely on one development machine (0% CPU,
+      # no output, cause unidentified) while this exact ts-node invocation
+      # booted normally every time it was tried; not worth the risk of a
+      # silent 30-minute job timeout to save the few seconds ts-node costs.
+      - run: |
+          npx ts-node -r tsconfig-paths/register src/main.ts > /tmp/api-server.log 2>&1 &
+          echo $! > /tmp/api-server.pid
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null -w '' http://localhost:3000/health/ready && exit 0
+            sleep 2
+          done
+          echo "API server did not become ready in time" >&2
+          cat /tmp/api-server.log
+          exit 1
+
+      - run: npm --prefix console ci
+      - run: npm --prefix console exec playwright install --with-deps chromium
+      - run: RUN_LIVE_OIDC=true npm --prefix console run test:e2e -- e2e/oidc-live.spec.ts
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() }}
+        with:
+          name: console-oidc-live-report
+          path: console/playwright-report/
+          retention-days: 14
+
+      - if: ${{ !cancelled() }}
+        run: kill "$(cat /tmp/api-server.pid)" 2>/dev/null || true
+
       # API and console clients are checked-in release artifacts. Regenerate
       # them from the bootable application schema and fail when a contributor
       # changed a controller/resolver without committing the matching client.
       - run: npm run generate:openapi
       - run: npm run generate:client
-      - run: npm --prefix console ci
       - run: npm --prefix console run codegen
       - run: git diff --exit-code -- openapi/openapi.json client/generated/schema.d.ts console/src/gql

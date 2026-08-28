@@ -10926,3 +10926,79 @@ No runtime/application changes — this is CI-only. The SHA-pinning fix has a re
 ### Next safe step
 
 Section 29 item 2's still-open half (the live Keycloak/PostgreSQL browser journey running by default in CI, not opt-in) or item 5's (downloadable evaluation/release evidence) are the next genuine candidates — not started without asking first.
+
+## M7-022: the live Keycloak/PostgreSQL OIDC browser journey now runs by default in CI
+
+### Status
+
+Implemented and verified — the same real journey that was previously only ever run manually (`RUN_LIVE_OIDC=true`, by a person, on their own machine) now runs on every CI push/PR, against real infrastructure this job already had no reason not to reuse.
+
+### What this closes
+
+Section 29 item 2's other still-open half: "the same coverage running by default against a live Keycloak/PostgreSQL stack — that journey exists but stays opt-in, skipped unless explicitly requested." The journey itself (`console/e2e/oidc-live.spec.ts`) already existed since M6-021 — a real Chromium browser, a real Keycloak login form, a real PostgreSQL membership lookup, a real same-origin session cookie, and a real logout. What it never had was a repeatable way to run in an environment nobody had logged into by hand first.
+
+### The real blocker, and how it was actually solved
+
+The test asserts on a specific tenant id (`20000000-0000-4000-8000-000000000002`) appearing in a real GraphQL request header, which means a real `User` row (matched by the OIDC `sub` claim) and a real `TenantMembership` granting it REVIEWER on that tenant have to exist in Postgres *before* the browser ever logs in. `npm run manage-user -- create-user <subject> <email>` already existed for exactly this, but `<subject>` has to be the real Keycloak-assigned `sub` — and `keycloak/realm-export.json`'s reviewer user had no `id` field, so Keycloak assigned it a fresh random UUID on every import. That's fine for a person running this by hand once (they log in, read the `sub` off a token, then seed against it) but makes the whole thing impossible to script for an environment that imports a brand-new realm on every single run.
+
+Fixed by adding `"id": "40000000-0000-4000-8000-000000000004"` to the reviewer user's entry in `keycloak/realm-export.json` — Keycloak honors a client-specified `id` on realm import instead of generating one, so this exact value is now assigned every time, anywhere, deterministically. Verified directly before trusting it: booted a real Keycloak container from the updated realm export, did a real password-grant login, and decoded the real returned ID token — `sub` was exactly `40000000-0000-4000-8000-000000000004`, not assumed from documentation.
+
+### Implementation
+
+- `keycloak/realm-export.json`: pinned the reviewer user's `id`, as above.
+- `.github/workflows/ci.yml`, `build-and-test` job: after the existing backend `test:e2e` step —
+  1. seed the tenant, the user (matching the pinned Keycloak id), and the membership, via `psql` and the existing `manage-user` CLI (no new administrative surface — reusing exactly what already existed for a human to run by hand);
+  2. boot the real API server (`ts-node`, not `node dist/main.js` — see "Errors and fixes" for why) and poll `/health/ready`;
+  3. install console dependencies and the Chromium browser, then run `RUN_LIVE_OIDC=true npm --prefix console run test:e2e -- e2e/oidc-live.spec.ts` against it;
+  4. upload its Playwright report as its own artifact (`console-oidc-live-report`, distinct from the separate `console` job's fixture-based report) and stop the background server.
+  - Added `OIDC_CLIENT_ID`/`OIDC_CALLBACK_URL`/`CONSOLE_ORIGIN` to the job's env — real values matching `keycloak/realm-export.json`'s own registered public client, not placeholders.
+  - Moved the pre-existing `npm --prefix console ci` step earlier so both this new block and the later contract-drift codegen check share one install.
+
+### Errors and fixes
+
+`node dist/main.js` (the production entry point, already proven to build cleanly by this same job's own `npm run build` step) was tried first for booting the live server. On this session's own development machine it hung indefinitely — 0% CPU, zero open sockets, no output on stdout or stderr, both backgrounded and in the foreground — with no root cause identified despite real investigation (checked for port/DB conflicts, tried with and without `--enable-source-maps`, compared against the exact same environment variables the working alternative used). `npx ts-node -r tsconfig-paths/register src/main.ts` booted normally every single time it was tried, including the full local dry run below, so it was used instead rather than gambling a 30-minute job timeout in CI on a mystery that couldn't be reproduced predictably enough to actually debug.
+
+### Verification
+
+```text
+Full local dry run of the exact CI sequence, before touching ci.yml's
+trust boundary (a fresh scratch Postgres container + a fresh Keycloak
+container from the updated realm export, not the long-lived local dev
+stack, so this matched CI's own fresh-environment shape):
+  npm run migration:run against the fresh scratch database — all 41
+    migrations applied cleanly, ending with the same schema CI's own
+    build-and-test job already produces.
+  Password-grant login against the fresh Keycloak container — real
+    decoded ID token, sub === 40000000-0000-4000-8000-000000000004,
+    confirming the pinned realm-export id actually round-trips.
+  psql seed (tenant) + npm run manage-user create-user + grant-membership
+    — real rows, real returned ids, no fabricated intermediate values.
+  npx ts-node -r tsconfig-paths/register src/main.ts — booted cleanly,
+    /health/ready returned 200 once ready.
+  RUN_LIVE_OIDC=true npx playwright test e2e/oidc-live.spec.ts (console/)
+    — 1 passed in 27.5s: real Keycloak login form, real credential
+    submission, real GraphQL x-tenant-id/x-csrf-token headers, real
+    HttpOnly session/CSRF cookies, zero browser-storage tokens, real
+    logout back to the connect screen.
+  Scratch containers torn down afterward — nothing left running.
+
+npx prettier --check .github/workflows/ci.yml keycloak/realm-export.json — clean
+semgrep p/ci ruleset against the full working tree — 0 findings (the new
+  shell steps introduce no new finding)
+node -e (yaml.parse) — ci.yml still parses with all seven jobs present
+```
+
+CI's own first real run of this new sequence is the actual, final piece of evidence — this dry run proves the design is sound, not a substitute for watching the real workflow succeed.
+
+### Security, privacy, cost, and compatibility
+
+The seeded tenant/user/membership are synthetic, scoped to this one CI run's own disposable database container — nothing persists past the job. No real credential, secret, or borrower data is involved; the Keycloak password is the same synthetic one already published in `console/README.md` for local development. This adds real wall-clock time to `build-and-test` (roughly another 45-60s: server boot, console install, one browser install, one Playwright test) but no new service container beyond what the job already ran for its own backend e2e tests.
+
+### Known gaps
+
+- This journey still runs only in the `build-and-test` job, sequentially after the backend's own tests — a backend test failure means this step never runs at all that CI run, so a regression only in the OIDC browser path could in principle go unnoticed on a run where something upstream also happened to fail. Splitting it into a fully independent job would remove that coupling at the cost of duplicating the Postgres/Keycloak/migration setup this job already pays for once.
+- Still exactly one scripted journey (login → GraphQL → cookie/CSRF assertions → logout) — it does not attempt every OIDC edge case (token refresh near expiry, absolute session expiry, RP-initiated logout redirect back to Keycloak) that the deterministic fixture suite or unit tests may already cover with mocks.
+
+### Next safe step
+
+Section 29 item 5's still-open half — downloadable evaluation/release evidence — is the next genuine candidate on that list, not started without asking first.
