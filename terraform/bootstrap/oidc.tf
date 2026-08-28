@@ -63,7 +63,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "NetworkingUnscopable"
     effect = "Allow"
     actions = [
-      "ec2:DescribeVpcs", "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
+      "ec2:DescribeVpcs", "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute", "ec2:DescribeVpcAttribute",
       "ec2:DescribeSubnets", "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
       "ec2:DescribeInternetGateways", "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
@@ -156,7 +156,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     actions = [
       "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:UpdateSecret",
       "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue",
-      "secretsmanager:DescribeSecret", "secretsmanager:TagResource",
+      "secretsmanager:DescribeSecret", "secretsmanager:TagResource", "secretsmanager:GetResourcePolicy",
     ]
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:mortgage-agent-staging/*"]
   }
@@ -189,10 +189,41 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "LogsForEcs"
     effect = "Allow"
     actions = [
-      "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:DescribeLogGroups",
+      "logs:CreateLogGroup", "logs:DeleteLogGroup",
       "logs:PutRetentionPolicy", "logs:TagResource", "logs:ListTagsForResource",
     ]
     resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/ecs/mortgage-agent-staging*"]
+  }
+
+  # DescribeLogGroups lists across the whole account/region in one call -
+  # it takes no log group name as input, so CloudWatch Logs does not
+  # support scoping it to a specific log-group ARN (the same "read/list
+  # action with no resource to scope to" situation as NetworkingUnscopable
+  # and EcsUnscopable above).
+  statement {
+    sid       = "LogsUnscopable"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  # Cloud Map (used for Temporal's private-DNS service discovery, since a
+  # Fargate task's own IP changes on every deploy/restart). Namespace and
+  # service create/delete are async - the provider polls GetOperation to
+  # know when they finish, and an operation ID isn't the same resource as
+  # the namespace/service it acted on, so this is scoped by action only.
+  statement {
+    sid    = "ServiceDiscovery"
+    effect = "Allow"
+    actions = [
+      "servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:DeleteNamespace",
+      "servicediscovery:GetNamespace", "servicediscovery:ListNamespaces",
+      "servicediscovery:CreateService", "servicediscovery:UpdateService", "servicediscovery:DeleteService",
+      "servicediscovery:GetService", "servicediscovery:ListServices",
+      "servicediscovery:GetOperation",
+      "servicediscovery:TagResource", "servicediscovery:UntagResource", "servicediscovery:ListTagsForResource",
+    ]
+    resources = ["*"]
   }
 
   statement {
