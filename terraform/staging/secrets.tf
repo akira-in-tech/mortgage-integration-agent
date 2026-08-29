@@ -22,6 +22,14 @@ resource "random_password" "outbox_signing_secret" {
 
 resource "aws_secretsmanager_secret" "rds_master_password" {
   name = "mortgage-agent-staging/rds-master-password"
+  # Secrets Manager's default delete is a soft delete with a recovery
+  # window - a resource that gets replaced (tainted, or an attribute
+  # change) tries to delete-then-recreate with the same name, and the
+  # create half fails outright while the old one is still "pending
+  # deletion". A synthetic staging secret has no real backup/restore
+  # need of its own to protect against accidental deletion, so skip
+  # the recovery window rather than risk this exact deadlock again.
+  recovery_window_in_days = 0
 }
 
 resource "aws_secretsmanager_secret_version" "rds_master_password" {
@@ -30,7 +38,8 @@ resource "aws_secretsmanager_secret_version" "rds_master_password" {
 }
 
 resource "aws_secretsmanager_secret" "app_role_password" {
-  name = "mortgage-agent-staging/app-role-password"
+  name                    = "mortgage-agent-staging/app-role-password"
+  recovery_window_in_days = 0 # see rds_master_password above
 }
 
 resource "aws_secretsmanager_secret_version" "app_role_password" {
@@ -39,7 +48,8 @@ resource "aws_secretsmanager_secret_version" "app_role_password" {
 }
 
 resource "aws_secretsmanager_secret" "outbox_signing_secret" {
-  name = "mortgage-agent-staging/outbox-signing-secret"
+  name                    = "mortgage-agent-staging/outbox-signing-secret"
+  recovery_window_in_days = 0 # see rds_master_password above
 }
 
 resource "aws_secretsmanager_secret_version" "outbox_signing_secret" {
@@ -56,7 +66,8 @@ resource "aws_secretsmanager_secret_version" "outbox_signing_secret" {
 # readable in plaintext to anyone who can call ecs:DescribeTaskDefinition
 # (a much wider audience than Secrets Manager's own access boundary).
 resource "aws_secretsmanager_secret" "database_url" {
-  name = "mortgage-agent-staging/database-url"
+  name                    = "mortgage-agent-staging/database-url"
+  recovery_window_in_days = 0 # see rds_master_password above
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
@@ -65,7 +76,8 @@ resource "aws_secretsmanager_secret_version" "database_url" {
 }
 
 resource "aws_secretsmanager_secret" "app_database_url" {
-  name = "mortgage-agent-staging/app-database-url"
+  name                    = "mortgage-agent-staging/app-database-url"
+  recovery_window_in_days = 0 # see rds_master_password above
 }
 
 resource "aws_secretsmanager_secret_version" "app_database_url" {

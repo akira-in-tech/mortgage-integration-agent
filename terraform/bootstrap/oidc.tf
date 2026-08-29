@@ -150,6 +150,18 @@ data "aws_iam_policy_document" "deploy_permissions" {
     ]
   }
 
+  # The provider's own "wait until available" polling calls
+  # DescribeDBInstances without a specific instance identifier (it
+  # filters client-side), which IAM evaluates against the bare `db:*`
+  # resource rather than the scoped ARN above - the same
+  # no-identifier-in-the-request situation as LogsUnscopable.
+  statement {
+    sid       = "RdsDescribeUnscopable"
+    effect    = "Allow"
+    actions   = ["rds:DescribeDBInstances"]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "SecretsManager"
     effect = "Allow"
