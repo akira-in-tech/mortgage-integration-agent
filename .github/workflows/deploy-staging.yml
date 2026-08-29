@@ -72,10 +72,21 @@ jobs:
         env:
           ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
         run: |
-          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
-          docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
-          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+          # The repository has IMMUTABLE tags on purpose (real supply-chain
+          # protection - a tag can never be silently overwritten once
+          # pushed). That means re-running this workflow for a commit
+          # whose image was already pushed (routine while iterating on
+          # unrelated Terraform/IAM fixes with no new commit) must not
+          # try to push it again - ECR would correctly refuse that.
+          if aws ecr describe-images --region "${{ vars.AWS_REGION }}" \
+              --repository-name mortgage-agent --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
+            echo "Image for ${{ github.sha }} already exists in ECR - skipping build/push."
+          else
+            aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+              | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
+            docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
+            docker push "$ECR_REPOSITORY:${{ github.sha }}"
+          fi
 
       - name: terraform apply
         working-directory: terraform/staging
