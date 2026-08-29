@@ -122,6 +122,11 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:service/mortgage-agent-staging*/*",
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:task/mortgage-agent-staging*/*",
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:task-definition/mortgage-agent-staging*:*",
+      # ecs:ListTasks checks against this resource type regardless of
+      # launch type - Fargate has no real "container instances", but a
+      # real AccessDeniedException from the failure-recovery drill
+      # named this exact ARN pattern, so it's required anyway.
+      "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:container-instance/mortgage-agent-staging*/*",
     ]
   }
 
