@@ -75,12 +75,16 @@ resource "aws_secretsmanager_secret_version" "database_url" {
   # RDS's default parameter group enforces rds.force_ssl - an
   # unencrypted connection is refused outright ("no pg_hba.conf entry
   # ... no encryption"), confirmed by a real failed migration run.
-  # sslmode=require is parsed by pg's own connection-string handling
-  # (no code change needed); it enables encryption without verifying
-  # RDS's certificate chain, standard for this kind of managed database
-  # and adequate for a synthetic staging environment with no real
-  # borrower data.
-  secret_string = "postgres://mortgage:${random_password.rds_master.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=require"
+  # sslmode=require was the first fix tried, but this pg version treats
+  # require/prefer/verify-ca as aliases for verify-full (a documented,
+  # deliberate security hardening in pg-connection-string) - full chain
+  # verification then failed against RDS's own AWS-issued certificate
+  # ("self-signed certificate in certificate chain", also confirmed by
+  # a real failed run). no-verify is pg-connection-string's distinct,
+  # explicitly-supported mode for "encrypt, don't verify the chain" -
+  # standard for this kind of managed database and adequate for a
+  # synthetic staging environment with no real borrower data.
+  secret_string = "postgres://mortgage:${random_password.rds_master.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=no-verify"
 }
 
 resource "aws_secretsmanager_secret" "app_database_url" {
@@ -90,5 +94,5 @@ resource "aws_secretsmanager_secret" "app_database_url" {
 
 resource "aws_secretsmanager_secret_version" "app_database_url" {
   secret_id     = aws_secretsmanager_secret.app_database_url.id
-  secret_string = "postgres://mortgage_app:${random_password.app_role.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=require" # see database_url above
+  secret_string = "postgres://mortgage_app:${random_password.app_role.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=no-verify" # see database_url above
 }
