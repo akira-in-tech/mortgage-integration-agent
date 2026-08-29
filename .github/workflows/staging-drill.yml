@@ -1,0 +1,318 @@
+name: Staging drill
+
+# Manual only, like deploy-staging.yml — this touches the real, live
+# staging environment (Charter Section 29 item 6, M7-024). Three
+# independent drills, one per run, chosen explicitly rather than
+# bundled: they take very different amounts of time (load: ~5 minutes;
+# backup-restore: a real second RDS instance exists for ~20-30 minutes;
+# failure-recovery: a real, short availability gap on the one running
+# API task), and each is something a human should choose to run
+# deliberately, not something that happens as a side effect of running
+# a different drill.
+on:
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: Which drill to run
+        required: true
+        type: choice
+        options:
+          - load
+          - backup-restore
+          - failure-recovery
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: staging-drill
+  cancel-in-progress: false
+
+jobs:
+  load:
+    if: github.event.inputs.drill == 'load'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: terraform/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      # A plain binary, checksum verified, the same pattern ci.yml
+      # already uses for gitleaks — not an npm devDependency, since
+      # this only ever runs as a one-off CI step.
+      - name: Install k6
+        run: |
+          curl -sL -o k6.tar.gz "https://github.com/grafana/k6/releases/download/v2.2.0/k6-v2.2.0-linux-amd64.tar.gz"
+          echo "b5a8003c86f35f5cd5ceef1490312c48e587696c94d998cefc6d7b3b4cb1597d  k6.tar.gz" | sha256sum -c -
+          tar -xzf k6.tar.gz k6-v2.2.0-linux-amd64/k6
+          mv k6-v2.2.0-linux-amd64/k6 ./k6
+
+      - name: Run the load/soak test against the real deployed staging API
+        working-directory: terraform/staging
+        run: |
+          alb_dns=$(terraform output -raw alb_dns_name)
+          echo "Target: http://$alb_dns"
+          STAGING_BASE_URL="http://$alb_dns" ../../k6 run \
+            --summary-export=../../k6-summary.json \
+            ../../load-testing/staging-health.js
+        # k6 itself exits non-zero if the thresholds in
+        # load-testing/staging-health.js are violated (>1% error rate,
+        # or /health/ready p95 >= 500ms) — a real failing result fails
+        # this job, not just a report nobody reads.
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: staging-load-drill-summary
+          path: k6-summary.json
+
+  backup-restore:
+    if: github.event.inputs.drill == 'backup-restore'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RESTORE_ID: mortgage-agent-staging-restore-drill
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: terraform/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      - name: Clean up a stale drill instance from a previous failed run, if any
+        run: |
+          if aws rds describe-db-instances --db-instance-identifier "$RESTORE_ID" --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1; then
+            echo "Stale $RESTORE_ID found from an earlier run - deleting it before starting."
+            aws rds delete-db-instance --db-instance-identifier "$RESTORE_ID" --skip-final-snapshot --region "${{ vars.AWS_REGION }}"
+            aws rds wait db-instance-deleted --db-instance-identifier "$RESTORE_ID" --region "${{ vars.AWS_REGION }}"
+          fi
+
+      - name: Create a real snapshot of the live instance
+        id: snapshot
+        run: |
+          snapshot_id="mortgage-agent-staging-drill-$(date +%Y%m%d%H%M%S)"
+          echo "snapshot_id=$snapshot_id" >> "$GITHUB_OUTPUT"
+          aws rds create-db-snapshot \
+            --db-instance-identifier mortgage-agent-staging \
+            --db-snapshot-identifier "$snapshot_id" \
+            --region "${{ vars.AWS_REGION }}"
+          echo "Waiting for the snapshot to become available..."
+          aws rds wait db-snapshot-available \
+            --db-snapshot-identifier "$snapshot_id" \
+            --region "${{ vars.AWS_REGION }}"
+          echo "Real snapshot ready: $snapshot_id"
+
+      - name: Restore the snapshot into a separate, temporary instance
+        working-directory: terraform/staging
+        run: |
+          rds_sg=$(terraform output -raw rds_security_group_id)
+          subnet_group=$(terraform output -raw rds_db_subnet_group_name)
+          aws rds restore-db-instance-from-db-snapshot \
+            --db-instance-identifier "$RESTORE_ID" \
+            --db-snapshot-identifier "${{ steps.snapshot.outputs.snapshot_id }}" \
+            --db-instance-class db.t4g.micro \
+            --db-subnet-group-name "$subnet_group" \
+            --vpc-security-group-ids "$rds_sg" \
+            --no-publicly-accessible \
+            --region "${{ vars.AWS_REGION }}"
+          echo "Waiting for the restored instance to become available..."
+          aws rds wait db-instance-available \
+            --db-instance-identifier "$RESTORE_ID" \
+            --region "${{ vars.AWS_REGION }}"
+          echo "Real restored instance ready: $RESTORE_ID"
+
+      # The restored instance is not publicly accessible, same as the
+      # real one - only reachable from inside the VPC's app security
+      # group. Reusing the migrate task definition's image (it already
+      # has the `pg` driver as a real production dependency) with an
+      # overridden command and DATABASE_URL, the same way
+      # ecs.tf's null_resource.migrate already runs a one-off task,
+      # rather than opening any new network path to the database.
+      - name: Verify the restored instance actually has real data
+        working-directory: terraform/staging
+        run: |
+          restored_endpoint=$(aws rds describe-db-instances \
+            --db-instance-identifier "$RESTORE_ID" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'DBInstances[0].Endpoint.Address' --output text)
+
+          master_password=$(aws secretsmanager get-secret-value \
+            --secret-id mortgage-agent-staging/rds-master-password \
+            --region "${{ vars.AWS_REGION }}" --query SecretString --output text)
+          echo "::add-mask::$master_password"
+
+          database_url="postgres://mortgage:${master_password}@${restored_endpoint}:5432/mortgage_agent?sslmode=no-verify"
+
+          read -r -d '' verify_script <<'EOF' || true
+          const { Client } = require('pg');
+          const client = new Client({ connectionString: process.env.DATABASE_URL });
+          client.connect()
+            .then(() => client.query('SELECT COUNT(*) FROM typeorm_migrations'))
+            .then((res) => {
+              const count = parseInt(res.rows[0].count, 10);
+              console.log('RESTORED_MIGRATIONS_COUNT=' + count);
+              process.exit(count > 0 ? 0 : 1);
+            })
+            .catch((err) => { console.error(err); process.exit(1); })
+            .finally(() => client.end());
+          EOF
+
+          jq -n --arg script "$verify_script" --arg db_url "$database_url" \
+            '{containerOverrides: [{name: "migrate", command: ["node", "-e", $script], environment: [{name: "DATABASE_URL", value: $db_url}]}]}' \
+            > /tmp/overrides.json
+
+          subnets=$(terraform output -json public_subnet_ids | jq -r 'join(",")')
+          app_sg=$(terraform output -raw app_security_group_id)
+          migrate_task_def=$(terraform output -raw migrate_task_definition_arn)
+
+          task_arn=$(aws ecs run-task \
+            --cluster mortgage-agent-staging \
+            --task-definition "$migrate_task_def" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$app_sg],assignPublicIp=ENABLED}" \
+            --overrides file:///tmp/overrides.json \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Verification task: $task_arn"
+          aws ecs wait tasks-stopped --cluster mortgage-agent-staging --tasks "$task_arn" --region "${{ vars.AWS_REGION }}"
+
+          exit_code=$(aws ecs describe-tasks --cluster mortgage-agent-staging --tasks "$task_arn" \
+            --region "${{ vars.AWS_REGION }}" --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "Verification task exit code: $exit_code"
+          if [ "$exit_code" != "0" ]; then
+            echo "Restored instance verification FAILED - check CloudWatch Logs group /ecs/mortgage-agent-staging-migrate" >&2
+            exit 1
+          fi
+          echo "Real data confirmed present in the restored instance after a real snapshot + restore."
+
+      # Runs even if the verification step above failed - a failed
+      # drill must never leave a second RDS instance quietly billing.
+      - name: Tear down the temporary restored instance and the drill snapshot
+        if: always()
+        run: |
+          if aws rds describe-db-instances --db-instance-identifier "$RESTORE_ID" --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1; then
+            aws rds delete-db-instance --db-instance-identifier "$RESTORE_ID" --skip-final-snapshot --region "${{ vars.AWS_REGION }}"
+            aws rds wait db-instance-deleted --db-instance-identifier "$RESTORE_ID" --region "${{ vars.AWS_REGION }}"
+            echo "Restored drill instance deleted."
+          fi
+          if [ -n "${{ steps.snapshot.outputs.snapshot_id }}" ]; then
+            aws rds delete-db-snapshot --db-snapshot-identifier "${{ steps.snapshot.outputs.snapshot_id }}" --region "${{ vars.AWS_REGION }}" || true
+            echo "Drill snapshot deleted."
+          fi
+
+      - name: Confirm nothing was left behind billing
+        if: always()
+        run: |
+          if aws rds describe-db-instances --db-instance-identifier "$RESTORE_ID" --region "${{ vars.AWS_REGION }}" >/dev/null 2>&1; then
+            echo "The restore-drill instance still exists after teardown - investigate manually." >&2
+            exit 1
+          fi
+          echo "Confirmed: no drill instance remains."
+
+  failure-recovery:
+    if: github.event.inputs.drill == 'failure-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: terraform/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      # desired_count=1 on the api service means stopping its one
+      # running task is a real, if brief, availability gap - not a
+      # simulation. What's being measured is real: does ECS's own
+      # scheduler actually replace it, and how long until the ALB
+      # marks the replacement healthy and traffic actually recovers.
+      - name: Stop the running API task and measure real recovery time
+        working-directory: terraform/staging
+        run: |
+          alb_dns=$(terraform output -raw alb_dns_name)
+          task_arn=$(aws ecs list-tasks --cluster mortgage-agent-staging \
+            --service-name mortgage-agent-staging-api \
+            --region "${{ vars.AWS_REGION }}" --query 'taskArns[0]' --output text)
+          echo "Current api task: $task_arn"
+
+          start_time=$(date +%s)
+          aws ecs stop-task --cluster mortgage-agent-staging --task "$task_arn" \
+            --reason "staging-drill: simulated crash" --region "${{ vars.AWS_REGION }}" >/dev/null
+          echo "Task stopped at t+0s. Polling http://$alb_dns/health/ready every 5s ..."
+
+          # Measure the REAL outage window, not the time since stop-task -
+          # there can be a brief grace period (in-flight requests still
+          # completing, the target not yet deregistered) before the ALB
+          # actually stops returning 200. Recovery time is measured from
+          # when a real failure is first observed, not from t+0.
+          outage_detected=0
+          outage_start=0
+          recovered=0
+          for i in $(seq 1 90); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$alb_dns/health/ready" || echo "000")
+            elapsed=$(( $(date +%s) - start_time ))
+            echo "t+${elapsed}s: HTTP $status"
+            if [ "$status" != "200" ] && [ "$outage_detected" = "0" ]; then
+              outage_detected=1
+              outage_start=$elapsed
+              echo "Real outage began at t+${elapsed}s"
+            fi
+            if [ "$status" = "200" ] && [ "$outage_detected" = "1" ]; then
+              recovered=1
+              echo "Real recovery: outage lasted $((elapsed - outage_start))s (t+${outage_start}s to t+${elapsed}s)"
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$outage_detected" = "0" ]; then
+            echo "No real outage was ever observed across the poll window - either the grace period was shorter than the 5s poll interval, or the service never actually lost capacity. Recording as: no measurable gap, not fabricating a recovery time."
+          elif [ "$recovered" != "1" ]; then
+            echo "A real outage began at t+${outage_start}s and never recovered within the poll window" >&2
+            exit 1
+          fi
