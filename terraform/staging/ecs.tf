@@ -139,6 +139,15 @@ resource "aws_ecs_task_definition" "temporal" {
       }
     }
   }])
+
+  # Revisions are immutable, but a new one can coexist with the old one -
+  # there's no real reason to deregister the old revision before the new
+  # one exists. Also breaks a real dependency-graph "Cycle" error the
+  # default destroy-then-create order produced together with
+  # null_resource.migrate and the services that depend_on it below.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_service" "temporal" {
@@ -190,6 +199,10 @@ resource "aws_ecs_task_definition" "api" {
       }
     }
   }])
+
+  lifecycle {
+    create_before_destroy = true # see aws_ecs_task_definition.temporal above
+  }
 }
 
 resource "aws_ecs_service" "api" {
@@ -243,6 +256,10 @@ resource "aws_ecs_task_definition" "worker" {
       }
     }
   }])
+
+  lifecycle {
+    create_before_destroy = true # see aws_ecs_task_definition.temporal above
+  }
 }
 
 resource "aws_ecs_service" "worker" {
@@ -298,6 +315,10 @@ resource "aws_ecs_task_definition" "migrate" {
       }
     }
   }])
+
+  lifecycle {
+    create_before_destroy = true # see aws_ecs_task_definition.temporal above
+  }
 }
 
 # Actually runs the migration task and blocks the rest of this apply
@@ -333,5 +354,9 @@ resource "null_resource" "migrate" {
         exit 1
       fi
     EOT
+  }
+
+  lifecycle {
+    create_before_destroy = true # see aws_ecs_task_definition.temporal above
   }
 }
