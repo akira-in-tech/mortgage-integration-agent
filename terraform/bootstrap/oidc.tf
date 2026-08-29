@@ -122,6 +122,11 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:service/mortgage-agent-staging*/*",
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:task/mortgage-agent-staging*/*",
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:task-definition/mortgage-agent-staging*:*",
+      # ecs:ListTasks checks against this resource type regardless of
+      # launch type - Fargate has no real "container instances", but a
+      # real AccessDeniedException from the failure-recovery drill
+      # named this exact ARN pattern, so it's required anyway.
+      "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:container-instance/mortgage-agent-staging*/*",
     ]
   }
 
@@ -153,9 +158,12 @@ data "aws_iam_policy_document" "deploy_permissions" {
   # Backup/restore drill (staging-drill.yml): take a real snapshot of the
   # live instance, restore it into a separate, temporary instance, verify
   # it, then tear both down. RestoreDBInstanceFromDBSnapshot needs
-  # permission on both the source snapshot and the new instance it
-  # creates - the db:mortgage-agent-staging* pattern above already covers
-  # a temporary "mortgage-agent-staging-restore-drill" identifier.
+  # permission on the source snapshot, the new instance it creates (the
+  # db:mortgage-agent-staging* pattern above already covers a temporary
+  # "mortgage-agent-staging-restore-drill" identifier), and - confirmed
+  # by a real AccessDenied from the drill's first restore attempt - the
+  # db subnet group it's restored into, since that's passed explicitly
+  # via --db-subnet-group-name.
   statement {
     sid    = "RdsSnapshotDrill"
     effect = "Allow"
@@ -166,6 +174,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     resources = [
       "arn:aws:rds:*:${data.aws_caller_identity.current.account_id}:db:mortgage-agent-staging*",
       "arn:aws:rds:*:${data.aws_caller_identity.current.account_id}:snapshot:mortgage-agent-staging*",
+      "arn:aws:rds:*:${data.aws_caller_identity.current.account_id}:subgrp:mortgage-agent-staging*",
     ]
   }
 
