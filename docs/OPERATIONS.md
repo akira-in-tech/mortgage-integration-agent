@@ -55,9 +55,9 @@ These are targets from Charter Section 17.2, not claims about a deployed product
 
 | Objective | Target | Implemented signal | Current evidence |
 | --- | ---: | --- | --- |
-| Synthetic staging API availability | 99.9% monthly | HTTP server request count and `lending:slo:api_availability:ratio_5m` | Local pipeline only; monthly staging window unmeasured |
-| Non-workflow API latency | p95 below 500 ms | HTTP request-duration histogram and `lending:slo:api_latency_p95_seconds:5m` | Load profile unexecuted |
-| Workflow-start acknowledgement | p95 below 1 s | `lending_workflow_client_duration_seconds` with `operation=start` | Load profile unexecuted |
+| Synthetic staging API availability | 99.9% monthly | HTTP server request count and `lending:slo:api_availability:ratio_5m` | Not a monthly measurement, but one real data point exists (2026-08-29, `staging-drill.yml` `failure-recovery`): killing the one running api task produced a real ALB outage of 40s (t+26s to t+66s after the kill) before automatic recovery. See `docs/DEVELOPMENT_LOG.md`'s M7-025 entry. |
+| Non-workflow API latency | p95 below 500 ms | HTTP request-duration histogram and `lending:slo:api_latency_p95_seconds:5m` | Real result, 2026-08-29 (`staging-drill.yml` `load`, k6, 20 VUs): overall p95 9.2ms, `/health/ready` (real DB round-trip per request) p95 9.6ms — well under target. Scope limit: only the two unauthenticated `/health/*` endpoints were load-tested, not the full non-workflow REST/GraphQL surface (that needs a synthetic authenticated tenant, a separate task). |
+| Workflow-start acknowledgement | p95 below 1 s | `lending_workflow_client_duration_seconds` with `operation=start` | Load profile unexecuted — not covered by the health-endpoint-only load drill above |
 | Provider retry/fallback duplicate effect | 0 | Durable intent/audit evidence; unknown-outcome metric and alert | Release fault corpus required; not inferred from HTTP metrics |
 | Protected communication without approval | 0 | Durable communication/audit evidence | Release corpus required |
 | Agent effect without budget/deadline authority | 0 | Budget reservation transition/failure metrics plus durable ledger evidence | Release corpus required |
@@ -100,6 +100,10 @@ Prometheus recording rules live in `observability/slo-rules.yaml`; alert rules l
 1. Use the Agent Budget Operations queue to distinguish exhaustion, deadline, version conflict, and unknown reservation.
 2. Do not increase a limit merely to clear an alert. Confirm tenant authority and expected cost first.
 3. Reviewer commit/release actions require evidence notes; unknown provider costs remain reserved until reconciled.
+
+## Backup and restore
+
+RDS automated backups are enabled (`backup_retention_period = 1`, capped by this AWS account's free-tier restrictions — see `terraform/staging/rds.tf`). The snapshot/restore mechanism itself was drilled for real on 2026-08-29 (`staging-drill.yml` `backup-restore`): a real snapshot (`mortgage-agent-staging-drill-20260829091710`) took ~3m33s to become available; restoring it into a separate temporary instance took ~6m40s; a real query against the restored instance (`SELECT COUNT(*) FROM typeorm_migrations`, run via a one-off ECS task) confirmed 45 real migration records present — schema and applied-migration history both survived intact. The temporary instance and the drill snapshot were both torn down afterward and independently confirmed gone. Full detail in `docs/DEVELOPMENT_LOG.md`'s M7-025 entry. This proves the snapshot/restore mechanism works, not an application-level disaster-recovery procedure (re-pointing the app at a restored instance, DNS/connection-string cutover) — that remains a separate, unbuilt exercise.
 
 ## Production replacement boundary
 

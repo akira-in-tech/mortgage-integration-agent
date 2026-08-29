@@ -11198,7 +11198,13 @@ Phase 1 is live and verified. Phase 2 (Keycloak, the deployed console, load/soak
 
 ### Status
 
-Built and structurally validated (`terraform fmt`/`validate` for the two new Terraform outputs and the new IAM permission statement, YAML parses, the k6 script's syntax checked with `node --check`, the k6 v2.2.0 Linux binary's checksum verified against the real release checksums file). **Not yet run for real against the live staging environment** — same honest boundary M7-024's own entry drew before its first real `deploy-staging.yml` run. This section is updated with real results once each of the three drills has actually executed.
+**Live and run for real, all three drills, against the real staging environment on 2026-08-29.** Results:
+
+- **Load**: 55,128 requests over 5 real minutes at 20 VUs (183.7 req/s). `/health/live`: 22,195 requests, 1 failure (an isolated blip, 0.0045%). `/health/ready` (real `SELECT 1` per request): 32,933 requests, 0 failures. Latency: overall p95 9.2ms, `/health/ready` p95 9.6ms — both roughly 50x better than the 500ms target. All k6 thresholds passed.
+- **Failure-recovery**: killed the one running `api` task. The ALB kept returning 200 for 26s (in-flight requests/deregistration grace period), then a real outage began — 40 real seconds of 503s (t+26s to t+66s) before ECS's replacement task passed health checks and traffic resumed.
+- **Backup/restore**: a real snapshot (`mortgage-agent-staging-drill-20260829091710`) took ~3m33s to become available. Restoring it into a separate temporary instance took ~6m40s. A real query against the restored instance (`SELECT COUNT(*) FROM typeorm_migrations`, run via a one-off ECS task) returned 45 — real schema and migration history survived intact. Teardown completed and was independently re-verified after the run (see "A false alarm, corrected" below).
+
+Getting there took 4 more real, evidence-based IAM fixes and one real operational mistake — recorded below, the same honesty standard M7-024 set.
 
 ### What this closes (partially)
 
@@ -11225,27 +11231,32 @@ The user was asked to choose the next Section 29 item 6 sub-task after M7-024 we
 
 The backup/restore drill's verification step passes the RDS master password to the one-off ECS task as a plain `environment` override in the `RunTask` API call, not through the task definition's own `secrets` field (which would need a dedicated, dynamically-updated Secrets Manager secret just for this internal one-off check). That means the password is visible to anyone with IAM access to view this specific `RunTask` call's parameters or `DescribeTasks` output for that one task — a narrower audience than M7-024's own plaintext-environment mistake (which would have been visible to anyone with the much more common `ecs:DescribeTaskDefinition` permission, since that mistake would have lived in the long-lived task definition itself, not a one-off run's override). The value is masked in the GitHub Actions log (`::add-mask::`) either way. Judged this a proportionate trade-off for a short-lived internal verification step rather than building a whole extra Secrets Manager secret lifecycle (create with a placeholder, update once the restored endpoint is known, delete) — but recording the real trade-off here rather than being quiet about it.
 
+### Real bugs found actually running the drills
+
+- **Terraform outputs don't exist in remote state until a real `apply` runs.** The four new outputs (`app_security_group_id`, etc.) were added in the same commit as the drill workflow, but nothing had run `terraform apply` against `terraform/staging` since — `terraform output -raw rds_security_group_id` failed with "Output not found" on the first backup-restore attempt. Fixed by triggering one real `deploy-staging.yml` run (a safe, outputs-only state change; no resource was recreated) before retrying the drill. An avoidable self-inflicted delay, recorded honestly rather than smoothed over.
+- **`ecs:ListTasks` needs the `container-instance` resource type.** The failure-recovery drill's first real attempt got a real `AccessDeniedException` naming `arn:aws:ecs:...:container-instance/mortgage-agent-staging/*` — this action was already granted, but IAM checks it against a resource type Fargate doesn't even really have (container instances are an EC2-launch-type concept), and our policy had never granted anything on that resource type. Added it.
+- **`rds:RestoreDBInstanceFromDBSnapshot` needs the `subgrp` resource too.** The first real restore attempt failed with `AccessDenied` naming the DB subnet group's ARN, not just the snapshot/instance ARNs already granted — because `--db-subnet-group-name` is passed explicitly. Added `subgrp:mortgage-agent-staging*` to the `RdsSnapshotDrill` statement.
+- **A false alarm, corrected.** Right after the successful backup/restore run, `aws rds describe-db-snapshots` showed one snapshot still named after the drill instance (`rds:mortgage-agent-staging-restore-drill-...`) — looked like a real orphaned resource the teardown missed. Re-checked before acting on it: a follow-up `describe-db-snapshots` a minute later showed it gone, and `describe-db-instance-automated-backups` showed nothing tied to the drill instance at all. What was actually observed was AWS's own async cleanup of the deleted instance's automated backup, caught mid-transition, not a real leak. Corrected the claim immediately rather than letting a wrong "found a bug" stand — the real, re-verified state is clean, confirmed by directly querying AWS again rather than trusting the first read.
+
 ### Verification
 
 ```text
-terraform fmt -check -diff / terraform validate — clean, terraform/staging
-  (new outputs) and terraform/bootstrap (new IAM statement)
-node -e (yaml.parse) — staging-drill.yml parses correctly
-node --check — load-testing/staging-health.js has valid syntax
-  (the k6 module resolution itself, e.g. `k6/http`, only exists inside
-  the real k6 binary, not plain Node - this checks JS syntax only)
-sha256sum -c — the k6 v2.2.0 linux-amd64 release binary's checksum
-  verified against the real checksums file grafana/k6 publishes for
-  that release, the same verify-before-trust pattern M7-021 used for
-  gitleaks
+terraform fmt -check -diff / terraform validate — clean throughout
+node -e (yaml.parse) / node --check — clean throughout
+sha256sum -c — k6 v2.2.0 linux-amd64 binary checksum verified against
+  the real checksums file grafana/k6 publishes for that release
 
-Not yet run: an actual `staging-drill.yml` execution for each of the
-three drills. This section will be updated with the real k6 summary
-(p95/p99 latency, error rate), the real snapshot id and restore
-duration and verification query result, and the real measured
-failure-recovery outage window, once each has actually run.
+Real, live results (2026-08-29), not structural proxies:
+- staging-drill.yml `load`: real k6 run against the real ALB, thresholds
+  passed, artifact `staging-load-drill-summary` uploaded
+- staging-drill.yml `failure-recovery`: real ecs:StopTask, real ALB
+  polling, a real measured 40s outage window
+- staging-drill.yml `backup-restore`: real snapshot, real restore into
+  a temporary instance, real verification query (45 migrations found),
+  real teardown, independently re-confirmed clean by directly querying
+  AWS afterward (not just trusting the workflow's own "confirm" step)
 ```
 
 ### Next safe step
 
-Trigger each of the three drills for real, one at a time, and update this entry and `docs/OPERATIONS.md`'s SLO table with the real, dated results — not claimed as done until that happens.
+`docs/OPERATIONS.md`'s SLO table and its new "Backup and restore" section are updated with these real, dated results. Load/backup-restore/failure-recovery for Charter Section 29 item 6 are done. What remains open in that item: Keycloak/console deployment (needs a real domain) and SBOM/build-provenance attestation — neither started, and neither should be assumed as the next task without asking.
