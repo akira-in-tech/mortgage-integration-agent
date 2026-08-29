@@ -273,9 +273,16 @@ resource "aws_ecs_task_definition" "migrate" {
   execution_role_arn       = aws_iam_role.execution.arn
 
   container_definitions = jsonencode([{
-    name    = "migrate"
-    image   = local.ecr_image
-    command = ["npm", "run", "migration:run"]
+    name  = "migrate"
+    image = local.ecr_image
+    # Not `npm run migration:run` - that script hardcodes `-d
+    # src/database/data-source.ts` and runs through ts-node, and this
+    # image's runtime stage has neither the raw src/ tree nor ts-node
+    # (a dev dependency, excluded by `npm ci --omit=dev` in the
+    # Dockerfile). data-source.ts's own entity/migration globs already
+    # match compiled `.js` for exactly this case - just point the plain
+    # typeorm CLI (a real production dependency) at the compiled file.
+    command = ["node", "node_modules/typeorm/cli.js", "migration:run", "-d", "dist/database/data-source.js"]
     # Real DDL rights — migrations run as the admin role, never the
     # restricted mortgage_app role AppRuntimeRole itself creates.
     secrets = [
