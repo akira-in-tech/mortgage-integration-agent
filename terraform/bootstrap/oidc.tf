@@ -167,7 +167,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     effect = "Allow"
     actions = [
       "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:UpdateSecret",
-      "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue",
+      "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecretVersionStage",
       "secretsmanager:DescribeSecret", "secretsmanager:TagResource", "secretsmanager:GetResourcePolicy",
     ]
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:mortgage-agent-staging/*"]
