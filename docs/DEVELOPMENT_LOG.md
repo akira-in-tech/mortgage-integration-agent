@@ -11193,3 +11193,59 @@ No AWS credential of any kind is held by this repository, its CI, or this sessio
 ### Next safe step
 
 Phase 1 is live and verified. Phase 2 (Keycloak, the deployed console, load/soak testing, a real backup/restore drill, a formal failure-recovery exercise, SBOM/build-provenance attestation) is explicitly not started and should not be assumed as the next task — each is a real, separate scope decision the same way this whole item was.
+
+## M7-025: staging operational drills — load/soak, backup/restore, failure-recovery
+
+### Status
+
+Built and structurally validated (`terraform fmt`/`validate` for the two new Terraform outputs and the new IAM permission statement, YAML parses, the k6 script's syntax checked with `node --check`, the k6 v2.2.0 Linux binary's checksum verified against the real release checksums file). **Not yet run for real against the live staging environment** — same honest boundary M7-024's own entry drew before its first real `deploy-staging.yml` run. This section is updated with real results once each of the three drills has actually executed.
+
+### What this closes (partially)
+
+The user was asked to choose the next Section 29 item 6 sub-task after M7-024 went live. Keycloak/console deployment was the first choice, but exploring it surfaced a real architectural blocker: `env.validation.ts` requires `OIDC_ISSUER_URL`/`OIDC_CALLBACK_URL`/`CONSOLE_ORIGIN` to all be HTTPS whenever `NODE_ENV` is staging/production and OIDC is configured, and staging's ALB has no domain — HTTP only, by the user's own earlier explicit choice. Surfaced this before building anything, the same way the Worker/Temporal dependency was surfaced before M7-024's own Terraform was written. The user chose to defer Keycloak/console and do the operational-verification sub-task instead, since it needs no domain.
+
+### Scope, drawn honestly before building
+
+- **Load/soak test** only exercises `GET /health/live` and `GET /health/ready` (`src/health/health.controller.ts`) — the only two unauthenticated, read-only, no-side-effect endpoints in the whole API. Every other route needs a real tenant/bearer token; hammering those with synthetic traffic would leave garbage data in the real staging database, which is a bigger, separate task (seed a dedicated synthetic load-test tenant) — not something to fake here. This measures the API + ALB + RDS-connection layer under load, **not full business-workflow latency** — said plainly wherever these numbers get reported, never claimed as more than what was actually measured.
+- Load is scaled to "confirm basic health under a modest sustained load" (20 VUs, a few minutes), not to find the breaking point of a single `db.t4g.micro` + one Fargate task with no auto-scaling — a capacity/ceiling test is a different, larger exercise.
+- The backup/restore drill verifies the RDS snapshot mechanism itself works end to end (create, restore, real data present) — not an application-level disaster-recovery procedure (re-pointing the app at a restored instance, DNS cutover, etc.), which is a separate, larger exercise this doesn't claim to cover.
+
+### Architecture
+
+- New `.github/workflows/staging-drill.yml`, `workflow_dispatch` with a `drill` choice input (`load` / `backup-restore` / `failure-recovery`) — one drill per run, not bundled, since they take very different amounts of time and each is a deliberate human choice (the backup/restore drill creates a real second RDS instance for the run's duration; the failure-recovery drill causes a real, short availability gap on the one running API task).
+- **Load**: `load-testing/staging-health.js`, a k6 script (single checksum-verified binary, the same pattern M7-021 already established for gitleaks — not an npm devDependency). Two scenarios back to back: pure `/health/live` throughput (no DB touch, a ceiling to compare against), then `/health/ready` under the same concurrency (one real `SELECT 1` per request). k6's own `thresholds` (error rate < 1%, `/health/ready` p95 < 500ms) make a genuinely unhealthy result fail the CI job, not just produce a report nobody reads.
+- **Backup/restore**: real `aws rds create-db-snapshot` → `restore-db-instance-from-db-snapshot` into a separate, temporary instance (`mortgage-agent-staging-restore-drill`) using the same subnet group and the *same* `rds` security group as the live instance (so the restored instance keeps the identical "only the app security group can reach it" boundary — no new network path opened). Verified with a real query, not just a successful `apply`: the migrate task definition's own image (it already ships the `pg` driver as a real production dependency) is reused via `aws ecs run-task` with an overridden `command` and `DATABASE_URL` pointing at the restored instance — the same one-off-task idiom `ecs.tf`'s `null_resource.migrate` already uses — running `SELECT COUNT(*) FROM typeorm_migrations` and exiting non-zero if it's empty. Every step after that runs under `if: always()`, including a final explicit check that the temporary instance is really gone, so a failed drill can never quietly leave a second RDS instance billing.
+- **Failure-recovery**: `aws ecs stop-task` against the one running `api` task (a real, short availability gap — `desired_count=1`, not a simulation), then polls the real ALB. Measures the real outage window, not time-since-stop-task: the first non-200 response marks when the outage actually started (there can be a brief grace period before the ALB stops routing to the killed task), and recovery time is measured from there to the next real 200 — a script that just measured "time since I ran the kill command" would overstate how bad the gap looks by counting a window where the service might still have been fine.
+
+### IAM
+
+`terraform/bootstrap/oidc.tf`'s `Rds` statement already had everything the failure-recovery drill needs (`ecs:StopTask`, `ecs:DescribeTasks`, `ecs:DescribeServices` were already granted for M7-024's own migration-task orchestration). Backup/restore needed four new actions this deploy role never had before — added as a new `RdsSnapshotDrill` statement: `rds:CreateDBSnapshot`, `rds:DescribeDBSnapshots`, `rds:RestoreDBInstanceFromDBSnapshot`, `rds:DeleteDBSnapshot`, scoped to the same `mortgage-agent-staging*` resource-name prefix pattern the rest of the RDS permissions already use. Four new Terraform outputs (`app_security_group_id`, `rds_security_group_id`, `public_subnet_ids`, `rds_db_subnet_group_name`) were added so the drill workflow's plain `aws` CLI calls can read these identifiers the same way the deploy workflow already reads `ecs_cluster_name`/`migrate_task_definition_arn`, rather than trying to re-derive a security group's real name from its Terraform `name_prefix`.
+
+### A real trade-off, disclosed rather than hidden
+
+The backup/restore drill's verification step passes the RDS master password to the one-off ECS task as a plain `environment` override in the `RunTask` API call, not through the task definition's own `secrets` field (which would need a dedicated, dynamically-updated Secrets Manager secret just for this internal one-off check). That means the password is visible to anyone with IAM access to view this specific `RunTask` call's parameters or `DescribeTasks` output for that one task — a narrower audience than M7-024's own plaintext-environment mistake (which would have been visible to anyone with the much more common `ecs:DescribeTaskDefinition` permission, since that mistake would have lived in the long-lived task definition itself, not a one-off run's override). The value is masked in the GitHub Actions log (`::add-mask::`) either way. Judged this a proportionate trade-off for a short-lived internal verification step rather than building a whole extra Secrets Manager secret lifecycle (create with a placeholder, update once the restored endpoint is known, delete) — but recording the real trade-off here rather than being quiet about it.
+
+### Verification
+
+```text
+terraform fmt -check -diff / terraform validate — clean, terraform/staging
+  (new outputs) and terraform/bootstrap (new IAM statement)
+node -e (yaml.parse) — staging-drill.yml parses correctly
+node --check — load-testing/staging-health.js has valid syntax
+  (the k6 module resolution itself, e.g. `k6/http`, only exists inside
+  the real k6 binary, not plain Node - this checks JS syntax only)
+sha256sum -c — the k6 v2.2.0 linux-amd64 release binary's checksum
+  verified against the real checksums file grafana/k6 publishes for
+  that release, the same verify-before-trust pattern M7-021 used for
+  gitleaks
+
+Not yet run: an actual `staging-drill.yml` execution for each of the
+three drills. This section will be updated with the real k6 summary
+(p95/p99 latency, error rate), the real snapshot id and restore
+duration and verification query result, and the real measured
+failure-recovery outage window, once each has actually run.
+```
+
+### Next safe step
+
+Trigger each of the three drills for real, one at a time, and update this entry and `docs/OPERATIONS.md`'s SLO table with the real, dated results — not claimed as done until that happens.

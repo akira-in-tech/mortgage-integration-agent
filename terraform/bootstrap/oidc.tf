@@ -150,6 +150,25 @@ data "aws_iam_policy_document" "deploy_permissions" {
     ]
   }
 
+  # Backup/restore drill (staging-drill.yml): take a real snapshot of the
+  # live instance, restore it into a separate, temporary instance, verify
+  # it, then tear both down. RestoreDBInstanceFromDBSnapshot needs
+  # permission on both the source snapshot and the new instance it
+  # creates - the db:mortgage-agent-staging* pattern above already covers
+  # a temporary "mortgage-agent-staging-restore-drill" identifier.
+  statement {
+    sid    = "RdsSnapshotDrill"
+    effect = "Allow"
+    actions = [
+      "rds:CreateDBSnapshot", "rds:DeleteDBSnapshot", "rds:DescribeDBSnapshots",
+      "rds:RestoreDBInstanceFromDBSnapshot",
+    ]
+    resources = [
+      "arn:aws:rds:*:${data.aws_caller_identity.current.account_id}:db:mortgage-agent-staging*",
+      "arn:aws:rds:*:${data.aws_caller_identity.current.account_id}:snapshot:mortgage-agent-staging*",
+    ]
+  }
+
   # The provider's own "wait until available" polling calls
   # DescribeDBInstances without a specific instance identifier (it
   # filters client-side), which IAM evaluates against the bare `db:*`
