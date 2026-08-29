@@ -25,8 +25,13 @@ resource "aws_db_instance" "this" {
   # security-groups.tf.
   publicly_accessible = false
 
-  backup_retention_period = 3
-  skip_final_snapshot     = true # A synthetic staging database — real backup/restore evidence is a named next step, not this instance's own final snapshot.
+  # This account's free-tier restrictions rejected a 3-day retention
+  # period outright (FreeTierRestrictionError) - 1 day is the most this
+  # account allows without upgrading the plan. Real backup/restore
+  # evidence is a named next step, not this instance's own retention
+  # window.
+  backup_retention_period = 1
+  skip_final_snapshot     = true
   deletion_protection     = false
 
   tags = { Name = local.name }

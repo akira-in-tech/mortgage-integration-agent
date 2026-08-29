@@ -63,13 +63,13 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "NetworkingUnscopable"
     effect = "Allow"
     actions = [
-      "ec2:DescribeVpcs", "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute",
+      "ec2:DescribeVpcs", "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpcAttribute", "ec2:DescribeVpcAttribute",
       "ec2:DescribeSubnets", "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnetAttribute",
       "ec2:DescribeInternetGateways", "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
       "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
       "ec2:DescribeRouteTables", "ec2:CreateRouteTable", "ec2:DeleteRouteTable",
       "ec2:CreateRoute", "ec2:DeleteRoute", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
-      "ec2:DescribeSecurityGroups", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
+      "ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
       "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
       "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
       "ec2:DescribeAvailabilityZones", "ec2:DescribeAccountAttributes",
@@ -92,6 +92,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     actions = [
       "ecr:CreateRepository", "ecr:DeleteRepository", "ecr:DescribeRepositories",
       "ecr:SetRepositoryPolicy", "ecr:GetRepositoryPolicy", "ecr:TagResource",
+      "ecr:ListTagsForResource",
       "ecr:PutLifecyclePolicy", "ecr:GetLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
       "ecr:BatchDeleteImage", "ecr:ListImages", "ecr:DescribeImages",
       "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability",
@@ -114,7 +115,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:DescribeClusters",
       "ecs:CreateService", "ecs:UpdateService", "ecs:DeleteService", "ecs:DescribeServices",
       "ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks", "ecs:ListTasks",
-      "ecs:TagResource", "ecs:UntagResource",
+      "ecs:TagResource", "ecs:UntagResource", "ecs:ListTagsForResource",
     ]
     resources = [
       "arn:aws:ecs:*:${data.aws_caller_identity.current.account_id}:cluster/mortgage-agent-staging*",
@@ -149,13 +150,25 @@ data "aws_iam_policy_document" "deploy_permissions" {
     ]
   }
 
+  # The provider's own "wait until available" polling calls
+  # DescribeDBInstances without a specific instance identifier (it
+  # filters client-side), which IAM evaluates against the bare `db:*`
+  # resource rather than the scoped ARN above - the same
+  # no-identifier-in-the-request situation as LogsUnscopable.
+  statement {
+    sid       = "RdsDescribeUnscopable"
+    effect    = "Allow"
+    actions   = ["rds:DescribeDBInstances"]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "SecretsManager"
     effect = "Allow"
     actions = [
       "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret", "secretsmanager:UpdateSecret",
-      "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue",
-      "secretsmanager:DescribeSecret", "secretsmanager:TagResource",
+      "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecretVersionStage",
+      "secretsmanager:DescribeSecret", "secretsmanager:TagResource", "secretsmanager:GetResourcePolicy",
     ]
     resources = ["arn:aws:secretsmanager:*:${data.aws_caller_identity.current.account_id}:secret:mortgage-agent-staging/*"]
   }
@@ -164,7 +177,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "IamForEcsTaskRoles"
     effect = "Allow"
     actions = [
-      "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole",
+      "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole", "iam:ListRoleTags",
       "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
       "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:ListAttachedRolePolicies",
       "iam:ListRolePolicies",
@@ -188,10 +201,60 @@ data "aws_iam_policy_document" "deploy_permissions" {
     sid    = "LogsForEcs"
     effect = "Allow"
     actions = [
-      "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:DescribeLogGroups",
-      "logs:PutRetentionPolicy", "logs:TagResource",
+      "logs:CreateLogGroup", "logs:DeleteLogGroup",
+      "logs:PutRetentionPolicy", "logs:TagResource", "logs:ListTagsForResource",
     ]
     resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/ecs/mortgage-agent-staging*"]
+  }
+
+  # DescribeLogGroups lists across the whole account/region in one call -
+  # it takes no log group name as input, so CloudWatch Logs does not
+  # support scoping it to a specific log-group ARN (the same "read/list
+  # action with no resource to scope to" situation as NetworkingUnscopable
+  # and EcsUnscopable above).
+  statement {
+    sid       = "LogsUnscopable"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  # Cloud Map (used for Temporal's private-DNS service discovery, since a
+  # Fargate task's own IP changes on every deploy/restart). Namespace and
+  # service create/delete are async - the provider polls GetOperation to
+  # know when they finish, and an operation ID isn't the same resource as
+  # the namespace/service it acted on, so this is scoped by action only.
+  statement {
+    sid    = "ServiceDiscovery"
+    effect = "Allow"
+    actions = [
+      "servicediscovery:CreatePrivateDnsNamespace", "servicediscovery:DeleteNamespace",
+      "servicediscovery:GetNamespace", "servicediscovery:ListNamespaces",
+      "servicediscovery:CreateService", "servicediscovery:UpdateService", "servicediscovery:DeleteService",
+      "servicediscovery:GetService", "servicediscovery:ListServices",
+      "servicediscovery:GetOperation",
+      "servicediscovery:TagResource", "servicediscovery:UntagResource", "servicediscovery:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  # A Cloud Map *private DNS* namespace is backed by an actual Route 53
+  # private hosted zone under the hood - creating one silently also
+  # creates/manages a hosted zone, discovered only by the real
+  # AccessDeniedException this caused. Route 53 hosted zones aren't
+  # scoped to this stack's name (the zone ID is assigned by AWS, not
+  # chosen), so this is Resource "*" the same way the other
+  # no-resource-to-scope-to statements above are.
+  statement {
+    sid    = "Route53ForServiceDiscovery"
+    effect = "Allow"
+    actions = [
+      "route53:CreateHostedZone", "route53:DeleteHostedZone", "route53:GetHostedZone",
+      "route53:ListHostedZones", "route53:ListHostedZonesByName",
+      "route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets",
+      "route53:GetChange", "route53:ChangeTagsForResource", "route53:ListTagsForResource",
+    ]
+    resources = ["*"]
   }
 
   statement {

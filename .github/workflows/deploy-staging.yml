@@ -43,15 +43,6 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Build and push the image (tagged with this commit's SHA - never "latest")
-        env:
-          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
-        run: |
-          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
-            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
-          docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
-          docker push "$ECR_REPOSITORY:${{ github.sha }}"
-
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
@@ -64,6 +55,60 @@ jobs:
             -backend-config="key=staging/terraform.tfstate" \
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      # A first-ever deploy has no ECR repository yet - it's a resource the
+      # real terraform apply below would normally create, but the image
+      # push step right after this one needs somewhere to push to first.
+      # This used to be solved with `terraform apply -target=...`, which
+      # is explicitly what Terraform's own docs warn isn't for routine
+      # use - running a targeted apply and a full apply back to back in
+      # the same run produced a real, confusing "Cycle" error on an
+      # otherwise-correct dependency graph. Doing the idempotent
+      # create-if-missing with a plain AWS CLI call, entirely outside
+      # Terraform's own state and graph, avoids that class of problem -
+      # the only thing Terraform does with this resource is the one real
+      # import below (a state-only operation, not a partial apply).
+      - name: Ensure the ECR repository exists (plain AWS CLI, outside Terraform, so the image push below has somewhere to push to)
+        run: |
+          if aws ecr describe-repositories --region "${{ vars.AWS_REGION }}" \
+              --repository-names mortgage-agent >/dev/null 2>&1; then
+            echo "ECR repository already exists."
+          else
+            aws ecr create-repository --region "${{ vars.AWS_REGION }}" \
+              --repository-name mortgage-agent --image-tag-mutability IMMUTABLE
+          fi
+
+      - name: Import the ECR repository into Terraform state if it isn't tracked yet
+        working-directory: terraform/staging
+        run: |
+          if terraform state show aws_ecr_repository.app >/dev/null 2>&1; then
+            echo "Already tracked in state."
+          else
+            terraform import \
+              -var="aws_region=${{ vars.AWS_REGION }}" \
+              -var="image_tag=${{ github.sha }}" \
+              aws_ecr_repository.app mortgage-agent
+          fi
+
+      - name: Build and push the image (tagged with this commit's SHA - never "latest")
+        env:
+          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+        run: |
+          # The repository has IMMUTABLE tags on purpose (real supply-chain
+          # protection - a tag can never be silently overwritten once
+          # pushed). That means re-running this workflow for a commit
+          # whose image was already pushed (routine while iterating on
+          # unrelated Terraform/IAM fixes with no new commit) must not
+          # try to push it again - ECR would correctly refuse that.
+          if aws ecr describe-images --region "${{ vars.AWS_REGION }}" \
+              --repository-name mortgage-agent --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
+            echo "Image for ${{ github.sha }} already exists in ECR - skipping build/push."
+          else
+            aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+              | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
+            docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
+            docker push "$ECR_REPOSITORY:${{ github.sha }}"
+          fi
 
       - name: terraform apply
         working-directory: terraform/staging
