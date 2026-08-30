@@ -32,6 +32,11 @@ registerEnumType(ProviderOperationIntentStatus, {
 @Entity('provider_operation_intents')
 @ObjectType()
 @Index('IDX_provider_operation_intents_case', ['tenantId', 'caseId'])
+@Index(
+  'UQ_provider_operation_intents_logical_effect',
+  ['tenantId', 'providerId', 'capability', 'logicalOperationKey'],
+  { unique: true },
+)
 export class ProviderOperationIntent {
   @Field(() => ID)
   @PrimaryGeneratedColumn('uuid')
@@ -64,9 +69,21 @@ export class ProviderOperationIntent {
   @Column({ type: 'varchar', length: 200 })
   idempotencyKey!: string;
 
+  /** Stable caller-owned identity for one logical external effect across Temporal retries and process restarts. */
+  @Column({ type: 'varchar', length: 200 })
+  logicalOperationKey!: string;
+
   @Field(() => ID)
   @Column({ type: 'uuid' })
   authorizationGrantId!: string;
+
+  /** Persisted before a successful normalized result is exposed, enabling safe replay without a second provider submission. */
+  @Column({ type: 'jsonb', nullable: true })
+  providerReceipt!: unknown | null;
+
+  /** Canonical normalized result returned on a replay of an already-succeeded logical operation. */
+  @Column({ type: 'jsonb', nullable: true })
+  normalizedFinding!: unknown | null;
 
   @Field(() => ProviderOperationIntentStatus)
   @Column({

@@ -22,6 +22,7 @@ describeOrSkip('ProviderOperationIntentService', () => {
     capability: ProviderCapability.INCOME,
     effectClass: 'REUSABLE_LOOKUP' as const,
     authorizationGrantId: '44444444-4444-4444-4444-444444444444',
+    logicalOperationKey: 'provider-operation-intent-service-spec',
     requestPayloadForFingerprint: { borrowerId: 'borrower-intent-spec' },
   };
 
@@ -46,8 +47,11 @@ describeOrSkip('ProviderOperationIntentService', () => {
     }
   });
 
-  it('prepare() persists a PREPARED intent with a sha256 fingerprint and a fresh idempotency key', async () => {
-    const intent = await service.prepare(baseInput);
+  it('prepare() persists a PREPARED intent with a sha256 fingerprint and a stable idempotency key', async () => {
+    const intent = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(intent.id);
 
     expect(intent).toMatchObject({
@@ -65,21 +69,28 @@ describeOrSkip('ProviderOperationIntentService', () => {
     );
   });
 
-  it('prepare() produces the same fingerprint for the same request payload and a different one for a different payload', async () => {
-    const first = await service.prepare(baseInput);
+  it('prepare() reuses one intent/idempotency key for the same logical payload and rejects changed payload reuse', async () => {
+    const logicalOperationKey = randomUUID();
+    const first = await service.prepare({ ...baseInput, logicalOperationKey });
     intentIds.push(first.id);
-    const second = await service.prepare(baseInput);
-    intentIds.push(second.id);
-    const third = await service.prepare({
+    const second = await service.prepare({
       ...baseInput,
-      requestPayloadForFingerprint: { borrowerId: 'a-different-borrower' },
+      logicalOperationKey,
+      requestPayloadForFingerprint: {
+        borrowerId: 'borrower-intent-spec',
+      },
     });
-    intentIds.push(third.id);
 
     expect(second.requestFingerprint).toBe(first.requestFingerprint);
-    expect(third.requestFingerprint).not.toBe(first.requestFingerprint);
-    // Each prepare() is still a distinct attempt row with its own identity.
-    expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    expect(second.id).toBe(first.id);
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    await expect(
+      service.prepare({
+        ...baseInput,
+        logicalOperationKey,
+        requestPayloadForFingerprint: { borrowerId: 'a-different-borrower' },
+      }),
+    ).rejects.toThrow(/reused with a changed/);
   });
 
   it('markDispatched/markSucceeded/markFailedFinal/markOutcomeUnknown each persist the expected state transition', async () => {
@@ -87,31 +98,54 @@ describeOrSkip('ProviderOperationIntentService', () => {
     const stateOf = async (id: string) =>
       (await repo.findOneByOrFail({ id })).state;
 
-    const dispatched = await service.prepare(baseInput);
+    const dispatched = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(dispatched.id);
     await service.markDispatched(baseInput.tenantId, dispatched.id);
     expect(await stateOf(dispatched.id)).toBe('DISPATCHED');
 
-    const succeeded = await service.prepare(baseInput);
+    const succeeded = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(succeeded.id);
-    await service.markSucceeded(baseInput.tenantId, succeeded.id);
+    await service.markDispatched(baseInput.tenantId, succeeded.id);
+    await service.markSucceeded(
+      baseInput.tenantId,
+      succeeded.id,
+      { status: 'COMPLETE' },
+      { monthlyIncome: 1000 },
+    );
     expect(await stateOf(succeeded.id)).toBe('SUCCEEDED');
 
-    const failedFinal = await service.prepare(baseInput);
+    const failedFinal = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(failedFinal.id);
     await service.markFailedFinal(baseInput.tenantId, failedFinal.id);
     expect(await stateOf(failedFinal.id)).toBe('FAILED_FINAL');
 
-    const outcomeUnknown = await service.prepare(baseInput);
+    const outcomeUnknown = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(outcomeUnknown.id);
+    await service.markDispatched(baseInput.tenantId, outcomeUnknown.id);
     await service.markOutcomeUnknown(baseInput.tenantId, outcomeUnknown.id);
     expect(await stateOf(outcomeUnknown.id)).toBe('OUTCOME_UNKNOWN');
   });
 
   it('markReconciling() persists the RECONCILING state', async () => {
     const repo = dataSource.getRepository(ProviderOperationIntent);
-    const intent = await service.prepare(baseInput);
+    const intent = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(intent.id);
+    await service.markDispatched(baseInput.tenantId, intent.id);
     await service.markOutcomeUnknown(baseInput.tenantId, intent.id);
 
     await service.markReconciling(baseInput.tenantId, intent.id);
@@ -121,10 +155,28 @@ describeOrSkip('ProviderOperationIntentService', () => {
     );
   });
 
+  it('rejects a late state transition that would regress a terminal result', async () => {
+    const intent = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
+    intentIds.push(intent.id);
+    await service.markDispatched(baseInput.tenantId, intent.id);
+    await service.markSucceeded(baseInput.tenantId, intent.id, {}, {});
+
+    await expect(
+      service.markOutcomeUnknown(baseInput.tenantId, intent.id),
+    ).rejects.toThrow(/cannot transition from SUCCEEDED/);
+  });
+
   it('resolveManually() records a real human resolution from OUTCOME_UNKNOWN, and rejects resolving an intent that already has a real terminal outcome', async () => {
     const repo = dataSource.getRepository(ProviderOperationIntent);
-    const intent = await service.prepare(baseInput);
+    const intent = await service.prepare({
+      ...baseInput,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(intent.id);
+    await service.markDispatched(baseInput.tenantId, intent.id);
     await service.markOutcomeUnknown(baseInput.tenantId, intent.id);
 
     await service.resolveManually(
@@ -159,18 +211,30 @@ describeOrSkip('ProviderOperationIntentService', () => {
     const tenantId = randomUUID();
     const input = { ...baseInput, tenantId };
 
-    const unclear = await service.prepare(input);
+    const unclear = await service.prepare({
+      ...input,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(unclear.id);
+    await service.markDispatched(tenantId, unclear.id);
     await service.markOutcomeUnknown(tenantId, unclear.id);
 
-    const beingChecked = await service.prepare(input);
+    const beingChecked = await service.prepare({
+      ...input,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(beingChecked.id);
+    await service.markDispatched(tenantId, beingChecked.id);
     await service.markOutcomeUnknown(tenantId, beingChecked.id);
     await service.markReconciling(tenantId, beingChecked.id);
 
-    const alreadyAnswered = await service.prepare(input);
+    const alreadyAnswered = await service.prepare({
+      ...input,
+      logicalOperationKey: randomUUID(),
+    });
     intentIds.push(alreadyAnswered.id);
-    await service.markSucceeded(tenantId, alreadyAnswered.id);
+    await service.markDispatched(tenantId, alreadyAnswered.id);
+    await service.markSucceeded(tenantId, alreadyAnswered.id, {}, {});
 
     const results = await service.listNeedingReconciliation(tenantId);
 

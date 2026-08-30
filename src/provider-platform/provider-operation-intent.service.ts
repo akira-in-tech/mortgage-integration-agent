@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import { createHash, randomUUID } from 'node:crypto';
 import { ProviderOperationIntent as ProviderOperationIntentEntity } from '../database/entities/provider-operation-intent.entity';
 import {
@@ -21,8 +21,39 @@ export interface PrepareIntentInput {
   capability: ProviderCapability;
   effectClass: ProviderEffectClass;
   authorizationGrantId: string;
+  /** Stable for one logical effect across retries; must change for a genuinely new provider operation. */
+  logicalOperationKey: string;
   /** Content that makes this request logically unique — hashed into `requestFingerprint`, never stored raw (Section 11.5). */
   requestPayloadForFingerprint: Record<string, unknown>;
+}
+
+export class ProviderIntentConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderIntentConflictError';
+  }
+}
+
+export class ProviderIntentTransitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderIntentTransitionError';
+  }
+}
+
+/** JSON canonicalization makes semantically identical object payloads hash identically even when key insertion order differs. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function toIntentValue(
@@ -37,16 +68,21 @@ function toIntentValue(
     effectClass: entity.effectClass as ProviderEffectClass,
     requestFingerprint: entity.requestFingerprint,
     idempotencyKey: entity.idempotencyKey,
+    logicalOperationKey: entity.logicalOperationKey,
     authorizationGrantId: entity.authorizationGrantId,
     state: entity.state as unknown as ProviderOperationIntent['state'],
+    providerReceipt: entity.providerReceipt ?? undefined,
+    normalizedFinding: entity.normalizedFinding ?? undefined,
   };
 }
 
 /**
  * Section 11.5: "The platform persists the operation intent before
- * dispatch." One row per real attempt — `prepare()` is called before the
- * adapter's `submit()` runs; the `mark*()` methods record the real
- * outcome once known. `CANCELLED` is declared (matching the charter's
+ * dispatch." One row per logical effect — `prepare()` reuses it across
+ * workflow retries, rejects a changed request under the same logical key,
+ * and preserves one provider idempotency key. The `mark*()` methods use
+ * compare-and-swap state transitions so a late writer cannot regress a
+ * terminal result. `CANCELLED` is declared (matching the charter's
  * full state enum) but nothing in this codebase transitions an intent
  * into it yet — no cancellation caller exists (Known gap, honestly
  * undriven rather than faked; `cancel()` is optional on `ProviderAdapter`
@@ -62,72 +98,147 @@ export class ProviderOperationIntentService {
 
   async prepare(input: PrepareIntentInput): Promise<ProviderOperationIntent> {
     const requestFingerprint = createHash('sha256')
-      .update(JSON.stringify(input.requestPayloadForFingerprint))
+      .update(canonicalJson(input.requestPayloadForFingerprint))
       .digest('hex');
     const entity = await runInTenantContext(
       this.dataSource,
       input.tenantId,
-      (manager) => {
+      async (manager) => {
         const repo = manager.getRepository(ProviderOperationIntentEntity);
-        return repo.save(
-          repo.create({
-            tenantId: input.tenantId,
-            caseId: input.caseId,
-            providerId: input.providerId,
-            capability: input.capability as unknown as ProviderCapabilityStatus,
-            effectClass: input.effectClass,
-            requestFingerprint,
-            idempotencyKey: randomUUID(),
-            authorizationGrantId: input.authorizationGrantId,
-          }),
-        );
+        const identity = {
+          tenantId: input.tenantId,
+          providerId: input.providerId,
+          capability: input.capability as unknown as ProviderCapabilityStatus,
+          logicalOperationKey: input.logicalOperationKey,
+        };
+        let existing = await repo.findOneBy(identity);
+        if (!existing) {
+          try {
+            return await repo.save(
+              repo.create({
+                ...identity,
+                caseId: input.caseId,
+                effectClass: input.effectClass,
+                requestFingerprint,
+                idempotencyKey: randomUUID(),
+                authorizationGrantId: input.authorizationGrantId,
+                providerReceipt: null,
+                normalizedFinding: null,
+              }),
+            );
+          } catch (error) {
+            // A concurrent retry can win the unique insert. Reloading the
+            // winner turns that race into the same deterministic reuse path.
+            if ((error as { code?: string }).code !== '23505') {
+              throw error;
+            }
+            existing = await repo.findOneByOrFail(identity);
+          }
+        }
+        if (
+          existing.caseId !== input.caseId ||
+          existing.requestFingerprint !== requestFingerprint ||
+          existing.effectClass !== input.effectClass
+        ) {
+          throw new ProviderIntentConflictError(
+            `logical provider operation "${input.logicalOperationKey}" was reused with a changed case, payload, or effect class`,
+          );
+        }
+        if (existing.state === ProviderOperationIntentStatus.PREPARED) {
+          await repo.update(
+            { id: existing.id, state: ProviderOperationIntentStatus.PREPARED },
+            { authorizationGrantId: input.authorizationGrantId },
+          );
+          existing.authorizationGrantId = input.authorizationGrantId;
+        }
+        return existing;
       },
     );
     return toIntentValue(entity);
   }
 
-  private setState(
+  private async transition(
     tenantId: string,
     id: string,
+    from: ProviderOperationIntentStatus[],
     state: ProviderOperationIntentStatus,
+    values: Partial<ProviderOperationIntentEntity> = {},
   ): Promise<void> {
-    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
-      await manager
+    await runInTenantContext(this.dataSource, tenantId, async (manager) => {
+      const result = await manager
         .getRepository(ProviderOperationIntentEntity)
-        .update({ id }, { state });
+        .update({ id, tenantId, state: In(from) }, {
+          state,
+          ...values,
+        } as never);
+      if (result.affected !== 1) {
+        const current = await manager
+          .getRepository(ProviderOperationIntentEntity)
+          .findOneBy({ id, tenantId });
+        throw new ProviderIntentTransitionError(
+          `intent ${id} cannot transition from ${current?.state ?? 'NOT_FOUND'} to ${state}`,
+        );
+      }
     });
   }
 
   async markDispatched(tenantId: string, id: string): Promise<void> {
-    await this.setState(tenantId, id, ProviderOperationIntentStatus.DISPATCHED);
-  }
-
-  async markSucceeded(tenantId: string, id: string): Promise<void> {
-    await this.setState(tenantId, id, ProviderOperationIntentStatus.SUCCEEDED);
-  }
-
-  async markFailedFinal(tenantId: string, id: string): Promise<void> {
-    await this.setState(
+    await this.transition(
       tenantId,
       id,
+      [ProviderOperationIntentStatus.PREPARED],
+      ProviderOperationIntentStatus.DISPATCHED,
+    );
+  }
+
+  async markSucceeded(
+    tenantId: string,
+    id: string,
+    providerReceipt: unknown,
+    normalizedFinding: unknown,
+  ): Promise<void> {
+    await this.transition(
+      tenantId,
+      id,
+      [ProviderOperationIntentStatus.DISPATCHED],
+      ProviderOperationIntentStatus.SUCCEEDED,
+      { providerReceipt, normalizedFinding },
+    );
+  }
+
+  async markFailedFinal(
+    tenantId: string,
+    id: string,
+    providerReceipt?: unknown,
+  ): Promise<void> {
+    await this.transition(
+      tenantId,
+      id,
+      [
+        ProviderOperationIntentStatus.PREPARED,
+        ProviderOperationIntentStatus.DISPATCHED,
+      ],
       ProviderOperationIntentStatus.FAILED_FINAL,
+      providerReceipt === undefined ? {} : { providerReceipt },
     );
   }
 
   /** Section 11.5: "After an ambiguous timeout, the state becomes OUTCOME_UNKNOWN." Our synthetic transient-failure injection is this codebase's own analog of that ambiguity. */
   async markOutcomeUnknown(tenantId: string, id: string): Promise<void> {
-    await this.setState(
+    await this.transition(
       tenantId,
       id,
+      [ProviderOperationIntentStatus.DISPATCHED],
       ProviderOperationIntentStatus.OUTCOME_UNKNOWN,
     );
   }
 
   /** `ProviderReconciliationService`'s own transition — an `OUTCOME_UNKNOWN` intent old enough that automatic resolution (this codebase has none — see that service's own comment) won't come; flagged for a human to investigate out of band. */
   async markReconciling(tenantId: string, id: string): Promise<void> {
-    await this.setState(
+    await this.transition(
       tenantId,
       id,
+      [ProviderOperationIntentStatus.OUTCOME_UNKNOWN],
       ProviderOperationIntentStatus.RECONCILING,
     );
   }
@@ -153,16 +264,23 @@ export class ProviderOperationIntentService {
   ): Promise<ProviderOperationIntentEntity> {
     return runInTenantContext(this.dataSource, tenantId, async (manager) => {
       const repo = manager.getRepository(ProviderOperationIntentEntity);
-      const current = await repo.findOneByOrFail({ id, tenantId });
-      if (
-        current.state !== ProviderOperationIntentStatus.OUTCOME_UNKNOWN &&
-        current.state !== ProviderOperationIntentStatus.RECONCILING
-      ) {
-        throw new Error(
-          `intent ${id} is not in a reconcilable state (current: ${current.state})`,
+      const result = await repo.update(
+        {
+          id,
+          tenantId,
+          state: In([
+            ProviderOperationIntentStatus.OUTCOME_UNKNOWN,
+            ProviderOperationIntentStatus.RECONCILING,
+          ]),
+        },
+        { state: outcome, resolvedBy, resolutionNote },
+      );
+      if (result.affected !== 1) {
+        const current = await repo.findOneBy({ id, tenantId });
+        throw new ProviderIntentTransitionError(
+          `intent ${id} is not in a reconcilable state (current: ${current?.state ?? 'NOT_FOUND'})`,
         );
       }
-      await repo.update({ id }, { state: outcome, resolvedBy, resolutionNote });
       return repo.findOneByOrFail({ id });
     });
   }

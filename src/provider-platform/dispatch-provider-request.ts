@@ -1,5 +1,8 @@
 import { ProviderAuthorizationService } from './provider-authorization.service';
-import { ProviderOperationIntentService } from './provider-operation-intent.service';
+import {
+  ProviderIntentConflictError,
+  ProviderOperationIntentService,
+} from './provider-operation-intent.service';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-promotion.service';
@@ -72,6 +75,14 @@ export class ProviderRevalidationError extends Error {
   }
 }
 
+/** A retry found an existing effect whose state makes another submit unsafe. */
+export class ProviderIntentReplayBlockedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderIntentReplayBlockedError';
+  }
+}
+
 export interface DispatchProviderRequestParams {
   tenantId: string;
   caseId: string;
@@ -81,6 +92,8 @@ export interface DispatchProviderRequestParams {
   request: Record<string, unknown>;
   purposeCode: string;
   permittedDataClasses: string[];
+  /** Stable across retries for one logical effect. Defaults to one evidence request per case/capability/purpose. */
+  logicalOperationKey?: string;
   /** Section 11.5's field-bound authorization (M5-028) — see `ProviderAuthorizationGrant`'s own entity comment. Unset means every current caller's existing behavior: the normalized finding returns unfiltered. */
   permittedFields?: string[];
 }
@@ -227,8 +240,26 @@ export async function dispatchProviderRequest<TFinding>(
           capability: params.capability,
           effectClass: adapter.operation.effectClass,
           authorizationGrantId: grant.id,
+          logicalOperationKey:
+            params.logicalOperationKey ??
+            `${params.caseId}:${params.capability}:${params.purposeCode}`,
           requestPayloadForFingerprint: params.request,
         });
+
+        if (intent.state === 'SUCCEEDED') {
+          if (intent.normalizedFinding === undefined) {
+            throw new ProviderIntentReplayBlockedError(
+              `logical provider operation "${intent.logicalOperationKey}" already succeeded but has no replayable normalized finding`,
+            );
+          }
+          telemetryOutcome = 'succeeded';
+          return intent.normalizedFinding as TFinding;
+        }
+        if (intent.state !== 'PREPARED') {
+          throw new ProviderIntentReplayBlockedError(
+            `logical provider operation "${intent.logicalOperationKey}" is ${intent.state}; another provider submission is blocked pending reconciliation or a new logical operation key`,
+          );
+        }
 
         const revalidation = await deps.authorizationService.revalidate(
           grant.id,
@@ -246,14 +277,14 @@ export async function dispatchProviderRequest<TFinding>(
         }
 
         await deps.intentService.markDispatched(intent.tenantId, intent.id);
+        let receipt: SynchronousProviderReceipt<unknown> | undefined;
         try {
-          const receipt = (await adapter.submit(
+          receipt = (await adapter.submit(
             params.request,
             intent,
             revalidation.grant,
             { tenantId: params.tenantId, caseId: params.caseId },
           )) as SynchronousProviderReceipt<unknown>;
-          await deps.intentService.markSucceeded(intent.tenantId, intent.id);
           const finding = adapter.normalize(receipt.payload, {
             tenantId: params.tenantId,
             caseId: params.caseId,
@@ -263,17 +294,34 @@ export async function dispatchProviderRequest<TFinding>(
           // params.permittedFields directly, the same "trust the revalidated
           // state, not the original request" discipline revalidate() itself
           // exists for.
-          telemetryOutcome = 'succeeded';
-          return filterToPermittedFields(
+          const filteredFinding = filterToPermittedFields(
             finding,
             revalidation.grant.permittedFields,
           );
+          await deps.intentService.markSucceeded(
+            intent.tenantId,
+            intent.id,
+            receipt,
+            filteredFinding,
+          );
+          telemetryOutcome = 'succeeded';
+          return filteredFinding;
         } catch (error) {
           if (error instanceof SyntheticProviderRejectionError) {
             telemetryOutcome = 'provider_rejected';
             await deps.intentService.markFailedFinal(
               intent.tenantId,
               intent.id,
+            );
+          } else if (receipt !== undefined) {
+            // The provider completed, but its receipt could not be normalized.
+            // This is a terminal platform-contract failure, not an ambiguous
+            // provider outcome and never a reason to submit the effect again.
+            telemetryOutcome = 'provider_rejected';
+            await deps.intentService.markFailedFinal(
+              intent.tenantId,
+              intent.id,
+              receipt,
             );
           } else {
             telemetryOutcome = 'outcome_unknown';
@@ -310,3 +358,5 @@ export async function dispatchProviderRequest<TFinding>(
     );
   }
 }
+
+export { ProviderIntentConflictError };

@@ -119,8 +119,11 @@ export interface ProviderOperationIntent {
   effectClass: ProviderEffectClass;
   requestFingerprint: string;
   idempotencyKey: string;
+  logicalOperationKey: string;
   authorizationGrantId: string;
   state: ProviderOperationIntentState;
+  providerReceipt?: unknown;
+  normalizedFinding?: unknown;
 }
 
 /**

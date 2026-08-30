@@ -11535,3 +11535,49 @@ git diff --check
 ### Remaining boundary
 
 This is a repository-truth and quality-gate repair only. It does not claim that the provider, privacy, Agent-model, evaluation, console-recovery, or external production-approval gaps in the following slices are complete.
+
+## M7-031: replay-safe provider effects and guarded intent state transitions
+
+### Status
+
+Implemented and verified against real local PostgreSQL, including the full clean-database migration chain.
+
+### Problem
+
+`ProviderOperationIntentService.prepare()` previously created a new row and random idempotency key on every activity retry. State writes were unconditional, so a late result could regress a terminal state. `dispatchProviderRequest()` also marked an intent `SUCCEEDED` before normalizing the provider payload, then classified a normalization failure as `OUTCOME_UNKNOWN`. Those behaviors were safe enough for synchronous read-only simulators but did not satisfy the production adapter contract.
+
+### Implementation
+
+- Added a caller-stable `logicalOperationKey`, unique per tenant/provider/capability, plus canonical JSON request hashing. Reuse with an identical payload returns the same row and idempotency key; reuse with a changed case, payload, or effect class fails closed.
+- Persisted `providerReceipt` and `normalizedFinding`. A retry of a completed operation returns the stored normalized result without a second provider submission.
+- Replaced unconditional state writes with compare-and-swap transitions: `PREPARED -> DISPATCHED -> terminal`, `OUTCOME_UNKNOWN -> RECONCILING`, and manual reconciliation from only the two reconcilable states.
+- Moved `SUCCEEDED` after normalization and field filtering. If the provider returned but normalization failed, the receipt is retained and the intent becomes terminal instead of being called an ambiguous provider outcome.
+- Added non-retryable Temporal classification for logical-key conflicts and replay-blocked unresolved effects.
+- Added migration `1787179000000-ProviderIntentReplaySafety`, including safe backfill of pre-existing rows with their own ids so historical effects are never incorrectly coalesced.
+
+### Tests and evidence
+
+```text
+Full scratch-database migration chain plus provider suites:
+  4 suites passed
+  75 tests passed
+
+Coverage added for:
+- identical logical replay returns the persisted result and one intent row;
+- changed-payload reuse is rejected;
+- a late terminal-state regression is rejected;
+- new columns/index apply and revert cleanly.
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+```
+
+### Local database note
+
+The long-lived local database had been created through TypeORM synchronization and had no migration-history rows, so a normal `migration:run` tried to replay the initial migration and correctly failed on an existing enum. The new migration's exact SQL was applied once to that local schema (432 existing intent rows received unique historical keys). The disposable scratch database then proved the complete 49-migration sequence from empty state and the new migration's down path.
+
+### Remaining boundary
+
+Receipts/results are still plain JSONB until the field/object-encryption slice. Current adapters remain synchronous; automatic polling, callbacks, cancellation, and cross-provider fallback are separate contract-suite work.

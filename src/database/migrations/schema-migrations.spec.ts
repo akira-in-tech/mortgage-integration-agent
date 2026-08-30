@@ -206,6 +206,37 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts provider intent replay safety without removing prior intent state', async () => {
+    const replayColumns: Array<{ column_name: string; is_nullable: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name, is_nullable FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+           AND column_name IN ('logicalOperationKey', 'providerReceipt', 'normalizedFinding')
+         ORDER BY column_name`,
+      );
+    expect(replayColumns).toEqual([
+      { column_name: 'logicalOperationKey', is_nullable: 'NO' },
+      { column_name: 'normalizedFinding', is_nullable: 'YES' },
+      { column_name: 'providerReceipt', is_nullable: 'YES' },
+    ]);
+    const replayIndexes: Array<{ indexname: string }> =
+      await scratchDataSource.query(
+        `SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = 'UQ_provider_operation_intents_logical_effect'`,
+      );
+    expect(replayIndexes).toHaveLength(1);
+
+    await scratchDataSource.undoLastMigration();
+
+    const replayColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+         AND column_name IN ('logicalOperationKey', 'providerReceipt', 'normalizedFinding')`,
+    );
+    expect(replayColumnsAfter).toEqual([]);
+  });
+
   it('reverts the provider promotion manifest declaredCommandClass column, dropping only that column', async () => {
     const columnBefore: Array<{ column_name: string; data_type: string }> =
       await scratchDataSource.query(

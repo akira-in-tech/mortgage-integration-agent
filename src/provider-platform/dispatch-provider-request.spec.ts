@@ -262,6 +262,57 @@ describeOrSkip('dispatchProviderRequest', () => {
     expect(grants[0].permittedFields).toEqual(['liquidAssets']);
   });
 
+  it('replays a completed logical operation from its persisted normalized finding without a second provider submission', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    const params = {
+      tenantId,
+      caseId,
+      borrowerSubjectId: 'dispatch-spec-replay-borrower',
+      capability: ProviderCapability.ASSET,
+      request: { borrowerId: 'dispatch-spec-replay-borrower' },
+      purposeCode: 'UNDERWRITING_EVIDENCE',
+      permittedDataClasses: ['ASSET'],
+      logicalOperationKey: 'dispatch-spec-stable-logical-effect',
+    };
+
+    const first = await dispatchProviderRequest(deps(), params);
+    const replay = await dispatchProviderRequest(deps(), params);
+
+    expect(replay).toEqual(first);
+    const intents = await dataSource
+      .getRepository(ProviderOperationIntent)
+      .find({ where: { tenantId } });
+    expect(intents).toHaveLength(1);
+    expect(intents[0].providerReceipt).toBeTruthy();
+    expect(intents[0].normalizedFinding).toEqual(first);
+  });
+
+  it('rejects changed payload reuse under the same logical operation key', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    const base = {
+      tenantId,
+      caseId,
+      borrowerSubjectId: 'dispatch-spec-conflict-borrower',
+      capability: ProviderCapability.ASSET,
+      purposeCode: 'UNDERWRITING_EVIDENCE',
+      permittedDataClasses: ['ASSET'],
+      logicalOperationKey: 'dispatch-spec-conflicting-logical-effect',
+    };
+    await dispatchProviderRequest(deps(), {
+      ...base,
+      request: { borrowerId: 'dispatch-spec-conflict-borrower' },
+    });
+
+    await expect(
+      dispatchProviderRequest(deps(), {
+        ...base,
+        request: { borrowerId: 'changed-borrower' },
+      }),
+    ).rejects.toThrow(/reused with a changed/);
+  });
+
   it('dispatches a real identity-verification request the same way', async () => {
     const tenantId = newTenantId();
     const caseId = randomUUID();

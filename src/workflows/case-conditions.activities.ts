@@ -34,6 +34,8 @@ import { ProviderKillSwitchService } from '../provider-platform/provider-kill-sw
 import { ProviderPromotionService } from '../provider-platform/provider-promotion.service';
 import {
   dispatchProviderRequest,
+  ProviderIntentConflictError,
+  ProviderIntentReplayBlockedError,
   ProviderRevalidationError,
   ProviderDisabledError,
 } from '../provider-platform/dispatch-provider-request';
@@ -179,6 +181,16 @@ async function callProviderWithRetryClassification<T>(
       throw ApplicationFailure.nonRetryable(
         error.message,
         'ProviderAuthorizationRevalidationFailed',
+        providerName,
+      );
+    }
+    if (
+      error instanceof ProviderIntentConflictError ||
+      error instanceof ProviderIntentReplayBlockedError
+    ) {
+      throw ApplicationFailure.nonRetryable(
+        error.message,
+        error.name,
         providerName,
       );
     }
