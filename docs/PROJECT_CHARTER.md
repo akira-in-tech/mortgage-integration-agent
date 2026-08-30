@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.12 |
+| Version | 2.13 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -60,17 +60,16 @@ The repository currently contains verified local vertical slices for:
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks with SSRF/redirect protection at dispatch, deterministic failure scenarios, and a generated TypeScript client;
 - API-client and OIDC authentication (same-origin Authorization Code + PKCE backend-for-frontend session, tenant discovery, and upstream logout propagation), two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
 - a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, and live activity polling;
-- CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, and dependency audits, plus an automated Playwright/axe browser and accessibility gate (a separate credential-gated live-Keycloak browser journey stays opt-in, not enforced by default);
+- CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, dependency audits, Playwright/axe coverage, and the credential-gated live-Keycloak browser journey on every push and pull request;
 - an opt-in local OpenTelemetry stack (Collector, Tempo, Prometheus, Grafana) with SLO recording rules, alerts, a provisioned dashboard, and an operator runbook (`docs/OPERATIONS.md`);
 - no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
 
 The following release boundaries remain open and are not represented as implemented:
 
-- external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage (Section 29 item 4);
+- external policy-source connector mechanisms are implemented; real reviewed source connectors and broader reviewed jurisdiction coverage remain open (Section 29 item 4);
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
 - complete administration and recovery queues (operational replay/cancel/recovery controls are not yet exposed through the console — see M6's own note);
 - a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
-- the provider certification/kill-switch exercise (Section 29 item 6's last piece);
 - production provider adapters, real-data approval, or official underwriting integrations.
 
 Infrastructure as code, deployed synthetic staging, supply-chain scans (SBOM/build-provenance attestation), load/soak evidence, and backup/restore drills are now implemented and live-verified against a real AWS account (M7-024/M7-025/M7-026) — this bullet previously listed them as open, which was accurate when written but is stale now that all of them have real, dated evidence recorded in `docs/DEVELOPMENT_LOG.md`. Downloadable evaluation evidence is also implemented (M7-023).

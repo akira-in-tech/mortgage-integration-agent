@@ -14,7 +14,7 @@ function baseConfig(
   };
   if (
     ['staging', 'production'].includes(String(overrides.NODE_ENV)) &&
-    !Object.hasOwn(overrides, 'APP_DATABASE_URL')
+    !Object.prototype.hasOwnProperty.call(overrides, 'APP_DATABASE_URL')
   ) {
     config.APP_DATABASE_URL =
       'postgresql://mortgage_app@localhost:5432/mortgage_agent';

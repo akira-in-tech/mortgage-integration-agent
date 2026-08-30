@@ -11503,3 +11503,35 @@ Real, against a live local Postgres (2026-08-30):
 ### Next safe step
 
 Same remaining list as M7-028's own "Next safe step" — FAPI 2.0, field/object encryption, the backup subsystem, real US jurisdiction coverage, a reusable adapter contract suite, and the untested failure-mode fixtures — each still a real, separate scope decision, not a quick follow-on. Not assumed without asking first.
+
+## M7-030: repository-wide typecheck and current-state documentation repair
+
+### Status
+
+Implemented and locally verified. This slice closes the six pre-existing TypeScript errors repeatedly disclosed by M7-028/M7-029 and removes current-state statements that became false after later milestones landed.
+
+### Implementation
+
+- Added the required immutable `applicationReceivedAt` fixture input to the two `evaluate_policy` tool tests instead of weakening the production type.
+- Replaced the ES2022-only `Object.hasOwn()` test helper with the ES2021-compatible `Object.prototype.hasOwnProperty.call()` form, preserving the repository's declared TypeScript target.
+- Replaced three string literals in `loan.service.spec.ts` with the shared `LoanDecisionStatus` enum, so the tests exercise the same vocabulary as production.
+- Updated `ProviderCapability`/`ProviderMode` comments to reflect five registered simulator adapters plus the real Plaid authorized-sandbox adapter.
+- Repaired the charter baseline: the live Keycloak CI journey, policy connector mechanism, and kill-switch exercise are no longer described as open. Version advanced from 2.12 to 2.13.
+- Corrected the README's LangGraph description from three tools and missing budget ledgers to the actual four live tools and PostgreSQL-authoritative budget enforcement, while retaining the honest no-model-call boundary.
+
+### Verification
+
+```text
+npx tsc --noEmit
+  passed (the previous six errors are gone)
+npm run lint:check
+  passed
+npm run build
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+This is a repository-truth and quality-gate repair only. It does not claim that the provider, privacy, Agent-model, evaluation, console-recovery, or external production-approval gaps in the following slices are complete.

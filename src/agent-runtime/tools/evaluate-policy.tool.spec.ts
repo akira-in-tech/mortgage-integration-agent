@@ -13,6 +13,7 @@ describe('evaluatePolicyTool', () => {
     jurisdictionCode: 'US-CA',
     productCode: 'CONVENTIONAL_MORTGAGE',
     lifecycleEvent: 'UNDERWRITING_REVIEW',
+    applicationReceivedAt: '2026-01-15T00:00:00.000Z',
   };
 
   it('declares the Section 9.4 registered-tool metadata', () => {
