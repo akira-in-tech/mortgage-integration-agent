@@ -66,11 +66,14 @@ The repository currently contains verified local vertical slices for:
 
 The following release boundaries remain open and are not represented as implemented:
 
-- external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage;
+- external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage (Section 29 item 4);
 - per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
-- complete administration and recovery queues, and downloadable evaluation evidence;
-- infrastructure as code, deployed synthetic staging, supply-chain scans, load/soak evidence, backup/restore drills, and release artifacts;
+- complete administration and recovery queues (operational replay/cancel/recovery controls are not yet exposed through the console — see M6's own note);
+- a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
+- the provider certification/kill-switch exercise (Section 29 item 6's last piece);
 - production provider adapters, real-data approval, or official underwriting integrations.
+
+Infrastructure as code, deployed synthetic staging, supply-chain scans (SBOM/build-provenance attestation), load/soak evidence, and backup/restore drills are now implemented and live-verified against a real AWS account (M7-024/M7-025/M7-026) — this bullet previously listed them as open, which was accurate when written but is stale now that all of them have real, dated evidence recorded in `docs/DEVELOPMENT_LOG.md`. Downloadable evaluation evidence is also implemented (M7-023).
 
 The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPROVED`, `CONDITIONAL`, and `DENIED` labels are not the target product contract and are never formal credit actions.
 
