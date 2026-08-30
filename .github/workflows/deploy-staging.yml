@@ -11,10 +11,16 @@ on:
 
 # id-token: write is what lets this workflow assume an AWS IAM role via
 # OIDC federation — no long-lived AWS access key is stored in this
-# repository at any point, in any secret.
+# repository at any point, in any secret. attestations: write is what
+# lets it record a real SBOM + build provenance attestation (GitHub's
+# own Sigstore-backed attestation store) for the exact image digest
+# that gets deployed - Charter Section 29 item 6's last open piece,
+# supply-chain evidence for the immutable image tags M7-021 already
+# established.
 permissions:
   contents: read
   id-token: write
+  attestations: write
 
 concurrency:
   group: deploy-staging
@@ -90,6 +96,17 @@ jobs:
               aws_ecr_repository.app mortgage-agent
           fi
 
+      # Login unconditionally, before the build/push-or-skip branch below
+      # - the pull step right after this one needs a real ECR session
+      # regardless of which branch runs, including the "already exists,
+      # skip build/push" one.
+      - name: Log in to ECR
+        env:
+          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+        run: |
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
+            | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
+
       - name: Build and push the image (tagged with this commit's SHA - never "latest")
         env:
           ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
@@ -104,11 +121,67 @@ jobs:
               --repository-name mortgage-agent --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
             echo "Image for ${{ github.sha }} already exists in ECR - skipping build/push."
           else
-            aws ecr get-login-password --region "${{ vars.AWS_REGION }}" \
-              | docker login --username AWS --password-stdin "$ECR_REPOSITORY"
             docker build -t "$ECR_REPOSITORY:${{ github.sha }}" .
             docker push "$ECR_REPOSITORY:${{ github.sha }}"
           fi
+
+      # Always pull, even on the "already exists, skip build/push" path
+      # above - the image is guaranteed to be in the runner's local
+      # Docker daemon either way, which is what the SBOM step below and
+      # the digest lookup both need, without requiring separate registry
+      # credentials for either.
+      - name: Pull the image so its real digest and contents are available locally
+        id: image
+        env:
+          ECR_REPOSITORY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+        run: |
+          docker pull "$ECR_REPOSITORY:${{ github.sha }}"
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$ECR_REPOSITORY:${{ github.sha }}" | cut -d'@' -f2)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Real image digest: $digest"
+
+      - name: Generate a real SBOM for the exact deployed image
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      # GitHub's own Sigstore-backed attestation store - tied to this
+      # exact image digest, not the mutable tag. Not pushed to ECR
+      # itself (push-to-registry): ECR's OCI-referrers support for this
+      # is unverified from here, and gh attestation verify below reads
+      # from GitHub's store either way, which is guaranteed to work.
+      - name: Attest build provenance for this exact image digest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+          subject-digest: ${{ steps.image.outputs.digest }}
+
+      - name: Attest the real SBOM for this exact image digest
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: sbom.spdx.json
+
+      # The real check - an attestation the action "succeeded" at
+      # creating is not the same as one that actually verifies. This
+      # pulls both attestations back from GitHub's real attestation API
+      # and cryptographically verifies them against the real pushed
+      # image, the same way anyone downloading this image later could.
+      - name: Really verify both attestations against the pushed image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image_ref="oci://${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent@${{ steps.image.outputs.digest }}"
+          gh attestation verify "$image_ref" --owner ${{ github.repository_owner }} --format json > verify.json
+          echo "Real predicate types verified against the pushed image:"
+          jq -r '.[].verificationResult.statement.predicateType' verify.json | tee predicate-types.txt
+
+          grep -q "slsa.dev/provenance" predicate-types.txt || { echo "No verified build-provenance attestation found" >&2; exit 1; }
+          grep -q "spdx" predicate-types.txt || { echo "No verified SBOM attestation found" >&2; exit 1; }
+          echo "Confirmed: both a real build-provenance attestation and a real SBOM attestation verify against this exact image digest."
 
       - name: terraform apply
         working-directory: terraform/staging
