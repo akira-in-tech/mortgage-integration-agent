@@ -10,6 +10,7 @@ import {
 } from './types';
 import { SyntheticProviderRejectionError } from '../integrations/synthetic-provider-failures';
 import { ConsentService } from '../consent/consent.service';
+import { assertNotStructurallyExcluded } from '../common/structural-exclusions';
 import {
   operationalTelemetry,
   ProviderOutcome,
@@ -137,6 +138,15 @@ export function filterToPermittedFields<T>(
  * `normalize()` — a real asynchronous adapter would need a different
  * dispatch path (poll until terminal, then normalize), not yet built
  * since none exists (Known gap).
+ *
+ * `assertNotStructurallyExcluded()` right after resolving the adapter is
+ * Section 7.5's "production router" checkpoint (M7-028) — the same check
+ * `ProviderRegistryService.register()` already ran once at registration
+ * time, re-run here at the actual dispatch point. Not a redundant
+ * re-statement of the same fact: registration only proves an adapter was
+ * clean *when it registered*; this proves the exact adapter this specific
+ * request is about to reach is still clean *right now*, independent of
+ * whatever path got it into `deps.registry`.
  */
 export async function dispatchProviderRequest<TFinding>(
   deps: DispatchProviderRequestDeps,
@@ -144,6 +154,11 @@ export async function dispatchProviderRequest<TFinding>(
 ): Promise<TFinding> {
   const mode = params.mode ?? 'SIMULATOR';
   const adapter = deps.registry.resolve(params.capability, mode);
+  assertNotStructurallyExcluded({
+    kind: 'provider_adapter',
+    identifier: `${adapter.providerId}/${params.capability}/${mode}`,
+    declaredCommandClass: adapter.structurallyExcludedCommandClass,
+  });
   const telemetryStartedAt = performance.now();
   let telemetryOutcome: ProviderOutcome = 'failed';
 

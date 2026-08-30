@@ -74,4 +74,15 @@ export class ProviderPromotionManifest {
 
   @Column({ type: 'timestamptz', nullable: true })
   validUntil!: Date | null;
+
+  /**
+   * Section 7.5's promotion-manifest validator checkpoint (M7-028): the
+   * same optional, human-attested field `AgentTool`/`ProviderAdapter`
+   * already declare in code — nullable because nothing today declares
+   * one, matching those two fields' own honest default. Checked by
+   * `assertNotStructurallyExcluded()` in `ProviderPromotionService.propose()`
+   * before this row is ever saved.
+   */
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  declaredCommandClass!: string | null;
 }

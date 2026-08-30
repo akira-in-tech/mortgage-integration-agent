@@ -50,6 +50,23 @@ describe('assertNotStructurallyExcluded (Section 2/7.5/16.4)', () => {
     },
   );
 
+  // M7-028: the promotion-manifest validator is its own independent
+  // checkpoint (Section 7.5's "even when... an adapter is technically
+  // certified") — this proves the check works for that kind too, not
+  // just the two kinds that already existed.
+  it.each(STRUCTURALLY_EXCLUDED_COMMAND_CLASSES)(
+    'rejects a provider_promotion_manifest declaring the excluded class %s',
+    (excludedClass) => {
+      expect(() =>
+        assertNotStructurallyExcluded({
+          kind: 'provider_promotion_manifest',
+          identifier: 'synthetic-test-provider/INCOME/SIMULATOR',
+          declaredCommandClass: excludedClass,
+        }),
+      ).toThrow(/structurally excluded/);
+    },
+  );
+
   it('names the offending identifier and command class in the error message', () => {
     expect(() =>
       assertNotStructurallyExcluded({

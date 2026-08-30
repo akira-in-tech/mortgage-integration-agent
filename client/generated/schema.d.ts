@@ -689,6 +689,7 @@ export interface components {
             validFrom: string;
             /** Format: date-time */
             validUntil: Record<string, never> | null;
+            declaredCommandClass: Record<string, never> | null;
         };
         ProviderCertificationRecordDto: {
             /** Format: uuid */
@@ -746,6 +747,8 @@ export interface components {
             dataClassifications: string[];
             /** Format: date-time */
             validUntil?: string;
+            /** @description Section 7.5's promotion-manifest validator checkpoint: what command class the underlying adapter declares, if any. Rejected outright if it names a structurally excluded class (FUNDS_MOVEMENT, RATE_LOCK, etc.) — nothing today has a real one to declare. */
+            declaredCommandClass?: string;
         };
         CertifyManifestDto: {
             /** @description e.g. "sandbox", "staging". */

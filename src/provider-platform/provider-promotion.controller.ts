@@ -125,6 +125,7 @@ export class ProviderPromotionController {
       // never something the client could set to someone else's name.
       proposedBy: admin.adminName,
       validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
+      declaredCommandClass: dto.declaredCommandClass ?? null,
     });
     return ProviderPromotionManifestDto.from(manifest);
   }

@@ -206,6 +206,37 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the provider promotion manifest declaredCommandClass column, dropping only that column', async () => {
+    const columnBefore: Array<{ column_name: string; data_type: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name, data_type FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'provider_promotion_manifests'
+           AND column_name = 'declaredCommandClass'`,
+      );
+    expect(columnBefore).toEqual([
+      { column_name: 'declaredCommandClass', data_type: 'character varying' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    const columnAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'provider_promotion_manifests'
+         AND column_name = 'declaredCommandClass'`,
+    );
+    expect(columnAfter).toEqual([]);
+    // The table itself, and every other column, survives — this is a
+    // narrow column drop, not a table rebuild.
+    const tableStillExists: Array<{ table_name: string }> =
+      await scratchDataSource.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'provider_promotion_manifests'`,
+      );
+    expect(tableStillExists).toEqual([
+      { table_name: 'provider_promotion_manifests' },
+    ]);
+  });
+
   it('reverts the policy source connector demo migration, removing only its own seed rows', async () => {
     const demoSources: Array<{
       jurisdictionCode: string;
