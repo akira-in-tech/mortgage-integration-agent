@@ -11657,3 +11657,51 @@ npm run build
 ### Remaining boundary
 
 The repository cannot manufacture a real FCRA or provider-approved permissible-purpose determination. Non-simulator credit remains fail-closed until an authorized party creates and supplies a matching live decision; provider credentials and external approvals remain separate production gates. Provider/evidence field encryption and complete deletion lineage are the next trust-boundary slice.
+
+## M7-034: encrypted borrower-derived fields and race-safe deletion lineage
+
+### Status
+
+Implemented and verified against real local PostgreSQL, including the full scratch-database migration chain. This closes field encryption for every borrower-derived JSON payload the repository currently persists: evidence values, provider receipts, and canonical normalized findings. It does not claim lineage for stores that do not exist yet.
+
+### Implementation
+
+- Added versioned AES-256-GCM JSON envelopes with a fresh 96-bit IV, authenticated tag, key id, and caller-supplied AAD. Provider payload AAD binds tenant, intent, and receipt/finding purpose; evidence AAD binds the protected column purpose. Ciphertext tampering, wrong AAD, and unknown keys fail closed.
+- `PROVIDER_DATA_ENCRYPTION_KEYS` is an ordered key ring: the first key writes and all keys read during rotation. Development has a deterministic synthetic-only fallback; staging/production require an explicit key ring and reject legacy plaintext reads.
+- Provider receipts/findings encrypt before persistence and decrypt only through the tenant-scoped service. `EvidenceFact.value` uses a TypeORM transformer so workflow, policy, GraphQL, and evaluation callers retain the typed application contract while raw PostgreSQL stores only the envelope.
+- Added `rotate-sensitive-data-encryption`, which backfills/re-encrypts provider and evidence rows and reports counts only. The staging migration ECS task injects the Secrets Manager key ring and runs rotation after DDL but before API/worker deployment, preventing production-like processes from encountering legacy plaintext.
+- Consent-revocation disposition now snapshots provider intent ids as well as evidence ids. DELETE/ANONYMIZE clears both stores; RETAIN still requires a live legal hold.
+- Closed a deletion/write race: disposition takes pessimistic row locks over snapshotted provider intents, cancels `PREPARED` work before dispatch, and rejects while any intent is `DISPATCHED`, `OUTCOME_UNKNOWN`, or `RECONCILING`. The operator must reconcile the provider outcome before deleting, so a late result cannot recreate removed content.
+- DELETE/ANONYMIZE now ends at `COMPLETED` with `backupExpiryDueAt`. A separate REVIEWER queue and verification route advance it to `VERIFIED` only after the configured window, with a non-sensitive authoritative backup evidence reference and no active legal hold. Elapsed time is a minimum guard, not fake proof that an external backup provider deleted data.
+- Added migration `1787179200000-EncryptedProviderLineage`, updated checked OpenAPI/client artifacts, Terraform secret injection, environment validation, runbook, README, and charter version 2.16.
+
+### Defect found during contract generation
+
+`permissible_purpose_decisions.capability` intentionally reused the provider-grant PostgreSQL enum in its migration, but the entity omitted the matching `enumName`. OpenAPI generation initializes the real application module and TypeORM tried to rename that still-referenced enum; PostgreSQL rejected the drop and rolled the transaction back. The entity now declares the shared enum name and its decision check constraint explicitly. Regeneration then completed successfully.
+
+### Verification
+
+```text
+Focused field-encryption, provider, disposition, environment, and full migration-chain suites:
+  8 suites passed
+  141 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+npm run generate:openapi
+  passed
+npm run generate:client
+  passed
+terraform validate (terraform/staging)
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+The repository has no persisted document binaries, object store, cache, search index, prompt archive, or separate evaluation-artifact content store. Any future implementation of one must join the disposition lineage before it is eligible for real data. Backup verification remains an operator attestation backed by the real provider/control-plane record; the application cannot infer external deletion from wall-clock time. No AWS apply or real-data deployment was performed in this slice.

@@ -7,12 +7,9 @@ export enum DataDispositionTaskType {
 }
 
 /**
- * M5-025: `resolve()` moves a task straight from `PENDING` to `VERIFIED`
- * in one atomic action — this codebase's real deletion/anonymization
- * execution is synchronous and fast, so a distinct `IN_PROGRESS`/
- * `COMPLETED` interval would have no genuine content to represent (no
- * real async execution spans time here); documented simplification, not
- * a silently skipped state.
+ * Primary deletion/anonymization is synchronous, but COMPLETED remains
+ * distinct from VERIFIED while managed backups are inside their retention
+ * window. Verification requires separate expiry evidence.
  */
 export enum DataDispositionTaskStatus {
   PENDING = 'PENDING',
@@ -23,11 +20,10 @@ export enum DataDispositionTaskStatus {
 
 /**
  * Section 14.2: "Deletion verification records what was deleted,
- * anonymized, retained under a valid hold, or pending backup expiry
- * without retaining the removed content itself." `PENDING_BACKUP_EXPIRY`
- * is deliberately not a real value here — this codebase has no backup
- * subsystem at all, so there is nothing real to track a backup's own
- * expiry against (Known gap, not fabricated).
+ * anonymized, retained under a valid hold, or pending backup expiry without
+ * retaining removed content. Pending expiry is represented by task status
+ * COMPLETED plus the explicit backup-expiry fields; the outcome continues to
+ * record what happened to the primary/derived records.
  */
 export enum DataDispositionResolutionOutcome {
   DELETED = 'DELETED',

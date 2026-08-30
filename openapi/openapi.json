@@ -667,6 +667,35 @@
         ]
       }
     },
+    "/v1/data-disposition-tasks/backup-expiry": {
+      "get": {
+        "operationId": "listDataDispositionTasksAwaitingBackupExpiry",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List tasks waiting for managed-backup retention expiry",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
     "/v1/data-disposition-tasks/{taskId}/resolve": {
       "post": {
         "operationId": "resolveDataDispositionTask",
@@ -715,6 +744,45 @@
           }
         ],
         "summary": "Delete, anonymize, or retain the evidence a task covers",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/{taskId}/verify-backup-expiry": {
+      "post": {
+        "operationId": "verifyDataDispositionBackupExpiry",
+        "parameters": [
+          {
+            "name": "taskId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBackupExpiryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify backup expiry after the retention window closes",
         "tags": [
           "data-disposition"
         ]
@@ -2266,6 +2334,13 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "backupExpiryDueAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "affectedProviderIntentCount": {
+            "type": "number"
           }
         },
         "required": [
@@ -2274,7 +2349,8 @@
           "taskType",
           "status",
           "reason",
-          "createdAt"
+          "createdAt",
+          "affectedProviderIntentCount"
         ]
       },
       "ResolveDataDispositionTaskDto": {
@@ -2291,6 +2367,18 @@
         },
         "required": [
           "action"
+        ]
+      },
+      "VerifyBackupExpiryDto": {
+        "type": "object",
+        "properties": {
+          "verificationReference": {
+            "type": "string",
+            "description": "Non-sensitive operator or provider evidence reference proving backup expiry."
+          }
+        },
+        "required": [
+          "verificationReference"
         ]
       },
       "AgentBudgetAggregateUsageDto": {
@@ -2789,6 +2877,18 @@
           "scope": {
             "type": "string"
           },
+          "permittedPurposes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permittedDataClasses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "grantedAt": {
             "format": "date-time",
             "type": "string"
@@ -2813,6 +2913,8 @@
           "caseId",
           "purpose",
           "scope",
+          "permittedPurposes",
+          "permittedDataClasses",
           "grantedAt",
           "createdAt"
         ]

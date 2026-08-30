@@ -1,4 +1,4 @@
-# Three real secrets, generated once and stored in Secrets Manager —
+# Runtime secrets, generated once and stored in Secrets Manager —
 # never in Terraform state as plaintext beyond what the provider itself
 # necessarily tracks, never as a plain ECS task-definition environment
 # variable. See src/database/migrations/1787082648663-AppRuntimeRole.ts
@@ -18,6 +18,10 @@ resource "random_password" "app_role" {
 resource "random_password" "outbox_signing_secret" {
   length  = 40
   special = false
+}
+
+resource "random_id" "provider_data_key" {
+  byte_length = 32
 }
 
 resource "aws_secretsmanager_secret" "rds_master_password" {
@@ -55,6 +59,16 @@ resource "aws_secretsmanager_secret" "outbox_signing_secret" {
 resource "aws_secretsmanager_secret_version" "outbox_signing_secret" {
   secret_id     = aws_secretsmanager_secret.outbox_signing_secret.id
   secret_string = random_password.outbox_signing_secret.result
+}
+
+resource "aws_secretsmanager_secret" "provider_data_encryption_keys" {
+  name                    = "mortgage-agent-staging/provider-data-encryption-keys"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "provider_data_encryption_keys" {
+  secret_id     = aws_secretsmanager_secret.provider_data_encryption_keys.id
+  secret_string = "staging-v1:${random_id.provider_data_key.hex}"
 }
 
 # ECS task-definition `secrets` can only inject a *whole* environment

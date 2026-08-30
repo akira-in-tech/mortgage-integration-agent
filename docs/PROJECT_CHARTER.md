@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.15 |
+| Version | 2.16 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -59,6 +59,7 @@ The repository currently contains verified local vertical slices for:
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks with SSRF/redirect protection at dispatch, deterministic failure scenarios, and a generated TypeScript client;
 - stable logical provider-effect identities, canonical request fingerprints, replay-safe idempotency keys, compare-and-swap intent transitions, and persisted synchronous receipts/results;
+- AES-256-GCM field encryption for evidence values, provider receipts, and normalized findings, with authenticated envelopes, a multi-key rotation window, production fail-closed legacy reads, and a pre-rollout backfill/rotation task;
 - API-client and OIDC authentication (same-origin Authorization Code + PKCE backend-for-frontend session, tenant discovery, and upstream logout propagation), two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
 - a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, and live activity polling;
 - CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, dependency audits, Playwright/axe coverage, and the credential-gated live-Keycloak browser journey on every push and pull request;
@@ -68,7 +69,7 @@ The repository currently contains verified local vertical slices for:
 The following release boundaries remain open and are not represented as implemented:
 
 - external policy-source connector mechanisms are implemented; real reviewed source connectors and broader reviewed jurisdiction coverage remain open (Section 29 item 4);
-- complete data lineage, encrypted object storage, and deletion/backup verification;
+- lineage and disposition beyond the currently implemented evidence/provider-result stores (documents, prompts, evaluation artifacts, caches, indexes, and object storage do not yet exist); managed-backup expiry still requires an authoritative external operator/provider evidence reference;
 - complete administration and recovery queues (operational replay/cancel/recovery controls are not yet exposed through the console — see M6's own note);
 - a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
 - production provider adapters, real-data approval, or official underwriting integrations.
@@ -87,7 +88,7 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 | Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; stale, exhausted, expired, unconfigured, and replayed unresolved effects route safely; REVIEWER-only reconciliation preserves actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; real cost-bearing adapters still require their provider-certification and operational gates. |
 | Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
 | Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
-| Trust | OIDC/API clients, RBAC, purpose-bound consent, transaction-specific consumer-report permissible-purpose decisions, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Complete lineage, encrypted object storage, and deployed control evidence remain open. |
+| Trust | OIDC/API clients, RBAC, purpose-bound consent, transaction-specific consumer-report permissible-purpose decisions, RLS, audit events, provider grants, operation intents, encrypted borrower-derived JSON fields, and lineage-aware data-disposition tasks are present. | Stores not yet implemented (documents, prompts, caches, indexes, objects) need their own lineage before introduction; real backup expiry needs external evidence and real-data approval remains open. |
 
 ## 4. Product position
 
@@ -1176,12 +1177,12 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Agent budget observations are derived from trusted deadlines and a versioned ledger; models and clients cannot supply, extend, reset, or race a budget reservation.
 - Protected communication approval is bound to the exact rendered-content hash, recipient, channel, locale, attachments, sender, and validity interval; changing any bound field invalidates reuse.
 - Routine communication delivery requires an exact active template version and allowlisted variable set; classification uncertainty fails closed to human review.
-- Raw provider payloads are encrypted, access-controlled, and short-lived.
+- Evidence values, provider receipts, and normalized findings are encrypted as authenticated field envelopes; staging/production reject legacy plaintext and rotate keys through an ordered decrypt window.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
 - Public demos and automated tests use visibly synthetic data only.
-- Retention and deletion traverse document, evidence, normalized finding, cache, search index, prompt, evaluation artifact, object, and backup lineage; legal holds are explicit, scoped, reviewable, and never inferred from an undeletable implementation detail.
-- Deletion verification records what was deleted, anonymized, retained under a valid hold, or pending backup expiry without retaining the removed content itself.
+- Retention and deletion must traverse every store that actually exists. The current implementation snapshots evidence and provider-result lineage; future document, cache, search-index, prompt, evaluation-artifact, and object stores cannot launch until they join the same disposition graph. Legal holds are explicit, scoped, reviewable, and never inferred from an undeletable implementation detail.
+- Deletion/anonymization locks snapshotted provider intents, cancels work not yet dispatched, and blocks while a dispatched or ambiguous outcome could reintroduce data. Primary deletion then remains `COMPLETED` until the configured backup-retention window has passed and a reviewer records a non-sensitive authoritative backup-expiry reference; only then is it `VERIFIED`.
 
 ## 15. API and developer experience
 

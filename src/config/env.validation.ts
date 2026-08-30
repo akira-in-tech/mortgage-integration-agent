@@ -164,6 +164,25 @@ export class EnvironmentVariables {
   @Min(1000)
   PROVIDER_RECONCILIATION_STALE_AFTER_MS: number = 300_000;
 
+  // Ordered AES-256-GCM key ring for provider receipts/findings and evidence
+  // values. The first key encrypts new values; remaining keys decrypt during
+  // rotation. The legacy variable name is retained for deployment stability.
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64}(,[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64})*$/,
+    {
+      message: 'PROVIDER_DATA_ENCRYPTION_KEYS must be kid:64hex[,kid:64hex...]',
+    },
+  )
+  PROVIDER_DATA_ENCRYPTION_KEYS?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(8760)
+  BACKUP_RETENTION_HOURS: number = 24;
+
   // ── OIDC (src/auth/oidc.*, M5-024) ───────────────────────────────────────
   // Section 16.1: "OIDC/OAuth 2.0 for people" — a real OIDC issuer (this
   // codebase's own docker-compose.yml ships self-hosted Keycloak for local
@@ -332,6 +351,11 @@ export function validateEnvironment(
   ) {
     throw new Error(
       'Invalid environment configuration:\n  - APP_DATABASE_URL must use a separate restricted runtime credential',
+    );
+  }
+  if (productionLike && !validatedConfig.PROVIDER_DATA_ENCRYPTION_KEYS) {
+    throw new Error(
+      'Invalid environment configuration:\n  - PROVIDER_DATA_ENCRYPTION_KEYS is required in staging and production',
     );
   }
 

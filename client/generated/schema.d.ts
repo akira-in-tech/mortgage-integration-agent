@@ -292,6 +292,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/data-disposition-tasks/backup-expiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tasks waiting for managed-backup retention expiry */
+        get: operations["listDataDispositionTasksAwaitingBackupExpiry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/data-disposition-tasks/{taskId}/resolve": {
         parameters: {
             query?: never;
@@ -303,6 +320,23 @@ export interface paths {
         put?: never;
         /** Delete, anonymize, or retain the evidence a task covers */
         post: operations["resolveDataDispositionTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data-disposition-tasks/{taskId}/verify-backup-expiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify backup expiry after the retention window closes */
+        post: operations["verifyDataDispositionBackupExpiry"];
         delete?: never;
         options?: never;
         head?: never;
@@ -810,10 +844,17 @@ export interface components {
             reason: string;
             /** Format: date-time */
             createdAt: string;
+            /** Format: date-time */
+            backupExpiryDueAt?: string;
+            affectedProviderIntentCount: number;
         };
         ResolveDataDispositionTaskDto: {
             /** @enum {string} */
             action: "DELETE" | "ANONYMIZE" | "RETAIN";
+        };
+        VerifyBackupExpiryDto: {
+            /** @description Non-sensitive operator or provider evidence reference proving backup expiry. */
+            verificationReference: string;
         };
         AgentBudgetAggregateUsageDto: {
             /** Format: date */
@@ -957,6 +998,8 @@ export interface components {
             caseId: string;
             purpose: string;
             scope: string;
+            permittedPurposes: string[];
+            permittedDataClasses: string[];
             /** Format: date-time */
             grantedAt: string;
             expiresAt?: Record<string, never>;
@@ -1541,6 +1584,25 @@ export interface operations {
             };
         };
     };
+    listDataDispositionTasksAwaitingBackupExpiry: {
+        parameters: {
+            query: {
+                limit: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     resolveDataDispositionTask: {
         parameters: {
             query?: never;
@@ -1574,6 +1636,29 @@ export interface operations {
             };
             /** @description REVIEWER role required. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verifyDataDispositionBackupExpiry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyBackupExpiryDto"];
+            };
+        };
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

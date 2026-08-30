@@ -239,9 +239,10 @@ describeOrSkip('dispatchProviderRequest', () => {
   }
 
   async function intentFor(tenantId: string) {
-    return dataSource
+    const entity = await dataSource
       .getRepository(ProviderOperationIntent)
       .findOneByOrFail({ tenantId });
+    return (await intentService.get(tenantId, entity.id))!;
   }
 
   it('dispatches a real asset-verification request: issues a grant, persists a SUCCEEDED intent, and returns the normalized finding', async () => {
@@ -326,8 +327,19 @@ describeOrSkip('dispatchProviderRequest', () => {
       .getRepository(ProviderOperationIntent)
       .find({ where: { tenantId } });
     expect(intents).toHaveLength(1);
-    expect(intents[0].providerReceipt).toBeTruthy();
-    expect(intents[0].normalizedFinding).toEqual(first);
+    expect(intents[0].providerReceipt).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      ciphertext: expect.any(String),
+    });
+    expect(intents[0].normalizedFinding).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      ciphertext: expect.any(String),
+    });
+    expect(
+      (await intentService.get(tenantId, intents[0].id))?.normalizedFinding,
+    ).toEqual(first);
   });
 
   it('rejects changed payload reuse under the same logical operation key', async () => {
@@ -537,7 +549,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           status: 'COMPLETE',
           payload,
         });
-        expect(intent.normalizedFinding).toBeNull();
+        expect(intent.normalizedFinding).toBeUndefined();
       },
     );
   });

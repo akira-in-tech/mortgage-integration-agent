@@ -207,6 +207,27 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts encrypted-provider deletion lineage without removing disposition tasks', async () => {
+    const lineageColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+           AND column_name IN ('affectedProviderIntentIds', 'backupExpiryDueAt', 'backupExpiryVerifiedAt', 'backupVerificationReference')
+         ORDER BY column_name`,
+      );
+    expect(lineageColumns).toHaveLength(4);
+
+    await scratchDataSource.undoLastMigration();
+
+    const lineageColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+         AND column_name IN ('affectedProviderIntentIds', 'backupExpiryDueAt', 'backupExpiryVerifiedAt', 'backupVerificationReference')`,
+    );
+    expect(lineageColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('data_disposition_tasks');
+  });
+
   it('reverts purpose-bound provider authority without removing the consent history table', async () => {
     const consentScopeColumns: Array<{ column_name: string }> =
       await scratchDataSource.query(

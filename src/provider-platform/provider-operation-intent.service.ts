@@ -12,7 +12,11 @@ import {
   ProviderEffectClass,
   ProviderOperationIntent,
 } from './types';
-import { runInTenantContext } from '../database/tenant-context';
+import {
+  runInTenantContext,
+  runWithRlsBypass,
+} from '../database/tenant-context';
+import { SensitiveJsonCipher } from './sensitive-json-cipher';
 
 export interface PrepareIntentInput {
   tenantId: string;
@@ -58,6 +62,7 @@ function canonicalJson(value: unknown): string {
 
 function toIntentValue(
   entity: ProviderOperationIntentEntity,
+  cipher: SensitiveJsonCipher,
 ): ProviderOperationIntent {
   return {
     id: entity.id,
@@ -71,8 +76,20 @@ function toIntentValue(
     logicalOperationKey: entity.logicalOperationKey,
     authorizationGrantId: entity.authorizationGrantId,
     state: entity.state as unknown as ProviderOperationIntent['state'],
-    providerReceipt: entity.providerReceipt ?? undefined,
-    normalizedFinding: entity.normalizedFinding ?? undefined,
+    providerReceipt:
+      entity.providerReceipt === null
+        ? undefined
+        : cipher.decrypt(
+            entity.providerReceipt,
+            `${entity.tenantId}:${entity.id}:receipt`,
+          ),
+    normalizedFinding:
+      entity.normalizedFinding === null
+        ? undefined
+        : cipher.decrypt(
+            entity.normalizedFinding,
+            `${entity.tenantId}:${entity.id}:finding`,
+          ),
   };
 }
 
@@ -91,6 +108,8 @@ function toIntentValue(
  */
 @Injectable()
 export class ProviderOperationIntentService {
+  private readonly cipher = new SensitiveJsonCipher();
+
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
@@ -154,7 +173,7 @@ export class ProviderOperationIntentService {
         return existing;
       },
     );
-    return toIntentValue(entity);
+    return toIntentValue(entity, this.cipher);
   }
 
   private async transition(
@@ -202,7 +221,16 @@ export class ProviderOperationIntentService {
       id,
       [ProviderOperationIntentStatus.DISPATCHED],
       ProviderOperationIntentStatus.SUCCEEDED,
-      { providerReceipt, normalizedFinding },
+      {
+        providerReceipt: this.cipher.encrypt(
+          providerReceipt,
+          `${tenantId}:${id}:receipt`,
+        ),
+        normalizedFinding: this.cipher.encrypt(
+          normalizedFinding,
+          `${tenantId}:${id}:finding`,
+        ),
+      },
     );
   }
 
@@ -219,7 +247,14 @@ export class ProviderOperationIntentService {
         ProviderOperationIntentStatus.DISPATCHED,
       ],
       ProviderOperationIntentStatus.FAILED_FINAL,
-      providerReceipt === undefined ? {} : { providerReceipt },
+      providerReceipt === undefined
+        ? {}
+        : {
+            providerReceipt: this.cipher.encrypt(
+              providerReceipt,
+              `${tenantId}:${id}:receipt`,
+            ),
+          },
     );
   }
 
@@ -306,5 +341,66 @@ export class ProviderOperationIntentService {
         take: boundedLimit,
       }),
     );
+  }
+
+  /** Tenant-scoped decrypted read used by safe replay and operator detail views. */
+  async get(
+    tenantId: string,
+    id: string,
+  ): Promise<ProviderOperationIntent | null> {
+    const entity = await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      (manager) =>
+        manager.getRepository(ProviderOperationIntentEntity).findOneBy({
+          id,
+          tenantId,
+        }),
+    );
+    return entity ? toIntentValue(entity, this.cipher) : null;
+  }
+
+  /** Administrative legacy backfill and key rotation; plaintext is never logged. */
+  async rotateSensitivePayloadEncryption(): Promise<{
+    scanned: number;
+    rewritten: number;
+  }> {
+    return runWithRlsBypass(this.dataSource, async (manager) => {
+      const repo = manager.getRepository(ProviderOperationIntentEntity);
+      const rows = await repo.find();
+      let rewritten = 0;
+      for (const row of rows) {
+        const values: Partial<ProviderOperationIntentEntity> = {};
+        if (row.providerReceipt !== null) {
+          const plaintext = this.cipher.isEnvelope(row.providerReceipt)
+            ? this.cipher.decrypt(
+                row.providerReceipt,
+                `${row.tenantId}:${row.id}:receipt`,
+              )
+            : row.providerReceipt;
+          values.providerReceipt = this.cipher.encrypt(
+            plaintext,
+            `${row.tenantId}:${row.id}:receipt`,
+          );
+        }
+        if (row.normalizedFinding !== null) {
+          const plaintext = this.cipher.isEnvelope(row.normalizedFinding)
+            ? this.cipher.decrypt(
+                row.normalizedFinding,
+                `${row.tenantId}:${row.id}:finding`,
+              )
+            : row.normalizedFinding;
+          values.normalizedFinding = this.cipher.encrypt(
+            plaintext,
+            `${row.tenantId}:${row.id}:finding`,
+          );
+        }
+        if (Object.keys(values).length > 0) {
+          await repo.update({ id: row.id }, values as never);
+          rewritten += 1;
+        }
+      }
+      return { scanned: rows.length, rewritten };
+    });
   }
 }

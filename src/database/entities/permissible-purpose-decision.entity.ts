@@ -1,5 +1,6 @@
 import {
   Column,
+  Check,
   CreateDateColumn,
   Entity,
   Index,
@@ -19,6 +20,10 @@ export enum PermissiblePurposeDecisionStatus {
  */
 @Entity('permissible_purpose_decisions')
 @Index('IDX_permissible_purpose_decisions_case', ['tenantId', 'caseId'])
+@Check(
+  'CHK_permissible_purpose_decision',
+  `"decision" IN ('AUTHORIZED','DENIED')`,
+)
 export class PermissiblePurposeDecision {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -32,7 +37,14 @@ export class PermissiblePurposeDecision {
   @Column({ type: 'varchar', length: 200 })
   borrowerSubjectId!: string;
 
-  @Column({ type: 'enum', enum: ProviderCapabilityStatus })
+  @Column({
+    type: 'enum',
+    enum: ProviderCapabilityStatus,
+    // This table intentionally shares the canonical capability enum created
+    // for provider grants. Naming it explicitly prevents synchronize/OpenAPI
+    // generation from trying to rename and replace a still-referenced type.
+    enumName: 'provider_authorization_grants_capability_enum',
+  })
   capability!: ProviderCapabilityStatus;
 
   @Column({ type: 'varchar', length: 100 })

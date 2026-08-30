@@ -19,6 +19,15 @@ function baseConfig(
     config.APP_DATABASE_URL =
       'postgresql://mortgage_app@localhost:5432/mortgage_agent';
   }
+  if (
+    ['staging', 'production'].includes(String(overrides.NODE_ENV)) &&
+    !Object.prototype.hasOwnProperty.call(
+      overrides,
+      'PROVIDER_DATA_ENCRYPTION_KEYS',
+    )
+  ) {
+    config.PROVIDER_DATA_ENCRYPTION_KEYS = `provider-v1:${'a'.repeat(64)}`;
+  }
   return config;
 }
 
@@ -373,6 +382,31 @@ describe('validateEnvironment', () => {
           }),
         ),
       ).toThrow(/scheme and authority/);
+    });
+  });
+
+  describe('provider field encryption boundary', () => {
+    it('requires a provider key ring in staging and production', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            NODE_ENV: 'staging',
+            PROVIDER_DATA_ENCRYPTION_KEYS: undefined,
+          }),
+        ),
+      ).toThrow(/PROVIDER_DATA_ENCRYPTION_KEYS/);
+    });
+
+    it('validates a rotation key ring and backup-retention window', () => {
+      const keyRing = `provider-v2:${'b'.repeat(64)},provider-v1:${'a'.repeat(64)}`;
+      const result = validateEnvironment(
+        baseConfig({
+          PROVIDER_DATA_ENCRYPTION_KEYS: keyRing,
+          BACKUP_RETENTION_HOURS: '48',
+        }),
+      );
+      expect(result.PROVIDER_DATA_ENCRYPTION_KEYS).toBe(keyRing);
+      expect(result.BACKUP_RETENTION_HOURS).toBe(48);
     });
   });
 });

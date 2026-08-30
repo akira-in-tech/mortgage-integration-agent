@@ -80,6 +80,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       aws_secretsmanager_secret.outbox_signing_secret.arn,
       aws_secretsmanager_secret.database_url.arn,
       aws_secretsmanager_secret.app_database_url.arn,
+      aws_secretsmanager_secret.provider_data_encryption_keys.arn,
     ]
   }
 }
@@ -104,6 +105,7 @@ locals {
     { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
     { name = "APP_DATABASE_URL", valueFrom = aws_secretsmanager_secret.app_database_url.arn },
     { name = "OUTBOX_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.outbox_signing_secret.arn },
+    { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
   ]
 }
 
@@ -298,13 +300,17 @@ resource "aws_ecs_task_definition" "migrate" {
     # (a dev dependency, excluded by `npm ci --omit=dev` in the
     # Dockerfile). data-source.ts's own entity/migration globs already
     # match compiled `.js` for exactly this case - just point the plain
-    # typeorm CLI (a real production dependency) at the compiled file.
-    command = ["node", "node_modules/typeorm/cli.js", "migration:run", "-d", "dist/database/data-source.js"]
+    # typeorm CLI (a real production dependency) at the compiled file. The
+    # rotation runs in the same blocking task after DDL and before API/worker
+    # rollout, so legacy plaintext JSONB cannot reach the production-like
+    # processes that deliberately reject it.
+    command = ["sh", "-c", "node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js && node dist/rotate-sensitive-data-encryption.js"]
     # Real DDL rights — migrations run as the admin role, never the
     # restricted mortgage_app role AppRuntimeRole itself creates.
     secrets = [
       { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
       { name = "APP_DATABASE_ROLE_PASSWORD", valueFrom = aws_secretsmanager_secret.app_role_password.arn },
+      { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"

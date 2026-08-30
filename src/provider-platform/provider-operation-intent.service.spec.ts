@@ -119,6 +119,20 @@ describeOrSkip('ProviderOperationIntentService', () => {
       { monthlyIncome: 1000 },
     );
     expect(await stateOf(succeeded.id)).toBe('SUCCEEDED');
+    const stored = await repo.findOneByOrFail({ id: succeeded.id });
+    expect(stored.providerReceipt).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      kid: expect.any(String),
+      ciphertext: expect.any(String),
+    });
+    expect(JSON.stringify(stored.providerReceipt)).not.toContain('COMPLETE');
+    await expect(
+      service.get(baseInput.tenantId, succeeded.id),
+    ).resolves.toMatchObject({
+      providerReceipt: { status: 'COMPLETE' },
+      normalizedFinding: { monthlyIncome: 1000 },
+    });
 
     const failedFinal = await service.prepare({
       ...baseInput,
@@ -153,6 +167,43 @@ describeOrSkip('ProviderOperationIntentService', () => {
     expect((await repo.findOneByOrFail({ id: intent.id })).state).toBe(
       'RECONCILING',
     );
+  });
+
+  it('backfills a legacy plaintext payload into authenticated envelopes without changing its value', async () => {
+    const repo = dataSource.getRepository(ProviderOperationIntent);
+    const legacy = await repo.save(
+      repo.create({
+        tenantId: baseInput.tenantId,
+        caseId: baseInput.caseId,
+        providerId: baseInput.providerId,
+        capability: baseInput.capability as never,
+        effectClass: baseInput.effectClass,
+        requestFingerprint: 'b'.repeat(64),
+        idempotencyKey: randomUUID(),
+        logicalOperationKey: randomUUID(),
+        authorizationGrantId: baseInput.authorizationGrantId,
+        providerReceipt: { status: 'LEGACY_COMPLETE' },
+        normalizedFinding: { monthlyIncome: 4321 },
+        state: 'SUCCEEDED' as never,
+        resolvedBy: null,
+        resolutionNote: null,
+      }),
+    );
+    intentIds.push(legacy.id);
+
+    const result = await service.rotateSensitivePayloadEncryption();
+    expect(result.rewritten).toBeGreaterThanOrEqual(1);
+    const stored = await repo.findOneByOrFail({ id: legacy.id });
+    expect(stored.providerReceipt).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+    });
+    await expect(
+      service.get(baseInput.tenantId, legacy.id),
+    ).resolves.toMatchObject({
+      providerReceipt: { status: 'LEGACY_COMPLETE' },
+      normalizedFinding: { monthlyIncome: 4321 },
+    });
   });
 
   it('rejects a late state transition that would regress a terminal result', async () => {

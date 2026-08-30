@@ -77,11 +77,11 @@ export class ProviderOperationIntent {
   @Column({ type: 'uuid' })
   authorizationGrantId!: string;
 
-  /** Persisted before a successful normalized result is exposed, enabling safe replay without a second provider submission. */
+  /** AES-256-GCM envelope; decrypted only by ProviderOperationIntentService. */
   @Column({ type: 'jsonb', nullable: true })
   providerReceipt!: unknown | null;
 
-  /** Canonical normalized result returned on a replay of an already-succeeded logical operation. */
+  /** AES-256-GCM envelope containing the canonical replay result. */
   @Column({ type: 'jsonb', nullable: true })
   normalizedFinding!: unknown | null;
 
