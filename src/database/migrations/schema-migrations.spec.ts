@@ -206,6 +206,33 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
   });
 
+  it('reverts the policy source connector demo migration, removing only its own seed rows', async () => {
+    const demoSources: Array<{
+      jurisdictionCode: string;
+      retrievalMode: string;
+    }> = await scratchDataSource.query(
+      `SELECT "jurisdictionCode", "retrievalMode" FROM policy_sources WHERE "jurisdictionCode" = 'US-DEMO'`,
+    );
+    expect(demoSources).toEqual([
+      { jurisdictionCode: 'US-DEMO', retrievalMode: 'CONNECTOR' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    const demoSourcesAfter = await scratchDataSource.query(
+      `SELECT "jurisdictionCode" FROM policy_sources WHERE "jurisdictionCode" = 'US-DEMO'`,
+    );
+    expect(demoSourcesAfter).toEqual([]);
+    const demoJurisdictionAfter = await scratchDataSource.query(
+      `SELECT code FROM jurisdictions WHERE code = 'US-DEMO'`,
+    );
+    expect(demoJurisdictionAfter).toEqual([]);
+    // Only the demo's own rows are gone - every other jurisdiction and
+    // policy source from earlier migrations is untouched.
+    expect(await tableNames()).toContain('jurisdictions');
+    expect(await tableNames()).toContain('policy_sources');
+  });
+
   it('reverts the evaluation reports migration, dropping only that table', async () => {
     expect(await tableNames()).toContain('evaluation_report_records');
 
