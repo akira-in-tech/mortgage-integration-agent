@@ -32,7 +32,11 @@ describe('AssetVerificationAdapter', () => {
     const receipt = await adapter.submit({ borrowerId: 'borrower-1' });
 
     expect(getAssetData).toHaveBeenCalledWith('borrower-1');
-    expect(receipt).toEqual({ status: 'COMPLETE', payload: GOOD_ASSETS });
+    expect(receipt).toMatchObject({
+      status: 'COMPLETE',
+      payload: GOOD_ASSETS,
+      observedAt: expect.any(String),
+    });
   });
 
   it('submit() propagates a rejection from the underlying AssetService unchanged', async () => {

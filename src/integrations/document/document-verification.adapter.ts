@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { DocumentService } from './document.service';
 import { DocumentVerificationResult } from './document.types';
@@ -47,7 +48,7 @@ export class DocumentVerificationAdapter implements ProviderAdapter<
     const payload = await this.documentService.verifyDocuments(
       request.borrowerId,
     );
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): DocumentVerificationResult {

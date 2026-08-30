@@ -18,6 +18,7 @@ import {
   operationalTelemetry,
   ProviderOutcome,
 } from '../observability/operational-telemetry';
+import { validateProviderFinding } from './provider-finding-contract';
 
 export interface DispatchProviderRequestDeps {
   registry: ProviderRegistryService;
@@ -285,10 +286,14 @@ export async function dispatchProviderRequest<TFinding>(
             revalidation.grant,
             { tenantId: params.tenantId, caseId: params.caseId },
           )) as SynchronousProviderReceipt<unknown>;
-          const finding = adapter.normalize(receipt.payload, {
-            tenantId: params.tenantId,
-            caseId: params.caseId,
-          }) as TFinding;
+          const finding = validateProviderFinding(
+            params.capability,
+            adapter.normalize(receipt.payload, {
+              tenantId: params.tenantId,
+              caseId: params.caseId,
+            }) as TFinding,
+            { observedAt: receipt.observedAt },
+          );
           // Section 11.5's field-bound authorization (M5-028) — filtered
           // against the freshly revalidated grant's own permittedFields, not
           // params.permittedFields directly, the same "trust the revalidated

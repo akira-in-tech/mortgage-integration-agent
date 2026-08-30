@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { CreditService } from './credit.service';
 import { CreditBureauData } from './credit.types';
@@ -42,7 +43,7 @@ export class CreditReportAdapter implements ProviderAdapter<
 
   async submit(request: CreditReportRequest): Promise<CreditReportReceipt> {
     const payload = await this.creditService.getCreditData(request.borrowerId);
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): CreditBureauData {

@@ -69,6 +69,15 @@ export interface ProviderStatus {
 export interface SynchronousProviderReceipt<TPayload> {
   status: 'COMPLETE';
   payload: TPayload;
+  /** Adapter-observed completion time used by the canonical freshness gate. */
+  observedAt: string;
+}
+
+export function completeProviderReceipt<TPayload>(
+  payload: TPayload,
+  observedAt = new Date(),
+): SynchronousProviderReceipt<TPayload> {
+  return { status: 'COMPLETE', payload, observedAt: observedAt.toISOString() };
 }
 
 /** Section 11.5. */

@@ -11581,3 +11581,41 @@ The long-lived local database had been created through TypeORM synchronization a
 ### Remaining boundary
 
 Receipts/results are still plain JSONB until the field/object-encryption slice. Current adapters remain synchronous; automatic polling, callbacks, cancellation, and cross-provider fallback are separate contract-suite work.
+
+## M7-032: reusable adapter contract and canonical finding rejection
+
+### Status
+
+Implemented and verified for every adapter that currently exists. This closes the reusable-suite and synchronous canonical-payload portion of Section 11.7 without claiming coverage for async capabilities no adapter implements.
+
+### Implementation
+
+- Added `describeProviderAdapterContract()`, one shared Jest specification imported for the five simulator adapters and the authorized Plaid sandbox adapter. It verifies declared identity/capability/mode, operation semantics, timestamped health, submit/normalize behavior, the canonical output contract, and deterministic transient/terminal failure mapping where the adapter supports those fixtures.
+- Kept the reusable Jest contract helper in TypeScript's repository-wide typecheck while explicitly excluding that one test-support file from Nest's production build; otherwise its Jest DSL globals would be compiled as application source even though every executable suite already lives in `.spec.ts` files.
+- Added a required `observedAt` field to every completed provider receipt and a shared `completeProviderReceipt()` constructor, so freshness is part of the adapter boundary rather than guessed from dispatch time.
+- Added strict Zod contracts for income, credit, document, asset, and identity findings. The gate rejects missing and unknown fields, invalid ranges, stale/future timestamps, and contradictions between document/identity summary flags and their component evidence.
+- Wired the same validation into `dispatchProviderRequest()` after provider-specific normalization and before field filtering or success persistence. A completed but invalid provider response is retained on the intent and classified `FAILED_FINAL`; it is never treated as an ambiguous timeout or retried as a fresh effect.
+- Added direct dispatch integration fixtures proving partial, stale, and contradictory receipts cross the real authorization/intent path, fail at the canonical boundary, and remain inspectable.
+
+### Verification
+
+```text
+Reusable contract, schema, and adapter suites:
+  7 suites passed
+  57 tests passed
+
+Real PostgreSQL dispatch integration:
+  1 suite passed
+  19 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+All current adapters complete synchronously and declare neither polling nor cancellation. Duplicate/out-of-order callbacks, delayed completion, cancellation races, rate-limit behavior, authentication expiry, redaction, and effect-class fallback therefore remain tuple-specific production-certification requirements. Adding fake callback behavior to synchronous adapters would not prove those properties.

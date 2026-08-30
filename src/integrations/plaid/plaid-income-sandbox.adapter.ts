@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { PlaidSandboxService } from './plaid-sandbox.service';
 import { PlaidIncomeData } from './plaid.types';
@@ -50,7 +51,7 @@ export class PlaidIncomeSandboxAdapter implements ProviderAdapter<
     const payload = await this.plaidSandboxService.getIncomeData(
       request.borrowerId,
     );
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): PlaidIncomeData {

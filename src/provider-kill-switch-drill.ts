@@ -31,6 +31,7 @@ import {
 } from './provider-platform/dispatch-provider-request';
 import {
   AnyProviderAdapter,
+  completeProviderReceipt,
   ProviderCapability,
 } from './provider-platform/types';
 
@@ -68,7 +69,13 @@ const drillAdapter: AnyProviderAdapter = {
     supportsCancellation: false,
     fallbackPolicy: 'PROHIBITED',
   },
-  submit: async () => ({ status: 'COMPLETE', payload: { drill: true } }),
+  submit: async () =>
+    completeProviderReceipt({
+      liquidAssets: 1,
+      investmentAssets: 1,
+      accountCount: 1,
+      reserveMonths: 1,
+    }),
   normalize: (payload) => payload,
   healthCheck: async () => ({
     healthy: true,

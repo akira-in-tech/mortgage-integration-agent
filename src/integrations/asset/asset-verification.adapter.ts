@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { AssetService } from './asset.service';
 import { AssetVerificationData } from './asset.types';
@@ -45,7 +46,7 @@ export class AssetVerificationAdapter implements ProviderAdapter<
     request: AssetVerificationRequest,
   ): Promise<AssetVerificationReceipt> {
     const payload = await this.assetService.getAssetData(request.borrowerId);
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): AssetVerificationData {

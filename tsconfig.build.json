@@ -10,5 +10,13 @@
     // project's size.
     "incremental": false
   },
-  "exclude": ["node_modules", "dist", "test", "client", "console", "**/*.spec.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "client",
+    "console",
+    "**/*.spec.ts",
+    "src/provider-platform/provider-adapter.contract.ts"
+  ]
 }

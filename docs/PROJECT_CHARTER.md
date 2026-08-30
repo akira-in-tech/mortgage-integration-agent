@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.13 |
+| Version | 2.14 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -978,6 +978,8 @@ Every adapter passes the same reusable suite:
 - health and routing behavior.
 
 The same suite runs against simulators and authorized sandboxes. A production certification run additionally verifies endpoint and credential isolation, real authentication behavior, representative schema variance, webhook signatures, documented rate limits, support correlation identifiers, canary routing, kill-switch behavior, and rollback to a safe provider state.
+
+Current implementation status: M7-032 provides a reusable suite for every implemented simulator and the authorized Plaid sandbox adapter, plus one strict post-normalization dispatch gate for all five canonical finding types. Timestamp freshness and malformed, partial, out-of-range, extra-field, and cross-field-contradictory findings fail closed and retain the rejected receipt. This is verified only for the current synchronous adapter contract. Async polling, callbacks, cancellation races, provider-specific rate/auth behavior, redaction, and fallback semantics remain required evidence for any adapter tuple that declares those capabilities; they are not inferred from the synchronous suite.
 
 ### 11.8 Real-data enablement boundary
 

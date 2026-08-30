@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { PlaidService } from './plaid.service';
 import { PlaidIncomeData } from './plaid.types';
@@ -41,7 +42,7 @@ export class PlaidIncomeAdapter implements ProviderAdapter<
 
   async submit(request: PlaidIncomeRequest): Promise<PlaidIncomeReceipt> {
     const payload = await this.plaidService.getIncomeData(request.borrowerId);
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): PlaidIncomeData {

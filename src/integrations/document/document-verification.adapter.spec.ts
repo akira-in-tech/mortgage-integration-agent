@@ -34,7 +34,11 @@ describe('DocumentVerificationAdapter', () => {
     const receipt = await adapter.submit({ borrowerId: 'borrower-1' });
 
     expect(verifyDocuments).toHaveBeenCalledWith('borrower-1');
-    expect(receipt).toEqual({ status: 'COMPLETE', payload: ALL_VALID });
+    expect(receipt).toMatchObject({
+      status: 'COMPLETE',
+      payload: ALL_VALID,
+      observedAt: expect.any(String),
+    });
   });
 
   it('submit() propagates a rejection from the underlying DocumentService unchanged', async () => {
