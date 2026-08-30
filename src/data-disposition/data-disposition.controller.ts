@@ -34,24 +34,23 @@ import { RequireRole } from '../auth/require-role.decorator';
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { CurrentAuth } from '../auth/current-auth.decorator';
 import { AuthContext } from '../auth/auth-context';
-import { AuditEventService } from '../audit/audit-event.service';
 
 /**
  * When a borrower revokes consent, the evidence collected under that
  * consent needs a real human decision: delete it, anonymize it, or keep
  * it because a legal hold requires that. This is where a reviewer makes
  * and records that decision. See DataDispositionService.resolve() for
- * the actual delete/anonymize/retain logic.
+ * the actual delete/anonymize/retain logic — including the
+ * `AuditEventService` write (moved there in M7-028 so the
+ * `resolve-data-disposition-task` script gets the same provenance this
+ * controller does, instead of only the REST path).
  */
 @ApiTags('data-disposition')
 @ApiBearerAuth()
 @UseGuards(TenantAuthGuard)
 @Controller('v1/data-disposition-tasks')
 export class DataDispositionController {
-  constructor(
-    private readonly dispositionService: DataDispositionService,
-    private readonly auditEventService: AuditEventService,
-  ) {}
+  constructor(private readonly dispositionService: DataDispositionService) {}
 
   @ApiOperation({
     operationId: 'listOpenDataDispositionTasks',
@@ -103,6 +102,7 @@ export class DataDispositionController {
         taskId,
         dto.action,
         auth.actorId,
+        auth.correlationId,
       );
     } catch (error) {
       // resolve() already throws BadRequestException for a bad state or
@@ -113,17 +113,6 @@ export class DataDispositionController {
         error instanceof Error ? error.message : 'Could not resolve task.',
       );
     }
-
-    await this.auditEventService.record({
-      tenantId: auth.tenantId,
-      actorId: auth.actorId,
-      action: 'DATA_DISPOSITION_TASK_RESOLVED',
-      resourceType: 'data_disposition_task',
-      resourceId: taskId,
-      correlationId: auth.correlationId,
-      reason: `Resolved as ${dto.action}`,
-      metadata: { action: dto.action },
-    });
 
     return DataDispositionTaskQueueItemDto.from(resolved);
   }

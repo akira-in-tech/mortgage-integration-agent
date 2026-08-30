@@ -11385,3 +11385,69 @@ Real, against a live local Postgres (2026-08-30):
 ### Next safe step
 
 Charter Section 29 has no fully-open items left. What remains, named honestly rather than silently dropped: real reviewed jurisdiction content for any actual US state (needs real legal review this session cannot provide or fabricate), Keycloak/console deployment (declined by the user, no domain), and SBOM/provenance coverage for the third-party `temporalio/auto-setup` image (out of scope — that image's own supply chain, not this repository's).
+
+## M7-028: two real gaps from a fresh M3/M4/M5 audit — policy invalidation events, and provenance for provider promotion + legal holds
+
+### Status
+
+Both real, live-verified locally on 2026-08-30 (real Postgres, not mocks). Not new scope — a direct fix for two specific, previously-undisclosed gaps the user asked to audit for and then asked to have fixed, out of a longer list the audit also surfaced (FAPI 2.0, field/object encryption, backup subsystem, real jurisdiction coverage — all named, explicitly deferred as "known, large scope reductions," not silently dropped).
+
+### Background: three parallel audit agents, then two specific fixes
+
+The user asked for "a real, line-by-line audit of M3/M4/M5 against the charter" — not a status summary from memory, an independent re-check of the charter's own Scope + Exit-evidence bullets against actual file:line code and passing tests. Three read-only agents ran in parallel, one per milestone, each explicitly told a comment or a TODO doesn't count as done and to look for real, previously-undisclosed gaps rather than assume charter language implies completion. All three found the core mechanisms genuinely real (the policy resolver, the LangGraph runtime, the budget ledger, provider promotion, consent/RLS), but each also surfaced gaps this project's own dev log hadn't named before. Asked to fix two of them:
+
+1. **M3's finding**: Section 10.4 says policy activation "emits invalidation events." `PolicyActivationService.activate()`/`withdraw()` genuinely bump `PolicyCatalogGeneration` — the fast-path guard really does key off that counter — but nothing ever recorded that an activation *happened*: no outbox event, no audit event, nothing. The bump itself is silent.
+2. **M5's finding**: three separate, previously-undisclosed provenance inconsistencies, found by comparing code paths directly rather than trusting the dev log's own self-assessment: `ProviderPromotionController` never called `AuditEventService` at all (provenance lived only in `proposedBy`/`certifiedBy`/etc. columns); `LegalHoldService.place()`/`release()` had zero audit calls and no REST controller, only the `manage-legal-hold` operator script; and `resolve-data-disposition-task.ts` called `DataDispositionService.resolve()` directly, bypassing `DataDispositionController`'s own audit-event write — so a script-driven resolution and a REST-driven one left different provenance behind for the identical mutation.
+
+### Why provider promotion and policy activation never got this before — and why they can now
+
+M7-020's own "Known gaps" section named this exact problem and explained why it was left alone: *"`AuditEventService.record()` is tenant-scoped (`runInTenantContext`) and these actions have no tenant, so it was not reused (that would have meant inventing a fake tenantId, which is exactly the kind of fabrication this session's standing discipline rules out)."* That reasoning was correct at the time — a real tenant's id would misattribute a platform-wide action to whichever tenant happened to be looked up first.
+
+The actual fix: `src/audit/platform-audit-tenant.ts` — a new, explicit `PLATFORM_AUDIT_TENANT_ID` constant (the nil UUID, `00000000-...-000000000000`), documented plainly as *not* a real `Tenant` row (`audit_events` has no foreign key to `tenants`, only its RLS check against `app.current_tenant_id`, so writing under a fixed, well-known, never-reused id is safe and queryable). This isn't a workaround for the fabrication concern — it's a genuinely different id space than "a real tenant," used only for the two mutation surfaces that are structurally shared across every tenant: provider promotion (`ProviderActivation`'s own entity comment already says "NOT tenant-scoped") and the policy catalog (deliberately global, per `Jurisdiction`'s own note).
+
+### What changed
+
+- `src/audit/platform-audit-tenant.ts` (new) — the constant above.
+- `src/provider-platform/provider-promotion.service.ts` — `propose()`/`certify()`/`approve()`/`activate()`/`deactivate()` each now call `AuditEventService.record()` after their own write, under `PLATFORM_AUDIT_TENANT_ID`. Put in the service, not `ProviderPromotionController`, so every real caller gets it — the console's REST path, but also `manage-provider-promotion.ts` and `provider-kill-switch-drill.ts`, neither of which goes through the controller.
+- `src/data-disposition/legal-hold.service.ts` — `place()`/`release()` now record `LEGAL_HOLD_PLACED`/`LEGAL_HOLD_RELEASED` audit events (this codebase's tenant-scoped kind — legal holds, unlike provider promotion, really do belong to one tenant). Since there's no REST controller for legal holds, this was the only material mutation in the whole codebase with zero provenance until now.
+- `src/data-disposition/data-disposition.service.ts` — the `DATA_DISPOSITION_TASK_RESOLVED` audit write moved from `DataDispositionController` into `DataDispositionService.resolve()` itself, closing the script-vs-REST inconsistency directly; `resolve()` gained an optional `correlationId` parameter so the REST path keeps that field instead of losing it in the move. `DataDispositionController` no longer depends on `AuditEventService` at all.
+- `src/policy/policy-activation.service.ts` — `activate()`/`withdraw()` gained a required `actorId` parameter and now record `POLICY_VERSION_ACTIVATED`/`POLICY_VERSION_WITHDRAWN` audit events under `PLATFORM_AUDIT_TENANT_ID`. Considered `OutboxEvent` first and rejected it: that table requires a `caseId` (Section 12.2's per-case transactional outbox), and a catalog-wide activation isn't scoped to any one case — `AuditEventService` has no such constraint.
+- Every manual (non-Nest-DI) construction site of these four services updated to pass a real `AuditEventService` — the standalone scripts (`resolve-data-disposition-task.ts`, `manage-legal-hold.ts`, `manage-provider-promotion.ts`, `provider-kill-switch-drill.ts`, `evaluation-report.ts`) and every spec file that builds these services outside Nest (`data-disposition.service.spec.ts`, `legal-hold.service.spec.ts`, `policy-activation.service.spec.ts`, `provider-promotion.service.spec.ts`, `dispatch-provider-request.spec.ts`, `provider-authorization.service.spec.ts`, `consent.service.spec.ts`, `case-conditions.activities.spec.ts`, `runner.spec.ts`). Nest-DI call sites (the controllers, `worker.ts`) needed no change — `AuditModule` is `@Global()`, already loaded by `app.module.ts`/`worker.module.ts`.
+- `data-disposition.controller.spec.ts` rewritten: the "records an audit event" assertion moved to `data-disposition.service.spec.ts` (where the write now actually happens), and the controller's own test now asserts it passes `auth.correlationId` through to the service instead of writing an event itself.
+- New real, Postgres-backed tests: `legal-hold.service.spec.ts` (place/release write the right audit row), `data-disposition.service.spec.ts` (resolve() called directly — the exact `resolve-data-disposition-task.ts` pattern — still writes the audit row), `policy-activation.service.spec.ts` (activate/withdraw write the right row under the platform tenant), `provider-promotion.service.spec.ts` (the whole propose→certify→approve→activate→deactivate chain writes five real, correctly-attributed rows).
+- One deliberate, disclosed side effect: `audit_events` is append-only by design (its own migration's trigger rejects `UPDATE`/`DELETE` unconditionally). `provider-kill-switch-drill.ts`'s own "a drill leaves nothing behind" comment is no longer fully true — its `PROVIDER_*` audit rows under the `kill-switch-drill-*` actor ids are now genuinely permanent, by the same design that makes an audit trail worth having. Documented directly in that script rather than left for someone to discover later.
+
+### A local-environment repair, honestly recorded (not a code fix)
+
+Running `src/workflows/case-conditions.activities.spec.ts` and `src/evaluation/runner.spec.ts` locally failed with `[POLICY_AMBIGUITY] jurisdiction "US" has no registered policy source` — the same category of gap M7-023/M7-027 already found and repaired: this machine's dev Postgres has the `FederalPolicySourceCoverage1787178500000` migration's *schema* (via `synchronize: true` at some point) but never actually ran its `up()`, so the seeded federal `PolicySource`/`PolicySourceRevision` rows were missing. Confirmed this was pre-existing and unrelated to this session's own code changes via `git stash` A/B first (identical 8 failed/16 passed with this session's changes stashed out — the DB gap, not the code, was the cause); then repaired the local database with the exact same `INSERT` the migration itself runs (not a code or migration change) and reran with this session's changes back in place: 24/24 passed.
+
+Separately, the broader `src/audit src/policy src/data-disposition src/provider-platform src/consent src/workflows src/evaluation` sweep has 57 pre-existing failures, all in `*-tenant-isolation.spec.ts` files, all with the identical `role "mortgage_app" does not exist` — a Postgres role this local database was never bootstrapped with (unrelated to migrations; a `CREATE ROLE` this environment's setup never ran). Confirmed pre-existing and unrelated the same way: `git stash` A/B produced the identical 9 failed suites / 57 failed tests with none of this session's changes present.
+
+### Verification
+
+```text
+Real, against a live local Postgres (2026-08-30):
+- legal-hold.service.spec.ts, data-disposition.service.spec.ts,
+  policy-activation.service.spec.ts, provider-promotion.service.spec.ts:
+  43/43 passed, including every new audit-event assertion
+- consent.service.spec.ts, provider-authorization.service.spec.ts,
+  dispatch-provider-request.spec.ts: 30/30 passed
+- case-conditions.activities.spec.ts, runner.spec.ts: 24/24 passed
+  (after repairing the pre-existing missing federal PolicySource seed)
+- Real NestFactory.createApplicationContext(AppModule) boot: all four
+  changed services (ProviderPromotionService, PolicyActivationService,
+  DataDispositionService, LegalHoldService) resolved cleanly through
+  real Nest DI with AuditEventService injected — not just a compile check
+- npm run build: clean
+- npx tsc --noEmit: same 6 pre-existing, unrelated errors as before this
+  work (evaluate-policy.tool.spec.ts, env.validation.spec.ts,
+  loan.service.spec.ts) - none introduced
+- eslint on every new/changed file: clean after one auto-fix pass
+- git-stash A/B comparison, twice: confirmed both the federal-source
+  local-seed gap and the broader tenant-isolation-spec `mortgage_app`
+  role gap are pre-existing, not caused by this work
+```
+
+### Next safe step
+
+The remaining M3/M4/M5 audit findings not acted on here — FAPI 2.0, field/object encryption, the backup subsystem, real US jurisdiction coverage, a reusable adapter contract suite, the untested failure-mode fixtures beyond transient/terminal — are each a real, separate scope decision (external dependency, legal review, or a large net-new subsystem), not something closable as a quick follow-on the way this entry's two fixes were. None should be assumed as the next task without asking first.

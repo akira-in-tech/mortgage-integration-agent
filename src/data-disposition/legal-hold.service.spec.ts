@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { Tenant } from '../database/entities/tenant.entity';
 import { LegalHold } from '../database/entities/legal-hold.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { LegalHoldService } from './legal-hold.service';
+import { AuditEventService } from '../audit/audit-event.service';
+import { runInTenantContext } from '../database/tenant-context';
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -20,10 +23,13 @@ describeOrSkip('LegalHoldService (Section 14.1, M5-025)', () => {
     dataSource = new DataSource({
       type: 'postgres',
       url: DATABASE_URL,
-      entities: [Tenant, LegalHold],
+      entities: [Tenant, LegalHold, AuditEvent],
     });
     await dataSource.initialize();
-    service = new LegalHoldService(dataSource);
+    service = new LegalHoldService(
+      dataSource,
+      new AuditEventService(dataSource),
+    );
 
     const tenantRepo = dataSource.getRepository(Tenant);
     const tenant = await tenantRepo.save(
@@ -36,6 +42,10 @@ describeOrSkip('LegalHoldService (Section 14.1, M5-025)', () => {
     if (dataSource?.isInitialized) {
       await dataSource.getRepository(LegalHold).delete({ tenantId });
       await dataSource.getRepository(Tenant).delete({ id: tenantId });
+      // audit_events is append-only by design (its own migration's
+      // trigger rejects UPDATE/DELETE unconditionally) — this spec's own
+      // AUDIT_HOLD_PLACED/RELEASED rows are left in place, same
+      // convention as audit-event.service.spec.ts's own afterAll.
       await dataSource.destroy();
     }
   });
@@ -110,5 +120,62 @@ describeOrSkip('LegalHoldService (Section 14.1, M5-025)', () => {
     await expect(
       service.release(tenantId, randomUUID(), 'releaser-1'),
     ).rejects.toThrow(/not found/);
+  });
+
+  // M7-028: the M5 audit found place()/release() wrote no audit_events
+  // row at all — there is no REST controller for legal holds, only the
+  // manage-legal-hold script, so this had been the one material
+  // mutation in this codebase with zero provenance. These two tests
+  // prove the fix against a real audit_events row, not just that the
+  // call didn't throw.
+  it('place() records a real LEGAL_HOLD_PLACED audit event', async () => {
+    const caseId = randomUUID();
+    const hold = await service.place(
+      tenantId,
+      caseId,
+      'audit-spec: litigation',
+      'audit-spec-owner',
+    );
+
+    const events = await runInTenantContext(dataSource, tenantId, (manager) =>
+      manager.getRepository(AuditEvent).find({
+        where: { tenantId, action: 'LEGAL_HOLD_PLACED', resourceId: hold.id },
+      }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId,
+      actorId: 'audit-spec-owner',
+      action: 'LEGAL_HOLD_PLACED',
+      resourceType: 'legal_hold',
+      resourceId: hold.id,
+      reason: 'audit-spec: litigation',
+      metadata: { caseId },
+    });
+  });
+
+  it('release() records a real LEGAL_HOLD_RELEASED audit event', async () => {
+    const caseId = randomUUID();
+    const hold = await service.place(tenantId, caseId, 'reason', 'owner-1');
+    await service.release(tenantId, hold.id, 'audit-spec-releaser');
+
+    const events = await runInTenantContext(dataSource, tenantId, (manager) =>
+      manager.getRepository(AuditEvent).find({
+        where: {
+          tenantId,
+          action: 'LEGAL_HOLD_RELEASED',
+          resourceId: hold.id,
+        },
+      }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId,
+      actorId: 'audit-spec-releaser',
+      action: 'LEGAL_HOLD_RELEASED',
+      resourceType: 'legal_hold',
+      resourceId: hold.id,
+      metadata: { caseId },
+    });
   });
 });

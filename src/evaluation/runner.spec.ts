@@ -42,6 +42,8 @@ import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
+import { AuditEventService } from '../audit/audit-event.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
 import { CommunicationDeliverySimulator } from '../communications/communication-delivery-simulator';
@@ -99,6 +101,7 @@ describeOrSkip('runCorpus', () => {
         CommunicationMessage,
         CommunicationTemplate,
         DataDispositionTask,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
@@ -144,9 +147,14 @@ describeOrSkip('runCorpus', () => {
     providerRegistry.register(
       new DocumentVerificationAdapter(new DocumentService()),
     );
+    const auditEventService = new AuditEventService(dataSource);
     const consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
+      new DataDispositionService(
+        dataSource,
+        new LegalHoldService(dataSource, auditEventService),
+        auditEventService,
+      ),
     );
     const providerAuthorizationService = new ProviderAuthorizationService(
       dataSource,
@@ -161,6 +169,7 @@ describeOrSkip('runCorpus', () => {
       dataSource.getRepository(ProviderCertificationRecord),
       dataSource.getRepository(ProviderApprovalRecord),
       dataSource.getRepository(ProviderActivation),
+      auditEventService,
     );
     const messageService = new CommunicationMessageService(dataSource);
     const communicationDeliveryService = new CommunicationDeliveryService(

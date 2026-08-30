@@ -7,10 +7,12 @@ import { LoanCase } from '../database/entities/loan-case.entity';
 import { Tenant } from '../database/entities/tenant.entity';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
+import { AuditEventService } from '../audit/audit-event.service';
 import { ProviderCapability } from './types';
 
 // Requires a reachable Postgres (same convention as the other real-DB
@@ -47,12 +49,18 @@ describeOrSkip('ProviderAuthorizationService', () => {
         Tenant,
         Jurisdiction,
         DataDispositionTask,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
+    const auditEventService = new AuditEventService(dataSource);
     consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
+      new DataDispositionService(
+        dataSource,
+        new LegalHoldService(dataSource, auditEventService),
+        auditEventService,
+      ),
     );
     service = new ProviderAuthorizationService(dataSource, consentService);
   });

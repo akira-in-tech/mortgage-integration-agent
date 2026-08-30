@@ -11,6 +11,8 @@ import { ProviderCertificationRecord } from './database/entities/provider-certif
 import { ProviderApprovalRecord } from './database/entities/provider-approval-record.entity';
 import { ProviderActivation } from './database/entities/provider-activation.entity';
 import { ConsentRecord } from './database/entities/consent-record.entity';
+import { AuditEvent } from './database/entities/audit-event.entity';
+import { AuditEventService } from './audit/audit-event.service';
 import { ProviderRegistryService } from './provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-platform/provider-operation-intent.service';
@@ -130,15 +132,18 @@ async function main(): Promise<void> {
       ProviderApprovalRecord,
       ProviderActivation,
       ConsentRecord,
+      AuditEvent,
     ],
   });
   await dataSource.initialize();
 
   const registry = new ProviderRegistryService();
   registry.register(drillAdapter);
+  const auditEventService = new AuditEventService(dataSource);
   const dataDispositionService = new DataDispositionService(
     dataSource,
-    new LegalHoldService(dataSource),
+    new LegalHoldService(dataSource, auditEventService),
+    auditEventService,
   );
   const consentService = new ConsentService(dataSource, dataDispositionService);
   const authorizationService = new ProviderAuthorizationService(
@@ -152,6 +157,7 @@ async function main(): Promise<void> {
     dataSource.getRepository(ProviderCertificationRecord),
     dataSource.getRepository(ProviderApprovalRecord),
     dataSource.getRepository(ProviderActivation),
+    auditEventService,
   );
   const deps = {
     registry,
@@ -280,7 +286,13 @@ async function main(): Promise<void> {
   } finally {
     // A drill leaves nothing behind - the same "clean up exactly what
     // this run created" discipline dispatch-provider-request.spec.ts's
-    // own afterAll follows.
+    // own afterAll follows. One deliberate exception (M7-028): every
+    // propose/certify/approve/activate/deactivate call above now writes
+    // a real `audit_events` row, and that table's own append-only
+    // trigger rejects DELETE unconditionally (see AuditEvents migration)
+    // - so this drill's own audit trail under the
+    // 'kill-switch-drill-*' actor ids is the one thing that genuinely
+    // can't be cleaned up, by design, not an oversight here.
     await dataSource
       .getRepository(ProviderOperationIntent)
       .createQueryBuilder()

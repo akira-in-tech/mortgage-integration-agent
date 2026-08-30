@@ -10,6 +10,7 @@ import {
 } from '../database/enums/data-disposition.enum';
 import { runInTenantContext } from '../database/tenant-context';
 import { LegalHoldService } from './legal-hold.service';
+import { AuditEventService } from '../audit/audit-event.service';
 
 export interface OpenRetentionReviewParams {
   tenantId: string;
@@ -33,6 +34,7 @@ export class DataDispositionService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly legalHoldService: LegalHoldService,
+    private readonly auditEventService: AuditEventService,
   ) {}
 
   /**
@@ -89,77 +91,102 @@ export class DataDispositionService {
    * `PENDING` -> `VERIFIED` directly, one atomic transaction — see
    * `DataDispositionTaskStatus`'s own comment for why no distinct
    * `IN_PROGRESS`/`COMPLETED` interval is modeled.
+   *
+   * The audit-event write used to live in `DataDispositionController`
+   * only (M7-028 fix): `resolve-data-disposition-task.ts` calls this
+   * method directly and never went through the controller, so a
+   * script-driven resolution produced no `audit_events` row while a
+   * REST-driven one did — the same mutation, two different provenance
+   * outcomes depending on who called it. Moving the write here closes
+   * that gap for both callers at once.
    */
   async resolve(
     tenantId: string,
     taskId: string,
     action: DataDispositionResolutionAction,
     actorId: string,
+    correlationId?: string | null,
   ): Promise<DataDispositionTask> {
-    return runInTenantContext(this.dataSource, tenantId, async (manager) => {
-      const taskRepo = manager.getRepository(DataDispositionTask);
-      const task = await taskRepo.findOneBy({ id: taskId, tenantId });
-      if (!task) {
-        throw new BadRequestException(
-          `data disposition task ${taskId} not found`,
-        );
-      }
-      if (task.status !== DataDispositionTaskStatus.PENDING) {
-        throw new BadRequestException(
-          `data disposition task ${taskId} is already ${task.status}`,
-        );
-      }
-
-      const hasHold = await this.legalHoldService.hasActiveHold(
-        tenantId,
-        task.caseId,
-      );
-
-      if (action === 'RETAIN') {
-        if (!hasHold) {
+    const resolved = await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      async (manager) => {
+        const taskRepo = manager.getRepository(DataDispositionTask);
+        const task = await taskRepo.findOneBy({ id: taskId, tenantId });
+        if (!task) {
           throw new BadRequestException(
-            `cannot RETAIN task ${taskId} — case ${task.caseId} has no active legal hold to retain it under; place one first, or choose DELETE/ANONYMIZE`,
+            `data disposition task ${taskId} not found`,
           );
         }
-      } else if (hasHold) {
-        throw new BadRequestException(
-          `cannot ${action} task ${taskId} — case ${task.caseId} has an active legal hold; release it first, or choose RETAIN`,
+        if (task.status !== DataDispositionTaskStatus.PENDING) {
+          throw new BadRequestException(
+            `data disposition task ${taskId} is already ${task.status}`,
+          );
+        }
+
+        const hasHold = await this.legalHoldService.hasActiveHold(
+          tenantId,
+          task.caseId,
         );
-      }
 
-      const evidenceRepo = manager.getRepository(EvidenceFact);
-      let resolutionOutcome: DataDispositionResolutionOutcome;
-      if (action === 'DELETE') {
-        if (task.affectedEvidenceFactIds.length > 0) {
-          await evidenceRepo.delete(task.affectedEvidenceFactIds);
+        if (action === 'RETAIN') {
+          if (!hasHold) {
+            throw new BadRequestException(
+              `cannot RETAIN task ${taskId} — case ${task.caseId} has no active legal hold to retain it under; place one first, or choose DELETE/ANONYMIZE`,
+            );
+          }
+        } else if (hasHold) {
+          throw new BadRequestException(
+            `cannot ${action} task ${taskId} — case ${task.caseId} has an active legal hold; release it first, or choose RETAIN`,
+          );
         }
-        resolutionOutcome = DataDispositionResolutionOutcome.DELETED;
-      } else if (action === 'ANONYMIZE') {
-        if (task.affectedEvidenceFactIds.length > 0) {
-          await evidenceRepo
-            .createQueryBuilder()
-            .update()
-            .set({ value: {} })
-            .whereInIds(task.affectedEvidenceFactIds)
-            .execute();
-        }
-        resolutionOutcome = DataDispositionResolutionOutcome.ANONYMIZED;
-      } else {
-        resolutionOutcome =
-          DataDispositionResolutionOutcome.RETAINED_UNDER_HOLD;
-      }
 
-      await taskRepo.update(
-        { id: taskId },
-        {
-          status: DataDispositionTaskStatus.VERIFIED,
-          resolutionOutcome,
-          resolvedAt: new Date(),
-          resolvedBy: actorId,
-        },
-      );
-      return taskRepo.findOneByOrFail({ id: taskId });
+        const evidenceRepo = manager.getRepository(EvidenceFact);
+        let resolutionOutcome: DataDispositionResolutionOutcome;
+        if (action === 'DELETE') {
+          if (task.affectedEvidenceFactIds.length > 0) {
+            await evidenceRepo.delete(task.affectedEvidenceFactIds);
+          }
+          resolutionOutcome = DataDispositionResolutionOutcome.DELETED;
+        } else if (action === 'ANONYMIZE') {
+          if (task.affectedEvidenceFactIds.length > 0) {
+            await evidenceRepo
+              .createQueryBuilder()
+              .update()
+              .set({ value: {} })
+              .whereInIds(task.affectedEvidenceFactIds)
+              .execute();
+          }
+          resolutionOutcome = DataDispositionResolutionOutcome.ANONYMIZED;
+        } else {
+          resolutionOutcome =
+            DataDispositionResolutionOutcome.RETAINED_UNDER_HOLD;
+        }
+
+        await taskRepo.update(
+          { id: taskId },
+          {
+            status: DataDispositionTaskStatus.VERIFIED,
+            resolutionOutcome,
+            resolvedAt: new Date(),
+            resolvedBy: actorId,
+          },
+        );
+        return taskRepo.findOneByOrFail({ id: taskId });
+      },
+    );
+
+    await this.auditEventService.record({
+      tenantId,
+      actorId,
+      action: 'DATA_DISPOSITION_TASK_RESOLVED',
+      resourceType: 'data_disposition_task',
+      resourceId: taskId,
+      correlationId: correlationId ?? null,
+      reason: `Resolved as ${action}`,
+      metadata: { action },
     });
+    return resolved;
   }
 
   /**

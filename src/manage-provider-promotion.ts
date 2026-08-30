@@ -12,6 +12,8 @@ import {
 } from './database/enums/provider-promotion.enum';
 import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
 import { ProviderCapability, ProviderMode } from './provider-platform/types';
+import { AuditEvent } from './database/entities/audit-event.entity';
+import { AuditEventService } from './audit/audit-event.service';
 
 const VALID_MODES: ProviderMode[] = [
   'SIMULATOR',
@@ -64,6 +66,10 @@ function parseOptionalDate(arg: string | undefined): Date | undefined {
  * codebase's two-role tenant RBAC has no admin tier), and every one of
  * these is a human, out-of-band governance decision anyway (Section
  * 16.1's "independent approval" language).
+ *
+ * Every state-changing action below writes a real `audit_events` row
+ * (M7-028) — `ProviderPromotionService` records it directly, so this
+ * script gets the same provenance the console's REST path does.
  */
 async function main(): Promise<void> {
   const [action, ...rest] = process.argv.slice(2);
@@ -86,6 +92,7 @@ async function main(): Promise<void> {
       ProviderCertificationRecord,
       ProviderApprovalRecord,
       ProviderActivation,
+      AuditEvent,
     ],
   });
   await dataSource.initialize();
@@ -96,6 +103,7 @@ async function main(): Promise<void> {
       dataSource.getRepository(ProviderCertificationRecord),
       dataSource.getRepository(ProviderApprovalRecord),
       dataSource.getRepository(ProviderActivation),
+      new AuditEventService(dataSource),
     );
 
     if (action === 'propose') {

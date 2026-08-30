@@ -36,6 +36,8 @@ import { ProviderActivation } from './database/entities/provider-activation.enti
 import { ConsentRecord } from './database/entities/consent-record.entity';
 import { CommunicationMessage } from './database/entities/communication-message.entity';
 import { CommunicationTemplate } from './database/entities/communication-template.entity';
+import { AuditEvent } from './database/entities/audit-event.entity';
+import { AuditEventService } from './audit/audit-event.service';
 import { PolicyApplicabilityResolverService } from './policy/policy-applicability-resolver.service';
 import { PolicyEvaluationService } from './policy/policy-evaluation.service';
 import { EvaluationManifestService } from './policy/evaluation-manifest.service';
@@ -125,6 +127,7 @@ async function main(): Promise<void> {
       CommunicationTemplate,
       DataDispositionTask,
       EvaluationReportRecord,
+      AuditEvent,
     ],
   });
   await dataSource.initialize();
@@ -148,9 +151,11 @@ async function main(): Promise<void> {
   providerRegistry.register(
     new DocumentVerificationAdapter(new DocumentService()),
   );
+  const auditEventService = new AuditEventService(dataSource);
   const dataDispositionService = new DataDispositionService(
     dataSource,
-    new LegalHoldService(dataSource),
+    new LegalHoldService(dataSource, auditEventService),
+    auditEventService,
   );
   const consentService = new ConsentService(dataSource, dataDispositionService);
   const providerAuthorizationService = new ProviderAuthorizationService(
@@ -166,6 +171,7 @@ async function main(): Promise<void> {
     dataSource.getRepository(ProviderCertificationRecord),
     dataSource.getRepository(ProviderApprovalRecord),
     dataSource.getRepository(ProviderActivation),
+    auditEventService,
   );
   const messageService = new CommunicationMessageService(dataSource);
   const communicationDeliveryService = new CommunicationDeliveryService(

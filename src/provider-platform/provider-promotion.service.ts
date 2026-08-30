@@ -12,6 +12,8 @@ import {
 } from '../database/enums/provider-promotion.enum';
 import { computeDigest } from '../policy/policy-digest';
 import { ProviderCapability, ProviderMode } from './types';
+import { AuditEventService } from '../audit/audit-event.service';
+import { PLATFORM_AUDIT_TENANT_ID } from '../audit/platform-audit-tenant';
 
 export interface ProposeManifestInput {
   providerId: string;
@@ -32,6 +34,18 @@ export interface ProposeManifestInput {
  * `dispatchProviderRequest` is the real enforcement point (Section 11.4's
  * kill switch's own precedent, M4-006) — every non-`SIMULATOR` dispatch
  * fails closed unless `isActivated()` is true.
+ *
+ * Every state-changing method here also writes an `AuditEventService`
+ * record (M7-028) — the M5 trust-boundary audit found that
+ * `ProviderPromotionController` never wrote one, leaving provenance for
+ * a manifest's whole propose/certify/approve/activate/deactivate history
+ * living only in this table's own `proposedBy`/`certifiedBy`/etc.
+ * columns. The audit call lives here rather than in the controller so
+ * every real caller — the console, and the `manage-provider-promotion`/
+ * `provider-kill-switch-drill` scripts, neither of which goes through
+ * the controller — gets the same provenance, not just the REST path.
+ * Under `PLATFORM_AUDIT_TENANT_ID` because this catalog is shared across
+ * every tenant, not owned by one (see that constant's own comment).
  */
 @Injectable()
 export class ProviderPromotionService {
@@ -44,6 +58,7 @@ export class ProviderPromotionService {
     private readonly approvalRepository: Repository<ProviderApprovalRecord>,
     @InjectRepository(ProviderActivation)
     private readonly activationRepository: Repository<ProviderActivation>,
+    private readonly auditEventService: AuditEventService,
   ) {}
 
   /** Each proposal is a new, immutable row — `version` increments per `{providerId, capability, mode}` tuple. */
@@ -69,7 +84,7 @@ export class ProviderPromotionService {
       dataClassifications: input.dataClassifications,
     });
 
-    return this.manifestRepository.save(
+    const manifest = await this.manifestRepository.save(
       this.manifestRepository.create({
         providerId: input.providerId,
         capability:
@@ -85,6 +100,22 @@ export class ProviderPromotionService {
         validUntil: input.validUntil ?? null,
       }),
     );
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: input.proposedBy,
+      action: 'PROVIDER_MANIFEST_PROPOSED',
+      resourceType: 'provider_promotion_manifest',
+      resourceId: manifest.id,
+      metadata: {
+        providerId: input.providerId,
+        capability: input.capability,
+        mode: input.mode,
+        version,
+        adapterVersion: input.adapterVersion,
+      },
+    });
+    return manifest;
   }
 
   /** Append-only — a re-certification (renewal, or reversing an earlier FAILED) is a new row, never a mutation. */
@@ -98,7 +129,7 @@ export class ProviderPromotionService {
   ): Promise<ProviderCertificationRecord> {
     await this.manifestRepository.findOneByOrFail({ id: manifestId });
 
-    return this.certificationRepository.save(
+    const record = await this.certificationRepository.save(
       this.certificationRepository.create({
         manifestId,
         environment,
@@ -108,6 +139,16 @@ export class ProviderPromotionService {
         expiresAt,
       }),
     );
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: certifiedBy,
+      action: 'PROVIDER_MANIFEST_CERTIFIED',
+      resourceType: 'provider_promotion_manifest',
+      resourceId: manifestId,
+      metadata: { environment, decision, evidenceRef },
+    });
+    return record;
   }
 
   /**
@@ -136,7 +177,7 @@ export class ProviderPromotionService {
       );
     }
 
-    return this.approvalRepository.save(
+    const record = await this.approvalRepository.save(
       this.approvalRepository.create({
         manifestId,
         approvalRole,
@@ -145,6 +186,16 @@ export class ProviderPromotionService {
         expiresAt,
       }),
     );
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: approvedBy,
+      action: 'PROVIDER_MANIFEST_APPROVAL_RECORDED',
+      resourceType: 'provider_promotion_manifest',
+      resourceId: manifestId,
+      metadata: { approvalRole, decision },
+    });
+    return record;
   }
 
   /**
@@ -206,7 +257,7 @@ export class ProviderPromotionService {
       );
     }
 
-    return this.activationRepository.save(
+    const activation = await this.activationRepository.save(
       this.activationRepository.create({
         ...existing,
         providerId: manifest.providerId,
@@ -218,6 +269,23 @@ export class ProviderPromotionService {
         activatedBy,
       }),
     );
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: activatedBy,
+      action: 'PROVIDER_ACTIVATED',
+      resourceType: 'provider_activation',
+      resourceId: activation.id,
+      metadata: {
+        providerId: manifest.providerId,
+        capability: manifest.capability,
+        mode: manifest.mode,
+        environment,
+        manifestId: manifest.id,
+        manifestVersion: manifest.version,
+      },
+    });
+    return activation;
   }
 
   /**
@@ -242,7 +310,19 @@ export class ProviderPromotionService {
       { id: existing.id },
       { state: ProviderActivationState.DEACTIVATED, activatedBy: actorId },
     );
-    return this.activationRepository.findOneByOrFail({ id: existing.id });
+    const activation = await this.activationRepository.findOneByOrFail({
+      id: existing.id,
+    });
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId,
+      action: 'PROVIDER_DEACTIVATED',
+      resourceType: 'provider_activation',
+      resourceId: activation.id,
+      metadata: { providerId, capability, mode },
+    });
+    return activation;
   }
 
   /** The real dispatch-time gate — `dispatchProviderRequest` calls this for every non-`SIMULATOR` mode. No row means never activated (fail closed, opposite of the kill switch's own "no row means ACTIVE" default — an unpromoted manifest must never be reachable). */

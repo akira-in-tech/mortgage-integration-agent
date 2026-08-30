@@ -32,6 +32,8 @@ import { AssetService } from '../integrations/asset/asset.service';
 import { AssetVerificationAdapter } from '../integrations/asset/asset-verification.adapter';
 import { IdentityService } from '../integrations/identity/identity.service';
 import { IdentityVerificationAdapter } from '../integrations/identity/identity-verification.adapter';
+import { AuditEvent } from '../database/entities/audit-event.entity';
+import { AuditEventService } from '../audit/audit-event.service';
 
 // Requires a reachable Postgres (same convention as the other real-DB
 // specs): skip instead of failing when no DATABASE_URL is configured.
@@ -101,15 +103,21 @@ describeOrSkip('dispatchProviderRequest', () => {
         ProviderApprovalRecord,
         ProviderActivation,
         ConsentRecord,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
     registry = new ProviderRegistryService();
     registry.register(new AssetVerificationAdapter(new AssetService()));
     registry.register(new IdentityVerificationAdapter(new IdentityService()));
+    const auditEventService = new AuditEventService(dataSource);
     consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
+      new DataDispositionService(
+        dataSource,
+        new LegalHoldService(dataSource, auditEventService),
+        auditEventService,
+      ),
     );
     authorizationService = new ProviderAuthorizationService(
       dataSource,
@@ -122,6 +130,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       dataSource.getRepository(ProviderCertificationRecord),
       dataSource.getRepository(ProviderApprovalRecord),
       dataSource.getRepository(ProviderActivation),
+      auditEventService,
     );
   });
 

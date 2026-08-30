@@ -3,7 +3,9 @@ loadEnv();
 
 import { DataSource } from 'typeorm';
 import { LegalHold } from './database/entities/legal-hold.entity';
+import { AuditEvent } from './database/entities/audit-event.entity';
 import { LegalHoldService } from './data-disposition/legal-hold.service';
+import { AuditEventService } from './audit/audit-event.service';
 
 /**
  * `npm run manage-legal-hold -- <tenantId> <caseId> place <ownerId> <reason>`
@@ -35,12 +37,15 @@ async function main(): Promise<void> {
   const dataSource = new DataSource({
     type: 'postgres',
     url: databaseUrl,
-    entities: [LegalHold],
+    entities: [LegalHold, AuditEvent],
   });
   await dataSource.initialize();
 
   try {
-    const service = new LegalHoldService(dataSource);
+    const service = new LegalHoldService(
+      dataSource,
+      new AuditEventService(dataSource),
+    );
     if (action === 'place') {
       const [ownerId, ...reasonParts] = rest;
       const reason = reasonParts.join(' ').trim();
