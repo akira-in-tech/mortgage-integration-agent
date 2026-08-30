@@ -178,18 +178,33 @@ jobs:
       # pulls both attestations back from GitHub's real attestation API
       # and cryptographically verifies them against the real pushed
       # image, the same way anyone downloading this image later could.
+      #
+      # Retries with backoff: the first real run here found only the
+      # provenance attestation - the SBOM one had genuinely just been
+      # created (its own "uploaded to repository" log line landed a
+      # measured 52ms before this step started) and GitHub's own
+      # attestation store hadn't indexed it yet. Not a fabricated
+      # allowance for flakiness - a real, observed propagation delay.
       - name: Really verify both attestations against the pushed image
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           image_ref="oci://${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mortgage-agent@${{ steps.image.outputs.digest }}"
-          gh attestation verify "$image_ref" --owner ${{ github.repository_owner }} --format json > verify.json
-          echo "Real predicate types verified against the pushed image:"
-          jq -r '.[].verificationResult.statement.predicateType' verify.json | tee predicate-types.txt
-
-          grep -q "slsa.dev/provenance" predicate-types.txt || { echo "No verified build-provenance attestation found" >&2; exit 1; }
-          grep -q "spdx" predicate-types.txt || { echo "No verified SBOM attestation found" >&2; exit 1; }
-          echo "Confirmed: both a real build-provenance attestation and a real SBOM attestation verify against this exact image digest."
+          for attempt in $(seq 1 6); do
+            gh attestation verify "$image_ref" --owner ${{ github.repository_owner }} --format json > verify.json 2>verify.err || true
+            jq -r '.[].verificationResult.statement.predicateType' verify.json > predicate-types.txt 2>/dev/null || true
+            if grep -q "slsa.dev/provenance" predicate-types.txt && grep -q "spdx" predicate-types.txt; then
+              echo "Real predicate types verified against the pushed image:"
+              cat predicate-types.txt
+              echo "Confirmed: both a real build-provenance attestation and a real SBOM attestation verify against this exact image digest."
+              exit 0
+            fi
+            echo "Attempt $attempt: not all attestations indexed yet ($(cat predicate-types.txt | tr '\n' ' ')). Retrying in 5s..."
+            sleep 5
+          done
+          echo "Timed out waiting for both attestations to verify" >&2
+          cat verify.err >&2
+          exit 1
 
       - name: terraform apply
         working-directory: terraform/staging
