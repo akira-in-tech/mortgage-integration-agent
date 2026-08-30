@@ -15,6 +15,12 @@ import { ProviderOperationIntentService } from './provider-platform/provider-ope
 import { ProviderKillSwitchService } from './provider-platform/provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
 import { ProviderReconciliationService } from './provider-platform/provider-reconciliation.service';
+import { PolicySourceMonitorService } from './policy/policy-source-monitor.service';
+import {
+  DemoPolicySourceConnector,
+  fetchDemoBulletin,
+} from './policy/policy-source-connector';
+import { PolicySource } from './database/entities/policy-source.entity';
 import { createCaseConditionsActivities } from './workflows/case-conditions.activities';
 import { CASE_CONDITIONS_TASK_QUEUE } from './workflows/case-conditions.signals';
 import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
@@ -86,6 +92,41 @@ async function bootstrap(): Promise<void> {
       });
   }, providerReconciliationIntervalMs);
 
+  // Section 29 item 4's monitoring mechanism (M7-027) - same "plain
+  // interval, not a Temporal workflow" reasoning as the two timers
+  // above. Looked up by jurisdictionCode rather than a hardcoded id so
+  // this doesn't silently do nothing if the demo migration hasn't run
+  // in a given environment; it just logs once and skips scheduling.
+  const policySourceRepository = appContext
+    .get(DataSource)
+    .getRepository(PolicySource);
+  const demoPolicySource = await policySourceRepository.findOneBy({
+    jurisdictionCode: 'US-DEMO',
+  });
+  let policySourceMonitorTimer: NodeJS.Timeout | undefined;
+  if (demoPolicySource) {
+    const policySourceMonitorService = appContext.get(
+      PolicySourceMonitorService,
+    );
+    const demoConnector = new DemoPolicySourceConnector(
+      demoPolicySource.id,
+      fetchDemoBulletin,
+    );
+    const policySourceMonitorIntervalMs = configService.get<number>(
+      'POLICY_SOURCE_MONITOR_INTERVAL_MS',
+      3_600_000,
+    );
+    policySourceMonitorTimer = setInterval(() => {
+      policySourceMonitorService.checkSource(demoConnector).catch((error) => {
+        console.error('Policy source monitor tick failed:', error);
+      });
+    }, policySourceMonitorIntervalMs);
+  } else {
+    console.warn(
+      'No US-DEMO policy source found - skipping the policy source monitor (run the PolicySourceConnectorDemo migration to enable it).',
+    );
+  }
+
   const connection = await NativeConnection.connect({
     address: configService.get<string>('TEMPORAL_ADDRESS', 'localhost:7233'),
   });
@@ -121,6 +162,9 @@ async function bootstrap(): Promise<void> {
   } finally {
     clearInterval(webhookDispatchTimer);
     clearInterval(providerReconciliationTimer);
+    if (policySourceMonitorTimer) {
+      clearInterval(policySourceMonitorTimer);
+    }
     await connection.close();
     await appContext.close();
     await shutdownTelemetry();

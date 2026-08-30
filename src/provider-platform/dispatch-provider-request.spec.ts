@@ -439,7 +439,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       registry.register(gateTestAdapter);
     });
 
-    it('fails closed with ProviderNotActivatedError before promotion, and dispatches for real once propose->certify->approve->activate all pass', async () => {
+    it('fails closed with ProviderNotActivatedError before promotion, dispatches for real once activated, and fails closed again the instant the kill switch deactivates it', async () => {
       const tenantId = newTenantId();
 
       await expect(
@@ -510,6 +510,33 @@ describeOrSkip('dispatchProviderRequest', () => {
         permittedDataClasses: ['ASSET'],
       });
       expect(finding).toEqual({ ok: true });
+
+      // The kill-switch exercise (Section 29 item 6): this specific
+      // round trip — active, dispatch really succeeds, deactivate, the
+      // very next dispatch really fails closed — had never been tested
+      // through dispatchProviderRequest itself before. Every existing
+      // deactivate() test stopped at isActivated() returning false; none
+      // proved a real dispatch attempt was actually rejected afterward.
+      const deactivated = await promotionService.deactivate(
+        'promotion-gate-spec-provider',
+        ProviderCapability.ASSET,
+        'AUTHORIZED_SANDBOX',
+        'dispatch-spec-killswitch-operator',
+      );
+      expect(deactivated.state).toBe('DEACTIVATED');
+
+      await expect(
+        dispatchProviderRequest(deps(), {
+          tenantId,
+          caseId: randomUUID(),
+          borrowerSubjectId: 'promotion-gate-borrower',
+          capability: ProviderCapability.ASSET,
+          mode: 'AUTHORIZED_SANDBOX',
+          request: {},
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['ASSET'],
+        }),
+      ).rejects.toThrow(ProviderNotActivatedError);
     });
   });
 

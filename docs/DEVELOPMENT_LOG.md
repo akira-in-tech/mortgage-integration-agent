@@ -11317,3 +11317,71 @@ Real, live result (2026-08-30, deploy-staging.yml run 33298283917):
 ### Next safe step
 
 Charter Section 29 item 6 is now fully closed except for Keycloak/console deployment, which the user has declined (no domain purchase) rather than merely deferred — do not revisit it without the user raising it again. Remaining open charter items (item 4's external policy-source monitoring, the provider certification/kill-switch exercise) are separate, unstarted work and should not be assumed as the next task without asking.
+
+## M7-027: policy-source connector mechanism (item 4) + a real kill-switch exercise (item 6)
+
+### Status
+
+Both real, live-verified locally on 2026-08-30 (real Postgres, not mocks); CI runs the same tests against its own fresh Postgres service. Closes Charter Section 29's last two open items — item 4's monitoring/ingestion mechanism and item 6's kill-switch exercise.
+
+### Item 4: the honest scope boundary, decided before writing any code
+
+Investigated the existing `PolicySource`/`PolicySourceRevision` system first: freshness is only ever checked reactively, arithmetically, when an evaluation happens to run against an already-expired source — nothing proactively polls anything today, and `PolicySourceRetrievalMode.CONNECTOR` has been declared in the enum since it was created but never once used. Only two jurisdictions exist (`US`, `US-CA`), both explicitly `SYNTHETIC`.
+
+Section 10.6 and 10.8 are direct and repeated: "no connector is described as complete coverage until that coverage is reviewed and tested" and "official or proprietary guidelines are not copied into the public repository." That drew a hard line before any code was written: the **mechanism** (a connector interface, a scheduled monitor, schema-drift detection) is legitimate engineering work the charter explicitly calls for — but **authoring or claiming real regulatory content for real jurisdictions is not something this session can or will do**. This entry says that plainly rather than quietly expanding "coverage" with anything invented.
+
+What got built, mirroring `ProviderAdapter`/`ProviderReconciliationService` (the same shape of problem this codebase already solved once for providers):
+
+- `PolicySourceConnector` interface (`src/policy/policy-source-connector.ts`): `checkForUpdate(latestKnownChecksum)` — a connector reports whether anything changed, never writes anything itself.
+- `DemoPolicySourceConnector` + `fetchDemoBulletin`: the one concrete connector in the codebase, deliberately not a real HTTP call to a real external system — there is no real regulatory feed this project has any right to poll. It reads a small, fixed, obviously-synthetic "external bulletin" so the real mechanism (change detection, schema-drift detection, candidate-revision creation) is genuinely exercised end to end.
+- `PolicySourceMonitorService` (`src/policy/policy-source-monitor.service.ts`): scans a `CONNECTOR`-mode source, and either does nothing (no real change), records a real new `PolicySourceRevision` (a genuine change, schema intact), or logs a schema-drift warning and writes nothing (content doesn't even have a `summary` field). It never touches `Jurisdiction.coverageStatus` — that stays a separate, human-reviewed fact, completely decoupled from whether a candidate revision exists. A migration (`1787178800000-PolicySourceConnectorDemo`) seeds one `US-DEMO` jurisdiction (`NOT_COVERED`, named to say exactly what it is) and one `CONNECTOR`-mode source for the monitor to actually poll. `worker.ts` schedules it hourly (`POLICY_SOURCE_MONITOR_INTERVAL_MS`), looked up by `jurisdictionCode` rather than a hardcoded id so it degrades to a one-time warning, not a crash, in an environment where the demo migration hasn't run.
+
+Real verification, not a description of intent: ran the actual `DemoPolicySourceConnector` against the actual migration-seeded `US-DEMO` source on a real Postgres — first check recorded a real `PolicySourceRevision` row (`sha256:demo-connector-bulletin-v1`), second check against the same content correctly did nothing. Four Jest tests (`policy-source-monitor.service.spec.ts`) cover: first-change records a revision, a genuine second change records a second one, a connector returning content missing the expected shape is flagged as schema drift with zero rows written, and a `MANUAL`-mode source is refused outright (this service polls what it's configured to poll, nothing else).
+
+### Item 6: the kill switch was already real — the gap was proof, not enforcement
+
+Read `dispatch-provider-request.ts` before assuming anything needed building: `deactivate()` really does flip `ProviderActivation.state` to `DEACTIVATED` in place, and every non-`SIMULATOR` dispatch does a fresh, uncached DB read of that row before proceeding. **The kill switch already was live, per-request enforcement** — not just a governance record — confirmed by reading the actual code path, not assumed from the entity name.
+
+The real gap was test coverage: every existing `deactivate()` test stopped at `isActivated()` returning `false` (record-level only); the one test that exercised real dispatch through the promotion gate (`dispatch-provider-request.spec.ts`) proved activation turns dispatch on, but never once called `deactivate()` to prove the reverse. Extended that exact test to continue the same real sequence: dispatch succeeds while active → `deactivate()` → the very next real dispatch attempt throws `ProviderNotActivatedError`. Ran for real against a live Postgres, passing.
+
+Also built `npm run kill-switch-drill` (`src/provider-kill-switch-drill.ts`) — a standalone, repeatable script (same one-off-script pattern as `evaluation-report.ts`/`create-platform-admin.ts`) that runs the identical real sequence outside Jest, against whatever `DATABASE_URL` points at, printing real timestamped evidence for every step and explicitly distinguishing "rejected for the expected reason" (`ProviderNotActivatedError`) from any other failure — a drill that called any rejection a pass would be weaker evidence than it claims. Ran it for real:
+
+```text
+STEP 1 OK: real dispatch rejected before promotion (no activation exists)
+STEP 2-4: propose -> certify -> approve -> activate, all real
+STEP 5 OK: real dispatch succeeded once active
+STEP 6: deactivate() (the kill switch)
+STEP 7 OK: real dispatch rejected immediately after the kill switch
+KILL-SWITCH DRILL PASSED
+```
+
+Leaves nothing behind — cleans up its own manifest/certification/approval/activation rows in a `finally` block, confirmed empty afterward by direct query.
+
+### A local-environment detour, honestly recorded
+
+This machine has a native Homebrew `postgresql@16` also bound to port 5432, shadowing the project's own docker-compose Postgres on `localhost:5432` — a pre-existing local quirk, unrelated to this feature. Asked the user before touching it; they approved. Stopped it, ran every real test/drill above against the real docker Postgres, restarted it immediately after. While there, hit two more known-category local-environment gaps (not code defects): this specific dev database's `typeorm_migrations` tracking table doesn't match its actual `synchronize: true`-built schema (same root cause M7-023 already found once for a different table), and `policy_catalog_generation`'s required singleton row was missing again. Both repaired locally the same way M7-023 did — direct `INSERT`, not a code or migration change — purely so this session's own local verification could run; CI's own fresh Postgres service never has either problem.
+
+Verified the 29 unrelated test failures seen when running the full `src/policy src/provider-platform` sweep were pre-existing, not caused by this work: `git stash`, re-ran the identical command with none of this session's changes present, got 28 failures in the same five files (none of them the files this session touched or added); every one of those five files passes cleanly in isolation. Real A/B evidence, not an assumption.
+
+### Verification
+
+```text
+Real, against a live local Postgres (2026-08-30):
+- dispatch-provider-request.spec.ts: 13/13 passed, including the new
+  kill-switch round trip
+- policy-source-monitor.service.spec.ts: 4/4 passed
+- npm run kill-switch-drill: real PASSED output, evidence above
+- DemoPolicySourceConnector run directly against the real migration-
+  seeded US-DEMO source: real revision recorded, real no-op on repeat
+- npm run build: clean
+- npx tsc --noEmit: same 6 pre-existing, unrelated errors as before
+  this work (evaluate-policy.tool.spec.ts, env.validation.spec.ts,
+  loan.service.spec.ts) - none introduced
+- eslint on every new/changed file: clean after one auto-fix pass
+- git-stash A/B comparison: confirmed the full-sweep failures in
+  src/policy + src/provider-platform are pre-existing, not caused here
+```
+
+### Next safe step
+
+Charter Section 29 has no fully-open items left. What remains, named honestly rather than silently dropped: real reviewed jurisdiction content for any actual US state (needs real legal review this session cannot provide or fabricate), Keycloak/console deployment (declined by the user, no domain), and SBOM/provenance coverage for the third-party `temporalio/auto-setup` image (out of scope — that image's own supply chain, not this repository's).

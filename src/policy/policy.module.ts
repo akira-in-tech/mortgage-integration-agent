@@ -18,6 +18,7 @@ import { PolicyChangeImpactService } from './policy-change-impact.service';
 import { PolicyActivationService } from './policy-activation.service';
 import { EvaluationManifestService } from './evaluation-manifest.service';
 import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
+import { PolicySourceMonitorService } from './policy-source-monitor.service';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { PolicyTransitionApprovalService } from './policy-transition-approval.se
     PolicyActivationService,
     EvaluationManifestService,
     PolicyTransitionApprovalService,
+    PolicySourceMonitorService,
   ],
   exports: [
     PolicyApplicabilityResolverService,
@@ -51,6 +53,7 @@ import { PolicyTransitionApprovalService } from './policy-transition-approval.se
     PolicyActivationService,
     EvaluationManifestService,
     PolicyTransitionApprovalService,
+    PolicySourceMonitorService,
   ],
 })
 export class PolicyModule {}
