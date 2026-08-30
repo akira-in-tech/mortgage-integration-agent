@@ -10,6 +10,10 @@ import {
 } from '../database/enums/provider-promotion.enum';
 import { ProviderPromotionService } from './provider-promotion.service';
 import { ProviderCapability } from './types';
+import { AuditEvent } from '../database/entities/audit-event.entity';
+import { AuditEventService } from '../audit/audit-event.service';
+import { PLATFORM_AUDIT_TENANT_ID } from '../audit/platform-audit-tenant';
+import { runInTenantContext } from '../database/tenant-context';
 
 // Requires a reachable Postgres (same convention as the other real-DB
 // specs): skip instead of failing when no DATABASE_URL is configured.
@@ -30,6 +34,7 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
         ProviderCertificationRecord,
         ProviderApprovalRecord,
         ProviderActivation,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
@@ -38,6 +43,7 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
       dataSource.getRepository(ProviderCertificationRecord),
       dataSource.getRepository(ProviderApprovalRecord),
       dataSource.getRepository(ProviderActivation),
+      new AuditEventService(dataSource),
     );
   });
 
@@ -77,6 +83,11 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
           .where('"providerId" IN (:...ids)', { ids: providerIds })
           .execute();
       }
+      // audit_events is append-only by design (its own migration's
+      // trigger rejects UPDATE/DELETE unconditionally) — this spec's own
+      // PROVIDER_* rows under PLATFORM_AUDIT_TENANT_ID are left in
+      // place, same convention as audit-event.service.spec.ts's own
+      // afterAll.
       await dataSource.destroy();
     }
   });
@@ -490,5 +501,88 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
       'AUTHORIZED_SANDBOX',
     );
     expect(afterDeactivate?.state).toBe('DEACTIVATED');
+  });
+
+  // M7-028: the M5 audit found ProviderPromotionController never wrote
+  // an audit_events row at all — provenance for the whole chain lived
+  // only in this table's own proposedBy/certifiedBy/etc columns. The
+  // fix moved the write into the service itself so every real caller
+  // (console, manage-provider-promotion script, kill-switch-drill
+  // script) gets it, not just a REST controller that happened to add
+  // one. This test drives the whole chain and checks the real
+  // audit_events rows it leaves behind.
+  it('propose/certify/approve/activate/deactivate each record a real audit event under the platform-wide tenant', async () => {
+    const providerId = uniqueProviderId();
+    const manifest = await proposeManifest(providerId, 'audit-spec-proposer');
+    await service.certify(
+      manifest.id,
+      'sandbox',
+      'audit-spec-certifier',
+      ProviderCertificationDecision.PASSED,
+      'evidence://audit-spec',
+    );
+    await service.approve(
+      manifest.id,
+      'compliance',
+      'audit-spec-approver',
+      ProviderApprovalDecision.APPROVED,
+    );
+    const activation = await service.activate(
+      manifest.id,
+      'sandbox',
+      'audit-spec-activator',
+      null,
+    );
+    await service.deactivate(
+      providerId,
+      ProviderCapability.INCOME,
+      'AUTHORIZED_SANDBOX',
+      'audit-spec-deactivator',
+    );
+
+    const events = await runInTenantContext(
+      dataSource,
+      PLATFORM_AUDIT_TENANT_ID,
+      (manager) =>
+        manager.getRepository(AuditEvent).find({
+          where: {
+            tenantId: PLATFORM_AUDIT_TENANT_ID,
+            resourceId: manifest.id,
+          },
+        }),
+    );
+    expect(events.map((e) => e.action).sort()).toEqual(
+      [
+        'PROVIDER_MANIFEST_PROPOSED',
+        'PROVIDER_MANIFEST_CERTIFIED',
+        'PROVIDER_MANIFEST_APPROVAL_RECORDED',
+      ].sort(),
+    );
+    expect(
+      events.find((e) => e.action === 'PROVIDER_MANIFEST_PROPOSED'),
+    ).toMatchObject({ actorId: 'audit-spec-proposer' });
+
+    const activationEvents = await runInTenantContext(
+      dataSource,
+      PLATFORM_AUDIT_TENANT_ID,
+      (manager) =>
+        manager.getRepository(AuditEvent).find({
+          where: {
+            tenantId: PLATFORM_AUDIT_TENANT_ID,
+            resourceId: activation.id,
+          },
+          order: { createdAt: 'ASC' },
+        }),
+    );
+    expect(activationEvents.map((e) => e.action)).toEqual([
+      'PROVIDER_ACTIVATED',
+      'PROVIDER_DEACTIVATED',
+    ]);
+    expect(activationEvents[0]).toMatchObject({
+      actorId: 'audit-spec-activator',
+    });
+    expect(activationEvents[1]).toMatchObject({
+      actorId: 'audit-spec-deactivator',
+    });
   });
 });

@@ -13,6 +13,10 @@ import { CasePolicyBinding } from '../database/entities/case-policy-binding.enti
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { PolicyChangeImpactAssessment } from '../database/entities/policy-change-impact-assessment.entity';
 import { PolicyTransitionApproval } from '../database/entities/policy-transition-approval.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
+import { AuditEventService } from '../audit/audit-event.service';
+import { PLATFORM_AUDIT_TENANT_ID } from '../audit/platform-audit-tenant';
+import { runInTenantContext } from '../database/tenant-context';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -73,6 +77,7 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
         PolicyCatalogGeneration,
         PolicyChangeImpactAssessment,
         PolicyTransitionApproval,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
@@ -103,6 +108,7 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       dataSource.getRepository(PolicyVersion),
       impactService,
       transitionApprovalService,
+      new AuditEventService(dataSource),
     );
 
     const tenant = await dataSource
@@ -157,6 +163,11 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       await dataSource
         .getRepository(Jurisdiction)
         .delete(JURISDICTION_CODES.map((code) => ({ code })));
+      // audit_events is append-only by design (its own migration's
+      // trigger rejects UPDATE/DELETE unconditionally) — this spec's own
+      // POLICY_VERSION_ACTIVATED/WITHDRAWN rows under
+      // PLATFORM_AUDIT_TENANT_ID are left in place, same convention as
+      // audit-event.service.spec.ts's own afterAll.
       await dataSource.destroy();
     }
   }, 30_000);
@@ -265,9 +276,9 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       '1.0.0',
     );
 
-    await expect(activationService.activate(versionId)).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      activationService.activate(versionId, 'policy-activation-spec-actor'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('activates a DRAFT version once independently approved, bumps the catalog generation, and rejects re-activation', async () => {
@@ -283,7 +294,10 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       `SELECT generation FROM policy_catalog_generation WHERE id = 1`,
     );
 
-    const result = await activationService.activate(versionId);
+    const result = await activationService.activate(
+      versionId,
+      'policy-activation-spec-actor',
+    );
 
     expect(result.generation).toBe(before[0].generation + 1);
     const updated = await dataSource
@@ -291,9 +305,52 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       .findOneByOrFail({ id: versionId });
     expect(updated.releaseStatus).toBe(PolicyReleaseStatus.RELEASED);
 
-    await expect(activationService.activate(versionId)).rejects.toThrow(
-      BadRequestException,
+    await expect(
+      activationService.activate(versionId, 'policy-activation-spec-actor'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  // M7-028: the M3 audit found neither activate() nor withdraw() ever
+  // recorded an "invalidation event" anywhere — Section 10.4 says
+  // activation "emits invalidation events," but the generation bump
+  // itself is silent and nothing observed it happening. This checks the
+  // real audit_events row the fix now writes, under the platform-wide
+  // tenant id since the policy catalog is shared, not tenant-owned.
+  it('activate() records a real POLICY_VERSION_ACTIVATED audit event under the platform-wide tenant', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-activate-audit',
+      '1.0.0',
     );
+    await transitionApprovalService.propose(versionId, 'author-1');
+    await transitionApprovalService.approve(versionId, 'approver-1');
+
+    const result = await activationService.activate(
+      versionId,
+      'policy-activation-audit-spec-actor',
+    );
+
+    const events = await runInTenantContext(
+      dataSource,
+      PLATFORM_AUDIT_TENANT_ID,
+      (manager) =>
+        manager.getRepository(AuditEvent).find({
+          where: {
+            tenantId: PLATFORM_AUDIT_TENANT_ID,
+            action: 'POLICY_VERSION_ACTIVATED',
+            resourceId: versionId,
+          },
+        }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: 'policy-activation-audit-spec-actor',
+      action: 'POLICY_VERSION_ACTIVATED',
+      resourceType: 'policy_version',
+      resourceId: versionId,
+      metadata: { generation: result.generation },
+    });
   });
 
   it('withdraws a RELEASED version, bumps the generation, and rejects re-withdrawal', async () => {
@@ -308,7 +365,10 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       `SELECT generation FROM policy_catalog_generation WHERE id = 1`,
     );
 
-    const result = await activationService.withdraw(versionId);
+    const result = await activationService.withdraw(
+      versionId,
+      'policy-activation-spec-actor',
+    );
 
     expect(result.generation).toBe(before[0].generation + 1);
     const updated = await dataSource
@@ -316,9 +376,45 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       .findOneByOrFail({ id: versionId });
     expect(updated.releaseStatus).toBe(PolicyReleaseStatus.WITHDRAWN);
 
-    await expect(activationService.withdraw(versionId)).rejects.toThrow(
-      BadRequestException,
+    await expect(
+      activationService.withdraw(versionId, 'policy-activation-spec-actor'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('withdraw() records a real POLICY_VERSION_WITHDRAWN audit event under the platform-wide tenant', async () => {
+    const versionId = await seedDraftVersion(
+      JURISDICTION_CODES[0],
+      'pas-rule-withdraw-audit',
+      '1.0.0',
+      PolicyReleaseStatus.RELEASED,
     );
+
+    const result = await activationService.withdraw(
+      versionId,
+      'policy-withdraw-audit-spec-actor',
+    );
+
+    const events = await runInTenantContext(
+      dataSource,
+      PLATFORM_AUDIT_TENANT_ID,
+      (manager) =>
+        manager.getRepository(AuditEvent).find({
+          where: {
+            tenantId: PLATFORM_AUDIT_TENANT_ID,
+            action: 'POLICY_VERSION_WITHDRAWN',
+            resourceId: versionId,
+          },
+        }),
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId: 'policy-withdraw-audit-spec-actor',
+      action: 'POLICY_VERSION_WITHDRAWN',
+      resourceType: 'policy_version',
+      resourceId: versionId,
+      metadata: { generation: result.generation },
+    });
   });
 
   it('assesses REQUIRES_REEVALUATION for an open case when the version it is bound to is withdrawn', async () => {
@@ -347,7 +443,10 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
       evaluation.resolution.versions.map((v) => v.policyVersionId),
     ).toEqual([versionId]);
 
-    const result = await activationService.withdraw(versionId);
+    const result = await activationService.withdraw(
+      versionId,
+      'policy-activation-spec-actor',
+    );
 
     expect(result.assessments).toHaveLength(1);
     expect(result.assessments[0]).toMatchObject({
@@ -404,7 +503,10 @@ describeOrSkip('PolicyActivationService + PolicyChangeImpactService', () => {
     );
     await transitionApprovalService.propose(conflictingVersionId, 'author-1');
     await transitionApprovalService.approve(conflictingVersionId, 'approver-1');
-    const result = await activationService.activate(conflictingVersionId);
+    const result = await activationService.activate(
+      conflictingVersionId,
+      'policy-activation-spec-actor',
+    );
 
     expect(result.assessments).toHaveLength(1);
     expect(result.assessments[0]).toMatchObject({

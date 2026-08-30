@@ -16,9 +16,11 @@ import {
   EvidenceSourceKind,
 } from '../database/entities/evidence-fact.entity';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { ConsentService } from './consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
+import { AuditEventService } from '../audit/audit-event.service';
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -44,12 +46,18 @@ describeOrSkip('ConsentService', () => {
         ConsentRecord,
         EvidenceFact,
         DataDispositionTask,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
+    const auditEventService = new AuditEventService(dataSource);
     service = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
+      new DataDispositionService(
+        dataSource,
+        new LegalHoldService(dataSource, auditEventService),
+        auditEventService,
+      ),
     );
 
     const tenantRepo = dataSource.getRepository(Tenant);

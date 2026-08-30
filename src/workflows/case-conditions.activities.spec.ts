@@ -46,6 +46,8 @@ import {
   READY_FOR_UNDERWRITING_TEMPLATE_VERSION,
 } from '../communications/well-known-templates';
 import { CommunicationTemplate } from '../database/entities/communication-template.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
+import { AuditEventService } from '../audit/audit-event.service';
 import { LoanType } from '../database/enums/loan-type.enum';
 import { CaseStatus } from '../database/enums/case-status.enum';
 import {
@@ -176,9 +178,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
         CommunicationMessage,
         CommunicationTemplate,
         DataDispositionTask,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
+    const auditEventService = new AuditEventService(dataSource);
 
     policyResolver = new PolicyApplicabilityResolverService(
       dataSource.getRepository(Jurisdiction),
@@ -195,7 +199,11 @@ describeOrSkip('createCaseConditionsActivities', () => {
     evaluationManifestService = new EvaluationManifestService(dataSource);
     consentService = new ConsentService(
       dataSource,
-      new DataDispositionService(dataSource, new LegalHoldService(dataSource)),
+      new DataDispositionService(
+        dataSource,
+        new LegalHoldService(dataSource, auditEventService),
+        auditEventService,
+      ),
     );
     providerAuthorizationService = new ProviderAuthorizationService(
       dataSource,
@@ -210,6 +218,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
       dataSource.getRepository(ProviderCertificationRecord),
       dataSource.getRepository(ProviderApprovalRecord),
       dataSource.getRepository(ProviderActivation),
+      auditEventService,
     );
     messageService = new CommunicationMessageService(dataSource);
     communicationDeliveryService = new CommunicationDeliveryService(

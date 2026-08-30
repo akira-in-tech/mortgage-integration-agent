@@ -7,6 +7,8 @@ import { PolicyChangeImpactAssessment } from '../database/entities/policy-change
 import { PolicyReleaseStatus } from '../database/enums/policy-version.enum';
 import { PolicyChangeImpactService } from './policy-change-impact.service';
 import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
+import { AuditEventService } from '../audit/audit-event.service';
+import { PLATFORM_AUDIT_TENANT_ID } from '../audit/platform-audit-tenant';
 
 export interface PolicyActivationResult {
   policyVersionId: string;
@@ -37,6 +39,18 @@ async function bumpCatalogGeneration(manager: EntityManager): Promise<number> {
  * key) and triggers `PolicyChangeImpactService` so the dry-run
  * assessment Section 10.6 requires actually happens, not just the
  * invalidation.
+ *
+ * Section 10.4 also says activation "emits invalidation events" — the M3
+ * audit found that neither `activate()` nor `withdraw()` ever recorded
+ * one anywhere (the generation bump itself is silent; nothing observes
+ * it happening). `OutboxEvent` can't carry this: it requires a `caseId`
+ * (Section 12.2's per-case transactional outbox), and a catalog
+ * activation isn't scoped to any one case. `AuditEventService` is this
+ * codebase's other real event-recording mechanism and has no such
+ * constraint, so that's what records it here (M7-028) — under
+ * `PLATFORM_AUDIT_TENANT_ID` because the policy catalog is shared across
+ * every tenant, not owned by one (`Jurisdiction`'s own "policy catalog is
+ * deliberately global" note).
  */
 @Injectable()
 export class PolicyActivationService {
@@ -47,9 +61,13 @@ export class PolicyActivationService {
     private readonly versionRepository: Repository<PolicyVersion>,
     private readonly impactService: PolicyChangeImpactService,
     private readonly transitionApprovalService: PolicyTransitionApprovalService,
+    private readonly auditEventService: AuditEventService,
   ) {}
 
-  async activate(policyVersionId: string): Promise<PolicyActivationResult> {
+  async activate(
+    policyVersionId: string,
+    actorId: string,
+  ): Promise<PolicyActivationResult> {
     const version = await this.versionRepository.findOneByOrFail({
       id: policyVersionId,
     });
@@ -82,10 +100,22 @@ export class PolicyActivationService {
     });
 
     const assessments = await this.impactService.assessImpact(policyVersionId);
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId,
+      action: 'POLICY_VERSION_ACTIVATED',
+      resourceType: 'policy_version',
+      resourceId: policyVersionId,
+      metadata: { generation, assessmentCount: assessments.length },
+    });
     return { policyVersionId, generation, assessments };
   }
 
-  async withdraw(policyVersionId: string): Promise<PolicyActivationResult> {
+  async withdraw(
+    policyVersionId: string,
+    actorId: string,
+  ): Promise<PolicyActivationResult> {
     const version = await this.versionRepository.findOneByOrFail({
       id: policyVersionId,
     });
@@ -106,6 +136,15 @@ export class PolicyActivationService {
     });
 
     const assessments = await this.impactService.assessImpact(policyVersionId);
+
+    await this.auditEventService.record({
+      tenantId: PLATFORM_AUDIT_TENANT_ID,
+      actorId,
+      action: 'POLICY_VERSION_WITHDRAWN',
+      resourceType: 'policy_version',
+      resourceId: policyVersionId,
+      metadata: { generation, assessmentCount: assessments.length },
+    });
     return { policyVersionId, generation, assessments };
   }
 }

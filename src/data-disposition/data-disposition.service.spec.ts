@@ -16,8 +16,10 @@ import {
 } from '../database/entities/evidence-fact.entity';
 import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
 import { LegalHold } from '../database/entities/legal-hold.entity';
+import { AuditEvent } from '../database/entities/audit-event.entity';
 import { DataDispositionService } from './data-disposition.service';
 import { LegalHoldService } from './legal-hold.service';
+import { AuditEventService } from '../audit/audit-event.service';
 import { runInTenantContext } from '../database/tenant-context';
 
 // Requires a reachable Postgres (same convention as this codebase's other
@@ -45,11 +47,17 @@ describeOrSkip('DataDispositionService', () => {
         EvidenceFact,
         DataDispositionTask,
         LegalHold,
+        AuditEvent,
       ],
     });
     await dataSource.initialize();
-    legalHoldService = new LegalHoldService(dataSource);
-    service = new DataDispositionService(dataSource, legalHoldService);
+    const auditEventService = new AuditEventService(dataSource);
+    legalHoldService = new LegalHoldService(dataSource, auditEventService);
+    service = new DataDispositionService(
+      dataSource,
+      legalHoldService,
+      auditEventService,
+    );
 
     const tenantRepo = dataSource.getRepository(Tenant);
     const tenant = await tenantRepo.save(
@@ -92,6 +100,11 @@ describeOrSkip('DataDispositionService', () => {
         .getRepository(Jurisdiction)
         .delete({ code: jurisdictionCode });
       await dataSource.getRepository(Tenant).delete({ id: tenantId });
+      // audit_events is append-only by design (its own migration's
+      // trigger rejects UPDATE/DELETE unconditionally) — this spec's own
+      // DATA_DISPOSITION_TASK_RESOLVED/LEGAL_HOLD_* rows are left in
+      // place, same convention as audit-event.service.spec.ts's own
+      // afterAll.
       await dataSource.destroy();
     }
   });
@@ -380,6 +393,40 @@ describeOrSkip('DataDispositionService', () => {
 
       expect(open.map((t) => t.id)).toContain(pendingTaskId);
       expect(open.map((t) => t.id)).not.toContain(resolvedTaskId);
+    });
+
+    // M7-028: the M5 audit found the audit-event write lived only in
+    // DataDispositionController, so resolve-data-disposition-task.ts (a
+    // real caller that calls service.resolve() directly, the same way
+    // this spec does) produced no audit_events row at all — a
+    // script-driven resolution and a REST-driven one left different
+    // provenance behind for the identical mutation. Calling resolve()
+    // straight from the spec, exactly as that script does, is the real
+    // regression test for that gap.
+    it('resolve() records a real DATA_DISPOSITION_TASK_RESOLVED audit event, even called directly (not through a controller)', async () => {
+      const { taskId } = await makeCaseWithTask();
+
+      await service.resolve(tenantId, taskId, 'DELETE', 'audit-spec-operator');
+
+      const events = await runInTenantContext(dataSource, tenantId, (manager) =>
+        manager.getRepository(AuditEvent).find({
+          where: {
+            tenantId,
+            action: 'DATA_DISPOSITION_TASK_RESOLVED',
+            resourceId: taskId,
+          },
+        }),
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        tenantId,
+        actorId: 'audit-spec-operator',
+        action: 'DATA_DISPOSITION_TASK_RESOLVED',
+        resourceType: 'data_disposition_task',
+        resourceId: taskId,
+        reason: 'Resolved as DELETE',
+        metadata: { action: 'DELETE' },
+      });
     });
   });
 });
