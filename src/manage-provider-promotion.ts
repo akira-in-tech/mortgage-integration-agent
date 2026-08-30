@@ -22,7 +22,7 @@ const VALID_MODES: ProviderMode[] = [
 ];
 
 const USAGE = `Usage:
-  npm run manage-provider-promotion -- propose <providerId> <capability> <mode> <adapterVersion> <proposedBy> <endpointAllowlistCsv> <dataClassificationsCsv> [validUntilISO]
+  npm run manage-provider-promotion -- propose <providerId> <capability> <mode> <adapterVersion> <proposedBy> <endpointAllowlistCsv> <dataClassificationsCsv> [validUntilISO] [declaredCommandClass]
   npm run manage-provider-promotion -- certify <manifestId> <environment> <certifiedBy> <PASSED|FAILED|REVOKED> <evidenceRef> [expiresAtISO]
   npm run manage-provider-promotion -- approve <manifestId> <approvalRole> <approvedBy> <APPROVED|REJECTED|REVOKED> [expiresAtISO]
   npm run manage-provider-promotion -- activate <manifestId> <environment> <activatedBy> <expectedCurrentManifestVersion|none>
@@ -116,6 +116,7 @@ async function main(): Promise<void> {
         endpointAllowlistCsv,
         dataClassificationsCsv,
         validUntilArg,
+        declaredCommandClass,
       ] = rest;
       if (
         !providerId ||
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
           .map((s) => s.trim()),
         proposedBy,
         validUntil: parseOptionalDate(validUntilArg) ?? null,
+        declaredCommandClass: declaredCommandClass ?? null,
       });
       console.log(
         `Proposed manifest ${manifest.id} (${providerId}/${manifest.capability}/${manifest.mode} v${manifest.version}, contentHash=${manifest.contentHash})`,

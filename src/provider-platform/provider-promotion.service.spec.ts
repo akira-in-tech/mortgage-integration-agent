@@ -113,6 +113,52 @@ describeOrSkip('ProviderPromotionService (Section 11.4, M4-007)', () => {
     });
   }
 
+  // M7-028: Section 7.5 names the promotion-manifest validator as its own
+  // independent checkpoint ("even when... an adapter is technically
+  // certified") — this proves propose() actually enforces it, not just
+  // that the shared assertNotStructurallyExcluded() helper works in
+  // isolation (structural-exclusions.spec.ts already covers that).
+  it('propose() rejects a manifest declaring a structurally excluded command class', async () => {
+    const providerId = uniqueProviderId();
+    await expect(
+      service.propose({
+        providerId,
+        capability: ProviderCapability.INCOME,
+        mode: 'AUTHORIZED_SANDBOX',
+        adapterVersion: '1.0.0',
+        endpointAllowlist: ['https://sandbox.example.invalid'],
+        dataClassifications: ['INCOME'],
+        proposedBy: 'proposer-1',
+        declaredCommandClass: 'FUNDS_MOVEMENT',
+      }),
+    ).rejects.toThrow(/structurally excluded/);
+
+    // Rejected before any row was ever written — not proposed-then-flagged.
+    const manifests = await dataSource
+      .getRepository(ProviderPromotionManifest)
+      .find({ where: { providerId } });
+    expect(manifests).toEqual([]);
+  });
+
+  it('propose() persists a real (non-excluded) declaredCommandClass unchanged, and leaves it null when unset', async () => {
+    const providerId = uniqueProviderId();
+    const manifest = await proposeManifest(providerId);
+    expect(manifest.declaredCommandClass).toBeNull();
+
+    const providerId2 = uniqueProviderId();
+    const withClass = await service.propose({
+      providerId: providerId2,
+      capability: ProviderCapability.INCOME,
+      mode: 'AUTHORIZED_SANDBOX',
+      adapterVersion: '1.0.0',
+      endpointAllowlist: ['https://sandbox.example.invalid'],
+      dataClassifications: ['INCOME'],
+      proposedBy: 'proposer-1',
+      declaredCommandClass: 'READ_ONLY_LOOKUP',
+    });
+    expect(withClass.declaredCommandClass).toBe('READ_ONLY_LOOKUP');
+  });
+
   it('propose() increments version per {providerId, capability, mode} tuple and computes a real content hash', async () => {
     const providerId = uniqueProviderId();
     const first = await proposeManifest(providerId);

@@ -12,17 +12,29 @@
  * these classes — this is a real, structural gate for a mistake that
  * hasn't happened yet, not ceremony around one that has. Its value is in
  * what it prevents: today, `0` structurally excluded command classes are
- * registered or activated anywhere (the charter's own Section 20 M4 exit
- * metric); this is the mechanism that keeps that number `0` by
- * construction rather than by nobody having tried yet. Checked at the two
- * genuinely independent registration choke points this codebase has —
- * `buildToolRegistry` (Agent tools) and `ProviderRegistryService.register()`
- * (provider adapters) — not re-checked at dispatch/routing time, since
- * neither `ProviderRegistryService.resolve()` nor a `ProviderPromotionManifest`
- * can ever reference an adapter that didn't already pass this gate at
- * registration (adapters are re-registered fresh on every process boot,
- * never persisted, so there is no stale-registration risk to guard
- * against separately).
+ * registered, promoted, or activated anywhere (the charter's own Section
+ * 20 M4 exit metric); this is the mechanism that keeps that number `0` by
+ * construction rather than by nobody having tried yet.
+ *
+ * Section 7.5 names four independent checkpoints — "the provider
+ * capability registry, Agent tool registry, promotion-manifest validator,
+ * and production router must reject excluded command classes even when
+ * credentials exist and an adapter is technically certified." A real
+ * M4 audit (M7-028) found only two of the four had a direct check;
+ * `assertNotStructurallyExcluded` is now called at all four:
+ * `buildToolRegistry` (Agent tool registry), `ProviderRegistryService.register()`
+ * (provider capability registry), `ProviderPromotionService.propose()`
+ * (promotion-manifest validator — checks the manifest's own attested
+ * `declaredCommandClass`, not the registered adapter, since the charter's
+ * own "even when... an adapter is technically certified" language asks
+ * for an independent check here, not a re-derivation of the registry's),
+ * and `dispatchProviderRequest()` right after resolving the adapter
+ * (production router). The registry/router pair check the same resolved
+ * adapter object at two different points in its lifecycle (registration,
+ * then every dispatch) — genuine defense-in-depth, not a redundant
+ * re-statement of the same fact, since a future bug in registry state
+ * (a raw Map mutated some other way, a test double, a hot-reload path)
+ * would only be caught by the second check.
  */
 export const STRUCTURALLY_EXCLUDED_COMMAND_CLASSES = [
   /** Disbursing, transferring, or otherwise moving loan or borrower funds. */
@@ -62,7 +74,7 @@ const EXCLUDED_SET: ReadonlySet<string> = new Set(
  * denylist, by construction.
  */
 export function assertNotStructurallyExcluded(subject: {
-  kind: 'agent_tool' | 'provider_adapter';
+  kind: 'agent_tool' | 'provider_adapter' | 'provider_promotion_manifest';
   identifier: string;
   declaredCommandClass?: string;
 }): void {

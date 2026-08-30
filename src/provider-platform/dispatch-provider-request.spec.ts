@@ -360,6 +360,59 @@ describeOrSkip('dispatchProviderRequest', () => {
     expect(grants).toHaveLength(0);
   });
 
+  // M7-028: Section 7.5 names "the production router" as its own
+  // independent checkpoint against the structural exclusion list — "even
+  // when... an adapter is technically certified." ProviderRegistryService
+  // .register() already blocks an excluded adapter from ever being
+  // registered normally (structural-exclusions.spec.ts covers that), so
+  // this test uses a fake registry standing in for however an excluded
+  // adapter might otherwise reach deps.registry, proving
+  // dispatchProviderRequest() checks again independently right before
+  // routing to it, rather than only trusting whatever called resolve().
+  it('rejects dispatch for an adapter carrying an excluded declaredCommandClass, independent of the registry-time check', async () => {
+    const excludedAdapter: AnyProviderAdapter = {
+      providerId: 'structural-exclusion-spec-provider',
+      capability: ProviderCapability.ASSET,
+      mode: 'SIMULATOR',
+      structurallyExcludedCommandClass: 'FUNDS_MOVEMENT',
+      operation: {
+        effectClass: 'REUSABLE_LOOKUP',
+        supportsStatusLookup: false,
+        supportsCancellation: false,
+        fallbackPolicy: 'PROHIBITED',
+      },
+      submit: async () => {
+        throw new Error(
+          'must never be reached — the structural check must reject before dispatch',
+        );
+      },
+      normalize: (payload) => payload,
+      healthCheck: async () => ({
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+      }),
+    };
+    const fakeRegistry = {
+      resolve: () => excludedAdapter,
+    } as unknown as ProviderRegistryService;
+
+    await expect(
+      dispatchProviderRequest(
+        { ...deps(), registry: fakeRegistry },
+        {
+          tenantId: newTenantId(),
+          caseId: randomUUID(),
+          borrowerSubjectId: 'structural-exclusion-borrower',
+          capability: ProviderCapability.ASSET,
+          mode: 'SIMULATOR',
+          request: {},
+          purposeCode: 'UNDERWRITING_EVIDENCE',
+          permittedDataClasses: ['ASSET'],
+        },
+      ),
+    ).rejects.toThrow(/structurally excluded/);
+  });
+
   describe('kill switch (Section 11.4, M4-006)', () => {
     afterEach(async () => {
       // Every test in this block ends with the tuple re-enabled, so it

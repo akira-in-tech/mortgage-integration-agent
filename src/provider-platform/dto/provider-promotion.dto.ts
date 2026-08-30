@@ -63,6 +63,15 @@ export class ProposeManifestDto {
   @IsOptional()
   @IsISO8601()
   validUntil?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      "Section 7.5's promotion-manifest validator checkpoint: what command class the underlying adapter declares, if any. Rejected outright if it names a structurally excluded class (FUNDS_MOVEMENT, RATE_LOCK, etc.) — nothing today has a real one to declare.",
+  })
+  @IsOptional()
+  @IsString()
+  declaredCommandClass?: string;
 }
 
 // --- certify -----------------------------------------------------------
@@ -183,6 +192,9 @@ export class ProviderPromotionManifestDto {
   @ApiProperty({ format: 'date-time', nullable: true })
   validUntil!: string | null;
 
+  @ApiProperty({ nullable: true })
+  declaredCommandClass!: string | null;
+
   static from(m: ProviderPromotionManifest): ProviderPromotionManifestDto {
     return {
       id: m.id,
@@ -198,6 +210,7 @@ export class ProviderPromotionManifestDto {
       proposedAt: m.proposedAt.toISOString(),
       validFrom: m.validFrom.toISOString(),
       validUntil: m.validUntil ? m.validUntil.toISOString() : null,
+      declaredCommandClass: m.declaredCommandClass,
     };
   }
 }

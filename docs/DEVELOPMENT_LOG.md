@@ -11451,3 +11451,55 @@ Real, against a live local Postgres (2026-08-30):
 ### Next safe step
 
 The remaining M3/M4/M5 audit findings not acted on here — FAPI 2.0, field/object encryption, the backup subsystem, real US jurisdiction coverage, a reusable adapter contract suite, the untested failure-mode fixtures beyond transient/terminal — are each a real, separate scope decision (external dependency, legal review, or a large net-new subsystem), not something closable as a quick follow-on the way this entry's two fixes were. None should be assumed as the next task without asking first.
+
+## M7-029: structural-exclusion enforcement at all four Section 7.5 checkpoints, not two
+
+### Status
+
+Real, live-verified locally on 2026-08-30 (real Postgres, not mocks). Closes the M4 audit's structural-exclusion finding: Section 7.5 names four independent checkpoints ("the provider capability registry, Agent tool registry, promotion-manifest validator, and production router must reject excluded command classes even when credentials exist and an adapter is technically certified"); only two had a direct `assertNotStructurallyExcluded()` call before this slice.
+
+### What was actually missing, and why the existing code's own reasoning wasn't wrong, just incomplete
+
+`structural-exclusions.ts`'s own header comment already argued the two existing checks (`ProviderRegistryService.register()`, `buildToolRegistry`) were sufficient by construction: neither `ProviderRegistryService.resolve()` nor a `ProviderPromotionManifest` can reference an adapter that didn't already pass the registration gate, since adapters are re-registered fresh on every process boot, never persisted. That's a real, correct argument about *today's* code paths — but the M4 audit's own framing was exactly right: it's an assumption about the two layers it doesn't check, not a proof enforced at them. A future bug in registry state (a raw `Map` mutated some other way, a test double standing in for the registry, a hot-reload path) would only be caught by a second, independent check — which is precisely what Section 7.5's own "even when... an adapter is technically certified" language is asking for.
+
+### The two closed checkpoints
+
+**Production router (`dispatchProviderRequest()`)**: `assertNotStructurallyExcluded()` now runs immediately after `deps.registry.resolve()`, checking the resolved adapter's own `structurallyExcludedCommandClass` again — the same data the registry already checked once, re-checked at the actual dispatch point, independent of whatever path got the adapter into `deps.registry`. No schema change needed; the data was already there.
+
+**Promotion-manifest validator (`ProviderPromotionService.propose()`)**: this one needed real new data, not just a new call site. `ProviderPromotionManifest` had no declared-command-class field of its own — only `capability` (INCOME/ASSET/CREDIT/IDENTITY/DOCUMENT, a verification *domain*), which can never collide with the excluded-class vocabulary (FUNDS_MOVEMENT, RATE_LOCK, etc.) — checking `capability` against the denylist would have been a real call to a real function that could never actually catch anything, exactly the "ceremony around a mistake that hasn't happened" `structural-exclusions.ts`'s own header explicitly says this mechanism is not supposed to be. Considered deriving it from the live registry instead (look up the registered adapter for the manifest's `{providerId, capability, mode}` tuple) and rejected that too: `ProviderPromotionService`'s own CLI-script callers (`manage-provider-promotion.ts`) run standalone against Postgres with no adapters registered anywhere, and governance data can legitimately be proposed ahead of the adapter it describes ever being deployed — coupling `propose()` to a live in-process registry would break that. The real fix: a new nullable `declaredCommandClass` column on `provider_promotion_manifests` (migration `1787178900000`), the same optional, human-attested field `AgentTool`/`ProviderAdapter` already declare in code — nullable because nothing today declares one, matching those two fields' own honest default. `propose()` checks it before the manifest is ever saved.
+
+`assertNotStructurallyExcluded()`'s `kind` union gained a third member, `'provider_promotion_manifest'`, so an error naming this checkpoint reads clearly instead of being misattributed to `'provider_adapter'`.
+
+### What changed
+
+- `src/common/structural-exclusions.ts` — third `kind`, and the header comment rewritten to describe all four real checkpoints instead of two plus an argument for why the other two didn't need one.
+- `src/provider-platform/dispatch-provider-request.ts` — the production-router check.
+- `src/database/migrations/1787178900000-ProviderPromotionManifestDeclaredCommandClass.ts` (new), `src/database/entities/provider-promotion-manifest.entity.ts` — the new column.
+- `src/provider-platform/provider-promotion.service.ts` — `ProposeManifestInput.declaredCommandClass` (optional) and the check in `propose()`.
+- `src/provider-platform/dto/provider-promotion.dto.ts` — `ProposeManifestDto.declaredCommandClass` (optional REST input) and `ProviderPromotionManifestDto.declaredCommandClass` (response field).
+- `src/provider-platform/provider-promotion.controller.ts`, `src/manage-provider-promotion.ts` — both real callers of `propose()` now pass the new optional field through.
+- `openapi/openapi.json`, `client/generated/schema.d.ts` — regenerated; `console/src/gql` unaffected (REST-only change, no GraphQL surface touched).
+- New tests: `structural-exclusions.spec.ts` gained the same 9-class parameterized rejection suite for the new `provider_promotion_manifest` kind the other two kinds already had; `provider-promotion.service.spec.ts` gained a real rejection test (manifest never saved) and a real acceptance test (a real, non-excluded value persists unchanged, unset stays null); `dispatch-provider-request.spec.ts` gained a real rejection test using a fake registry standing in for however an excluded adapter might otherwise reach `deps.registry`, proving the router-level check is independent of the registry-level one, not a re-statement of it; `schema-migrations.spec.ts` gained the dedicated revert test the new migration needs (inserted first among the revert tests, the established fix for this file's own recurring off-by-one).
+
+### Verification
+
+```text
+Real, against a live local Postgres (2026-08-30):
+- schema-migrations.spec.ts (fresh scratch database, full migration
+  sequence including the new one, then a full revert chain): passed
+- structural-exclusions.spec.ts, provider-promotion.service.spec.ts,
+  dispatch-provider-request.spec.ts, provider-promotion.controller.spec.ts,
+  provider-registry.service.spec.ts, agent-tool.types.spec.ts: 127/127
+  passed
+- npm run build (API + console): clean
+- npx tsc --noEmit: same 6 pre-existing, unrelated errors as before this
+  work - none introduced
+- eslint on every new/changed file: clean after one auto-fix pass
+- npm run generate:openapi / generate:client: real diff limited to the
+  one new field; console/src/gql unchanged (confirmed via git status)
+- console tsc --noEmit: clean
+```
+
+### Next safe step
+
+Same remaining list as M7-028's own "Next safe step" — FAPI 2.0, field/object encryption, the backup subsystem, real US jurisdiction coverage, a reusable adapter contract suite, and the untested failure-mode fixtures — each still a real, separate scope decision, not a quick follow-on. Not assumed without asking first.

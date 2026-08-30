@@ -14,6 +14,7 @@ import { computeDigest } from '../policy/policy-digest';
 import { ProviderCapability, ProviderMode } from './types';
 import { AuditEventService } from '../audit/audit-event.service';
 import { PLATFORM_AUDIT_TENANT_ID } from '../audit/platform-audit-tenant';
+import { assertNotStructurallyExcluded } from '../common/structural-exclusions';
 
 export interface ProposeManifestInput {
   providerId: string;
@@ -25,6 +26,8 @@ export interface ProposeManifestInput {
   proposedBy: string;
   validFrom?: Date;
   validUntil?: Date | null;
+  /** Section 7.5's promotion-manifest validator checkpoint (M7-028) — see `ProviderPromotionManifest.declaredCommandClass`'s own comment. Optional: nothing today declares one. */
+  declaredCommandClass?: string | null;
 }
 
 /**
@@ -65,6 +68,12 @@ export class ProviderPromotionService {
   async propose(
     input: ProposeManifestInput,
   ): Promise<ProviderPromotionManifest> {
+    assertNotStructurallyExcluded({
+      kind: 'provider_promotion_manifest',
+      identifier: `${input.providerId}/${input.capability}/${input.mode}`,
+      declaredCommandClass: input.declaredCommandClass ?? undefined,
+    });
+
     const latest = await this.manifestRepository.findOne({
       where: {
         providerId: input.providerId,
@@ -98,6 +107,7 @@ export class ProviderPromotionService {
         proposedBy: input.proposedBy,
         validFrom: input.validFrom ?? new Date(),
         validUntil: input.validUntil ?? null,
+        declaredCommandClass: input.declaredCommandClass ?? null,
       }),
     );
 

@@ -1833,6 +1833,10 @@
             "type": "object",
             "format": "date-time",
             "nullable": true
+          },
+          "declaredCommandClass": {
+            "type": "object",
+            "nullable": true
           }
         },
         "required": [
@@ -1848,7 +1852,8 @@
           "proposedBy",
           "proposedAt",
           "validFrom",
-          "validUntil"
+          "validUntil",
+          "declaredCommandClass"
         ]
       },
       "ProviderCertificationRecordDto": {
@@ -2058,6 +2063,10 @@
           "validUntil": {
             "type": "string",
             "format": "date-time"
+          },
+          "declaredCommandClass": {
+            "type": "string",
+            "description": "Section 7.5's promotion-manifest validator checkpoint: what command class the underlying adapter declares, if any. Rejected outright if it names a structurally excluded class (FUNDS_MOVEMENT, RATE_LOCK, etc.) — nothing today has a real one to declare."
           }
         },
         "required": [
