@@ -11619,3 +11619,41 @@ git diff --check
 ### Remaining boundary
 
 All current adapters complete synchronously and declare neither polling nor cancellation. Duplicate/out-of-order callbacks, delayed completion, cancellation races, rate-limit behavior, authentication expiry, redaction, and effect-class fallback therefore remain tuple-specific production-certification requirements. Adding fake callback behavior to synchronous adapters would not prove those properties.
+
+## M7-033: purpose-bound consent and consumer-report permissible purpose
+
+### Status
+
+Implemented and verified through the real provider dispatch and Temporal activity paths. The public simulator remains free and synthetic; this change does not create legal authority for a real credit-report pull.
+
+### Implementation
+
+- Replaced descriptive-only consent scope with machine-enforced `permittedPurposes` and `permittedDataClasses`. Normal case creation grants only `UNDERWRITING_EVIDENCE` across the five canonical evidence classes.
+- Dispatch now fails before grant issuance unless the most recent active consent covers the exact requested purpose and every requested data class. Grant revalidation repeats tenant, case, purpose, and class checks and rejects empty consent references.
+- Added the RLS-protected `permissible_purpose_decisions` table. A decision is bound to one tenant, case, borrower subject, capability, purpose, data-class set, mode, status, and expiry.
+- Credit simulator dispatch mints a short-lived `SYNTHETIC_MORTGAGE_APPLICATION` decision. The `syntheticOnly` gate prevents reuse in authorized-sandbox or production mode; live modes require an externally authorized decision id.
+- Revalidates the decision at the last boundary immediately before adapter submission. Missing, mismatched, expired, revoked, denied, or synthetic/live-crossed authority is non-retryable.
+- Added migration `1787179100000-PurposeBoundProviderAuthority`, including safe backfill defaults for historical synthetic case consents and a down path that preserves consent history.
+
+### Verification
+
+```text
+Focused consent/provider/workflow integration:
+  4 suites passed
+  54 tests passed
+
+Permissible-purpose, dispatch, and full scratch migration chain:
+  3 suites passed
+  73 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+```
+
+### Remaining boundary
+
+The repository cannot manufacture a real FCRA or provider-approved permissible-purpose determination. Non-simulator credit remains fail-closed until an authorized party creates and supplies a matching live decision; provider credentials and external approvals remain separate production gates. Provider/evidence field encryption and complete deletion lineage are the next trust-boundary slice.

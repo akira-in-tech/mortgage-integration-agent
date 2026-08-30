@@ -110,6 +110,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_conditions',
       'oidc_sessions',
       'outbox_events',
+      'permissible_purpose_decisions',
       'platform_admins',
       'policy_applicability',
       'policy_catalog_generation',
@@ -204,6 +205,32 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts purpose-bound provider authority without removing the consent history table', async () => {
+    const consentScopeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'consent_records'
+           AND column_name IN ('permittedPurposes', 'permittedDataClasses')
+         ORDER BY column_name`,
+      );
+    expect(consentScopeColumns).toEqual([
+      { column_name: 'permittedDataClasses' },
+      { column_name: 'permittedPurposes' },
+    ]);
+    expect(await tableNames()).toContain('permissible_purpose_decisions');
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('permissible_purpose_decisions');
+    const consentScopeColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'consent_records'
+         AND column_name IN ('permittedPurposes', 'permittedDataClasses')`,
+    );
+    expect(consentScopeColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('consent_records');
   });
 
   it('reverts provider intent replay safety without removing prior intent state', async () => {

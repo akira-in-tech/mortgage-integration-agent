@@ -38,10 +38,13 @@ import {
   ProviderIntentReplayBlockedError,
   ProviderRevalidationError,
   ProviderDisabledError,
+  ProviderConsentScopeError,
+  PermissiblePurposeError,
 } from '../provider-platform/dispatch-provider-request';
 import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
 import { ConsentService } from '../consent/consent.service';
+import { PermissiblePurposeService } from '../provider-platform/permissible-purpose.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
 import { CommunicationTemplate } from '../database/entities/communication-template.entity';
@@ -73,6 +76,7 @@ export interface CaseConditionsActivitiesDeps {
   providerKillSwitchService: ProviderKillSwitchService;
   providerPromotionService: ProviderPromotionService;
   consentService: ConsentService;
+  permissiblePurposeService?: PermissiblePurposeService;
   messageService: CommunicationMessageService;
   communicationDeliveryService: CommunicationDeliveryService;
   /** HMAC secret for outbox event signing (Section 15.3). */
@@ -173,7 +177,11 @@ async function callProviderWithRetryClassification<T>(
         providerName,
       );
     }
-    if (error instanceof ProviderRevalidationError) {
+    if (
+      error instanceof ProviderRevalidationError ||
+      error instanceof ProviderConsentScopeError ||
+      error instanceof PermissiblePurposeError
+    ) {
       // A mismatched, expired, revoked, or (M5-005) consent-invalidated
       // grant — retrying the identical request can never fix any of
       // these, so this is unconditionally non-retryable, the same
@@ -245,6 +253,7 @@ export function createCaseConditionsActivities(
     providerKillSwitchService,
     providerPromotionService,
     consentService,
+    permissiblePurposeService,
     messageService,
     communicationDeliveryService,
     outboxSigningSecret,
@@ -256,6 +265,8 @@ export function createCaseConditionsActivities(
     killSwitchService: providerKillSwitchService,
     promotionService: providerPromotionService,
     consentService,
+    permissiblePurposeService:
+      permissiblePurposeService ?? new PermissiblePurposeService(dataSource),
   };
 
   // M3-024: the real, registered-tool-invoking (not a bypass) path

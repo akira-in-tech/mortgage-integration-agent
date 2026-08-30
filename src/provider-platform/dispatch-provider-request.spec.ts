@@ -22,10 +22,11 @@ import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import {
-  dispatchProviderRequest,
+  dispatchProviderRequest as dispatchProviderRequestRaw,
   filterToPermittedFields,
   ProviderDisabledError,
   ProviderNotActivatedError,
+  ProviderConsentScopeError,
 } from './dispatch-provider-request';
 import {
   AnyProviderAdapter,
@@ -39,6 +40,8 @@ import { IdentityVerificationAdapter } from '../integrations/identity/identity-v
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { AuditEventService } from '../audit/audit-event.service';
 import { ProviderFindingContractError } from './provider-finding-contract';
+import { PermissiblePurposeDecision } from '../database/entities/permissible-purpose-decision.entity';
+import { PermissiblePurposeService } from './permissible-purpose.service';
 
 // Requires a reachable Postgres (same convention as the other real-DB
 // specs): skip instead of failing when no DATABASE_URL is configured.
@@ -87,6 +90,7 @@ describeOrSkip('dispatchProviderRequest', () => {
   let killSwitchService: ProviderKillSwitchService;
   let promotionService: ProviderPromotionService;
   let consentService: ConsentService;
+  let permissiblePurposeService: PermissiblePurposeService;
   // Every test uses a fresh randomUUID() tenantId and tracks it here so
   // afterAll can remove exactly what this file created — findOneByOrFail
   // on a shared/persistent scratch database has no defined row when more
@@ -109,6 +113,7 @@ describeOrSkip('dispatchProviderRequest', () => {
         ProviderActivation,
         ConsentRecord,
         AuditEvent,
+        PermissiblePurposeDecision,
       ],
     });
     await dataSource.initialize();
@@ -129,6 +134,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       consentService,
     );
     intentService = new ProviderOperationIntentService(dataSource);
+    permissiblePurposeService = new PermissiblePurposeService(dataSource);
     killSwitchService = new ProviderKillSwitchService(dataSource);
     promotionService = new ProviderPromotionService(
       dataSource.getRepository(ProviderPromotionManifest),
@@ -150,6 +156,12 @@ describeOrSkip('dispatchProviderRequest', () => {
           .execute();
         await dataSource
           .getRepository(ProviderAuthorizationGrant)
+          .createQueryBuilder()
+          .delete()
+          .where('"tenantId" IN (:...ids)', { ids: testTenantIds })
+          .execute();
+        await dataSource
+          .getRepository(PermissiblePurposeDecision)
           .createQueryBuilder()
           .delete()
           .where('"tenantId" IN (:...ids)', { ids: testTenantIds })
@@ -193,7 +205,32 @@ describeOrSkip('dispatchProviderRequest', () => {
     killSwitchService,
     promotionService,
     consentService,
+    permissiblePurposeService,
   });
+
+  // These integration tests construct provider requests directly rather than
+  // through CasesService, whose normal create path grants consent. Seed the
+  // exact scope here so every dispatch still exercises the production gate.
+  async function dispatchProviderRequest<TFinding>(
+    dependencies: Parameters<typeof dispatchProviderRequestRaw>[0],
+    params: Parameters<typeof dispatchProviderRequestRaw>[1],
+  ): Promise<TFinding> {
+    const consent = await consentService.activeRecordForPurpose(
+      params.tenantId,
+      params.caseId,
+      params.purposeCode,
+      params.permittedDataClasses,
+    );
+    if (!consent) {
+      await consentService.grantForCase(
+        params.tenantId,
+        params.caseId,
+        params.purposeCode,
+        params.permittedDataClasses.join(','),
+      );
+    }
+    return dispatchProviderRequestRaw<TFinding>(dependencies, params);
+  }
 
   function newTenantId(): string {
     const id = randomUUID();
@@ -340,6 +377,35 @@ describeOrSkip('dispatchProviderRequest', () => {
     const intent = await intentFor(tenantId);
     expect(intent.state).toBe('SUCCEEDED');
     expect(intent.providerId).toBe('identity-verification-simulator');
+  });
+
+  it('fails before grant issuance when consent does not cover the exact purpose and data class', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    await consentService.grantForCase(
+      tenantId,
+      caseId,
+      'ANALYTICS_ONLY',
+      'INCOME',
+    );
+
+    await expect(
+      dispatchProviderRequestRaw(deps(), {
+        tenantId,
+        caseId,
+        borrowerSubjectId: 'wrong-scope-borrower',
+        capability: ProviderCapability.ASSET,
+        request: { borrowerId: 'wrong-scope-borrower' },
+        purposeCode: 'UNDERWRITING_EVIDENCE',
+        permittedDataClasses: ['ASSET'],
+      }),
+    ).rejects.toBeInstanceOf(ProviderConsentScopeError);
+
+    expect(
+      await dataSource
+        .getRepository(ProviderAuthorizationGrant)
+        .find({ where: { tenantId, caseId } }),
+    ).toHaveLength(0);
   });
 
   it('classifies a synthetic transient failure as a rejected promise and marks the intent OUTCOME_UNKNOWN', async () => {
@@ -489,6 +555,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           killSwitchService,
           promotionService,
           consentService,
+          permissiblePurposeService,
         },
         {
           tenantId,

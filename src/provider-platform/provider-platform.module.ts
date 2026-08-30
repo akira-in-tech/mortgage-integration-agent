@@ -8,6 +8,7 @@ import { ProviderCertificationRecord } from '../database/entities/provider-certi
 import { ProviderApprovalRecord } from '../database/entities/provider-approval-record.entity';
 import { ProviderActivation } from '../database/entities/provider-activation.entity';
 import { PlatformAdmin } from '../database/entities/platform-admin.entity';
+import { PermissiblePurposeDecision } from '../database/entities/permissible-purpose-decision.entity';
 import { ProviderAuthorizationService } from './provider-authorization.service';
 import { ProviderOperationIntentService } from './provider-operation-intent.service';
 import { ProviderRegistryService } from './provider-registry.service';
@@ -18,6 +19,7 @@ import { ProviderOperationIntentController } from './provider-operation-intent.c
 import { ProviderPromotionController } from './provider-promotion.controller';
 import { PlatformAdminGuard } from '../auth/platform-admin.guard';
 import { PlatformAdminService } from '../auth/platform-admin.service';
+import { PermissiblePurposeService } from './permissible-purpose.service';
 
 /**
  * `PlatformAdmin` is registered here, not in the (tenant-scoped)
@@ -42,6 +44,7 @@ import { PlatformAdminService } from '../auth/platform-admin.service';
       ProviderApprovalRecord,
       ProviderActivation,
       PlatformAdmin,
+      PermissiblePurposeDecision,
     ]),
   ],
   controllers: [ProviderOperationIntentController, ProviderPromotionController],
@@ -54,6 +57,7 @@ import { PlatformAdminService } from '../auth/platform-admin.service';
     ProviderReconciliationService,
     PlatformAdminGuard,
     PlatformAdminService,
+    PermissiblePurposeService,
   ],
   exports: [
     ProviderRegistryService,
@@ -62,6 +66,7 @@ import { PlatformAdminService } from '../auth/platform-admin.service';
     ProviderKillSwitchService,
     ProviderPromotionService,
     ProviderReconciliationService,
+    PermissiblePurposeService,
   ],
 })
 export class ProviderPlatformModule {}

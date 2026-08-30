@@ -116,8 +116,16 @@ describeOrSkip('ConsentService', () => {
     expect(record).toMatchObject({
       tenantId,
       caseId,
-      purpose: 'CASE_PROCESSING',
-      scope: 'CASE_PROCESSING',
+      purpose: 'UNDERWRITING_EVIDENCE',
+      scope: 'INCOME,CREDIT,DOCUMENT,ASSET,IDENTITY',
+      permittedPurposes: ['UNDERWRITING_EVIDENCE'],
+      permittedDataClasses: [
+        'INCOME',
+        'CREDIT',
+        'DOCUMENT',
+        'ASSET',
+        'IDENTITY',
+      ],
       revokedAt: null,
     });
     expect(await service.getStatus(tenantId, caseId)).toBe('VALID');

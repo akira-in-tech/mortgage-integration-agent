@@ -11,11 +11,9 @@ import { ObjectType, Field, ID } from '@nestjs/graphql';
 /**
  * Section 14.1's `consent_records`: "Purpose, scope, policy version,
  * grant, expiration, and revocation evidence." One record per case, not
- * per purpose — a deliberate simplification against the charter's fuller
- * per-purpose model, matched to the single scalar `consentStatus` field
- * `LendingOperationsAgentState` (Section 9.3) actually consumes today;
- * `purpose`/`scope` are descriptive, not yet a real per-purpose grant
- * boundary. `policyVersionId` (the charter's "policy version" dimension)
+ * per grant event. `purpose`/`scope` preserve the human-readable evidence;
+ * `permittedPurposes`/`permittedDataClasses` are the machine-enforced
+ * dispatch boundary. `policyVersionId` (the charter's "policy version" dimension)
  * is not modeled — no policy-version-scoped consent requirement exists
  * yet to bind it to (Known gap, M5-005).
  *
@@ -59,6 +57,16 @@ export class ConsentRecord {
   @Field()
   @Column({ type: 'varchar', length: 100 })
   scope!: string;
+
+  @ApiProperty({ type: [String] })
+  @Field(() => [String])
+  @Column({ type: 'jsonb' })
+  permittedPurposes!: string[];
+
+  @ApiProperty({ type: [String] })
+  @Field(() => [String])
+  @Column({ type: 'jsonb' })
+  permittedDataClasses!: string[];
 
   @ApiProperty()
   @Field()

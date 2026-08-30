@@ -63,6 +63,13 @@ describeOrSkip('ProviderAuthorizationService', () => {
       ),
     );
     service = new ProviderAuthorizationService(dataSource, consentService);
+    const consent = await consentService.grantForCase(
+      baseInput.tenantId,
+      baseInput.caseId,
+      baseInput.purposeCode,
+      baseInput.permittedDataClasses.join(','),
+    );
+    consentRecordIds.push(consent.id);
   });
 
   afterAll(async () => {
@@ -82,7 +89,7 @@ describeOrSkip('ProviderAuthorizationService', () => {
     }
   });
 
-  it('issues a grant with the honest-null fields this codebase has no backing subsystem for, and permittedFields unset when the caller does not request field-scoping', async () => {
+  it('persists an incomplete lower-level grant for diagnosis but rejects it because no purpose-bound consent is attached', async () => {
     const grant = await service.issue(baseInput);
     grantIds.push(grant.id);
 
@@ -102,12 +109,24 @@ describeOrSkip('ProviderAuthorizationService', () => {
     expect(new Date(grant.expiresAt).getTime()).toBeGreaterThan(
       new Date(grant.issuedAt).getTime(),
     );
+    await expect(
+      service.revalidate(grant.id, {
+        tenantId: baseInput.tenantId,
+        caseId: baseInput.caseId,
+        providerId: baseInput.providerId,
+        capability: baseInput.capability,
+      }),
+    ).resolves.toEqual({
+      valid: false,
+      reason: expect.stringContaining('no purpose-bound consent'),
+    });
   });
 
   it('issues and revalidates a grant with real permittedFields (Section 11.5, M5-028) when the caller requests field-scoping', async () => {
     const grant = await service.issue({
       ...baseInput,
       permittedFields: ['monthlyIncome'],
+      consentRecordIds: [consentRecordIds[0]],
     });
     grantIds.push(grant.id);
     expect(grant.permittedFields).toEqual(['monthlyIncome']);
@@ -125,7 +144,10 @@ describeOrSkip('ProviderAuthorizationService', () => {
   });
 
   it('revalidate() succeeds for a fresh grant whose expected fields all match', async () => {
-    const grant = await service.issue(baseInput);
+    const grant = await service.issue({
+      ...baseInput,
+      consentRecordIds: [consentRecordIds[0]],
+    });
     grantIds.push(grant.id);
 
     const result = await service.revalidate(grant.id, {
@@ -232,6 +254,8 @@ describeOrSkip('ProviderAuthorizationService', () => {
     const consentRecord = await consentService.grantForCase(
       baseInput.tenantId,
       baseInput.caseId,
+      baseInput.purposeCode,
+      baseInput.permittedDataClasses.join(','),
     );
     consentRecordIds.push(consentRecord.id);
 

@@ -19,8 +19,9 @@ export interface IssueGrantInput {
   permittedFields?: string[];
   /** Defaults to a short-lived grant (Section 11.5: authorization is "... and time-bound") — long enough for one Agent-run/activity attempt, not a standing credential. */
   ttlMs?: number;
-  /** The case's own consent record(s) authorizing this dispatch (M5-005) — empty when the caller has none to attach (e.g. a direct `issue()` call outside `dispatchProviderRequest`), which `revalidate()` treats as "no consent constraint to check," not a failure. */
+  /** The case's own purpose-bound consent record(s). A lower-level caller may persist an incomplete grant for diagnostics, but `revalidate()` always rejects it. */
   consentRecordIds?: string[];
+  permissiblePurposeDecisionId?: string;
 }
 
 const DEFAULT_GRANT_TTL_MS = 5 * 60 * 1000;
@@ -85,7 +86,8 @@ export class ProviderAuthorizationService {
             permittedDataClasses: input.permittedDataClasses,
             permittedFields: input.permittedFields ?? null,
             consentRecordIds: input.consentRecordIds ?? [],
-            permissiblePurposeDecisionId: null,
+            permissiblePurposeDecisionId:
+              input.permissiblePurposeDecisionId ?? null,
             expiresAt: new Date(
               now.getTime() + (input.ttlMs ?? DEFAULT_GRANT_TTL_MS),
             ),
@@ -147,12 +149,22 @@ export class ProviderAuthorizationService {
     // Section 11.5: "Revalidation also confirms every referenced consent
     // record is still granted and unrevoked; a stale, mismatched,
     // expired, or revoked reference fails closed instead of dispatching."
-    // An empty consentRecordIds array (a grant with nothing attached —
-    // the only kind that could exist before M5-005) means there's no
-    // consent constraint to check, not a failure.
+    if (entity.consentRecordIds.length === 0) {
+      return {
+        valid: false,
+        reason: `authorization grant ${grantId} has no purpose-bound consent record`,
+      };
+    }
     for (const consentRecordId of entity.consentRecordIds) {
-      const stillValid =
-        await this.consentService.isRecordValid(consentRecordId);
+      const stillValid = await this.consentService.isRecordValid(
+        consentRecordId,
+        {
+          tenantId: entity.tenantId,
+          caseId: entity.caseId,
+          purpose: entity.purposeCode,
+          dataClasses: entity.permittedDataClasses,
+        },
+      );
       if (!stillValid) {
         return {
           valid: false,

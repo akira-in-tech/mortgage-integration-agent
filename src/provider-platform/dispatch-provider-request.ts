@@ -19,6 +19,7 @@ import {
   ProviderOutcome,
 } from '../observability/operational-telemetry';
 import { validateProviderFinding } from './provider-finding-contract';
+import { PermissiblePurposeService } from './permissible-purpose.service';
 
 export interface DispatchProviderRequestDeps {
   registry: ProviderRegistryService;
@@ -27,6 +28,7 @@ export interface DispatchProviderRequestDeps {
   consentService: ConsentService;
   killSwitchService: ProviderKillSwitchService;
   promotionService: ProviderPromotionService;
+  permissiblePurposeService: PermissiblePurposeService;
 }
 
 /**
@@ -84,6 +86,20 @@ export class ProviderIntentReplayBlockedError extends Error {
   }
 }
 
+export class ProviderConsentScopeError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderConsentScopeError';
+  }
+}
+
+export class PermissiblePurposeError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'PermissiblePurposeError';
+  }
+}
+
 export interface DispatchProviderRequestParams {
   tenantId: string;
   caseId: string;
@@ -97,6 +113,8 @@ export interface DispatchProviderRequestParams {
   logicalOperationKey?: string;
   /** Section 11.5's field-bound authorization (M5-028) — see `ProviderAuthorizationGrant`'s own entity comment. Unset means every current caller's existing behavior: the normalized finding returns unfiltered. */
   permittedFields?: string[];
+  /** Required for non-simulator consumer-report dispatches. Simulator credit creates a marked synthetic-only decision. */
+  permissiblePurposeDecisionId?: string;
 }
 
 /**
@@ -217,10 +235,52 @@ export async function dispatchProviderRequest<TFinding>(
         // M5-005: attach the case's own active consent record (if any) to the
         // grant being issued, so revalidate() can later confirm it's still
         // granted and unrevoked (Section 11.5) immediately before dispatch.
-        const consentRecordId = await deps.consentService.activeRecordId(
+        const consentRecord = await deps.consentService.activeRecordForPurpose(
           params.tenantId,
           params.caseId,
+          params.purposeCode,
+          params.permittedDataClasses,
         );
+        if (!consentRecord) {
+          telemetryOutcome = 'authorization_rejected';
+          throw new ProviderConsentScopeError(
+            `no active consent authorizes purpose=${params.purposeCode} dataClasses=${params.permittedDataClasses.join(',')}`,
+          );
+        }
+
+        const purposeContext = {
+          tenantId: params.tenantId,
+          caseId: params.caseId,
+          borrowerSubjectId: params.borrowerSubjectId,
+          capability: params.capability,
+          purposeCode: params.purposeCode,
+          permittedDataClasses: params.permittedDataClasses,
+          mode,
+        };
+        let permissiblePurposeDecisionId = params.permissiblePurposeDecisionId;
+        if (params.capability === ProviderCapability.CREDIT) {
+          if (!permissiblePurposeDecisionId && mode === 'SIMULATOR') {
+            permissiblePurposeDecisionId =
+              await deps.permissiblePurposeService.issueSynthetic(
+                purposeContext,
+              );
+          }
+          if (!permissiblePurposeDecisionId) {
+            telemetryOutcome = 'authorization_rejected';
+            throw new PermissiblePurposeError(
+              'consumer-report dispatch requires a transaction-specific permissible-purpose decision',
+            );
+          }
+          const purposeValidation =
+            await deps.permissiblePurposeService.validate(
+              permissiblePurposeDecisionId,
+              purposeContext,
+            );
+          if (!purposeValidation.valid) {
+            telemetryOutcome = 'authorization_rejected';
+            throw new PermissiblePurposeError(purposeValidation.reason);
+          }
+        }
 
         const grant = await deps.authorizationService.issue({
           tenantId: params.tenantId,
@@ -231,7 +291,8 @@ export async function dispatchProviderRequest<TFinding>(
           purposeCode: params.purposeCode,
           permittedDataClasses: params.permittedDataClasses,
           permittedFields: params.permittedFields,
-          consentRecordIds: consentRecordId ? [consentRecordId] : [],
+          consentRecordIds: [consentRecord.id],
+          permissiblePurposeDecisionId,
         });
 
         const intent = await deps.intentService.prepare({
@@ -275,6 +336,24 @@ export async function dispatchProviderRequest<TFinding>(
           telemetryOutcome = 'authorization_rejected';
           await deps.intentService.markFailedFinal(intent.tenantId, intent.id);
           throw new ProviderRevalidationError(revalidation.reason);
+        }
+
+        // Re-check consumer-report authority at the final external-call
+        // boundary so expiry or revocation after grant issuance fails closed.
+        if (permissiblePurposeDecisionId) {
+          const purposeValidation =
+            await deps.permissiblePurposeService.validate(
+              permissiblePurposeDecisionId,
+              purposeContext,
+            );
+          if (!purposeValidation.valid) {
+            telemetryOutcome = 'authorization_rejected';
+            await deps.intentService.markFailedFinal(
+              intent.tenantId,
+              intent.id,
+            );
+            throw new PermissiblePurposeError(purposeValidation.reason);
+          }
         }
 
         await deps.intentService.markDispatched(intent.tenantId, intent.id);

@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.14 |
+| Version | 2.15 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -68,7 +68,7 @@ The repository currently contains verified local vertical slices for:
 The following release boundaries remain open and are not represented as implemented:
 
 - external policy-source connector mechanisms are implemented; real reviewed source connectors and broader reviewed jurisdiction coverage remain open (Section 29 item 4);
-- per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
+- complete data lineage, encrypted object storage, and deletion/backup verification;
 - complete administration and recovery queues (operational replay/cancel/recovery controls are not yet exposed through the console — see M6's own note);
 - a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
 - production provider adapters, real-data approval, or official underwriting integrations.
@@ -87,7 +87,7 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 | Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; stale, exhausted, expired, unconfigured, and replayed unresolved effects route safely; REVIEWER-only reconciliation preserves actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; real cost-bearing adapters still require their provider-certification and operational gates. |
 | Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
 | Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
-| Trust | OIDC/API clients, RBAC, consent, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Purpose-level consent, complete lineage, encrypted object storage, and deployed control evidence remain open. |
+| Trust | OIDC/API clients, RBAC, purpose-bound consent, transaction-specific consumer-report permissible-purpose decisions, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Complete lineage, encrypted object storage, and deployed control evidence remain open. |
 
 ## 4. Product position
 

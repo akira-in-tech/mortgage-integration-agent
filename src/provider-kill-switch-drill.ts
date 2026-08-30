@@ -12,6 +12,7 @@ import { ProviderApprovalRecord } from './database/entities/provider-approval-re
 import { ProviderActivation } from './database/entities/provider-activation.entity';
 import { ConsentRecord } from './database/entities/consent-record.entity';
 import { AuditEvent } from './database/entities/audit-event.entity';
+import { PermissiblePurposeDecision } from './database/entities/permissible-purpose-decision.entity';
 import { AuditEventService } from './audit/audit-event.service';
 import { ProviderRegistryService } from './provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from './provider-platform/provider-authorization.service';
@@ -34,6 +35,7 @@ import {
   completeProviderReceipt,
   ProviderCapability,
 } from './provider-platform/types';
+import { PermissiblePurposeService } from './provider-platform/permissible-purpose.service';
 
 /**
  * `npm run kill-switch-drill` — Charter Section 29 item 6's last piece:
@@ -98,11 +100,14 @@ type DispatchResult =
 async function attemptDispatch(
   deps: Parameters<typeof dispatchProviderRequest>[0],
   tenantId: string,
+  consentService: ConsentService,
 ): Promise<DispatchResult> {
   try {
+    const caseId = randomUUID();
+    await consentService.grantForCase(tenantId, caseId);
     const finding = await dispatchProviderRequest(deps, {
       tenantId,
-      caseId: randomUUID(),
+      caseId,
       borrowerSubjectId: 'kill-switch-drill-borrower',
       capability: CAPABILITY,
       mode: MODE,
@@ -140,6 +145,7 @@ async function main(): Promise<void> {
       ProviderActivation,
       ConsentRecord,
       AuditEvent,
+      PermissiblePurposeDecision,
     ],
   });
   await dataSource.initialize();
@@ -173,6 +179,7 @@ async function main(): Promise<void> {
     killSwitchService,
     promotionService,
     consentService,
+    permissiblePurposeService: new PermissiblePurposeService(dataSource),
   };
 
   const tenantId = randomUUID();
@@ -183,7 +190,7 @@ async function main(): Promise<void> {
       'STEP 1',
       `dispatching before any promotion exists (tenant ${tenantId})`,
     );
-    const before = await attemptDispatch(deps, tenantId);
+    const before = await attemptDispatch(deps, tenantId, consentService);
     if (before.ok) {
       passed = false;
       log(
@@ -244,7 +251,7 @@ async function main(): Promise<void> {
     log('STEP 4 OK', `activation ${activation.id} state=${activation.state}`);
 
     log('STEP 5', 'dispatching a real request now that the tuple is active');
-    const active = await attemptDispatch(deps, tenantId);
+    const active = await attemptDispatch(deps, tenantId, consentService);
     if (!active.ok) {
       passed = false;
       log(
@@ -271,7 +278,7 @@ async function main(): Promise<void> {
       'STEP 7',
       'dispatching again immediately after the kill switch - this must be rejected',
     );
-    const after = await attemptDispatch(deps, tenantId);
+    const after = await attemptDispatch(deps, tenantId, consentService);
     if (after.ok) {
       passed = false;
       log(

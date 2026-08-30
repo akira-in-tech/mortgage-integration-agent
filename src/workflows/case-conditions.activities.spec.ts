@@ -39,6 +39,7 @@ import { ProviderCertificationRecord } from '../database/entities/provider-certi
 import { ProviderApprovalRecord } from '../database/entities/provider-approval-record.entity';
 import { ProviderActivation } from '../database/entities/provider-activation.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { PermissiblePurposeDecision } from '../database/entities/permissible-purpose-decision.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import { CommunicationTemplateStatus } from '../database/enums/communication.enum';
 import {
@@ -175,6 +176,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ProviderApprovalRecord,
         ProviderActivation,
         ConsentRecord,
+        PermissiblePurposeDecision,
         CommunicationMessage,
         CommunicationTemplate,
         DataDispositionTask,

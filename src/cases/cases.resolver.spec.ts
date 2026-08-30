@@ -226,6 +226,8 @@ describe('CasesResolver (Section 15.2, M6)', () => {
       caseId: CASE_ID,
       purpose: 'underwriting',
       scope: 'case',
+      permittedPurposes: ['underwriting'],
+      permittedDataClasses: ['case'],
       grantedAt: new Date(),
       expiresAt: null,
       revokedAt: new Date(),
