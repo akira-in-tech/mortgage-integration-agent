@@ -11260,3 +11260,60 @@ Real, live results (2026-08-29), not structural proxies:
 ### Next safe step
 
 `docs/OPERATIONS.md`'s SLO table and its new "Backup and restore" section are updated with these real, dated results. Load/backup-restore/failure-recovery for Charter Section 29 item 6 are done. What remains open in that item: Keycloak/console deployment (needs a real domain) and SBOM/build-provenance attestation — neither started, and neither should be assumed as the next task without asking.
+
+## M7-026: real SBOM + build provenance attestation for the deployed image
+
+### Status
+
+**Live and verified, 2026-08-30.** The user was asked to choose the next step after M7-025; they declined Keycloak/console deployment outright ("我不會買真實域名" — not deferred, a real decision not to buy a domain) and asked me to choose and finish the remaining item myself. Chose SBOM/build-provenance attestation: the last named piece of Charter Section 29 item 6, needs no domain, needs no new AWS cost or IAM coordination with the user (confirmed below), and is a bounded, checkable deliverable.
+
+### What this closes
+
+Every image `deploy-staging.yml` builds and pushes now gets two real, Sigstore-backed attestations recorded in GitHub's own attestation store, tied to the exact image digest (not the mutable commit-SHA tag):
+- A SLSA build-provenance statement (`https://slsa.dev/provenance/v1`) — which workflow, which commit, which repo built this exact image.
+- A real SPDX SBOM (`https://spdx.dev/Document/v2.3`), generated from the actual image contents by Syft (via `anchore/sbom-action`), not a source-tree scan.
+
+Both are independently, cryptographically re-verified in the workflow itself via `gh attestation verify` right after creation — an attestation action exiting 0 is not proof it produced something real, and this session already had two separate exhibits of exactly that gap (below).
+
+### Needs no AWS coordination
+
+`actions/attest`/`actions/attest-build-provenance` authenticate to Sigstore's Fulcio CA using GitHub Actions' own OIDC token (`id-token: write`) — a completely separate flow from the AWS deploy role's OIDC federation. No new `terraform/bootstrap/` permissions, no re-apply, no waiting on the user for this one.
+
+### Two real bugs found actually running it, not two guesses
+
+1. **`actions/attest-sbom` silently failed to persist a retrievable attestation.** The step exited 0 and printed its own deprecation notice ("please use actions/attest instead"), but a real `gh attestation verify` immediately after found only the provenance attestation — confirmed independently outside CI too, with a fresh local ECR login. First guess: `actions/attest` needs `artifact-metadata: write` for SBOM mode specifically (a permission the docs list for `attest`'s SBOM path but not for `attest-build-provenance`'s provenance path) — added it and switched to `actions/attest` directly. Still failed the same way on the very next real run. That ruled the first guess out rather than letting it stand as the fix.
+2. **The real root cause: `gh attestation verify` only checks the `https://slsa.dev/provenance/v1` predicate type by default** (its own `--help` text says exactly this) and silently ignores every other attestation on the same subject unless a matching `--predicate-type` is passed explicitly. Six retries over almost a minute still only ever found the provenance one — proving it wasn't a propagation delay, which the previous commit had wrongly assumed and "fixed" with a retry loop that could never have worked. Found the real cause and the real fix together by querying GitHub's raw attestations API directly (`gh api repos/.../attestations/<digest>`), which returned the SBOM attestation's actual predicate type in its base64-encoded DSSE payload: `https://spdx.dev/Document/v2.3` — read off the real API response, not guessed. Two explicit `gh attestation verify` calls, one per predicate type, replaced the retry loop.
+
+Both fixes were tried, proven wrong or right by a real subsequent CI run, and only the one that actually worked was kept — the retry-loop commit is still in history as an honest record of a wrong turn, not silently squashed away.
+
+### Verification
+
+```text
+node -e (yaml.parse) / semgrep p/ci — clean throughout every iteration
+
+Real, live result (2026-08-30, deploy-staging.yml run 33298283917):
+- Real SBOM generated from the actual deployed image's contents (Syft,
+  SPDX JSON), uploaded as a workflow artifact
+- Real build-provenance attestation created (Rekor transparency log
+  entry https://search.sigstore.dev?logIndex=2648101820, GitHub
+  attestation URL .../attestations/43931270)
+- Real SBOM attestation created (Rekor log entry, GitHub attestation
+  URL .../attestations/43931274)
+- Both independently re-verified a second time, outside the workflow
+  entirely, against the real pushed image digest
+  (sha256:150815c83b35999160955305eee15b9a7adc0fd0ec6dd22ba0b3ed10b04e0d61):
+  `gh attestation verify oci://.../mortgage-agent@<digest> --owner
+  akira-in-tech --predicate-type <each type>` — both exit 0, both
+  return exactly one verified statement of the expected predicate type
+- The full deploy still completed normally after these new steps: real
+  terraform apply, real 200 from the deployed ALB
+```
+
+### Known gaps
+
+- Attestations are not pushed to the ECR registry itself as OCI referrers (`push-to-registry` left `false`) — ECR's support for this was unverified from here, and GitHub's own attestation store is sufficient for `gh attestation verify` to work, which is the actual guarantee this closes. Anyone with registry access but not GitHub API access to this repo would need the GitHub-side lookup, not a registry-side one.
+- This covers the `mortgage-agent` image only (api/worker share it); the `temporalio/auto-setup` image used for the self-hosted Temporal service is a third-party image with its own upstream supply chain, out of scope here.
+
+### Next safe step
+
+Charter Section 29 item 6 is now fully closed except for Keycloak/console deployment, which the user has declined (no domain purchase) rather than merely deferred — do not revisit it without the user raising it again. Remaining open charter items (item 4's external policy-source monitoring, the provider certification/kill-switch exercise) are separate, unstarted work and should not be assumed as the next task without asking.
