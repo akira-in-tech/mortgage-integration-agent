@@ -12118,6 +12118,11 @@ first live edge deployment and browser walkthrough.
   Vitest tests passed. A local Node 22.11 run remains unsuitable evidence
   because the repository requires Node 24 and its Vite/Rolldown optional
   native binding was unavailable there.
+- The first protected deployment reached Terraform planning and exposed one
+  least-privilege omission before any new edge resource was created:
+  Terraform's managed CloudFront cache-policy data sources require
+  `cloudfront:ListCachePolicies`. The deployment role is amended narrowly and
+  the same workflow will be re-run; no failed plan is treated as live proof.
 
 ### Remaining boundary
 
