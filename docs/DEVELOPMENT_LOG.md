@@ -12126,8 +12126,10 @@ first live edge deployment and browser walkthrough.
   real migration task to exit 0, and then exposed the remaining exact provider
   operations (S3 tag inspection, API Gateway v2 tag application, CloudFront
   origin-request-policy creation, and Cognito MFA configuration reads). The
-  deploy role is amended narrowly and the same workflow will be re-run; no
-  failed apply is treated as live proof.
+  deploy role is amended narrowly. A subsequent state refresh surfaced one
+  further S3 provider read, `s3:GetBucketAcl`, which is also added without
+  expanding object access. The same workflow will be re-run; no failed apply
+  is treated as live proof.
 
 ### Remaining boundary
 

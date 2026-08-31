@@ -356,6 +356,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "s3:GetBucketOwnershipControls", "s3:PutBucketOwnershipControls",
       "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
       "s3:GetBucketTagging", "s3:PutBucketTagging",
+      "s3:GetBucketAcl",
     ]
     resources = [
       "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}",
