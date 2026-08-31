@@ -357,6 +357,11 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
       "s3:GetBucketTagging", "s3:PutBucketTagging",
       "s3:GetBucketAcl",
+      # The AWS provider reads several optional bucket attributes (ACL, CORS,
+      # lifecycle, website, and encryption) while reconciling one bucket.
+      # Scope all of those read-only queries to this fixed private console
+      # bucket instead of growing a cross-bucket permission one API at a time.
+      "s3:Get*",
     ]
     resources = [
       "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}",

@@ -12127,9 +12127,11 @@ first live edge deployment and browser walkthrough.
   operations (S3 tag inspection, API Gateway v2 tag application, CloudFront
   origin-request-policy creation, and Cognito MFA configuration reads). The
   deploy role is amended narrowly. A subsequent state refresh surfaced one
-  further S3 provider read, `s3:GetBucketAcl`, which is also added without
-  expanding object access. The same workflow will be re-run; no failed apply
-  is treated as live proof.
+  further S3 provider reads (`s3:GetBucketAcl`, then `s3:GetBucketCORS`). The
+  role therefore receives `s3:Get*` only on the one fixed private console
+  bucket, covering its optional-attribute reconciliation without opening any
+  other bucket or expanding write access. The same workflow will be re-run;
+  no failed apply is treated as live proof.
 
 ### Remaining boundary
 
