@@ -149,7 +149,7 @@ describe('OidcSessionService', () => {
     expect(returnUrl).toBe('http://localhost:5173/cases?queue=review');
     expect(stored?.sessionTokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(stored?.csrfTokenHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(stored?.encryptedTokenBundle).toMatch(/^v1\./);
+    expect(stored?.encryptedTokenBundle).toMatch(/^v2\.legacy\./);
     expect(stored?.encryptedTokenBundle).not.toContain('provider-access-token');
     expect(JSON.stringify(stored)).not.toContain('provider-refresh-token');
 

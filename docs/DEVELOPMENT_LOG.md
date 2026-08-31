@@ -12002,3 +12002,15 @@ Started and verified as the first object-storage boundary. This is not yet an up
 ### Remaining boundary
 
 The next slice must add document metadata/RLS plus create, read, hold-aware delete, and backup-verification operations. A public multipart upload before those controls exist would widen the data boundary without satisfying its deletion and lineage obligations.
+
+## M7-047: OIDC session encryption key-ring rotation
+
+### Status
+
+Implemented with backward-compatible single-key configuration.
+
+### Implementation
+
+- New sessions use a versioned key identifier and the first `OIDC_SESSION_ENCRYPTION_KEYS` entry; retained entries decrypt prior sessions during an operator-controlled rotation window.
+- Existing single-key deployments emit `v2.legacy` sessions and remain readable. Configuration rejects malformed key rings and permits either the legacy key or ring in staging/production.
+- This closes session-wide forced logout during a planned key rotation. It does not create bearer-token overlap for machine or platform-admin credentials.

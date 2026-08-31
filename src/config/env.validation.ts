@@ -281,6 +281,19 @@ export class EnvironmentVariables {
   })
   OIDC_SESSION_ENCRYPTION_KEY?: string;
 
+  // Ordered key ring: the first key encrypts new sessions and retained keys
+  // decrypt sessions issued before rotation. The single-key variable remains
+  // accepted for backwards-compatible deployments.
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64}(,[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64})*$/,
+    {
+      message: 'OIDC_SESSION_ENCRYPTION_KEYS must be kid:64hex[,kid:64hex...]',
+    },
+  )
+  OIDC_SESSION_ENCRYPTION_KEYS?: string;
+
   @IsOptional()
   @IsInt()
   @Min(300)
@@ -394,7 +407,8 @@ export function validateEnvironment(
     validatedConfig.OIDC_CLIENT_SECRET ||
     validatedConfig.OIDC_CALLBACK_URL ||
     validatedConfig.CONSOLE_ORIGIN ||
-    validatedConfig.OIDC_SESSION_ENCRYPTION_KEY,
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEY ||
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS,
   );
   if (
     issuerConfigured !== audienceConfigured ||
@@ -408,7 +422,7 @@ export function validateEnvironment(
     const productionErrors: string[] = [];
     if (!validatedConfig.OIDC_SESSION_ENCRYPTION_KEY) {
       productionErrors.push(
-        'OIDC_SESSION_ENCRYPTION_KEY is required when OIDC is enabled in staging or production',
+        'OIDC_SESSION_ENCRYPTION_KEY or OIDC_SESSION_ENCRYPTION_KEYS is required when OIDC is enabled in staging or production',
       );
     }
     if (!validatedConfig.OIDC_CALLBACK_URL) {
