@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ApiClient } from '../database/entities/api-client.entity';
@@ -21,6 +25,12 @@ export interface CreateApiClientInput {
 export interface CreateApiClientResult {
   client: ApiClient;
   /** The raw bearer token (`{id}.{secret}`) — generated once, never persisted, never retrievable again after this call returns. */
+  token: string;
+}
+
+export interface RotateApiClientResult {
+  client: ApiClient;
+  /** The replacement raw bearer token, shown once and never persisted. */
   token: string;
 }
 
@@ -54,5 +64,42 @@ export class ApiClientService {
       }),
     );
     return { client, token: `${client.id}.${secret}` };
+  }
+
+  /**
+   * Replaces one active client's secret atomically. The old bearer token
+   * fails on the next request; callers needing an overlap create a second
+   * client, switch the integration, and revoke the first explicitly.
+   */
+  async rotate(id: string): Promise<RotateApiClientResult> {
+    const client = await this.apiClientRepository.findOneBy({ id });
+    if (!client) {
+      throw new NotFoundException(`API client ${id} not found`);
+    }
+    if (client.status !== ApiClientStatus.ACTIVE) {
+      throw new ConflictException(`API client ${id} is not active`);
+    }
+
+    const secret = generateApiClientSecret();
+    client.hashedSecret = hashApiClientSecret(secret);
+    const rotated = await this.apiClientRepository.save(client);
+    return { client: rotated, token: `${rotated.id}.${secret}` };
+  }
+
+  /**
+   * Revocation preserves the identity and its historical audit references
+   * while making every subsequent bearer-token verification fail closed.
+   */
+  async revoke(id: string): Promise<ApiClient> {
+    const client = await this.apiClientRepository.findOneBy({ id });
+    if (!client) {
+      throw new NotFoundException(`API client ${id} not found`);
+    }
+    if (client.status === ApiClientStatus.REVOKED) {
+      return client;
+    }
+
+    client.status = ApiClientStatus.REVOKED;
+    return this.apiClientRepository.save(client);
   }
 }

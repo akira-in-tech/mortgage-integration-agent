@@ -11963,3 +11963,26 @@ Implemented and verified against the clean PostgreSQL verification database. Thi
 ### Remaining boundary
 
 The fixed window is a deliberate, inspectable baseline rather than a claim of receiver-specific traffic protection. An authorized launch still needs receiver capacity agreements, load tests, alert thresholds, retry/backoff evidence, and an operational owner for any destination-specific exception.
+
+## M7-045: controlled machine-credential rotation and revocation
+
+### Status
+
+Implemented as an out-of-band operational control. It does not create a tenant self-service administration surface or claim a production secret-management integration.
+
+### Implementation
+
+- Added `ApiClientService.rotate()` to atomically replace an active machine client's scrypt secret hash and return a new bearer token exactly once. The client id, tenant scope, and role remain stable; the old token fails on its next verification.
+- Added idempotent `ApiClientService.revoke()`: the credential's historical row remains for attributable audit references, while `ApiKeyGuard` rejects every bearer token for the revoked client.
+- Added `npm run manage-api-client -- <rotate|revoke> <apiClientId>`. It deliberately stays a local, operator-invoked command like credential creation rather than exposing a REST endpoint without an administrative authorization model.
+- Documented the no-overlap rotation contract. Integrations requiring a handoff window must create a second client, switch their configuration, then revoke the old one; this avoids inventing an unimplemented multi-secret key-ring model.
+- Added real database guard proofs for new-token-only rotation and idempotent revocation.
+
+### Verification
+
+- `DATABASE_URL=postgres://mortgage:mortgage_demo@localhost:55432/mortgage_agent npm test -- api-key.guard.spec.ts --runInBand --no-cache --silent`: 1 suite / 12 tests passed.
+- `npm run build`, `npm run lint:check`, `npx prettier --write` on changed source/docs, and `git diff --check`: passed.
+
+### Remaining boundary
+
+The command depends on the operator's database access and prints a secret once. A production rollout still needs approved privileged access, secrets-manager storage, rotation scheduling, and a documented incident owner; those are deployment controls, not claims this local command can satisfy.

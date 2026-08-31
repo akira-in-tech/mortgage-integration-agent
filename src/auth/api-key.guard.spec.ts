@@ -167,6 +167,44 @@ describeOrSkip('ApiKeyGuard', () => {
     );
   });
 
+  it('accepts only the replacement bearer token after a controlled rotation', async () => {
+    const { client, token: originalToken } = await apiClientService.create({
+      tenantId: randomUUID(),
+      name: 'guard-spec-rotation',
+    });
+    clientIds.push(client.id);
+    const { token: replacementToken } = await apiClientService.rotate(
+      client.id,
+    );
+
+    const original = contextFor(`Bearer ${originalToken}`);
+    await expect(guard.canActivate(original.context)).rejects.toThrow(
+      UnauthorizedException,
+    );
+    const replacement = contextFor(`Bearer ${replacementToken}`);
+    await expect(guard.canActivate(replacement.context)).resolves.toBe(true);
+    expect(replacement.request.authContext?.actorId).toBe(client.id);
+  });
+
+  it('revoke() is idempotent and makes an otherwise valid token fail closed', async () => {
+    const { client, token } = await apiClientService.create({
+      tenantId: randomUUID(),
+      name: 'guard-spec-service-revoke',
+    });
+    clientIds.push(client.id);
+
+    expect((await apiClientService.revoke(client.id)).status).toBe(
+      ApiClientStatus.REVOKED,
+    );
+    expect((await apiClientService.revoke(client.id)).status).toBe(
+      ApiClientStatus.REVOKED,
+    );
+    const { context } = contextFor(`Bearer ${token}`);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
   it('fails closed for a revoked client even with the correct secret', async () => {
     const { client, token } = await apiClientService.create({
       tenantId: randomUUID(),
