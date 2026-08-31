@@ -52,7 +52,13 @@ describe('evaluatePolicyTool', () => {
     expect(evaluate).toHaveBeenCalledWith(
       'tenant-1',
       'case-1',
-      expect.objectContaining(args),
+      expect.objectContaining({
+        jurisdictionCode: args.jurisdictionCode,
+        productCode: args.productCode,
+        lifecycleEvent: args.lifecycleEvent,
+        applicationReceivedAt: new Date(args.applicationReceivedAt),
+        asOf: expect.any(Date),
+      }),
     );
     expect(result).toEqual({
       outcome: 'REFRESHED',

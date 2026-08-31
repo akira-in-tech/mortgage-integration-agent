@@ -27,6 +27,7 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
 import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
 import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.tool';
+import { AgentPlannerPort } from '../agent-runtime/agent-planner';
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
@@ -81,6 +82,8 @@ export interface CaseConditionsActivitiesDeps {
   communicationDeliveryService: CommunicationDeliveryService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
+  /** Optional local model router; omitted keeps the deterministic graph. */
+  agentPlanner?: AgentPlannerPort;
 }
 
 interface CaseRef {
@@ -257,6 +260,7 @@ export function createCaseConditionsActivities(
     messageService,
     communicationDeliveryService,
     outboxSigningSecret,
+    agentPlanner,
   } = deps;
   const providerDispatchDeps = {
     registry: providerRegistry,
@@ -362,6 +366,7 @@ export function createCaseConditionsActivities(
     evaluationManifestService,
     messageService,
     outboxSigningSecret,
+    agentPlanner,
   });
 
   async function finalizeReadyForUnderwriting(
@@ -597,7 +602,7 @@ export function createCaseConditionsActivities(
         attemptedTools: [],
         remainingStepBudget: stepBudget,
         remainingDurationBudgetMs: durationBudgetMs,
-        remainingTokenBudget: 0, // this graph makes no model calls
+        remainingTokenBudget: agentPlanner?.tokenBudgetUnits ?? 0,
         remainingProviderCallBudget: 0, // its tools make no outbound provider calls; evidence was already fetched by earlier workflow activities
         budgetCurrency: 'USD',
         remainingCostBudgetMinorUnits: 0, // all providers are synthetic; no real cost is ever incurred
@@ -612,7 +617,7 @@ export function createCaseConditionsActivities(
         budget: {
           stepBudget,
           durationBudgetMs,
-          tokenBudget: 0,
+          tokenBudget: agentPlanner?.tokenBudgetUnits ?? 0,
           providerCallBudget: 0,
           costBudgetMinorUnits: 0,
           currency: 'USD',

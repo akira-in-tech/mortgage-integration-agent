@@ -13,6 +13,7 @@ import { OutboxEvent } from '../database/entities/outbox-event.entity';
 import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
 import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
+import { AgentModelInvocation } from '../database/entities/agent-model-invocation.entity';
 import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
@@ -326,6 +327,9 @@ export async function cleanupEvaluationRun(
       .delete(agentRuns.map((r) => ({ agentRunId: r.id })));
   }
   await dataSource.getRepository(AgentRun).delete({ tenantId });
+  if (dataSource.hasMetadata(AgentModelInvocation)) {
+    await dataSource.getRepository(AgentModelInvocation).delete({ tenantId });
+  }
   await dataSource.getRepository(EvaluationInputManifest).delete({ tenantId });
   await dataSource.getRepository(OutboxEvent).delete({ tenantId });
   await dataSource.getRepository(EvidenceFact).delete({ tenantId });

@@ -28,6 +28,7 @@ import { CasePolicyBinding } from '../database/entities/case-policy-binding.enti
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
+import { AgentModelInvocation } from '../database/entities/agent-model-invocation.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
 import { AgentBudgetReservation } from '../database/entities/agent-budget-reservation.entity';
@@ -165,6 +166,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         PolicyCatalogGeneration,
         EvaluationInputManifest,
         AgentRun,
+        AgentModelInvocation,
         ToolAttempt,
         AgentBudgetLedger,
         AgentBudgetReservation,

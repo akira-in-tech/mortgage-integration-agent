@@ -409,4 +409,38 @@ describe('validateEnvironment', () => {
       expect(result.BACKUP_RETENTION_HOURS).toBe(48);
     });
   });
+
+  describe('bounded local Agent planner', () => {
+    it('validates the conservative planner token and output limits', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          AGENT_PLANNER_TOKEN_BUDGET: '2048',
+          AGENT_PLANNER_MAX_OUTPUT_TOKENS: '256',
+          AGENT_PLANNER_MIN_CONFIDENCE_BPS: '8500',
+        }),
+      );
+      expect(result.AGENT_PLANNER_TOKEN_BUDGET).toBe(2048);
+      expect(result.AGENT_PLANNER_MAX_OUTPUT_TOKENS).toBe(256);
+      expect(result.AGENT_PLANNER_MIN_CONFIDENCE_BPS).toBe(8500);
+    });
+
+    it('rejects an output cap larger than the authoritative reservation', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            AGENT_PLANNER_TOKEN_BUDGET: '256',
+            AGENT_PLANNER_MAX_OUTPUT_TOKENS: '512',
+          }),
+        ),
+      ).toThrow(/MAX_OUTPUT_TOKENS cannot exceed/);
+    });
+
+    it('rejects a confidence floor outside basis-point bounds', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ AGENT_PLANNER_MIN_CONFIDENCE_BPS: '10001' }),
+        ),
+      ).toThrow(/AGENT_PLANNER_MIN_CONFIDENCE_BPS/);
+    });
+  });
 });

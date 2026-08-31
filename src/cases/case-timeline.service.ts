@@ -117,6 +117,9 @@ export class CaseTimelineService {
           reviewRequested: run.reviewRequested,
           reviewReason: run.reviewReason,
           reviewCategory: run.reviewCategory,
+          modelInvocationId: run.modelInvocationId,
+          modelVersion: run.modelVersion,
+          promptVersion: run.promptVersion,
           tools: attempts.map((a) => ({
             name: a.toolName,
             outcome: a.outcome,

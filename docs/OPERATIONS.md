@@ -101,6 +101,14 @@ Prometheus recording rules live in `observability/slo-rules.yaml`; alert rules l
 2. Do not increase a limit merely to clear an alert. Confirm tenant authority and expected cost first.
 3. Reviewer commit/release actions require evidence notes; unknown provider costs remain reserved until reconciled.
 
+### Local Agent planner unavailable or invalid
+
+1. Treat `MODEL_OUTPUT_INVALID`, `MODEL_UNCERTAINTY`, and planner `TOOL_EXECUTION_FAILURE` routes as human-review work. Never bypass the review by editing `agent_runs` or `agent_model_invocations`.
+2. Confirm the configured `OLLAMA_MODEL` is installed and `OLLAMA_BASE_URL` is reachable from the worker network. The application never downloads a model automatically.
+3. Check only bounded operational metadata: model version, prompt version, digests, route, confidence basis points, and ledger reservation. Prompt and response bodies are deliberately not persisted or logged.
+4. Repair the runtime or configuration, then resume through the governed workflow path. A failed reservation is released; a successful immutable invocation is reused on replay so the model is not called twice for the same workflow/case/model/prompt tuple.
+5. Keep `think=false` for the two-edge planner unless a future charter and ledger design explicitly accounts for hidden reasoning tokens. Changing the model or prompt version creates a new auditable invocation identity.
+
 ## Backup and restore
 
 RDS automated backups are enabled (`backup_retention_period = 1`, capped by this AWS account's free-tier restrictions — see `terraform/staging/rds.tf`). The snapshot/restore mechanism itself was drilled for real on 2026-08-29 (`staging-drill.yml` `backup-restore`): a real snapshot (`mortgage-agent-staging-drill-20260829091710`) took ~3m33s to become available; restoring it into a separate temporary instance took ~6m40s; a real query against the restored instance (`SELECT COUNT(*) FROM typeorm_migrations`, run via a one-off ECS task) confirmed 45 real migration records present — schema and applied-migration history both survived intact. The temporary instance and the drill snapshot were both torn down afterward and independently confirmed gone. Full detail in `docs/DEVELOPMENT_LOG.md`'s M7-025 entry. This proves the snapshot/restore mechanism works, not an application-level disaster-recovery procedure (re-pointing the app at a restored instance, DNS/connection-string cutover) — that remains a separate, unbuilt exercise.

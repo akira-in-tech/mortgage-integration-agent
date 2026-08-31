@@ -89,6 +89,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(await tableNames()).toEqual([
       'agent_budget_ledgers',
       'agent_budget_reservations',
+      'agent_model_invocations',
       'agent_runs',
       'api_clients',
       'audit_events',
@@ -183,7 +184,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // webhook_deliveries -> outbox_events, OIDC sessions -> users, agent
     // budget reservations -> the tenant-matching authoritative budget ledger,
     // aggregate usage -> tenants, reservations -> their aggregate month
-    expect(foreignKeys).toHaveLength(21);
+    // agent_runs -> its optional bounded model invocation
+    expect(foreignKeys).toHaveLength(22);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -205,6 +207,33 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+  });
+
+  it('reverts governed Agent planner evidence without removing agent run history', async () => {
+    expect(await tableNames()).toContain('agent_model_invocations');
+    const runColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'agent_runs'
+           AND column_name IN ('modelInvocationId', 'modelVersion', 'promptVersion')
+         ORDER BY column_name`,
+      );
+    expect(runColumns).toEqual([
+      { column_name: 'modelInvocationId' },
+      { column_name: 'modelVersion' },
+      { column_name: 'promptVersion' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('agent_model_invocations');
+    const runColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'agent_runs'
+         AND column_name IN ('modelInvocationId', 'modelVersion', 'promptVersion')`,
+    );
+    expect(runColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('agent_runs');
   });
 
   it('reverts encrypted-provider deletion lineage without removing disposition tasks', async () => {

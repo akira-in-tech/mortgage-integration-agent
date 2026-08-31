@@ -5,7 +5,7 @@
 | Field | Value |
 | --- | --- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.16 |
+| Version | 2.17 |
 | Repository | `mortgage-integration-agent` |
 | Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
 | Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -64,7 +64,7 @@ The repository currently contains verified local vertical slices for:
 - a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, and live activity polling;
 - CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, dependency audits, Playwright/axe coverage, and the credential-gated live-Keycloak browser journey on every push and pull request;
 - an opt-in local OpenTelemetry stack (Collector, Tempo, Prometheus, Grafana) with SLO recording rules, alerts, a provisioned dashboard, and an operator runbook (`docs/OPERATIONS.md`);
-- no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
+- no-paid-model default execution and an optional governed local Ollama/Qwen planner in the authoritative LangGraph runtime; the legacy compatibility path remains separate.
 
 The following release boundaries remain open and are not represented as implemented:
 
@@ -85,7 +85,7 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 | Intake | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations. | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks. |
 | Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence. | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated. |
 | Policy | Released versions resolve across the full covered jurisdiction ancestry; every registered source must satisfy its freshness objective; allowlisted transition rules use the immutable application receipt time for grandfathering; resolver releases, source deadlines, scheduled boundaries, and catalog changes invalidate reuse before evaluation binds an immutable snapshot. | External source monitoring/ingestion and broader reviewed jurisdiction coverage remain open; stale, incomplete, cyclic, or unsupported policy context fails closed to review. |
-| Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; stale, exhausted, expired, unconfigured, and replayed unresolved effects route safely; REVIEWER-only reconciliation preserves actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; real cost-bearing adapters still require their provider-certification and operational gates. |
+| Agent | A bounded LangGraph runtime optionally uses a schema-constrained local-model planner for one of two routes, then invokes allowlisted deterministic tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; model provenance and token use are durable and replay-safe. | The model cannot evaluate policy, decide credit, approve communication, name tools, or execute effects; malformed, unavailable, or uncertain output routes to human review. Current deterministic tools declare zero token/provider/cost usage. |
 | Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
 | Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
 | Trust | OIDC/API clients, RBAC, purpose-bound consent, transaction-specific consumer-report permissible-purpose decisions, RLS, audit events, provider grants, operation intents, encrypted borrower-derived JSON fields, and lineage-aware data-disposition tasks are present. | Stores not yet implemented (documents, prompts, caches, indexes, objects) need their own lineage before introduction; real backup expiry needs external evidence and real-data approval remains open. |

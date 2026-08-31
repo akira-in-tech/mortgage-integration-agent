@@ -22,6 +22,8 @@ import { CasePolicyBinding } from './database/entities/case-policy-binding.entit
 import { PolicyCatalogGeneration } from './database/entities/policy-catalog-generation.entity';
 import { EvaluationInputManifest } from './database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from './database/entities/agent-run.entity';
+import { AgentModelInvocation } from './database/entities/agent-model-invocation.entity';
+import { PermissiblePurposeDecision } from './database/entities/permissible-purpose-decision.entity';
 import { AgentBudgetLedger } from './database/entities/agent-budget-ledger.entity';
 import { AgentBudgetReservation } from './database/entities/agent-budget-reservation.entity';
 import { TenantAgentBudgetUsage } from './database/entities/tenant-agent-budget-usage.entity';
@@ -111,6 +113,8 @@ async function main(): Promise<void> {
       PolicyCatalogGeneration,
       EvaluationInputManifest,
       AgentRun,
+      AgentModelInvocation,
+      PermissiblePurposeDecision,
       AgentBudgetLedger,
       AgentBudgetReservation,
       TenantAgentBudgetUsage,

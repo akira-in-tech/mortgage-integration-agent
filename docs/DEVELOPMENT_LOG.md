@@ -11705,3 +11705,75 @@ git diff --check
 ### Remaining boundary
 
 The repository has no persisted document binaries, object store, cache, search index, prompt archive, or separate evaluation-artifact content store. Any future implementation of one must join the disposition lineage before it is eligible for real data. Backup verification remains an operator attestation backed by the real provider/control-plane record; the application cannot infer external deletion from wall-clock time. No AWS apply or real-data deployment was performed in this slice.
+
+## M7-035: governed local-model routing in the authoritative LangGraph runtime
+
+### Status
+
+Implemented and verified through the real worker composition, LangGraph runtime, PostgreSQL budget ledger, immutable evaluation manifest, and a live local Ollama smoke call. Deterministic `rules` remains the free default. The model is a bounded routing assistant, not a policy evaluator, credit decision-maker, tool executor, or communication approver.
+
+### Implementation
+
+- Added `AgentPlannerPort` and `OllamaAgentPlanner`. The request contains only server-owned `consentValid`, `evidenceComplete`, and the two available route enums—no borrower identity, amount, income, score, evidence value, document text, tenant input, or free-form case content.
+- The planner can return only `EVALUATE_POLICY` or `REQUEST_HUMAN_REVIEW`. Ollama receives a strict JSON schema with `temperature: 0`, capped output, and `think: false`; application-side Zod validation rejects extra fields, invented actions, mismatched reason codes, invalid confidence, and non-JSON content.
+- Added a runtime provenance guard independent of the Ollama adapter. Model version, prompt version, token accounting, action/reason pairing, confidence bounds, and SHA-256 digest shape must exactly match the tuple and capacity reserved by the runtime. Adapter-level metadata cannot expand authority or under-report its reservation.
+- Added a configurable confidence floor (`AGENT_PLANNER_MIN_CONFIDENCE_BPS`, default 8000). A syntactically valid evaluate route below that floor interrupts for `MODEL_UNCERTAINTY`; it is never silently treated as sufficient confidence.
+- The planner reserves one step and its full conservative token allowance in the PostgreSQL-authoritative budget ledger before inference. A malformed/unavailable call releases the reservation and routes safely; a valid result commits the reservation. The stable reservation and invocation keys make a completed call replay-safe.
+- Added RLS-protected `agent_model_invocations`, which persists only tenant/case/workflow references, model and prompt versions, the bounded action/reason, confidence basis points, accounted token units, and request/response SHA-256 digests. Prompt and response bodies, hidden reasoning, and borrower data are never stored. Database checks enforce the action/reason pair as well as value and range constraints.
+- Linked `AgentRun` and `EvaluationInputManifest` to the real invocation id. The case timeline exposes model/prompt provenance without exposing content. Deterministic runs preserve null provenance.
+- Wired `DECISION_PROVIDER=ollama` into the Temporal worker, not only the legacy API compatibility path. Docker Compose now passes Ollama and planner budget/confidence variables to the worker; staging remains deliberately pinned to `rules` because no governed hosted Ollama/vLLM deployment exists there.
+- Added mandatory-review categories for malformed model output and model uncertainty, plus operator guidance for model unavailability, replay, and content-free diagnostics.
+- Extended the restricted-role integration proof to `agent_model_invocations`: no context sees zero rows, each tenant sees only its own invocation, and only the explicit audited bypass sees both.
+
+### Defects found during full verification
+
+- `evaluation-report.ts` and the evaluation runner used explicit TypeORM entity lists that had not acquired `PermissiblePurposeDecision` or the new `AgentModelInvocation`. This caused real evaluation setup to fail with missing metadata; both lists and cleanup paths now include their complete relation graph.
+- Two older provider-intent test fixtures had not acquired M7-031's required `logicalOperationKey`/receipt/finding fields, so the first full clean-migration test exposed a NOT NULL failure. The fixtures now match the production entity.
+- The evaluate-policy tool test still expected `applicationReceivedAt` to cross the service boundary as a string even though the implementation correctly converts it to an immutable `Date` and adds evaluation `asOf`. Its assertion now verifies the real typed contract.
+- The API container already received `DECISION_PROVIDER`; the worker did not. Without the worker wiring, the authoritative workflow would have remained deterministic even when Compose advertised Ollama mode. The worker environment is now explicit.
+
+### Verification
+
+```text
+Fresh PostgreSQL 16 container:
+  51 migrations applied from zero
+  newest governed-planner migration included
+
+Full backend Jest run with real PostgreSQL:
+  109 suites passed
+  868 tests passed
+  4 conditional suites / 28 tests skipped by their declared external-runtime gates
+
+Focused planner, runtime, migration, RLS, and contract run:
+  4 suites passed
+  79 tests passed
+
+Evaluation corpus:
+  12 / 12 passed
+  condition recall 1.0
+  condition precision 1.0
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+git diff --check
+  passed
+
+Live local Ollama smoke (content-free control state only):
+  installed model tested: qwen3:8b
+  route: EVALUATE_POLICY
+  reason: POLICY_EVALUATION_REQUIRED
+  confidence: 1.0
+  prompt: lending-operations-planner-v1
+  accounted token units: 1024
+```
+
+### Decisions and remaining boundary
+
+- The configured target remains `qwen3.5:9b`, but that tag is not installed on this machine and was not downloaded automatically because it is a multi-gigabyte operator choice. The only live claim is for the already-installed `qwen3:8b`; Qwen3.5 behavior remains schema/unit-tested through mocked HTTP until its exact artifact is installed and exercised.
+- `think` stays disabled. This is a two-edge, schema-constrained control decision; hidden reasoning would consume capacity that is not independently observable or useful to the policy boundary. A future task that genuinely needs reasoning must define an accountable budget and evaluation gate first.
+- The content-free invocation is audit/control metadata. It intentionally remains after borrower data disposition because it stores no borrower value or prompt body; introducing prompts, retrieved text, embeddings, caches, or model-response archives would create a new lineage store and must join consent, encryption, retention, and deletion controls before use.
+- The model cannot choose a tool name. Every policy decision and effect remains in deterministic, allowlisted code behind consent, budget, policy, provider, review, and structural-exclusion gates. This boundary is permanent for this implementation, not a prompt instruction that a model can override.

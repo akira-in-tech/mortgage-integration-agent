@@ -27,6 +27,7 @@ import { AgentBudgetLedger } from '../../database/entities/agent-budget-ledger.e
 import { AgentBudgetReservation } from '../../database/entities/agent-budget-reservation.entity';
 import { CommunicationMessage } from '../../database/entities/communication-message.entity';
 import { CommunicationTemplate } from '../../database/entities/communication-template.entity';
+import { AgentModelInvocation } from '../../database/entities/agent-model-invocation.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
@@ -44,6 +45,11 @@ import { CommunicationMessageService } from '../../communications/communication-
 import { LendingOperationsAgentState } from '../agent-state.types';
 import { AgentRunInput } from '../agent-runtime.types';
 import { createLendingOperationsAgentRuntime } from './lending-operations-agent-runtime';
+import {
+  AGENT_PLANNER_PROMPT_VERSION,
+  AgentPlannerError,
+  AgentPlannerPort,
+} from '../agent-planner';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeOrSkip = DATABASE_URL ? describe : describe.skip;
@@ -68,6 +74,7 @@ describeOrSkip(
     let policyEvaluationService: PolicyEvaluationService;
     let evaluationManifestService: EvaluationManifestService;
     let runtime: ReturnType<typeof createLendingOperationsAgentRuntime>;
+    let messageService: CommunicationMessageService;
     let tenantId: string;
     const caseIds: string[] = [];
 
@@ -91,6 +98,7 @@ describeOrSkip(
           PolicyCatalogGeneration,
           EvaluationInputManifest,
           AgentRun,
+          AgentModelInvocation,
           ToolAttempt,
           AgentBudgetLedger,
           AgentBudgetReservation,
@@ -113,7 +121,7 @@ describeOrSkip(
         dataSource.getRepository(PolicyCatalogGeneration),
       );
       evaluationManifestService = new EvaluationManifestService(dataSource);
-      const messageService = new CommunicationMessageService(dataSource);
+      messageService = new CommunicationMessageService(dataSource);
       runtime = createLendingOperationsAgentRuntime({
         dataSource,
         policyEvaluationService,
@@ -210,6 +218,9 @@ describeOrSkip(
         await dataSource.getRepository(AgentBudgetLedger).delete({ tenantId });
         // ToolAttempt cascades on AgentRun's delete.
         await dataSource.getRepository(AgentRun).delete({ tenantId });
+        await dataSource
+          .getRepository(AgentModelInvocation)
+          .delete({ tenantId });
         await dataSource
           .getRepository(EvaluationInputManifest)
           .delete({ tenantId });
@@ -346,6 +357,25 @@ describeOrSkip(
       };
     }
 
+    function runtimeWithPlanner(
+      plan: AgentPlannerPort['plan'],
+    ): ReturnType<typeof createLendingOperationsAgentRuntime> {
+      return createLendingOperationsAgentRuntime({
+        dataSource,
+        policyEvaluationService,
+        evaluationManifestService,
+        messageService,
+        outboxSigningSecret: OUTBOX_SIGNING_SECRET,
+        agentPlanner: {
+          tokenBudgetUnits: 512,
+          minimumConfidenceBasisPoints: 8000,
+          modelVersion: 'qwen3.5:9b',
+          promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+          plan,
+        },
+      });
+    }
+
     it('routes to AWAITING_INFORMATION when required evidence is missing', async () => {
       const caseId = await makeCase();
       await addEvidence(caseId, EvidenceType.CREDIT, {});
@@ -382,6 +412,185 @@ describeOrSkip(
       expect(manifests).toHaveLength(1);
       expect(manifests[0].policyBindingId).not.toBeNull();
       expect(manifests[0].evidenceRefs).toHaveLength(1);
+    });
+
+    it('uses a bounded model route, accounts tokens, and binds its manifest to the deterministic evaluation', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 6000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const planner = jest.fn().mockResolvedValue({
+        nextAction: 'EVALUATE_POLICY',
+        reasonCode: 'POLICY_EVALUATION_REQUIRED',
+        confidence: 0.99,
+        modelVersion: 'qwen3.5:9b',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+        requestDigest: 'a'.repeat(64),
+        responseDigest: 'b'.repeat(64),
+        accountedTokenUnits: 512,
+      });
+      const state = makeInitialState(caseId);
+
+      const result = await runtimeWithPlanner(planner).run(
+        makeInput(state, {
+          budget: {
+            ...makeInput(state).budget,
+            tokenBudget: 512,
+          },
+        }),
+      );
+
+      expect(result.route).toBe('PROPOSED_ACTION');
+      expect(planner).toHaveBeenCalledWith({
+        consentValid: true,
+        evidenceComplete: true,
+        availableActions: ['EVALUATE_POLICY', 'REQUEST_HUMAN_REVIEW'],
+      });
+      expect(
+        result.finalState.attemptedTools.map((attempt) => attempt.toolName),
+      ).toContain('agent_planner');
+      const invocation = await dataSource
+        .getRepository(AgentModelInvocation)
+        .findOneByOrFail({ caseId });
+      expect(invocation).toMatchObject({
+        modelVersion: 'qwen3.5:9b',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+        nextAction: 'EVALUATE_POLICY',
+        accountedTokenUnits: 512,
+      });
+      const manifest = await dataSource
+        .getRepository(EvaluationInputManifest)
+        .findOneByOrFail({ caseId });
+      expect(manifest.modelAndPromptManifestId).toBe(invocation.id);
+      const persistedRun = await dataSource
+        .getRepository(AgentRun)
+        .findOneByOrFail({ caseId });
+      expect(persistedRun).toMatchObject({
+        modelInvocationId: invocation.id,
+        modelVersion: 'qwen3.5:9b',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+      });
+      const ledger = await dataSource
+        .getRepository(AgentBudgetLedger)
+        .findOneByOrFail({ tenantId, workflowRunId: state.workflowRunId });
+      expect(ledger.tokenUsed).toBe(512);
+      expect(ledger.tokenReserved).toBe(0);
+    });
+
+    it('interrupts before policy evaluation when the bounded planner requests human review', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const planner = jest.fn().mockResolvedValue({
+        nextAction: 'REQUEST_HUMAN_REVIEW',
+        reasonCode: 'HUMAN_REVIEW_REQUIRED',
+        confidence: 0.51,
+        modelVersion: 'qwen3.5:9b',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+        requestDigest: 'c'.repeat(64),
+        responseDigest: 'd'.repeat(64),
+        accountedTokenUnits: 512,
+      });
+      const state = makeInitialState(caseId);
+
+      const result = await runtimeWithPlanner(planner).run(
+        makeInput(state, {
+          budget: { ...makeInput(state).budget, tokenBudget: 512 },
+        }),
+      );
+
+      expect(result.route).toBe('INTERRUPTED_FOR_REVIEW');
+      expect(result.finalState.reviewState?.category).toBe('MODEL_UNCERTAINTY');
+      expect(
+        result.finalState.attemptedTools.map((attempt) => attempt.toolName),
+      ).toEqual(['check_case_completeness', 'agent_planner']);
+    });
+
+    it('interrupts when a valid evaluate route is below the governed confidence floor', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const planner = jest.fn().mockResolvedValue({
+        nextAction: 'EVALUATE_POLICY',
+        reasonCode: 'POLICY_EVALUATION_REQUIRED',
+        confidence: 0.79,
+        modelVersion: 'qwen3.5:9b',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+        requestDigest: 'e'.repeat(64),
+        responseDigest: 'f'.repeat(64),
+        accountedTokenUnits: 512,
+      });
+      const state = makeInitialState(caseId);
+
+      const result = await runtimeWithPlanner(planner).run(
+        makeInput(state, {
+          budget: { ...makeInput(state).budget, tokenBudget: 512 },
+        }),
+      );
+
+      expect(result.route).toBe('INTERRUPTED_FOR_REVIEW');
+      expect(result.finalState.reviewState?.category).toBe('MODEL_UNCERTAINTY');
+      expect(result.finalState.reviewState?.reason).toContain('7900bp');
+    });
+
+    it('rejects planner provenance that does not match the reserved model tuple', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const planner = jest.fn().mockResolvedValue({
+        nextAction: 'EVALUATE_POLICY',
+        reasonCode: 'POLICY_EVALUATION_REQUIRED',
+        confidence: 0.99,
+        modelVersion: 'unreserved-model',
+        promptVersion: AGENT_PLANNER_PROMPT_VERSION,
+        requestDigest: 'a'.repeat(64),
+        responseDigest: 'b'.repeat(64),
+        accountedTokenUnits: 512,
+      });
+      const state = makeInitialState(caseId);
+
+      const result = await runtimeWithPlanner(planner).run(
+        makeInput(state, {
+          budget: { ...makeInput(state).budget, tokenBudget: 512 },
+        }),
+      );
+
+      expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
+      expect(result.finalState.reviewState?.category).toBe(
+        'MODEL_OUTPUT_INVALID',
+      );
+    });
+
+    it('releases the model reservation and routes invalid model output to manual review', async () => {
+      const caseId = await makeCase();
+      await addEvidence(caseId, EvidenceType.INCOME, { monthlyIncome: 9000 });
+      await addEvidence(caseId, EvidenceType.CREDIT, {});
+      await addEvidence(caseId, EvidenceType.DOCUMENT, {});
+      const state = makeInitialState(caseId);
+      const planner = jest
+        .fn()
+        .mockRejectedValue(
+          new AgentPlannerError('MALFORMED_OUTPUT', 'invalid shape'),
+        );
+
+      const result = await runtimeWithPlanner(planner).run(
+        makeInput(state, {
+          budget: { ...makeInput(state).budget, tokenBudget: 512 },
+        }),
+      );
+
+      expect(result.route).toBe('ROUTED_TO_MANUAL_REVIEW');
+      expect(result.finalState.reviewState?.category).toBe(
+        'MODEL_OUTPUT_INVALID',
+      );
+      const ledger = await dataSource
+        .getRepository(AgentBudgetLedger)
+        .findOneByOrFail({ tenantId, workflowRunId: state.workflowRunId });
+      expect(ledger.tokenUsed).toBe(0);
+      expect(ledger.tokenReserved).toBe(0);
     });
 
     it('assembles a manifest with no evidence when no policy version is even applicable to the case (M3-022)', async () => {

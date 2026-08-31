@@ -27,6 +27,8 @@ import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
 import { ConsentService } from './consent/consent.service';
 import { CommunicationMessageService } from './communications/communication-message.service';
 import { CommunicationDeliveryService } from './communications/communication-delivery.service';
+import { DecisionProvider } from './config/env.validation';
+import { OllamaAgentPlanner } from './agent-runtime/agent-planner';
 
 async function bootstrap(): Promise<void> {
   // A plain Nest application context, not createApplicationContext + an
@@ -34,6 +36,32 @@ async function bootstrap(): Promise<void> {
   // the same DI-managed services activities need (Section 12.1).
   const appContext = await NestFactory.createApplicationContext(WorkerModule);
   const configService = appContext.get(ConfigService);
+  const agentPlanner =
+    configService.get<DecisionProvider>(
+      'DECISION_PROVIDER',
+      DecisionProvider.Rules,
+    ) === DecisionProvider.Ollama
+      ? new OllamaAgentPlanner({
+          baseUrl: configService.get<string>(
+            'OLLAMA_BASE_URL',
+            'http://127.0.0.1:11434',
+          ),
+          model: configService.get<string>('OLLAMA_MODEL', 'qwen3.5:9b'),
+          timeoutMs: configService.get<number>('OLLAMA_TIMEOUT_MS', 60_000),
+          maxOutputTokens: configService.get<number>(
+            'AGENT_PLANNER_MAX_OUTPUT_TOKENS',
+            128,
+          ),
+          tokenBudgetUnits: configService.get<number>(
+            'AGENT_PLANNER_TOKEN_BUDGET',
+            1024,
+          ),
+          minimumConfidenceBasisPoints: configService.get<number>(
+            'AGENT_PLANNER_MIN_CONFIDENCE_BPS',
+            8000,
+          ),
+        })
+      : undefined;
 
   const activities = createCaseConditionsActivities({
     dataSource: appContext.get(DataSource),
@@ -49,6 +77,7 @@ async function bootstrap(): Promise<void> {
     consentService: appContext.get(ConsentService),
     messageService: appContext.get(CommunicationMessageService),
     communicationDeliveryService: appContext.get(CommunicationDeliveryService),
+    agentPlanner,
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',

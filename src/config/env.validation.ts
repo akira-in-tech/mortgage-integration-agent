@@ -119,6 +119,26 @@ export class EnvironmentVariables {
   @Min(1)
   OLLAMA_TIMEOUT_MS: number = 60_000;
 
+  // Conservative token charge for the bounded LangGraph routing call. The
+  // ledger reserves this whole amount before Ollama is contacted.
+  @IsOptional()
+  @IsInt()
+  @Min(256)
+  @Max(8192)
+  AGENT_PLANNER_TOKEN_BUDGET: number = 1024;
+
+  @IsOptional()
+  @IsInt()
+  @Min(16)
+  @Max(1024)
+  AGENT_PLANNER_MAX_OUTPUT_TOKENS: number = 128;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  AGENT_PLANNER_MIN_CONFIDENCE_BPS: number = 8000;
+
   // ── Temporal (src/workflows, src/worker.ts) ─────────────────────────────
   @IsOptional()
   @IsString()
@@ -356,6 +376,14 @@ export function validateEnvironment(
   if (productionLike && !validatedConfig.PROVIDER_DATA_ENCRYPTION_KEYS) {
     throw new Error(
       'Invalid environment configuration:\n  - PROVIDER_DATA_ENCRYPTION_KEYS is required in staging and production',
+    );
+  }
+  if (
+    validatedConfig.AGENT_PLANNER_MAX_OUTPUT_TOKENS >
+    validatedConfig.AGENT_PLANNER_TOKEN_BUDGET
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - AGENT_PLANNER_MAX_OUTPUT_TOKENS cannot exceed AGENT_PLANNER_TOKEN_BUDGET',
     );
   }
 

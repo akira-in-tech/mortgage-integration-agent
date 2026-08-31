@@ -18,6 +18,7 @@ export interface AssembleManifestInput {
   evaluatorVersion: string;
   /** Exactly the evidence facts this evaluation actually read — not every fact on the case (see the entity's own comment). */
   evidence: EvidenceFact[];
+  modelAndPromptManifestId?: string;
 }
 
 /**
@@ -61,7 +62,7 @@ export class EvaluationManifestService {
       policyBindingId: input.policyBindingId,
       observedPolicyDependencyDigest: input.observedPolicyDependencyDigest,
       evaluatorVersion: input.evaluatorVersion,
-      modelAndPromptManifestId: null,
+      modelAndPromptManifestId: input.modelAndPromptManifestId ?? null,
     };
     const manifestHash = computeDigest(contentToHash);
 

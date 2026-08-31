@@ -47,6 +47,10 @@ export enum MandatoryReviewCategory {
    * genuine execution exception, not a malformed-but-successful result.
    */
   TOOL_EXECUTION_FAILURE = 'TOOL_EXECUTION_FAILURE',
+  /** Schema-invalid, authority-expanding, or otherwise unusable model output. */
+  MODEL_OUTPUT_INVALID = 'MODEL_OUTPUT_INVALID',
+  /** The bounded planner explicitly declined to continue deterministically. */
+  MODEL_UNCERTAINTY = 'MODEL_UNCERTAINTY',
 }
 
 export type MandatoryReviewRoute =
@@ -59,6 +63,8 @@ const CATEGORY_ROUTES: Record<MandatoryReviewCategory, MandatoryReviewRoute> = {
   [MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED]:
     'ROUTE_TO_MANUAL_REVIEW',
   [MandatoryReviewCategory.TOOL_EXECUTION_FAILURE]: 'ROUTE_TO_MANUAL_REVIEW',
+  [MandatoryReviewCategory.MODEL_OUTPUT_INVALID]: 'ROUTE_TO_MANUAL_REVIEW',
+  [MandatoryReviewCategory.MODEL_UNCERTAINTY]: 'INTERRUPT_FOR_REVIEW',
 };
 
 export interface MandatoryReviewTrigger {
