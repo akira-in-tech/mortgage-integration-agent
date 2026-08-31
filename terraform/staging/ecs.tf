@@ -128,6 +128,15 @@ resource "aws_ecs_task_definition" "temporal" {
       { name = "DB_PORT", value = "5432" },
       { name = "POSTGRES_USER", value = "mortgage" },
       { name = "POSTGRES_SEEDS", value = aws_db_instance.this.address },
+      # RDS rejects plaintext PostgreSQL sessions. Temporal's auto-setup
+      # utility and the running server use different TLS variable families,
+      # so both are set explicitly. Host verification remains disabled only
+      # because this synthetic stack does not mount the RDS CA bundle; the
+      # connection is still encrypted in transit.
+      { name = "POSTGRES_TLS_ENABLED", value = "true" },
+      { name = "POSTGRES_TLS_DISABLE_HOST_VERIFICATION", value = "true" },
+      { name = "SQL_TLS_ENABLED", value = "true" },
+      { name = "SQL_HOST_VERIFICATION", value = "false" },
     ]
     secrets = [
       { name = "POSTGRES_PWD", valueFrom = aws_secretsmanager_secret.rds_master_password.arn },

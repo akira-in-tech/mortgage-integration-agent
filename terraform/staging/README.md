@@ -18,6 +18,13 @@ personal credential. Its state lives in the S3 backend that
   directly, not through the browser console. Both are a named Phase 2,
   not started here.
 
+The machine-bearer routes reject anonymous requests, but the current
+public HTTP listener is not a browser-authenticated or TLS-protected
+environment. Do not use it for real borrower data or transmit a bearer token
+over an untrusted network. A continuously accessible browser demo needs a
+domain-backed HTTPS listener plus a real OIDC provider before it can meet that
+boundary.
+
 ## What isn't here yet
 
 Load/soak testing, a backup/restore drill, and a formal failure-recovery

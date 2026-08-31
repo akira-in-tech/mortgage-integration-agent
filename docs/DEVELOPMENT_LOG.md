@@ -12034,3 +12034,43 @@ Implemented as the persisted lineage layer for the encrypted object boundary.
 ### Remaining boundary
 
 No upload/read route is exposed yet. The next slice must atomically coordinate object writes with metadata creation, malware scanning, consent checks, and hold-aware disposition before accepting files.
+
+## M7-049: restore TLS connectivity for the staging Temporal service
+
+### Status
+
+Implemented as a staging-runtime repair after live service inspection found
+Temporal repeatedly restarting while the API health check alone stayed green.
+
+### Problem
+
+The RDS instance requires encrypted PostgreSQL connections. The Temporal
+`auto-setup` container was configured with its database endpoint and password,
+but neither its schema-bootstrap client nor the running Temporal server had
+TLS enabled. The result was a repeated `no pg_hba.conf entry ... no
+encryption` failure, leaving the Temporal service at zero running tasks.
+
+### Implementation
+
+- Enabled the documented `POSTGRES_TLS_*` settings used by Temporal schema
+  bootstrap and the separate `SQL_TLS_*` settings used by the running server.
+- Disabled only certificate-host verification for this synthetic RDS setup,
+  because the task does not yet mount the RDS CA bundle. The database session
+  remains encrypted; this is not a substitute for CA validation in a
+  production deployment.
+- Updated the staging README to state precisely that API bearer guards do not
+  make the current public HTTP listener a browser-authenticated or
+  TLS-protected demo.
+
+### Verification
+
+- Live ECS events and CloudWatch logs identified the failure before the
+  configuration change. Terraform formatting/validation and a CI deployment
+  remain required before this repair can be called live-verified.
+
+### Remaining boundary
+
+The existing Phase 1 stack can demonstrate authenticated API routes only once
+a synthetic machine credential is provisioned. It cannot satisfy a
+continuously accessible browser-login requirement without a domain-backed
+HTTPS listener and an OIDC provider.
