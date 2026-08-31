@@ -12121,8 +12121,10 @@ first live edge deployment and browser walkthrough.
 - The first protected deployment reached Terraform planning and exposed one
   least-privilege omission before any new edge resource was created:
   Terraform's managed CloudFront cache-policy data sources require
-  `cloudfront:ListCachePolicies`. The deployment role is amended narrowly and
-  the same workflow will be re-run; no failed plan is treated as live proof.
+  `cloudfront:ListCachePolicies`. Its next run reached the provider's selected
+  policy read and surfaced the companion `cloudfront:GetCachePolicy` action.
+  The deployment role is amended narrowly and the same workflow will be
+  re-run; no failed plan is treated as live proof.
 
 ### Remaining boundary
 

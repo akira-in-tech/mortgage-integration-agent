@@ -298,6 +298,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "cloudfront:GetDistribution", "cloudfront:GetDistributionConfig",
       "cloudfront:UpdateDistribution", "cloudfront:CreateInvalidation",
       "cloudfront:ListDistributions", "cloudfront:ListCachePolicies",
+      "cloudfront:GetCachePolicy",
       "cloudfront:CreateOriginAccessControl",
       "cloudfront:GetOriginAccessControl", "cloudfront:UpdateOriginAccessControl",
       "cloudfront:DeleteOriginAccessControl",
