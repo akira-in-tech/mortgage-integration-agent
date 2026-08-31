@@ -657,7 +657,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List this tenant's webhook subscriptions without exposing signing secrets. */
+        get: operations["listWebhookEndpoints"];
         put?: never;
         /** Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later. */
         post: operations["createWebhookEndpoint"];
@@ -665,6 +666,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/webhook-endpoints/{endpointId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a webhook subscription while preserving its signed delivery history. */
+        delete: operations["deleteWebhookEndpoint"];
+        options?: never;
+        head?: never;
+        /** Update a webhook destination or event subscriptions for future deliveries. */
+        patch: operations["updateWebhookEndpoint"];
         trace?: never;
     };
     "/v1/webhook-deliveries/{deliveryId}": {
@@ -1093,19 +1112,39 @@ export interface components {
             targetUrl: string;
             eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
         };
-        WebhookEndpoint: {
+        CreatedWebhookEndpointResponseDto: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             tenantId: string;
             targetUrl: string;
-            /** @description The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it. */
-            secret: string;
             eventTypes: string[];
             /** @enum {string} */
             status: "ACTIVE" | "DISABLED";
             /** Format: date-time */
             createdAt: string;
+            /** @description HMAC signing secret. Store it now: future reads and mutations never return it. */
+            secret: string;
+        };
+        WebhookEndpointResponseDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            targetUrl: string;
+            eventTypes: string[];
+            /** @enum {string} */
+            status: "ACTIVE" | "DISABLED";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        UpdateWebhookEndpointDto: {
+            /**
+             * @description Replacement HTTPS destination for future signed deliveries.
+             * @example https://partner.example.com/webhooks/mortgage-agent-v2
+             */
+            targetUrl?: string;
+            eventTypes?: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
         };
         WebhookDeliveryAttempt: {
             attemptNumber: number;
@@ -2437,6 +2476,25 @@ export interface operations {
             };
         };
     };
+    listWebhookEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointResponseDto"][];
+                };
+            };
+        };
+    };
     createWebhookEndpoint: {
         parameters: {
             query?: never;
@@ -2455,7 +2513,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WebhookEndpoint"];
+                    "application/json": components["schemas"]["CreatedWebhookEndpointResponseDto"];
                 };
             };
             /** @description targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4). */
@@ -2471,6 +2529,51 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    deleteWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The endpoint is disabled; past delivery history remains available. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookEndpointDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointResponseDto"];
+                };
             };
         };
     };

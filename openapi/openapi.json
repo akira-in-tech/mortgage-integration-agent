@@ -1717,7 +1717,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WebhookEndpoint"
+                  "$ref": "#/components/schemas/CreatedWebhookEndpointResponseDto"
                 }
               }
             }
@@ -1735,6 +1735,107 @@
           }
         ],
         "summary": "Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.",
+        "tags": [
+          "webhooks"
+        ]
+      },
+      "get": {
+        "operationId": "listWebhookEndpoints",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List this tenant's webhook subscriptions without exposing signing secrets.",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/webhook-endpoints/{endpointId}": {
+      "patch": {
+        "operationId": "updateWebhookEndpoint",
+        "parameters": [
+          {
+            "name": "endpointId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a webhook destination or event subscriptions for future deliveries.",
+        "tags": [
+          "webhooks"
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWebhookEndpoint",
+        "parameters": [
+          {
+            "name": "endpointId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The endpoint is disabled; past delivery history remains available."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Revoke a webhook subscription while preserving its signed delivery history.",
         "tags": [
           "webhooks"
         ]
@@ -3199,7 +3300,7 @@
           "eventTypes"
         ]
       },
-      "WebhookEndpoint": {
+      "CreatedWebhookEndpointResponseDto": {
         "type": "object",
         "properties": {
           "id": {
@@ -3213,9 +3314,51 @@
           "targetUrl": {
             "type": "string"
           },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "secret": {
             "type": "string",
-            "description": "The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it."
+            "description": "HMAC signing secret. Store it now: future reads and mutations never return it."
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "targetUrl",
+          "eventTypes",
+          "status",
+          "createdAt",
+          "secret"
+        ]
+      },
+      "WebhookEndpointResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetUrl": {
+            "type": "string"
           },
           "eventTypes": {
             "type": "array",
@@ -3239,11 +3382,42 @@
           "id",
           "tenantId",
           "targetUrl",
-          "secret",
           "eventTypes",
           "status",
           "createdAt"
         ]
+      },
+      "UpdateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "targetUrl": {
+            "type": "string",
+            "description": "Replacement HTTPS destination for future signed deliveries.",
+            "example": "https://partner.example.com/webhooks/mortgage-agent-v2"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "loan_case.created",
+                "workflow_run.started",
+                "workflow_run.waiting_for_review",
+                "workflow_run.completed",
+                "workflow_run.failed",
+                "workflow_run.cancelled",
+                "workflow_run.recovery_started",
+                "evidence.updated",
+                "condition.opened",
+                "condition.satisfied",
+                "condition.waived",
+                "evaluation.interrupted",
+                "case.escalated",
+                "communication.delivered"
+              ]
+            }
+          }
+        }
       },
       "WebhookDeliveryAttempt": {
         "type": "object",

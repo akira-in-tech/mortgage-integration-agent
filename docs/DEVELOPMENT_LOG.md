@@ -11829,3 +11829,26 @@ Implemented and verified in the Platform Admin console. This is an inspection su
 ### Remaining boundary
 
 The dashboard reflects only saved synthetic corpus evidence. Broader adversarial/model, provider callback, and real-provider certification corpora remain separate, provider- and capability-specific release evidence requirements.
+
+## M7-039: safe webhook subscription lifecycle
+
+### Status
+
+Implemented and contract-generated. This closes the endpoint-management half of the webhook operations gap without weakening signing-secret or delivery-history controls.
+
+### Implementation
+
+- Added tenant-scoped `GET /v1/webhook-endpoints`, `PATCH /v1/webhook-endpoints/{endpointId}`, and `DELETE /v1/webhook-endpoints/{endpointId}` operations.
+- Read and post-creation mutation responses use a dedicated safe DTO. The HMAC secret remains an enrollment credential returned only by `POST`.
+- `PATCH` runs the same DNS/private-address SSRF guard as registration before accepting a destination change.
+- `DELETE` means disable/revoke, rather than a database cascade: historical signed deliveries remain attributable while no new events fan out to the endpoint.
+- Created, updated, and revoked endpoint actions record tenant audit events.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed.
+- The focused service suite contains lifecycle and unsafe-update coverage, but skipped in this shell because its declared `DATABASE_URL` gate is unset. It must run against the clean PostgreSQL verification stack before this slice can claim a real-DB proof.
+
+### Remaining boundary
+
+Endpoint lifecycle is now present. Per-endpoint outbound rate limiting remains a separate dispatch-control slice; real receiver load/SLO evidence still requires an authorized external receiver.
