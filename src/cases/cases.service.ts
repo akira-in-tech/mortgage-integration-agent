@@ -62,6 +62,25 @@ export class WorkflowRunStatus {
   status!: string;
 }
 
+/** A bounded, tenant-scoped view of operations that need an operator. */
+export class WorkflowOperationQueueItem extends WorkflowRunStatus {
+  @ApiProperty()
+  caseId!: string;
+
+  @ApiProperty()
+  caseStatus!: CaseStatus;
+
+  @ApiProperty()
+  caseUpdatedAt!: Date;
+}
+
+const RECOVERABLE_WORKFLOW_STATUSES = new Set([
+  'CANCELLED',
+  'FAILED',
+  'TIMED_OUT',
+  'TERMINATED',
+]);
+
 /**
  * REST-facing orchestration (Section 15.1: `/v1/loan-cases`). Owns case
  * creation and the mapping from Temporal's own errors/idempotency behavior
@@ -238,6 +257,114 @@ export class CasesService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Lists at most 100 of this tenant's most recently changed cases and
+   * describes their latest workflow directly from Temporal. No workflow
+   * status is copied into Postgres, avoiding a stale shadow authority; the
+   * bounded fan-out is appropriate for an operations queue and can later be
+   * replaced with a Temporal Search Attribute when a deployment provisions
+   * tenant-scoped search indexing.
+   */
+  async listWorkflowOperations(
+    tenantId: string,
+  ): Promise<WorkflowOperationQueueItem[]> {
+    const cases = await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      (manager) =>
+        manager.getRepository(LoanCase).find({
+          where: { tenantId },
+          order: { updatedAt: 'DESC' },
+          take: 100,
+        }),
+    );
+    const descriptions = await Promise.all(
+      cases.map(async (loanCase) => {
+        try {
+          const workflow = await this.temporalClient.getWorkflowStatus(
+            loanCase.id,
+          );
+          if (
+            workflow.status !== 'RUNNING' &&
+            !RECOVERABLE_WORKFLOW_STATUSES.has(workflow.status)
+          ) {
+            return undefined;
+          }
+          return {
+            ...workflow,
+            caseId: loanCase.id,
+            caseStatus: loanCase.status,
+            caseUpdatedAt: loanCase.updatedAt,
+          };
+        } catch (error) {
+          if (error instanceof WorkflowNotFoundError) return undefined;
+          throw error;
+        }
+      }),
+    );
+    return descriptions.filter(
+      (item): item is WorkflowOperationQueueItem => item !== undefined,
+    );
+  }
+
+  /**
+   * Cancellation is limited to the latest running execution. The action
+   * stops orchestration; it never represents a provider-side cancellation,
+   * which remains subject to the provider reconciliation process.
+   */
+  async cancelWorkflow(
+    tenantId: string,
+    caseId: string,
+    runId: string,
+  ): Promise<WorkflowRunStatus> {
+    await this.getCase(tenantId, caseId);
+    const workflow = await this.getWorkflowRun(tenantId, caseId, runId);
+    if (workflow.status !== 'RUNNING') {
+      throw new ConflictException(
+        `Workflow run ${runId} cannot be cancelled from ${workflow.status}`,
+      );
+    }
+    await this.temporalClient.cancelCaseConditionsWorkflow(caseId, runId);
+    return workflow;
+  }
+
+  /**
+   * Recovery starts a new execution from a failed/cancelled run. A completed
+   * approval path is never replayed, and the workflow's recovery activity
+   * reuses exactly one durable open condition when one already exists.
+   */
+  async recoverWorkflow(
+    tenantId: string,
+    caseId: string,
+    runId: string,
+  ): Promise<StartWorkflowRunResult> {
+    const loanCase = await this.getCase(tenantId, caseId);
+    if (
+      loanCase.status === CaseStatus.READY_FOR_UNDERWRITING ||
+      loanCase.status === CaseStatus.CLOSED
+    ) {
+      throw new ConflictException(`Case ${caseId} cannot be recovered`);
+    }
+    const workflow = await this.getWorkflowRun(tenantId, caseId, runId);
+    if (!RECOVERABLE_WORKFLOW_STATUSES.has(workflow.status)) {
+      throw new ConflictException(
+        `Workflow run ${runId} cannot be recovered from ${workflow.status}`,
+      );
+    }
+    const latest = await this.temporalClient.getWorkflowStatus(caseId);
+    if (latest.runId !== runId) {
+      throw new ConflictException(
+        `Workflow run ${runId} is no longer the latest execution for case ${caseId}`,
+      );
+    }
+    return this.temporalClient.recoverCaseConditionsWorkflow({
+      tenantId: loanCase.tenantId,
+      caseId: loanCase.id,
+      borrowerId: loanCase.borrowerId,
+      recoveryOfRunId: runId,
+    });
   }
 
   /**

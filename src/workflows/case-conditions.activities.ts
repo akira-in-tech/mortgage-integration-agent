@@ -1,4 +1,4 @@
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 import { ApplicationFailure } from '@temporalio/activity';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
@@ -146,6 +146,16 @@ interface ResolveConditionInput extends CaseRef {
   actorId: string;
   resolution: ConditionResolutionKind;
   reason?: string;
+}
+
+interface PrepareWorkflowRecoveryInput extends CaseRef {
+  recoveryOfRunId: string;
+}
+
+interface PrepareWorkflowRecoveryResult {
+  outcome: 'REUSE_OPEN_CONDITION' | 'RESTART_COLLECTION' | 'REVIEW_REQUIRED';
+  conditionId?: string;
+  reviewReason?: string;
 }
 
 /**
@@ -446,6 +456,63 @@ export function createCaseConditionsActivities(
           eventType: OutboxEventType.WorkflowRunStarted,
           payload: { caseId },
         });
+      });
+    },
+
+    /**
+     * Recovery never guesses which open condition a reviewer intended to
+     * resume. Reusing one durable condition preserves the original policy
+     * snapshot and prevents a cancelled workflow from creating a duplicate;
+     * multiple active conditions require a human decision instead.
+     */
+    async prepareWorkflowRecovery({
+      tenantId,
+      caseId,
+      recoveryOfRunId,
+    }: PrepareWorkflowRecoveryInput): Promise<PrepareWorkflowRecoveryResult> {
+      return runInTenantContext(dataSource, tenantId, async (manager) => {
+        const conditions = await manager.getRepository(LoanCondition).find({
+          where: {
+            tenantId,
+            caseId,
+            status: In([
+              ConditionStatus.OPEN,
+              ConditionStatus.IN_PROGRESS,
+              ConditionStatus.WAITING_FOR_EVIDENCE,
+            ]),
+          },
+          order: { createdAt: 'ASC' },
+        });
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunRecoveryStarted,
+          payload: {
+            caseId,
+            recoveryOfRunId,
+            activeConditionCount: conditions.length,
+          },
+        });
+        if (conditions.length === 1) {
+          await manager
+            .getRepository(LoanCase)
+            .update(
+              { id: caseId, tenantId },
+              { status: CaseStatus.CONDITIONS_OPEN },
+            );
+          return {
+            outcome: 'REUSE_OPEN_CONDITION',
+            conditionId: conditions[0].id,
+          };
+        }
+        if (conditions.length > 1) {
+          return {
+            outcome: 'REVIEW_REQUIRED',
+            reviewReason:
+              'recovery found multiple active conditions; reviewer selection is required',
+          };
+        }
+        return { outcome: 'RESTART_COLLECTION' };
       });
     },
 
@@ -777,6 +844,47 @@ export function createCaseConditionsActivities(
           caseId,
           eventType: OutboxEventType.WorkflowRunFailed,
           payload: { caseId, reason },
+        });
+      });
+    },
+
+    /**
+     * Temporal cancellation is an orchestration outcome only. Provider
+     * adapters are synchronous in this release, so this activity makes no
+     * claim that an in-flight external request was cancelled; its durable
+     * record tells operators to reconcile any ambiguous provider outcome.
+     */
+    async markWorkflowCancelled({ tenantId, caseId }: CaseRef): Promise<void> {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
+        const caseRepo = manager.getRepository(LoanCase);
+        const loanCase = await caseRepo.findOneByOrFail({
+          id: caseId,
+          tenantId,
+        });
+        // Cancellation can race the tiny interval after a terminal case
+        // transition commits but before the workflow reports completion. A
+        // late cancel request must not regress a legitimately ready/closed
+        // case back to manual review merely because orchestration lost that
+        // response race.
+        if (
+          loanCase.status !== CaseStatus.READY_FOR_UNDERWRITING &&
+          loanCase.status !== CaseStatus.CLOSED
+        ) {
+          await caseRepo.update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.MANUAL_REVIEW },
+          );
+        }
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunCancelled,
+          payload: {
+            caseId,
+            scope: 'ORCHESTRATION_ONLY',
+            providerCancellationAsserted: false,
+            caseStatusAtCancellation: loanCase.status,
+          },
         });
       });
     },

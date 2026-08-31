@@ -23,6 +23,15 @@ export interface DataDispositionTaskQueueItem {
   createdAt: string;
 }
 
+export interface WorkflowOperationQueueItem {
+  caseId: string;
+  workflowId: string;
+  runId: string;
+  status: 'RUNNING' | 'CANCELLED' | 'FAILED' | 'TIMED_OUT' | 'TERMINATED';
+  caseStatus: string;
+  caseUpdatedAt: string;
+}
+
 export function listProviderOperationIntentsNeedingReconciliation() {
   return request<ProviderOperationIntentQueueItem[]>(
     '/v1/provider-operation-intents/reconciling?limit=100',
@@ -54,6 +63,34 @@ export function resolveDataDispositionTask(
 ) {
   return request<DataDispositionTaskQueueItem>(
     `/v1/data-disposition-tasks/${encodeURIComponent(taskId)}/resolve`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function listWorkflowOperations() {
+  return request<WorkflowOperationQueueItem[]>(
+    '/v1/loan-cases/workflow-operations',
+  );
+}
+
+export function cancelWorkflowRun(
+  caseId: string,
+  runId: string,
+  input: { reason: string },
+) {
+  return request<WorkflowOperationQueueItem>(
+    `/v1/loan-cases/${encodeURIComponent(caseId)}/workflow-runs/${encodeURIComponent(runId)}/cancel`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+}
+
+export function recoverWorkflowRun(
+  caseId: string,
+  runId: string,
+  input: { reason: string },
+) {
+  return request<{ workflowId: string; runId: string }>(
+    `/v1/loan-cases/${encodeURIComponent(caseId)}/workflow-runs/${encodeURIComponent(runId)}/recover`,
     { method: 'POST', body: JSON.stringify(input) },
   );
 }

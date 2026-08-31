@@ -29,6 +29,7 @@ import {
 import {
   CasesService,
   StartWorkflowRunResult,
+  WorkflowOperationQueueItem,
   WorkflowRunStatus,
 } from './cases.service';
 import { CreateCaseDto } from './dto/create-case.dto';
@@ -36,6 +37,7 @@ import { ReviewDto } from './dto/review.dto';
 import { ConsentActionDto } from './dto/consent-action.dto';
 import { EscalateDto } from './dto/escalate.dto';
 import { CheckPolicyChangeImpactDto } from './dto/check-policy-change-impact.dto';
+import { WorkflowOperationReasonDto } from './dto/workflow-operation-reason.dto';
 import { LoanCase } from '../database/entities/loan-case.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
 import { TimelineEntry } from './case-timeline.service';
@@ -106,6 +108,23 @@ export class CasesController {
       throw new BadRequestException('Idempotency-Key header is required');
     }
     return this.casesService.createCase(idempotencyKey.trim(), tenantId, dto);
+  }
+
+  // This static route must precede `GET :caseId`; otherwise Nest would try
+  // to parse the literal `workflow-operations` as a UUID case identifier.
+  @ApiOperation({
+    operationId: 'listWorkflowOperations',
+    summary: 'List running or recoverable workflow operations for this tenant',
+  })
+  @ApiOkResponse({ type: WorkflowOperationQueueItem, isArray: true })
+  @ApiForbiddenResponse({ description: 'REVIEWER role required.' })
+  @Get('workflow-operations')
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async listWorkflowOperations(
+    @AuthTenantId() tenantId: string,
+  ): Promise<WorkflowOperationQueueItem[]> {
+    return this.casesService.listWorkflowOperations(tenantId);
   }
 
   @ApiOperation({ operationId: 'getCase', summary: 'Get a loan case by id' })
@@ -195,6 +214,81 @@ export class CasesController {
     @Param('runId') runId: string,
   ): Promise<WorkflowRunStatus> {
     return this.casesService.getWorkflowRun(tenantId, caseId, runId);
+  }
+
+  @ApiOperation({
+    operationId: 'cancelWorkflowRun',
+    summary: 'Request cancellation of one running workflow execution',
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiParam({ name: 'runId' })
+  @ApiAcceptedResponse({
+    description:
+      'Cancellation requested for orchestration only; in-flight provider outcomes still require reconciliation.',
+  })
+  @ApiConflictResponse({ description: 'Workflow run is not running.' })
+  @Post(':caseId/workflow-runs/:runId/cancel')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async cancelWorkflowRun(
+    @CurrentAuth() auth: AuthContext,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('runId') runId: string,
+    @Body() dto: WorkflowOperationReasonDto,
+  ): Promise<WorkflowRunStatus> {
+    const result = await this.casesService.cancelWorkflow(
+      auth.tenantId,
+      caseId,
+      runId,
+    );
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: auth.actorId,
+      action: 'WORKFLOW_CANCELLATION_REQUESTED',
+      resourceType: 'workflow_run',
+      resourceId: runId,
+      correlationId: auth.correlationId,
+      reason: dto.reason,
+      metadata: { caseId, providerCancellationAsserted: false },
+    });
+    return result;
+  }
+
+  @ApiOperation({
+    operationId: 'recoverWorkflowRun',
+    summary: 'Start a recovery execution from a terminally interrupted run',
+  })
+  @ApiParam({ name: 'caseId', format: 'uuid' })
+  @ApiParam({ name: 'runId' })
+  @ApiAcceptedResponse({ type: StartWorkflowRunResult })
+  @ApiConflictResponse({ description: 'Workflow run is not recoverable.' })
+  @Post(':caseId/workflow-runs/:runId/recover')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async recoverWorkflowRun(
+    @CurrentAuth() auth: AuthContext,
+    @Param('caseId', ParseUUIDPipe) caseId: string,
+    @Param('runId') runId: string,
+    @Body() dto: WorkflowOperationReasonDto,
+  ): Promise<StartWorkflowRunResult> {
+    const result = await this.casesService.recoverWorkflow(
+      auth.tenantId,
+      caseId,
+      runId,
+    );
+    await this.auditEventService.record({
+      tenantId: auth.tenantId,
+      actorId: auth.actorId,
+      action: 'WORKFLOW_RECOVERY_STARTED',
+      resourceType: 'workflow_run',
+      resourceId: runId,
+      correlationId: auth.correlationId,
+      reason: dto.reason,
+      metadata: { caseId, recoveryRunId: result.runId },
+    });
+    return result;
   }
 
   // The reviewer-decision endpoint in Section 15.1 (`POST .../reviews`) —

@@ -411,6 +411,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/loan-cases/workflow-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List running or recoverable workflow operations for this tenant */
+        get: operations["listWorkflowOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}": {
         parameters: {
             query?: never;
@@ -473,6 +490,40 @@ export interface paths {
         get: operations["getWorkflowRun"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request cancellation of one running workflow execution */
+        post: operations["cancelWorkflowRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a recovery execution from a terminally interrupted run */
+        post: operations["recoverWorkflowRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -954,6 +1005,15 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        WorkflowOperationQueueItem: {
+            workflowId: string;
+            runId: string;
+            status: string;
+            caseId: string;
+            caseStatus: string;
+            /** Format: date-time */
+            caseUpdatedAt: string;
+        };
         TimelineEntry: {
             timestamp: string;
             /** @enum {string} */
@@ -971,6 +1031,9 @@ export interface components {
             workflowId: string;
             runId: string;
             status: string;
+        };
+        WorkflowOperationReasonDto: {
+            reason: string;
         };
         ReviewDto: {
             /** @enum {string} */
@@ -1028,7 +1091,7 @@ export interface components {
              * @example https://partner.example.com/webhooks/mortgage-agent
              */
             targetUrl: string;
-            eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
+            eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
         };
         WebhookEndpoint: {
             /** Format: uuid */
@@ -1816,6 +1879,32 @@ export interface operations {
             };
         };
     };
+    listWorkflowOperations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowOperationQueueItem"][];
+                };
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getCase: {
         parameters: {
             query?: never;
@@ -1950,6 +2039,71 @@ export interface operations {
             };
             /** @description No case with this id owned by the authenticated tenant, or no such workflow run. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelWorkflowRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowOperationReasonDto"];
+            };
+        };
+        responses: {
+            /** @description Cancellation requested for orchestration only; in-flight provider outcomes still require reconciliation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Workflow run is not running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recoverWorkflowRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowOperationReasonDto"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartWorkflowRunResult"];
+                };
+            };
+            /** @description Workflow run is not recoverable. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

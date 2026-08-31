@@ -15,6 +15,10 @@ export const OutboxEventType = {
   WorkflowRunWaitingForReview: 'workflow_run.waiting_for_review',
   WorkflowRunCompleted: 'workflow_run.completed',
   WorkflowRunFailed: 'workflow_run.failed',
+  /** A cancellation stopped orchestration; it does not assert provider cancellation. */
+  WorkflowRunCancelled: 'workflow_run.cancelled',
+  /** A reviewer started a separately identifiable recovery execution. */
+  WorkflowRunRecoveryStarted: 'workflow_run.recovery_started',
   EvidenceUpdated: 'evidence.updated',
   ConditionOpened: 'condition.opened',
   ConditionSatisfied: 'condition.satisfied',

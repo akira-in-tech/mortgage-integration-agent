@@ -77,7 +77,7 @@ type ProviderOutcome =
   | 'outcome_unknown'
   | 'failed';
 type AgentToolOutcome = 'success' | 'failure' | 'blocked';
-type WorkflowOperation = 'start' | 'signal' | 'describe';
+type WorkflowOperation = 'start' | 'signal' | 'describe' | 'cancel' | 'recover';
 type BudgetAction = 'reserve' | 'commit' | 'release' | 'mark_unknown';
 
 const REGISTERED_AGENT_TOOLS = new Set([

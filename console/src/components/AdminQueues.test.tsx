@@ -21,6 +21,15 @@ const task = {
   createdAt: '2026-08-22T12:00:00.000Z',
 };
 
+const workflow = {
+  caseId: '77777777-7777-4777-8777-777777777777',
+  workflowId: 'case-conditions-77777777-7777-4777-8777-777777777777',
+  runId: '88888888-8888-4888-8888-888888888888',
+  status: 'CANCELLED' as const,
+  caseStatus: 'MANUAL_REVIEW',
+  caseUpdatedAt: '2026-08-30T12:00:00.000Z',
+};
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -39,6 +48,8 @@ describe('AdminQueues', () => {
         if (url.includes('provider-operation-intents'))
           return jsonResponse([intent]);
         if (url.includes('data-disposition-tasks')) return jsonResponse([task]);
+        if (url.includes('workflow-operations'))
+          return jsonResponse([workflow]);
         throw new Error(`unexpected request: ${url}`);
       }),
     );
@@ -49,6 +60,55 @@ describe('AdminQueues', () => {
       await screen.findByText('plaid-income-simulator'),
     ).toBeInTheDocument();
     expect(screen.getByText('Consent was revoked.')).toBeInTheDocument();
+    expect(screen.getByText('CANCELLED')).toBeInTheDocument();
+  });
+
+  it('starts recovery for a terminal workflow with a reviewer reason', async () => {
+    let workflowOpen = true;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('provider-operation-intents')) return jsonResponse([]);
+        if (url.includes('data-disposition-tasks')) return jsonResponse([]);
+        if (init?.method === 'POST') {
+          return jsonResponse({
+            workflowId: workflow.workflowId,
+            runId: 'new-run',
+          });
+        }
+        return jsonResponse(workflowOpen ? [workflow] : []);
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<AdminQueues />);
+
+    const section = (
+      await screen.findByRole('heading', { name: 'Workflow operations' })
+    ).closest('section')!;
+    await user.click(within(section).getByRole('button', { name: 'Recover' }));
+    const action = screen.getByRole('button', { name: 'Start recovery' });
+    expect(action).toBeDisabled();
+    await user.type(
+      screen.getByLabelText(/What did you find/),
+      'Confirmed that the interrupted run may be safely resumed.',
+    );
+    await user.click(action);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Recovery started as new-run.'),
+      ).toBeInTheDocument(),
+    );
+    const post = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === 'POST',
+    );
+    expect(String(post?.[0])).toContain('/recover');
+    expect(post?.[1]?.body).toBe(
+      JSON.stringify({
+        reason: 'Confirmed that the interrupted run may be safely resumed.',
+      }),
+    );
   });
 
   it('resolves a provider-operation intent with a real note, and removes it from that queue only', async () => {
@@ -57,6 +117,7 @@ describe('AdminQueues', () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.includes('data-disposition-tasks')) return jsonResponse([task]);
+        if (url.includes('workflow-operations')) return jsonResponse([]);
         if (init?.method === 'POST') {
           intentStillOpen = false;
           return jsonResponse({ ...intent, state: 'SUCCEEDED' });
@@ -111,6 +172,7 @@ describe('AdminQueues', () => {
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.includes('provider-operation-intents')) return jsonResponse([]);
+        if (url.includes('workflow-operations')) return jsonResponse([]);
         if (init?.method === 'POST') {
           taskStillOpen = false;
           return jsonResponse({ ...task, status: 'VERIFIED' });
@@ -154,6 +216,7 @@ describe('AdminQueues', () => {
             },
           );
         }
+        if (url.includes('workflow-operations')) return jsonResponse([]);
         return jsonResponse([task]);
       }),
     );

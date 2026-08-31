@@ -974,6 +974,39 @@
         ]
       }
     },
+    "/v1/loan-cases/workflow-operations": {
+      "get": {
+        "operationId": "listWorkflowOperations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowOperationQueueItem"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List running or recoverable workflow operations for this tenant",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}": {
       "get": {
         "operationId": "getCase",
@@ -1152,6 +1185,115 @@
           }
         ],
         "summary": "Get the status of one workflow run",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowOperationReasonDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Cancellation requested for orchestration only; in-flight provider outcomes still require reconciliation."
+          },
+          "409": {
+            "description": "Workflow run is not running."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Request cancellation of one running workflow execution",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/recover": {
+      "post": {
+        "operationId": "recoverWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowOperationReasonDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowRunResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Workflow run is not recoverable."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start a recovery execution from a terminally interrupted run",
         "tags": [
           "loan-cases"
         ]
@@ -2739,6 +2881,38 @@
           "updatedAt"
         ]
       },
+      "WorkflowOperationQueueItem": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "caseStatus": {
+            "type": "string"
+          },
+          "caseUpdatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId",
+          "status",
+          "caseId",
+          "caseStatus",
+          "caseUpdatedAt"
+        ]
+      },
       "TimelineEntry": {
         "type": "object",
         "properties": {
@@ -2799,6 +2973,19 @@
           "workflowId",
           "runId",
           "status"
+        ]
+      },
+      "WorkflowOperationReasonDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "reason"
         ]
       },
       "ReviewDto": {
@@ -2994,6 +3181,8 @@
                 "workflow_run.waiting_for_review",
                 "workflow_run.completed",
                 "workflow_run.failed",
+                "workflow_run.cancelled",
+                "workflow_run.recovery_started",
                 "evidence.updated",
                 "condition.opened",
                 "condition.satisfied",

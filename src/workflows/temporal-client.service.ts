@@ -5,6 +5,7 @@ import {
   Connection,
   WorkflowExecutionAlreadyStartedError,
 } from '@temporalio/client';
+import { WorkflowIdReusePolicy } from '@temporalio/common';
 import { caseConditionsWorkflow } from './case-conditions.workflow';
 import {
   CASE_CONDITIONS_TASK_QUEUE,
@@ -143,6 +144,44 @@ export class TemporalClientService implements OnModuleDestroy {
         workflowId,
         runId: description.runId,
         status: description.status.name,
+      };
+    });
+  }
+
+  /** Requests cancellation of one exact execution, never an arbitrary later run. */
+  async cancelCaseConditionsWorkflow(
+    caseId: string,
+    runId: string,
+  ): Promise<void> {
+    return operationalTelemetry.observeWorkflow('cancel', async () => {
+      const client = await this.getClient();
+      await client.workflow
+        .getHandle(`case-conditions-${caseId}`, runId)
+        .cancel();
+    });
+  }
+
+  /**
+   * Starts a new execution only after the specified non-success terminal run.
+   * Temporal enforces the reuse policy atomically, rather than relying on a
+   * racy describe-then-start check in the API process.
+   */
+  async recoverCaseConditionsWorkflow(
+    input: CaseConditionsWorkflowInput & { recoveryOfRunId: string },
+  ): Promise<{ workflowId: string; runId: string }> {
+    return operationalTelemetry.observeWorkflow('recover', async () => {
+      const client = await this.getClient();
+      const workflowId = `case-conditions-${input.caseId}`;
+      const handle = await client.workflow.start(caseConditionsWorkflow, {
+        taskQueue: CASE_CONDITIONS_TASK_QUEUE,
+        workflowId,
+        workflowIdReusePolicy:
+          WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+        args: [input],
+      });
+      return {
+        workflowId: handle.workflowId,
+        runId: handle.firstExecutionRunId,
       };
     });
   }

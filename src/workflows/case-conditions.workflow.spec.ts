@@ -28,6 +28,9 @@ function makeMockActivities(
 ): CaseConditionsActivities {
   return {
     markCollectingEvidence: jest.fn().mockResolvedValue(undefined),
+    prepareWorkflowRecovery: jest
+      .fn()
+      .mockResolvedValue({ outcome: 'RESTART_COLLECTION' }),
     fetchIncomeEvidence: jest.fn().mockResolvedValue({
       monthlyIncome: 8000,
       employmentStatus: 'FULL_TIME',
@@ -54,6 +57,7 @@ function makeMockActivities(
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
     markWaitingForReview: jest.fn().mockResolvedValue(undefined),
     markManualReview: jest.fn().mockResolvedValue(undefined),
+    markWorkflowCancelled: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as CaseConditionsActivities;
 }
@@ -176,6 +180,54 @@ describeOrSkip('caseConditionsWorkflow', () => {
       tenantId: 'tenant-1',
       caseId: 'case-1',
     });
+  });
+
+  it('reuses exactly one durable open condition during recovery instead of collecting and evaluating again', async () => {
+    const activities = makeMockActivities({
+      prepareWorkflowRecovery: jest.fn().mockResolvedValue({
+        outcome: 'REUSE_OPEN_CONDITION',
+        conditionId: 'condition-from-cancelled-run',
+      }),
+    });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, async () => {
+      const handle = await env.client.workflow.start(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          {
+            tenantId: 'tenant-1',
+            caseId: 'case-1',
+            borrowerId: 'borrower-1',
+            recoveryOfRunId: 'cancelled-run-1',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await handle.signal(resolveConditionSignal, {
+        actorId: 'reviewer-1',
+        resolution: 'SATISFIED',
+        reason: 'Existing condition is now satisfied.',
+      });
+      return handle.result();
+    });
+
+    expect(result).toEqual({
+      finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
+      conditionId: 'condition-from-cancelled-run',
+    });
+    expect(activities.prepareWorkflowRecovery).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      caseId: 'case-1',
+      recoveryOfRunId: 'cancelled-run-1',
+    });
+    expect(activities.markCollectingEvidence).not.toHaveBeenCalled();
+    expect(activities.fetchIncomeEvidence).not.toHaveBeenCalled();
+    expect(activities.evaluateConditions).not.toHaveBeenCalled();
+    expect(activities.resolveCondition).toHaveBeenCalledWith(
+      expect.objectContaining({ conditionId: 'condition-from-cancelled-run' }),
+    );
   });
 
   it('loses no acknowledged work across a worker restart while durably waiting', async () => {

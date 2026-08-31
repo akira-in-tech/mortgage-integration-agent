@@ -12,6 +12,9 @@ describe('CasesController', () => {
     getCase: jest.Mock;
     startWorkflow: jest.Mock;
     getWorkflowRun: jest.Mock;
+    listWorkflowOperations: jest.Mock;
+    cancelWorkflow: jest.Mock;
+    recoverWorkflow: jest.Mock;
     submitReview: jest.Mock;
     getTimeline: jest.Mock;
   };
@@ -42,6 +45,9 @@ describe('CasesController', () => {
       getCase: jest.fn(),
       startWorkflow: jest.fn(),
       getWorkflowRun: jest.fn(),
+      listWorkflowOperations: jest.fn(),
+      cancelWorkflow: jest.fn(),
+      recoverWorkflow: jest.fn(),
       submitReview: jest.fn(),
       getTimeline: jest.fn(),
     };
@@ -106,6 +112,50 @@ describe('CasesController', () => {
         TENANT_ID,
         'case-1',
         'run-1',
+      );
+    });
+
+    it('lists reviewer workflow operations inside the authenticated tenant', async () => {
+      casesService.listWorkflowOperations.mockResolvedValue([]);
+      await controller.listWorkflowOperations(TENANT_ID);
+      expect(casesService.listWorkflowOperations).toHaveBeenCalledWith(
+        TENANT_ID,
+      );
+    });
+
+    it('records cancellation with the authenticated actor, never a body actor id', async () => {
+      casesService.cancelWorkflow.mockResolvedValue({ status: 'RUNNING' });
+      await controller.cancelWorkflowRun(AUTH, 'case-1', 'run-1', {
+        reason: 'The reviewer requested a controlled cancellation.',
+      });
+      expect(casesService.cancelWorkflow).toHaveBeenCalledWith(
+        TENANT_ID,
+        'case-1',
+        'run-1',
+      );
+      expect(auditEventService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: AUTH.actorId,
+          action: 'WORKFLOW_CANCELLATION_REQUESTED',
+          metadata: { caseId: 'case-1', providerCancellationAsserted: false },
+        }),
+      );
+    });
+
+    it('records recovery with its newly started execution id', async () => {
+      casesService.recoverWorkflow.mockResolvedValue({
+        workflowId: 'wf-1',
+        runId: 'run-2',
+      });
+      await controller.recoverWorkflowRun(AUTH, 'case-1', 'run-1', {
+        reason: 'The reviewer confirmed recovery conditions are met.',
+      });
+      expect(auditEventService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorId: AUTH.actorId,
+          action: 'WORKFLOW_RECOVERY_STARTED',
+          metadata: { caseId: 'case-1', recoveryRunId: 'run-2' },
+        }),
       );
     });
 

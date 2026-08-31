@@ -4,6 +4,8 @@ import {
   condition,
   log,
   workflowInfo,
+  CancellationScope,
+  isCancellation,
 } from '@temporalio/workflow';
 import type { CaseConditionsActivities } from './case-conditions.activities';
 import {
@@ -39,6 +41,27 @@ const activities = proxyActivities<CaseConditionsActivities>({
 export async function caseConditionsWorkflow(
   input: CaseConditionsWorkflowInput,
 ): Promise<CaseConditionsWorkflowResult> {
+  try {
+    return await runCaseConditionsWorkflow(input);
+  } catch (error) {
+    if (isCancellation(error)) {
+      // This cleanup is shielded from the cancellation that triggered it so
+      // the durable operational record cannot be lost during a worker restart
+      // or a reviewer-requested cancellation.
+      await CancellationScope.nonCancellable(() =>
+        activities.markWorkflowCancelled({
+          tenantId: input.tenantId,
+          caseId: input.caseId,
+        }),
+      );
+    }
+    throw error;
+  }
+}
+
+async function runCaseConditionsWorkflow(
+  input: CaseConditionsWorkflowInput,
+): Promise<CaseConditionsWorkflowResult> {
   const { tenantId, caseId, borrowerId } = input;
 
   let resolution: ResolveConditionSignalPayload | undefined;
@@ -50,6 +73,42 @@ export async function caseConditionsWorkflow(
   setHandler(resumeInterruptedEvaluationSignal, (payload) => {
     interruptResolution = payload;
   });
+
+  if (input.recoveryOfRunId) {
+    const recovery = await activities.prepareWorkflowRecovery({
+      tenantId,
+      caseId,
+      recoveryOfRunId: input.recoveryOfRunId,
+    });
+    if (recovery.outcome === 'REUSE_OPEN_CONDITION') {
+      log.info('Recovery reusing existing open condition', {
+        caseId,
+        conditionId: recovery.conditionId,
+      });
+      await condition(() => resolution !== undefined);
+      await activities.resolveCondition({
+        tenantId,
+        caseId,
+        conditionId: recovery.conditionId!,
+        actorId: resolution!.actorId,
+        resolution: resolution!.resolution,
+        reason: resolution!.reason,
+      });
+      await activities.markReadyForUnderwriting({ tenantId, caseId });
+      return {
+        finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
+        conditionId: recovery.conditionId,
+      };
+    }
+    if (recovery.outcome === 'REVIEW_REQUIRED') {
+      await activities.markManualReview({
+        tenantId,
+        caseId,
+        reason: recovery.reviewReason ?? 'recovery requires reviewer selection',
+      });
+      return { finalStatus: CaseStatus.MANUAL_REVIEW };
+    }
+  }
 
   await activities.markCollectingEvidence({ tenantId, caseId });
 
