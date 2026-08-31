@@ -11873,3 +11873,23 @@ Implemented and verified at build, generated-contract, and console component lev
 ### Remaining boundary
 
 Browsing source provenance cannot turn a demo or externally ingested policy candidate into an approved jurisdiction pack. Publishing still needs the governed policy lifecycle and real legal review.
+
+## M7-041: reviewer-scoped audit evidence export
+
+### Status
+
+Implemented and contract-generated. This closes the dedicated audit-export REST gap without introducing a mutable audit administration API.
+
+### Implementation
+
+- Added REVIEWER-only `GET /v1/audit-events` and `GET /v1/audit-events/export` endpoints.
+- Both reads are tenant-scoped under the same RLS transaction helper as writes and capped at 1,000 events. The export returns a JSON attachment with its generation timestamp and tenant id.
+- The immutable audit-event database trigger remains the authority preventing update/delete; the new API can only read evidence.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed.
+
+### Remaining boundary
+
+The project still has no document binary/object-storage API. Adding one requires a prior storage design that joins encryption, consent lineage, retention, deletion, legal holds, and backup-expiry verification rather than treating uploads as ordinary JSON.

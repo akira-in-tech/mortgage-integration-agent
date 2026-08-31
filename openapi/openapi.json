@@ -620,6 +620,78 @@
         ]
       }
     },
+    "/v1/audit-events": {
+      "get": {
+        "operationId": "listAuditEvents",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1000,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEvent"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List recent tenant audit events.",
+        "tags": [
+          "audit-events"
+        ]
+      }
+    },
+    "/v1/audit-events/export": {
+      "get": {
+        "operationId": "exportAuditEvents",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1000,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download bounded tenant audit evidence as JSON.",
+        "tags": [
+          "audit-events"
+        ]
+      }
+    },
     "/v1/data-disposition-tasks/open": {
       "get": {
         "operationId": "listOpenDataDispositionTasks",
@@ -2600,6 +2672,10 @@
             "type": "object"
           }
         }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {}
       },
       "DataDispositionTaskQueueItemDto": {
         "type": "object",

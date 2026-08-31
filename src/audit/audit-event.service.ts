@@ -64,4 +64,19 @@ export class AuditEventService {
       );
     }
   }
+
+  /**
+   * Bounded, newest-first tenant read used by the reviewer export route. The
+   * tenant context is set in the same transaction as the query so RLS remains
+   * a database-level backstop even if a future caller gets filtering wrong.
+   */
+  async list(tenantId: string, limit: number): Promise<AuditEvent[]> {
+    return runInTenantContext(this.dataSource, tenantId, (manager) =>
+      manager.getRepository(AuditEvent).find({
+        where: { tenantId },
+        order: { createdAt: 'DESC', id: 'DESC' },
+        take: Math.min(Math.max(limit, 1), 1000),
+      }),
+    );
+  }
 }
