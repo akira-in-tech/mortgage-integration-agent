@@ -80,7 +80,7 @@ Prometheus recording rules live in `observability/slo-rules.yaml`; alert rules l
 1. Separate application 5xx from proxy/client failures and confirm request volume is non-zero.
 2. Use a trace ID to inspect HTTP, policy, workflow-client, Agent, provider, and PostgreSQL spans without searching by borrower data.
 3. Check database pool/query latency, Temporal reachability, provider outcomes, event-loop saturation, and recent release changes.
-4. Apply the deployment rollback procedure when a release is causal. This repository does not yet contain the staging deployment/rollback implementation, so do not claim that step is automated.
+4. Apply the deployment rollback procedure when a release is causal. Staging deployment is implemented through the manually dispatched GitHub OIDC workflow, but there is no automated rollback workflow: identify the last known-good immutable image digest, require the operator's change authorization, redeploy that digest through the same governed staging path, and record the incident/release evidence. Do not claim automated rollback.
 
 ### Provider outcome unknown
 

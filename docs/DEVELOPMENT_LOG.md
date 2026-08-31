@@ -11893,3 +11893,22 @@ Implemented and contract-generated. This closes the dedicated audit-export REST 
 ### Remaining boundary
 
 The project still has no document binary/object-storage API. Adding one requires a prior storage design that joins encryption, consent lineage, retention, deletion, legal holds, and backup-expiry verification rather than treating uploads as ordinary JSON.
+
+## M7-042: reconcile the staging rollback runbook
+
+### Status
+
+Implemented as a documentation correctness fix.
+
+### Implementation
+
+- Corrected `docs/OPERATIONS.md` to distinguish the completed manual OIDC staging deployment from the still-unimplemented automated rollback workflow.
+- The runbook now specifies a controlled known-good image-digest redeploy with change authorization and incident evidence, rather than making the false statement that staging deployment does not exist.
+
+### Verification
+
+- Documentation cross-checked against the charter's M7-024 deployment record and `deploy-staging.yml`; no runtime behavior changed.
+
+### Remaining boundary
+
+Automated rollback remains intentionally unimplemented. A future implementation must select only an independently verified immutable artifact and preserve approval/audit evidence.
