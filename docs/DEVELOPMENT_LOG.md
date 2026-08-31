@@ -11986,3 +11986,19 @@ Implemented as an out-of-band operational control. It does not create a tenant s
 ### Remaining boundary
 
 The command depends on the operator's database access and prints a secret once. A production rollout still needs approved privileged access, secrets-manager storage, rotation scheduling, and a documented incident owner; those are deployment controls, not claims this local command can satisfy.
+
+## M7-046: encrypted Document Evidence Vault foundation
+
+### Status
+
+Started and verified as the first object-storage boundary. This is not yet an upload API or a claim that object metadata and disposition lineage are complete.
+
+### Implementation
+
+- Added `DocumentContentCipher`, an AES-256-GCM binary envelope with tenant/case/document-bound additional authenticated data and ordered key-ring decryption for rotation.
+- Added an S3-compatible ciphertext-only storage port using AWS SDK v3 bare-bones commands. It accepts only an opaque object key, encrypted bytes, and media type; borrower data and filenames cannot become object metadata.
+- Added rotation and AAD-mismatch proofs. The adapter is compatible with local MinIO and a future managed S3 bucket, but is not wired to a public upload route until metadata, malware scanning, and disposition operations are atomic enough to protect real content.
+
+### Remaining boundary
+
+The next slice must add document metadata/RLS plus create, read, hold-aware delete, and backup-verification operations. A public multipart upload before those controls exist would widen the data boundary without satisfying its deletion and lineage obligations.
