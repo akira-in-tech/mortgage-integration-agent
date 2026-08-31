@@ -206,4 +206,48 @@ describeOrSkip('WebhookEndpointService', () => {
       (await service.findByIdOrFail(tenantId, endpoint.id)).targetUrl,
     ).toBe('https://example.com/update-guard');
   });
+
+  it('atomically reserves only the configured number of attempts in a UTC-minute window', async () => {
+    const endpoint = await service.create(tenantId, {
+      targetUrl: 'https://example.com/rate-limited',
+      eventTypes: ['loan_case.created'],
+    });
+    endpointIds.push(endpoint.id);
+    await service.update(tenantId, endpoint.id, {
+      outboundRateLimitPerMinute: 1,
+    });
+
+    const firstMinute = new Date('2026-08-31T12:34:12.000Z');
+    const first = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      firstMinute,
+    );
+    const blocked = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      new Date('2026-08-31T12:34:59.000Z'),
+    );
+    const nextWindow = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      new Date('2026-08-31T12:35:00.000Z'),
+    );
+
+    // The database update is the shared coordinator across worker replicas;
+    // this proof verifies both a blocked second reservation and the next
+    // window's reset without relying on process-local counters.
+    expect(first).toEqual({
+      reserved: true,
+      nextWindowAt: new Date('2026-08-31T12:35:00.000Z'),
+    });
+    expect(blocked).toEqual({
+      reserved: false,
+      nextWindowAt: new Date('2026-08-31T12:35:00.000Z'),
+    });
+    expect(nextWindow).toEqual({
+      reserved: true,
+      nextWindowAt: new Date('2026-08-31T12:36:00.000Z'),
+    });
+  });
 });

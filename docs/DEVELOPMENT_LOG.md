@@ -11936,3 +11936,30 @@ The full real-DB suite found two older isolation fixtures had fallen behind non-
 ### Remaining boundary
 
 The earlier full-suite run also exposed a stale default local PostgreSQL container whose bootstrap user was not `mortgage`; it is an environment mismatch, not a code result. The clean verification database on port 55432 uses the CI role/schema contract.
+
+## M7-044: durable outbound webhook rate limits
+
+### Status
+
+Implemented and verified against the clean PostgreSQL verification database. This is a receiver-protection control for the existing webhook subsystem, not evidence that an external receiver has passed a production traffic or SLO test.
+
+### Implementation
+
+- Added a migration-backed `WebhookEndpoint.outboundRateLimitPerMinute` control with an explicit database constraint of 1 through 600 attempts per minute (default 60), plus persisted UTC-window start and attempt-count fields.
+- Allowed a tenant to change its endpoint's future rate ceiling via the existing validated `PATCH /v1/webhook-endpoints/{endpointId}` lifecycle operation. The safe endpoint response and generated API contract expose the configured limit but never expose the signing secret.
+- Added `WebhookEndpointService.reserveOutboundAttempt()`: one conditional `UPDATE ... RETURNING` atomically increments or resets the per-endpoint UTC-minute window only when capacity remains. This makes the database, rather than a process-local counter, the coordinator across worker replicas.
+- Updated `WebhookDispatchService` to reserve capacity before preparing or sending an HTTP request. When an endpoint is at its ceiling, it leaves the delivery `PENDING` and moves `nextAttemptAt` to the next UTC-minute boundary; it neither records a failed HTTP attempt nor hot-loops.
+- Added a real-PostgreSQL service proof that verifies first reservation, same-window rejection, and next-window reset for a limit of one.
+
+### Verification
+
+- `DATABASE_URL=postgres://mortgage:mortgage_demo@localhost:55432/mortgage_agent npm run migration:run`: applied `WebhookEndpointOutboundRateLimit1787179400000` successfully.
+- The focused real-PostgreSQL proofs passed: `schema-migrations.spec.ts` (53 tests, including the new narrow rollback sequence) and `webhook-endpoint.service.spec.ts` (9 tests).
+- The full backend regression suite passed against PostgreSQL and Temporal: 110 suites passed, 3 skipped; 889 tests passed, 18 skipped; 907 total.
+- The full E2E suite passed: 4 suites / 40 tests. Its existing `DataSource.synchronize()` setup emits pg@9 deprecation warnings from TypeORM's schema introspection (`PostgresQueryRunner.getTables()`), not from request dispatch; production uses migrations rather than synchronize. The warning is retained as an upstream/test-harness upgrade item rather than suppressed or misreported as a clean provider proof.
+- Console regression and production build passed: 12 Vitest files / 60 tests; `tsc -b && vite build` completed. Both root and console production dependency audits reported zero high-severity vulnerabilities.
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed after the migration-backed implementation.
+
+### Remaining boundary
+
+The fixed window is a deliberate, inspectable baseline rather than a claim of receiver-specific traffic protection. An authorized launch still needs receiver capacity agreements, load tests, alert thresholds, retry/backoff evidence, and an operational owner for any destination-specific exception.

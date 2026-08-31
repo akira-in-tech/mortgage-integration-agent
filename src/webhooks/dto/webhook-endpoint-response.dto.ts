@@ -23,6 +23,9 @@ export class WebhookEndpointResponseDto {
   @ApiProperty({ enum: WebhookEndpointStatus })
   status!: WebhookEndpointStatus;
 
+  @ApiProperty({ minimum: 1, maximum: 600 })
+  outboundRateLimitPerMinute!: number;
+
   @ApiProperty()
   createdAt!: Date;
 }

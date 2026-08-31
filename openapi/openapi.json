@@ -3511,6 +3511,11 @@
               "DISABLED"
             ]
           },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
@@ -3526,6 +3531,7 @@
           "targetUrl",
           "eventTypes",
           "status",
+          "outboundRateLimitPerMinute",
           "createdAt",
           "secret"
         ]
@@ -3557,6 +3563,11 @@
               "DISABLED"
             ]
           },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
@@ -3568,6 +3579,7 @@
           "targetUrl",
           "eventTypes",
           "status",
+          "outboundRateLimitPerMinute",
           "createdAt"
         ]
       },
@@ -3600,6 +3612,11 @@
                 "communication.delivered"
               ]
             }
+          },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
           }
         }
       },

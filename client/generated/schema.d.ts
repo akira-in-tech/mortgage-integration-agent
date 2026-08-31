@@ -1190,6 +1190,7 @@ export interface components {
             eventTypes: string[];
             /** @enum {string} */
             status: "ACTIVE" | "DISABLED";
+            outboundRateLimitPerMinute: number;
             /** Format: date-time */
             createdAt: string;
             /** @description HMAC signing secret. Store it now: future reads and mutations never return it. */
@@ -1204,6 +1205,7 @@ export interface components {
             eventTypes: string[];
             /** @enum {string} */
             status: "ACTIVE" | "DISABLED";
+            outboundRateLimitPerMinute: number;
             /** Format: date-time */
             createdAt: string;
         };
@@ -1214,6 +1216,7 @@ export interface components {
              */
             targetUrl?: string;
             eventTypes?: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
+            outboundRateLimitPerMinute?: number;
         };
         WebhookDeliveryAttempt: {
             attemptNumber: number;

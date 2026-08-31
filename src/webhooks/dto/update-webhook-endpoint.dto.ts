@@ -2,8 +2,11 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsIn,
+  IsInt,
   IsOptional,
   IsUrl,
+  Max,
+  Min,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { OutboxEventType } from '../../database/outbox/outbox-event-types';
@@ -30,4 +33,11 @@ export class UpdateWebhookEndpointDto {
   @ArrayUnique()
   @IsIn(KNOWN_EVENT_TYPES, { each: true })
   eventTypes?: string[];
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 600 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(600)
+  outboundRateLimitPerMinute?: number;
 }

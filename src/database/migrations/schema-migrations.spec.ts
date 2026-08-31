@@ -207,6 +207,46 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+
+    const endpointRateColumns: Array<{
+      column_name: string;
+      column_default: string | null;
+    }> = await scratchDataSource.query(
+      `SELECT column_name, column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'webhook_endpoints'
+         AND column_name IN (
+           'outboundRateLimitPerMinute',
+           'rateWindowStartedAt',
+           'rateWindowAttempts'
+         )
+       ORDER BY column_name`,
+    );
+    expect(endpointRateColumns).toEqual([
+      { column_name: 'outboundRateLimitPerMinute', column_default: '60' },
+      { column_name: 'rateWindowAttempts', column_default: '0' },
+      { column_name: 'rateWindowStartedAt', column_default: null },
+    ]);
+  });
+
+  it('reverts outbound webhook rate limiting without removing endpoint history', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    const endpointRateColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'webhook_endpoints'
+           AND column_name IN (
+             'outboundRateLimitPerMinute',
+             'rateWindowStartedAt',
+             'rateWindowAttempts'
+           )`,
+      );
+    expect(endpointRateColumns).toEqual([]);
+    // A control rollback is deliberately narrow: endpoints and durable
+    // delivery history remain available for the prior migration's reversal.
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['webhook_endpoints', 'webhook_deliveries']),
+    );
   });
 
   it('reverts governed Agent planner evidence without removing agent run history', async () => {

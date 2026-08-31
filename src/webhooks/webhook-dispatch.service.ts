@@ -175,6 +175,24 @@ export class WebhookDispatchService {
       delivery.tenantId,
       delivery.webhookEndpointId,
     );
+    const rateReservation = await this.endpointService.reserveOutboundAttempt(
+      delivery.tenantId,
+      endpoint.id,
+      now,
+    );
+    if (!rateReservation.reserved) {
+      // Deferral preserves the durable delivery and avoids hot-looping until
+      // the receiver's next permitted UTC-minute window.
+      await runInTenantContext(this.dataSource, delivery.tenantId, (manager) =>
+        manager
+          .getRepository(WebhookDelivery)
+          .update(
+            { id: delivery.id, status: WebhookDeliveryStatus.PENDING },
+            { nextAttemptAt: rateReservation.nextWindowAt },
+          ),
+      );
+      return;
+    }
     const event = await runInTenantContext(
       this.dataSource,
       delivery.tenantId,

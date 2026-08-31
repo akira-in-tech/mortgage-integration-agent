@@ -164,6 +164,7 @@ export class WebhookEndpointsController {
       targetUrl: endpoint.targetUrl,
       eventTypes: endpoint.eventTypes,
       status: endpoint.status,
+      outboundRateLimitPerMinute: endpoint.outboundRateLimitPerMinute,
       createdAt: endpoint.createdAt,
     };
   }

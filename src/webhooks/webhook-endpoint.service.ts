@@ -98,6 +98,9 @@ export class WebhookEndpointService {
       }
       if (dto.targetUrl !== undefined) endpoint.targetUrl = dto.targetUrl;
       if (dto.eventTypes !== undefined) endpoint.eventTypes = dto.eventTypes;
+      if (dto.outboundRateLimitPerMinute !== undefined) {
+        endpoint.outboundRateLimitPerMinute = dto.outboundRateLimitPerMinute;
+      }
       return repo.save(endpoint);
     });
   }
@@ -129,6 +132,35 @@ export class WebhookEndpointService {
       }
       return endpoint;
     });
+  }
+
+  /** Atomically reserves one outbound attempt in a persistent UTC-minute window. */
+  async reserveOutboundAttempt(
+    tenantId: string,
+    endpointId: string,
+    now: Date,
+  ): Promise<{ reserved: boolean; nextWindowAt: Date }> {
+    const windowStart = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+    const nextWindowAt = new Date(windowStart.getTime() + 60_000);
+    const [, affectedRows] = (await runInTenantContext(
+      this.dataSource,
+      tenantId,
+      (manager) =>
+        manager.query(
+          `UPDATE "webhook_endpoints"
+         SET "rateWindowStartedAt" = $3,
+             "rateWindowAttempts" = CASE WHEN "rateWindowStartedAt" IS NULL OR "rateWindowStartedAt" < $3 THEN 1 ELSE "rateWindowAttempts" + 1 END
+         WHERE "id" = $1 AND "tenantId" = $2
+           AND ("rateWindowStartedAt" IS NULL OR "rateWindowStartedAt" < $3 OR "rateWindowAttempts" < "outboundRateLimitPerMinute")
+         RETURNING "id"`,
+          [endpointId, tenantId, windowStart],
+        ),
+    )) as [unknown[], number];
+    // TypeORM's PostgreSQL driver returns UPDATE results as
+    // `[returnedRows, affectedRowCount]`; returnedRows itself is an array
+    // even when the conditional update matched nothing. The affected count
+    // is therefore the only reliable reservation outcome.
+    return { reserved: affectedRows === 1, nextWindowAt };
   }
 
   private async assertSafeTarget(targetUrl: string): Promise<void> {
