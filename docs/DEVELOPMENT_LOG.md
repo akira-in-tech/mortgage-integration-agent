@@ -12119,12 +12119,15 @@ first live edge deployment and browser walkthrough.
   because the repository requires Node 24 and its Vite/Rolldown optional
   native binding was unavailable there.
 - The first protected deployment reached Terraform planning and exposed one
-  least-privilege omission before any new edge resource was created:
-  Terraform's managed CloudFront cache-policy data sources require
-  `cloudfront:ListCachePolicies`. Its next run reached the provider's selected
-  policy read and surfaced the companion `cloudfront:GetCachePolicy` action.
-  The deployment role is amended narrowly and the same workflow will be
-  re-run; no failed plan is treated as live proof.
+  least-privilege omission: Terraform's managed CloudFront cache-policy data
+  sources require `cloudfront:ListCachePolicies`. Its next run reached the
+  provider's selected policy read and surfaced the companion
+  `cloudfront:GetCachePolicy` action. The third run passed both reads, ran the
+  real migration task to exit 0, and then exposed the remaining exact provider
+  operations (S3 tag inspection, API Gateway v2 tag application, CloudFront
+  origin-request-policy creation, and Cognito MFA configuration reads). The
+  deploy role is amended narrowly and the same workflow will be re-run; no
+  failed apply is treated as live proof.
 
 ### Remaining boundary
 

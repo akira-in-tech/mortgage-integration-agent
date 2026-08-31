@@ -302,6 +302,9 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "cloudfront:CreateOriginAccessControl",
       "cloudfront:GetOriginAccessControl", "cloudfront:UpdateOriginAccessControl",
       "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:CreateOriginRequestPolicy", "cloudfront:GetOriginRequestPolicy",
+      "cloudfront:UpdateOriginRequestPolicy", "cloudfront:DeleteOriginRequestPolicy",
+      "cloudfront:ListOriginRequestPolicies",
       "cloudfront:TagResource", "cloudfront:UntagResource", "cloudfront:ListTagsForResource",
     ]
     resources = ["*"]
@@ -314,7 +317,15 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "apigateway:GET", "apigateway:POST", "apigateway:PATCH", "apigateway:DELETE",
       "apigateway:PUT", "apigateway:TagResource", "apigateway:UntagResource",
     ]
-    resources = ["arn:aws:apigateway:*::/apis*"]
+    # API Gateway v2 creates an API and then applies default tags through its
+    # separate `/tags/arn.../v2/apis/...` resource path. Keep both the v1/v2
+    # API paths and that tag endpoint explicit instead of opening all API
+    # Gateway resources to the deployment role.
+    resources = [
+      "arn:aws:apigateway:*::/apis*",
+      "arn:aws:apigateway:*::/v2/apis*",
+      "arn:aws:apigateway:*::/tags/*",
+    ]
   }
 
   statement {
@@ -330,6 +341,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "cognito-idp:DeleteUserPoolDomain", "cognito-idp:DescribeUserPoolDomain",
       "cognito-idp:AdminCreateUser", "cognito-idp:AdminSetUserPassword",
       "cognito-idp:AdminDeleteUser", "cognito-idp:AdminGetUser", "cognito-idp:ListUsers",
+      "cognito-idp:GetUserPoolMfaConfig", "cognito-idp:SetUserPoolMfaConfig",
     ]
     resources = ["*"]
   }
@@ -343,6 +355,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "s3:GetBucketPublicAccessBlock", "s3:PutBucketPublicAccessBlock",
       "s3:GetBucketOwnershipControls", "s3:PutBucketOwnershipControls",
       "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+      "s3:GetBucketTagging", "s3:PutBucketTagging",
     ]
     resources = [
       "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}",
