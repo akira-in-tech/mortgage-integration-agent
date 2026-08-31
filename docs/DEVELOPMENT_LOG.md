@@ -11912,3 +11912,27 @@ Implemented as a documentation correctness fix.
 ### Remaining boundary
 
 Automated rollback remains intentionally unimplemented. A future implementation must select only an independently verified immutable artifact and preserve approval/audit evidence.
+
+## M7-043: repair stale RLS proof fixtures
+
+### Status
+
+Implemented and verified against the clean PostgreSQL 16 verification database.
+
+### Problem
+
+The full real-DB suite found two older isolation fixtures had fallen behind non-null lineage/authorization columns added by later migrations. They failed before their RLS assertions ran, obscuring the behavior they were intended to prove.
+
+### Implementation
+
+- Added explicit permitted-purpose/data-class values to `ConsentRecord` fixtures.
+- Added an explicit empty provider-intent lineage array to `DataDispositionTask` fixtures.
+- Both changes preserve the tests' intent: they exercise tenant isolation under current production schema rather than an obsolete insert shape.
+
+### Verification
+
+- `DATABASE_URL=...:55432 npm test -- consent/consent-tenant-isolation.spec.ts data-disposition/data-disposition-tenant-isolation.spec.ts --runInBand --no-cache --silent`: 2 suites / 14 tests passed.
+
+### Remaining boundary
+
+The earlier full-suite run also exposed a stale default local PostgreSQL container whose bootstrap user was not `mortgage`; it is an environment mismatch, not a code result. The clean verification database on port 55432 uses the CI role/schema contract.

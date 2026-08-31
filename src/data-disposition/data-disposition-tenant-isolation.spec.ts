@@ -61,6 +61,9 @@ describeOrSkip('data_disposition_tasks row-level security', () => {
         reason: 'tenant-isolation-spec',
         triggeringConsentRecordId: randomUUID(),
         affectedEvidenceFactIds: [],
+        // Provider-intent lineage was added after this proof fixture. Keep
+        // it explicit so an RLS failure cannot be masked by a NOT NULL error.
+        affectedProviderIntentIds: [],
         resolvedAt: null,
       });
     }
@@ -156,6 +159,7 @@ describeOrSkip('data_disposition_tasks row-level security', () => {
             reason: 'tenant-isolation-spec-insert',
             triggeringConsentRecordId: randomUUID(),
             affectedEvidenceFactIds: [],
+            affectedProviderIntentIds: [],
             resolvedAt: null,
           }),
         );
