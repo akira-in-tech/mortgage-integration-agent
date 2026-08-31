@@ -19,6 +19,7 @@ import { PolicyChangeImpactAssessment } from './entities/policy-change-impact-as
 import { CommunicationTemplate } from './entities/communication-template.entity';
 import { CommunicationMessage } from './entities/communication-message.entity';
 import { CommunicationApproval } from './entities/communication-approval.entity';
+import { DocumentRecord } from './entities/document-record.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -46,6 +47,7 @@ import { CommunicationApproval } from './entities/communication-approval.entity'
       CommunicationTemplate,
       CommunicationMessage,
       CommunicationApproval,
+      DocumentRecord,
     ]),
   ],
   exports: [TypeOrmModule],

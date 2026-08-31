@@ -101,6 +101,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'condition_transitions',
       'consent_records',
       'data_disposition_tasks',
+      'document_records',
       'evaluation_input_manifests',
       'evaluation_report_records',
       'evidence_facts',
@@ -185,7 +186,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // budget reservations -> the tenant-matching authoritative budget ledger,
     // aggregate usage -> tenants, reservations -> their aggregate month
     // agent_runs -> its optional bounded model invocation
-    expect(foreignKeys).toHaveLength(22);
+    expect(foreignKeys).toHaveLength(23);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -226,6 +227,13 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       { column_name: 'rateWindowAttempts', column_default: '0' },
       { column_name: 'rateWindowStartedAt', column_default: null },
     ]);
+  });
+
+  it('reverts document-vault metadata without removing the case aggregate', async () => {
+    expect(await tableNames()).toContain('document_records');
+    await scratchDataSource.undoLastMigration();
+    expect(await tableNames()).not.toContain('document_records');
+    expect(await tableNames()).toContain('loan_cases');
   });
 
   it('reverts outbound webhook rate limiting without removing endpoint history', async () => {

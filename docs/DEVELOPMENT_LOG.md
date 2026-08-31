@@ -12014,3 +12014,23 @@ Implemented with backward-compatible single-key configuration.
 - New sessions use a versioned key identifier and the first `OIDC_SESSION_ENCRYPTION_KEYS` entry; retained entries decrypt prior sessions during an operator-controlled rotation window.
 - Existing single-key deployments emit `v2.legacy` sessions and remain readable. Configuration rejects malformed key rings and permits either the legacy key or ring in staging/production.
 - This closes session-wide forced logout during a planned key rotation. It does not create bearer-token overlap for machine or platform-admin credentials.
+
+## M7-048: Document Vault metadata and tenant isolation
+
+### Status
+
+Implemented as the persisted lineage layer for the encrypted object boundary.
+
+### Implementation
+
+- Added `document_records`: opaque storage key, plaintext SHA-256 checksum, media type, byte size, tenant/case lineage, and creation time; no filename, binary content, or extracted facts are stored in metadata.
+- The creation migration includes a foreign key, size check, unique storage key, index, and enabled/forced PostgreSQL RLS policy in the same transaction.
+- Added cumulative migration proof for narrow metadata rollback before earlier Vault-control reversals.
+
+### Verification
+
+- In a clean non-synced worktree, `npm ci`, `DATABASE_URL=... npm test -- schema-migrations.spec.ts --runInBand --no-cache --silent` (54 tests), `npm run build`, `npm run lint:check`, and `git diff --check` passed.
+
+### Remaining boundary
+
+No upload/read route is exposed yet. The next slice must atomically coordinate object writes with metadata creation, malware scanning, consent checks, and hold-aware disposition before accepting files.
