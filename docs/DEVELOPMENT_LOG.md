@@ -11783,7 +11783,7 @@ Live local Ollama smoke (content-free control state only):
 
 ### Status
 
-Implemented and locally verified at the API/service, workflow, console, lint, and build layers. The real Temporal-server workflow suite remains conditional on `TEMPORAL_ADDRESS`; it is intentionally not represented as live-server evidence by this entry.
+Implemented and verified at the API/service, workflow, console, lint, and build layers. The complete workflow suite was subsequently run against a real local Temporal server and a clean 51-migration PostgreSQL 16 database; the recovery-reuse path executed in that real workflow runtime.
 
 ### Problem
 
@@ -11803,6 +11803,7 @@ Temporal already provided durable wait and process-restart behavior, but no revi
 - `npm test -- --runInBand cases/cases.service.spec.ts cases/cases.controller.spec.ts workflows/case-conditions.activities.spec.ts`: 2 suites/39 tests passed; 1 conditional PostgreSQL suite skipped by its declared `DATABASE_URL` gate.
 - `npm --prefix console test -- --run src/components/AdminQueues.test.tsx`: 1 suite/5 tests passed.
 - `npm --prefix console run build`, `npm run lint:check`, `npm run build`, and `git diff --check`: passed.
+- CI-like service verification with `TEMPORAL_ADDRESS=localhost:7233` and the clean PostgreSQL 16 verification database: full backend Jest run passed, including the real Temporal recovery workflow; `npm run test:e2e -- --runInBand`: 4 suites/40 tests passed.
 
 ### Remaining boundary
 
