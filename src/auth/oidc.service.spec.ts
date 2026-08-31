@@ -77,6 +77,36 @@ describeOrSkip('OidcService (Section 16.1, M5-024)', () => {
 describe('OidcService discovery trust boundary', () => {
   afterEach(() => jest.restoreAllMocks());
 
+  it('requires the configured client in aud or Cognito access-token client_id', () => {
+    const service = new OidcService(
+      new ConfigService({
+        OIDC_ISSUER_URL: 'https://identity.example.test',
+        OIDC_AUDIENCE: 'mortgage-console',
+      }),
+    );
+    const matchesAudience = (
+      service as unknown as {
+        matchesAudience: (
+          payload: { aud?: string | string[]; client_id?: string },
+          expected: string,
+        ) => boolean;
+      }
+    ).matchesAudience;
+
+    expect(
+      matchesAudience({ aud: 'mortgage-console' }, 'mortgage-console'),
+    ).toBe(true);
+    expect(
+      matchesAudience({ client_id: 'mortgage-console' }, 'mortgage-console'),
+    ).toBe(true);
+    expect(
+      matchesAudience({ aud: ['another-client'] }, 'mortgage-console'),
+    ).toBe(false);
+    expect(
+      matchesAudience({ client_id: 'another-client' }, 'mortgage-console'),
+    ).toBe(false);
+  });
+
   it('rejects metadata whose issuer differs from the configured issuer', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,

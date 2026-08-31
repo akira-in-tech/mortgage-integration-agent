@@ -6,30 +6,34 @@ This module is meant to run exclusively through
 personal credential. Its state lives in the S3 backend that
 `terraform/bootstrap/` provisioned.
 
-## Scope (Phase 1)
+## Scope
 
 - API (`main.ts`), Worker (`worker.ts`), and a self-hosted Temporal
   server — the same three processes `docker-compose.yml` runs locally,
   on the same RDS Postgres.
-- A public Application Load Balancer, **HTTP only** — there is no
-  domain to validate an ACM certificate against yet.
-- No Keycloak (real OIDC login) and no deployed console — this
-  environment is REST/GraphQL-with-a-bearer-token only, reached
-  directly, not through the browser console. Both are a named Phase 2,
-  not started here.
+- CloudFront's AWS-managed `cloudfront.net` hostname provides the public
+  HTTPS console. The S3 origin is private and readable only through CloudFront.
+- Cognito is the real OIDC issuer. The API remains an OIDC relying party and
+  stores provider tokens only in encrypted server-side sessions; the browser
+  receives opaque HttpOnly cookies and a CSRF value.
+- CloudFront proxies `/v1/*`, `/graphql`, and `/health/*` through HTTP API to
+  the existing ECS API, preserving one browser origin without requiring a
+  purchased domain. The ALB forwards application traffic only when API Gateway
+  supplies its private edge-origin header; public health checks remain narrow.
+- A staging-only task provisions one synthetic Cognito reviewer into the
+  application's separate `users` and `tenant_memberships` authorization model.
+  It neither creates real borrower identities nor relaxes tenant checks.
 
-The machine-bearer routes reject anonymous requests, but the current
-public HTTP listener is not a browser-authenticated or TLS-protected
-environment. Do not use it for real borrower data or transmit a bearer token
-over an untrusted network. A continuously accessible browser demo needs a
-domain-backed HTTPS listener plus a real OIDC provider before it can meet that
-boundary.
+This is a persistent synthetic demo, not a production lending deployment. Do
+not enter borrower data, rely on its policy simulations, or treat Cognito demo
+access as an approval from a lender, provider, or regulator.
 
 ## What isn't here yet
 
-Load/soak testing, a backup/restore drill, and a formal failure-recovery
-exercise are still open — they need this infrastructure to exist first.
-See `docs/DEVELOPMENT_LOG.md`'s M7-024 entry for the full accounting.
+The console build and CloudFront invalidation run through the same protected
+GitHub OIDC deployment workflow as the infrastructure. A browser walkthrough
+still requires explicit synthetic seed data and a human-controlled Cognito
+login; no password is printed into CI logs or documentation.
 
 ## Applying a change locally (rare — normally CI does this)
 

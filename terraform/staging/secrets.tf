@@ -110,3 +110,37 @@ resource "aws_secretsmanager_secret_version" "app_database_url" {
   secret_id     = aws_secretsmanager_secret.app_database_url.id
   secret_string = "postgres://mortgage_app:${random_password.app_role.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=no-verify" # see database_url above
 }
+
+resource "aws_secretsmanager_secret" "oidc_client_secret" {
+  name                    = "mortgage-agent-staging/oidc-client-secret"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "oidc_client_secret" {
+  secret_id     = aws_secretsmanager_secret.oidc_client_secret.id
+  secret_string = aws_cognito_user_pool_client.console.client_secret
+}
+
+resource "aws_secretsmanager_secret" "oidc_session_encryption_keys" {
+  name                    = "mortgage-agent-staging/oidc-session-encryption-keys"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "oidc_session_encryption_keys" {
+  secret_id     = aws_secretsmanager_secret.oidc_session_encryption_keys.id
+  secret_string = "staging-v1:${random_id.oidc_session_key.hex}"
+}
+
+# The synthetic reviewer's password is a one-time walkthrough credential.
+# Keep it in Secrets Manager, never in a Terraform output or CI log, so a
+# human operator can retrieve it under their AWS identity without turning a
+# simulated account into a repository secret.
+resource "aws_secretsmanager_secret" "synthetic_reviewer_password" {
+  name                    = "mortgage-agent-staging/synthetic-reviewer-password"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "synthetic_reviewer_password" {
+  secret_id     = aws_secretsmanager_secret.synthetic_reviewer_password.id
+  secret_string = random_password.cognito_demo_password.result
+}

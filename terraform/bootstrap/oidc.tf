@@ -285,6 +285,86 @@ data "aws_iam_policy_document" "deploy_permissions" {
     resources = ["*"]
   }
 
+  # The browser demo is still AWS-only when no custom domain is purchased:
+  # a private S3 origin serves the console through CloudFront's AWS-managed
+  # HTTPS hostname, while HTTP API proxies the existing ECS control plane.
+  # These create/list APIs have no practical resource ARN at creation time,
+  # so they are scoped by service action and the staging module's fixed names.
+  statement {
+    sid    = "CloudFrontConsoleEdge"
+    effect = "Allow"
+    actions = [
+      "cloudfront:CreateDistribution", "cloudfront:DeleteDistribution",
+      "cloudfront:GetDistribution", "cloudfront:GetDistributionConfig",
+      "cloudfront:UpdateDistribution", "cloudfront:CreateInvalidation",
+      "cloudfront:ListDistributions", "cloudfront:CreateOriginAccessControl",
+      "cloudfront:GetOriginAccessControl", "cloudfront:UpdateOriginAccessControl",
+      "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:TagResource", "cloudfront:UntagResource", "cloudfront:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ApiGatewayConsoleEdge"
+    effect = "Allow"
+    actions = [
+      "apigateway:GET", "apigateway:POST", "apigateway:PATCH", "apigateway:DELETE",
+      "apigateway:PUT", "apigateway:TagResource", "apigateway:UntagResource",
+    ]
+    resources = ["arn:aws:apigateway:*::/apis*"]
+  }
+
+  statement {
+    sid    = "CognitoSyntheticDemo"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:CreateUserPool", "cognito-idp:DeleteUserPool", "cognito-idp:DescribeUserPool",
+      "cognito-idp:UpdateUserPool", "cognito-idp:ListUserPools", "cognito-idp:TagResource",
+      "cognito-idp:UntagResource", "cognito-idp:ListTagsForResource",
+      "cognito-idp:CreateUserPoolClient", "cognito-idp:DeleteUserPoolClient",
+      "cognito-idp:DescribeUserPoolClient", "cognito-idp:UpdateUserPoolClient",
+      "cognito-idp:ListUserPoolClients", "cognito-idp:CreateUserPoolDomain",
+      "cognito-idp:DeleteUserPoolDomain", "cognito-idp:DescribeUserPoolDomain",
+      "cognito-idp:AdminCreateUser", "cognito-idp:AdminSetUserPassword",
+      "cognito-idp:AdminDeleteUser", "cognito-idp:AdminGetUser", "cognito-idp:ListUsers",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ConsoleAssetBucket"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket", "s3:DeleteBucket", "s3:GetBucketLocation",
+      "s3:GetBucketPolicy", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
+      "s3:GetBucketPublicAccessBlock", "s3:PutBucketPublicAccessBlock",
+      "s3:GetBucketOwnershipControls", "s3:PutBucketOwnershipControls",
+      "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+    ]
+    resources = [
+      "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}",
+      "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}/*",
+    ]
+  }
+
+  statement {
+    sid       = "ConsoleAssetBucketCreate"
+    effect    = "Allow"
+    actions   = ["s3:CreateBucket"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ApiGatewayLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy",
+      "logs:TagResource", "logs:ListTagsForResource",
+    ]
+    resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/mortgage-agent-staging*"]
+  }
+
   statement {
     sid       = "TerraformStateBucket"
     effect    = "Allow"

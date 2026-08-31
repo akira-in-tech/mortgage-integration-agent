@@ -12074,3 +12074,54 @@ The existing Phase 1 stack can demonstrate authenticated API routes only once
 a synthetic machine credential is provisioned. It cannot satisfy a
 continuously accessible browser-login requirement without a domain-backed
 HTTPS listener and an OIDC provider.
+
+## M7-050: AWS-only HTTPS console edge and Cognito OIDC design
+
+### Status
+
+Implemented in infrastructure and application configuration, pending the
+first live edge deployment and browser walkthrough.
+
+### Implementation
+
+- Added a private S3 console origin, CloudFront's AWS-managed HTTPS hostname,
+  and non-caching CloudFront behaviours for `/v1/*`, `/graphql`, and health.
+  Browser traffic stays same-origin, so the existing BFF session cookie is
+  first-party rather than a cross-site token transport.
+- Added an HTTP API proxy between CloudFront and ECS. The ALB now returns 403
+  by default and forwards application traffic only when API Gateway injects a
+  deployment-generated edge-origin header; `/health/*` remains the sole
+  unauthenticated ALB rule for deployment checks.
+- Added a Cognito user pool, confidential OAuth Authorization Code client,
+  hosted login domain, and a single Terraform-managed synthetic reviewer.
+  The app receives client/session secrets from Secrets Manager and continues
+  to decide tenant membership from PostgreSQL rather than trusting an IdP
+  group claim.
+- Extended OIDC token verification to accept the standard `aud` client id and
+  Cognito access tokens' documented `client_id` representation. Both remain
+  signature-, issuer-, expiry-, and configured-client-bound; Cognito ID tokens
+  cannot be substituted for access tokens.
+- Added an idempotent staging-only ECS bootstrap task that maps the synthetic
+  Cognito reviewer to a REVIEWER membership. It fails outside explicitly
+  marked staging and prints no credential.
+
+### Verification
+
+- Terraform formatting and static validation passed for the expanded staging
+  module and the bootstrap module. The bootstrap IAM plan changed one existing
+  GitHub OIDC role in place, with no resource create or destroy; the change
+  was applied under Akira's verified AWS identity to permit CloudFront OAC and
+  Cognito user reconciliation.
+- In an isolated Node 24 container, backend lint and production build passed;
+  the targeted OIDC suite passed with the new `aud`/Cognito `client_id`
+  acceptance and mismatch rejections. Console production build and all 60
+  Vitest tests passed. A local Node 22.11 run remains unsuitable evidence
+  because the repository requires Node 24 and its Vite/Rolldown optional
+  native binding was unavailable there.
+
+### Remaining boundary
+
+The synthetic reviewer credential must remain in AWS Secrets Manager and be
+used only for a human walkthrough. The project still needs a live browser
+flow recording with synthetic case data before this edge can be described as
+demo-verified.

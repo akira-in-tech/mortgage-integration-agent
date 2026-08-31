@@ -71,10 +71,18 @@ export class OidcService {
     }
     try {
       const { jwks, issuer } = await this.resolveJwks();
-      const { payload } = await jwtVerify(token, jwks, {
-        issuer,
-        audience: this.audience,
-      });
+      const { payload } = await jwtVerify(token, jwks, { issuer });
+      // Standard OIDC providers place the relying-party identifier in `aud`.
+      // Cognito access tokens instead use `client_id` (its ID tokens retain
+      // `aud`). Accept either verified representation, never a token with no
+      // matching client identifier, so the BFF can use Cognito access tokens
+      // without weakening the audience boundary for existing issuers.
+      if (!this.matchesAudience(payload, this.audience)) {
+        throw new Error('token audience does not match configured client');
+      }
+      if (payload.token_use !== undefined && payload.token_use !== 'access') {
+        throw new Error('token is not an access token');
+      }
       if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
         throw new Error('token has no sub claim');
       }
@@ -191,6 +199,19 @@ export class OidcService {
       throw new UnauthorizedException('OIDC token exchange failed');
     }
     return body as OidcTokenResponse;
+  }
+
+  private matchesAudience(payload: JWTPayload, expected: string): boolean {
+    const audiences = Array.isArray(payload.aud)
+      ? payload.aud
+      : typeof payload.aud === 'string'
+        ? [payload.aud]
+        : [];
+    const cognitoClientId = payload['client_id'];
+    return (
+      audiences.includes(expected) ||
+      (typeof cognitoClientId === 'string' && cognitoClientId === expected)
+    );
   }
 
   private async fetchDiscoveryDocument(): Promise<OidcDiscoveryDocument> {

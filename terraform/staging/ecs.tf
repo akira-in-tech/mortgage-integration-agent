@@ -81,6 +81,8 @@ data "aws_iam_policy_document" "execution_secrets" {
       aws_secretsmanager_secret.database_url.arn,
       aws_secretsmanager_secret.app_database_url.arn,
       aws_secretsmanager_secret.provider_data_encryption_keys.arn,
+      aws_secretsmanager_secret.oidc_client_secret.arn,
+      aws_secretsmanager_secret.oidc_session_encryption_keys.arn,
     ]
   }
 }
@@ -106,6 +108,8 @@ locals {
     { name = "APP_DATABASE_URL", valueFrom = aws_secretsmanager_secret.app_database_url.arn },
     { name = "OUTBOX_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.outbox_signing_secret.arn },
     { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
+    { name = "OIDC_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client_secret.arn },
+    { name = "OIDC_SESSION_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.oidc_session_encryption_keys.arn },
   ]
 }
 
@@ -197,6 +201,12 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PORT", value = "3000" },
       { name = "DECISION_PROVIDER", value = "rules" },
       { name = "TEMPORAL_ADDRESS", value = "${local.temporal_dns}:7233" },
+      { name = "OIDC_ISSUER_URL", value = aws_cognito_user_pool.console.endpoint },
+      { name = "OIDC_AUDIENCE", value = aws_cognito_user_pool_client.console.id },
+      { name = "OIDC_CLIENT_ID", value = aws_cognito_user_pool_client.console.id },
+      { name = "OIDC_CALLBACK_URL", value = "https://${aws_cloudfront_distribution.console.domain_name}/v1/auth/session/callback" },
+      { name = "CONSOLE_ORIGIN", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
+      { name = "CORS_ALLOWED_ORIGINS", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
     ]
     secrets = [
       for e in local.app_secret_env : { name = e.name, valueFrom = e.valueFrom }
@@ -222,7 +232,11 @@ resource "aws_ecs_service" "api" {
   task_definition = aws_ecs_task_definition.api.arn
   desired_count   = 1
   launch_type     = "FARGATE"
-  depends_on      = [aws_ecs_service.temporal, null_resource.migrate]
+  depends_on = [
+    aws_ecs_service.temporal,
+    null_resource.migrate,
+    null_resource.synthetic_demo_bootstrap,
+  ]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -279,7 +293,11 @@ resource "aws_ecs_service" "worker" {
   task_definition = aws_ecs_task_definition.worker.arn
   desired_count   = 1
   launch_type     = "FARGATE"
-  depends_on      = [aws_ecs_service.temporal, null_resource.migrate]
+  depends_on = [
+    aws_ecs_service.temporal,
+    null_resource.migrate,
+    null_resource.synthetic_demo_bootstrap,
+  ]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -336,6 +354,43 @@ resource "aws_ecs_task_definition" "migrate" {
   }
 }
 
+# A one-off, idempotent staging-only task establishes the Cognito reviewer's
+# application-side User/TenantMembership mapping. Cognito proves identity;
+# this database membership remains the independent tenant authorization gate.
+resource "aws_ecs_task_definition" "synthetic_demo_bootstrap" {
+  family                   = "${local.name}-synthetic-demo-bootstrap"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.fargate_cpu
+  memory                   = var.fargate_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+
+  container_definitions = jsonencode([{
+    name    = "synthetic-demo-bootstrap"
+    image   = local.ecr_image
+    command = ["node", "dist/bootstrap-synthetic-demo.js"]
+    environment = [
+      { name = "NODE_ENV", value = "staging" },
+      { name = "SYNTHETIC_DEMO_BOOTSTRAP", value = "true" },
+      { name = "DEMO_OIDC_SUBJECT", value = aws_cognito_user.synthetic_reviewer.sub },
+      { name = "DEMO_OIDC_EMAIL", value = "synthetic-reviewer@example.invalid" },
+    ]
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.migrate.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "synthetic-demo-bootstrap"
+      }
+    }
+  }])
+
+  lifecycle { create_before_destroy = true }
+}
+
 # Actually runs the migration task and blocks the rest of this apply
 # until it exits — real ordering (schema migrated before api/worker
 # ever see the new image), enforced by Terraform's own dependency
@@ -373,5 +428,29 @@ resource "null_resource" "migrate" {
 
   lifecycle {
     create_before_destroy = true # see aws_ecs_task_definition.temporal above
+  }
+}
+
+resource "null_resource" "synthetic_demo_bootstrap" {
+  triggers = {
+    task_definition = aws_ecs_task_definition.synthetic_demo_bootstrap.arn
+    reviewer_sub    = aws_cognito_user.synthetic_reviewer.sub
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      task_arn=$(aws ecs run-task \
+        --cluster "${aws_ecs_cluster.this.name}" \
+        --task-definition "${aws_ecs_task_definition.synthetic_demo_bootstrap.arn}" \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", aws_subnet.public[*].id)}],securityGroups=[${aws_security_group.app.id}],assignPublicIp=ENABLED}" \
+        --region "${var.aws_region}" \
+        --query 'tasks[0].taskArn' --output text)
+      aws ecs wait tasks-stopped --cluster "${aws_ecs_cluster.this.name}" --tasks "$task_arn" --region "${var.aws_region}"
+      exit_code=$(aws ecs describe-tasks --cluster "${aws_ecs_cluster.this.name}" --tasks "$task_arn" --region "${var.aws_region}" --query 'tasks[0].containers[0].exitCode' --output text)
+      test "$exit_code" = "0"
+    EOT
   }
 }
