@@ -188,8 +188,45 @@ export interface EvaluationReportSummary {
   conditionPrecision: number | null;
 }
 
+export interface EvaluationCaseResult {
+  fixtureId: string;
+  category: string;
+  expectedOutcome: string;
+  actualOutcome: string;
+  expectedConditionCode?: string;
+  actualConditionCode?: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface EvaluationReportDetail {
+  id: string;
+  report: {
+    generatedAt: string;
+    codeRevision: { gitCommit: string | null; gitBranch: string | null };
+    summary: {
+      totalCases: number;
+      passed: number;
+      failed: number;
+      conditionRecall: number | null;
+      conditionPrecision: number | null;
+      byCategory: Record<string, { total: number; passed: number }>;
+    };
+    results: EvaluationCaseResult[];
+  };
+}
+
 export function listEvaluationReports(): Promise<EvaluationReportSummary[]> {
   return platformAdminRequest('/v1/platform-admin/evaluation-reports');
+}
+
+/** Fetches the immutable per-case evidence for the selected saved run. */
+export function getEvaluationReport(
+  id: string,
+): Promise<EvaluationReportDetail> {
+  return platformAdminRequest(
+    `/v1/platform-admin/evaluation-reports/${encodeURIComponent(id)}`,
+  );
 }
 
 // Not platformAdminRequest — that helper always parses the response as

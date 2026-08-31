@@ -11806,4 +11806,25 @@ Temporal already provided durable wait and process-restart behavior, but no revi
 
 ### Remaining boundary
 
-Current provider adapters are synchronous and declare no provider-side cancellation protocol. Any future asynchronous/cancellable adapter must add tuple-specific cancellation, polling/callback ordering, and reconciliation tests before it can claim a provider cancellation outcome. The fuller evaluation dashboard remains a separate M6 gap.
+Current provider adapters are synchronous and declare no provider-side cancellation protocol. Any future asynchronous/cancellable adapter must add tuple-specific cancellation, polling/callback ordering, and reconciliation tests before it can claim a provider cancellation outcome.
+
+## M7-037: immutable evaluation-run inspection dashboard
+
+### Status
+
+Implemented and verified in the Platform Admin console. This is an inspection surface over the existing persisted report detail; it does not alter the corpus, calculate a second result, or widen evaluation access beyond the platform-admin credential.
+
+### Implementation
+
+- Added a typed client for the existing `GET /v1/platform-admin/evaluation-reports/{id}` endpoint and an `Inspect` action next to the existing authenticated download.
+- The selected immutable run now displays saved pass rate, condition recall, condition precision, failures, category totals/pass rates, and every failing fixture's expected/actual result and recorded detail.
+- Empty failed-case results, loading state, failure state, and close/reselection behavior are explicit. The UI never treats a dashboard metric as a production approval and never recomputes metrics client-side.
+
+### Verification
+
+- `npm --prefix console test -- --run src/components/PlatformAdminConsole.test.tsx`: 1 suite/9 tests passed, including category and failed-fixture inspection.
+- `npm --prefix console run build` and `git diff --check`: passed.
+
+### Remaining boundary
+
+The dashboard reflects only saved synthetic corpus evidence. Broader adversarial/model, provider callback, and real-provider certification corpora remain separate, provider- and capability-specific release evidence requirements.

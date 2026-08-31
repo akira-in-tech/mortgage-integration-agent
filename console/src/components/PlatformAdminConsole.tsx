@@ -14,11 +14,13 @@ import {
   activateManifest,
   deactivateProvider,
   listEvaluationReports,
+  getEvaluationReport,
   downloadEvaluationReport,
   type ProviderPromotionManifest,
   type ProviderActivation,
   type ProviderPromotionManifestDetail,
   type EvaluationReportSummary,
+  type EvaluationReportDetail,
 } from '../platform-admin-api';
 import { DataTable } from './DataTable';
 import { GearIcon } from './icons';
@@ -406,6 +408,8 @@ function EvaluationReportsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<EvaluationReportDetail | null>(null);
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
 
   useEffect(() => {
     listEvaluationReports()
@@ -444,6 +448,18 @@ function EvaluationReportsSection() {
     }
   }
 
+  async function inspect(id: string) {
+    setInspectingId(id);
+    setError(null);
+    try {
+      setSelected(await getEvaluationReport(id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load report.');
+    } finally {
+      setInspectingId(null);
+    }
+  }
+
   if (loading) {
     return (
       <div
@@ -467,43 +483,166 @@ function EvaluationReportsSection() {
   }
 
   return (
-    <DataTable
-      columns={[
-        'Generated',
-        'Commit',
-        'Total',
-        'Passed',
-        'Failed',
-        'Recall',
-        'Precision',
-        'Action',
-      ]}
-      emptyLabel="No evaluation reports saved yet — run npm run evaluate."
-      rows={reports.map((report) => [
-        new Date(report.generatedAt).toLocaleString(),
-        <span className="mono" key={`${report.id}-c`}>
-          {report.gitCommit ? report.gitCommit.slice(0, 8) : '—'}
-        </span>,
-        report.totalCases,
-        report.passed,
-        report.failed,
-        report.conditionRecall != null
-          ? `${Math.round(report.conditionRecall * 100)}%`
-          : '—',
-        report.conditionPrecision != null
-          ? `${Math.round(report.conditionPrecision * 100)}%`
-          : '—',
-        <button
-          key={`${report.id}-d`}
-          type="button"
-          className="btn"
-          disabled={downloadingId === report.id}
-          onClick={() => void download(report.id)}
-        >
-          {downloadingId === report.id ? 'Downloading…' : 'Download'}
-        </button>,
-      ])}
-    />
+    <>
+      <DataTable
+        columns={[
+          'Generated',
+          'Commit',
+          'Total',
+          'Passed',
+          'Failed',
+          'Recall',
+          'Precision',
+          'Action',
+        ]}
+        emptyLabel="No evaluation reports saved yet — run npm run evaluate."
+        rows={reports.map((report) => [
+          new Date(report.generatedAt).toLocaleString(),
+          <span className="mono" key={`${report.id}-c`}>
+            {report.gitCommit ? report.gitCommit.slice(0, 8) : '—'}
+          </span>,
+          report.totalCases,
+          report.passed,
+          report.failed,
+          report.conditionRecall != null
+            ? `${Math.round(report.conditionRecall * 100)}%`
+            : '—',
+          report.conditionPrecision != null
+            ? `${Math.round(report.conditionPrecision * 100)}%`
+            : '—',
+          <span
+            key={`${report.id}-actions`}
+            style={{ display: 'flex', gap: 6 }}
+          >
+            <button
+              type="button"
+              className="btn"
+              disabled={inspectingId === report.id}
+              onClick={() => void inspect(report.id)}
+            >
+              {inspectingId === report.id ? 'Loading…' : 'Inspect'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={downloadingId === report.id}
+              onClick={() => void download(report.id)}
+            >
+              {downloadingId === report.id ? 'Downloading…' : 'Download'}
+            </button>
+          </span>,
+        ])}
+      />
+      {selected && (
+        <EvaluationReportDashboard
+          report={selected}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// A release dashboard exposes evidence already present in the immutable
+// report; it does not recompute quality metrics or turn a pass rate into a
+// production-approval claim. It is Platform Admin-only with the report API.
+function EvaluationReportDashboard({
+  report,
+  onClose,
+}: {
+  report: EvaluationReportDetail;
+  onClose: () => void;
+}) {
+  const { summary, results } = report.report;
+  const failures = results.filter((result) => !result.passed);
+  const percent = (value: number | null) =>
+    value == null ? '—' : `${Math.round(value * 100)}%`;
+
+  return (
+    <section
+      aria-labelledby="evaluation-dashboard-heading"
+      className="card"
+      style={{ marginTop: 16, padding: 16 }}
+    >
+      <div
+        style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}
+      >
+        <div>
+          <h3
+            id="evaluation-dashboard-heading"
+            style={{ margin: '0 0 4px', fontSize: 15 }}
+          >
+            Evaluation run dashboard
+          </h3>
+          <div style={{ color: 'var(--ink-muted)', fontSize: 12.5 }}>
+            {report.report.generatedAt} ·{' '}
+            {report.report.codeRevision.gitCommit?.slice(0, 8) ?? 'unversioned'}
+          </div>
+        </div>
+        <button className="btn" type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gap: 10,
+          margin: '14px 0',
+        }}
+      >
+        <MetricCard
+          label="Pass rate"
+          value={percent(
+            summary.totalCases ? summary.passed / summary.totalCases : null,
+          )}
+        />
+        <MetricCard
+          label="Condition recall"
+          value={percent(summary.conditionRecall)}
+        />
+        <MetricCard
+          label="Condition precision"
+          value={percent(summary.conditionPrecision)}
+        />
+        <MetricCard label="Failures" value={String(summary.failed)} />
+      </div>
+      <DataTable
+        columns={['Category', 'Passed', 'Total', 'Pass rate']}
+        emptyLabel="This report contains no categories."
+        rows={Object.entries(summary.byCategory).map(([category, metric]) => [
+          category,
+          metric.passed,
+          metric.total,
+          percent(metric.total ? metric.passed / metric.total : null),
+        ])}
+      />
+      <div style={{ marginTop: 14 }}>
+        <h4 style={{ margin: '0 0 5px', fontSize: 13.5 }}>Failed cases</h4>
+        <DataTable
+          columns={['Fixture', 'Category', 'Expected', 'Actual', 'Detail']}
+          emptyLabel="No failed cases in this saved evaluation run."
+          rows={failures.map((result) => [
+            result.fixtureId,
+            result.category,
+            result.expectedConditionCode ?? result.expectedOutcome,
+            result.actualConditionCode ?? result.actualOutcome,
+            result.detail,
+          ])}
+        />
+      </div>
+    </section>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 10 }}
+    >
+      <div style={{ color: 'var(--ink-muted)', fontSize: 11.5 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 650, marginTop: 2 }}>{value}</div>
+    </div>
   );
 }
 

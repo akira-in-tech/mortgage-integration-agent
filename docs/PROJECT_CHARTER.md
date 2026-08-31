@@ -5,7 +5,7 @@
 | Field           | Value                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------- |
 | Document status | Target-state charter; implementation plan, not a production-readiness claim                       |
-| Version         | 2.18                                                                                              |
+| Version         | 2.19                                                                                              |
 | Repository      | `mortgage-integration-agent`                                                                      |
 | Product model   | Vendor-neutral API, operations console, Agent control plane, and developer sandbox                |
 | Launch model    | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
@@ -70,7 +70,6 @@ The following release boundaries remain open and are not represented as implemen
 
 - external policy-source connector mechanisms are implemented; real reviewed source connectors and broader reviewed jurisdiction coverage remain open (Section 29 item 4);
 - lineage and disposition beyond the currently implemented evidence/provider-result stores (documents, prompts, evaluation artifacts, caches, indexes, and object storage do not yet exist); managed-backup expiry still requires an authoritative external operator/provider evidence reference;
-- a fuller evaluation dashboard (the current release-report view is a list-and-download table, not visualizations or trends);
 - a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
 - production provider adapters, real-data approval, or official underwriting integrations.
 
@@ -1700,7 +1699,7 @@ Exit evidence:
 - accessibility and unhappy-path checks pass;
 - no sensitive fixture content appears in telemetry or unauthorized views.
 
-Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation, provider reconciliation, data-disposition, policy-impact, provider promotion, and workflow operations all have real console screens (the last behind its own separate platform-admin credential, not the tenant one — see M7-020). The workflow queue is REVIEWER-only and is backed by live Temporal descriptions rather than a stale copied status; it can request cancellation of a running execution and recover only terminal non-success executions. Recovery does not collect/evaluate again when exactly one durable open condition exists, preventing duplicate conditions. Downloadable evaluation reports (M7-023) use that same credential. Still open: a fuller evaluation dashboard (today it's a list-and-download table, not visualizations/trends).
+Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation, provider reconciliation, data-disposition, policy-impact, provider promotion, workflow operations, and evaluation reports all have real console screens (the last two behind their appropriate least-privilege credentials). The workflow queue is REVIEWER-only and is backed by live Temporal descriptions rather than a stale copied status; it can request cancellation of a running execution and recover only terminal non-success executions. Recovery does not collect/evaluate again when exactly one durable open condition exists, preventing duplicate conditions. Platform Admin evaluation inspection exposes saved category metrics and failed synthetic fixtures without recomputing or overstating a release result.
 
 ### M7 — Synthetic staging and provider-integration readiness
 
