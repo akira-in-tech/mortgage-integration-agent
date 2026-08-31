@@ -16,11 +16,13 @@ import {
   listEvaluationReports,
   getEvaluationReport,
   downloadEvaluationReport,
+  listPolicyVersions,
   type ProviderPromotionManifest,
   type ProviderActivation,
   type ProviderPromotionManifestDetail,
   type EvaluationReportSummary,
   type EvaluationReportDetail,
+  type PolicyVersionSummary,
 } from '../platform-admin-api';
 import { DataTable } from './DataTable';
 import { GearIcon } from './icons';
@@ -382,6 +384,10 @@ function PlatformAdminMain({
         </section>
 
         <section style={{ marginTop: 28 }}>
+          <PolicyVersionBrowser />
+        </section>
+
+        <section style={{ marginTop: 28 }}>
           <h2 style={{ fontSize: 15, margin: '0 0 4px' }}>
             Evaluation reports
           </h2>
@@ -400,6 +406,92 @@ function PlatformAdminMain({
         </section>
       </div>
     </div>
+  );
+}
+
+function PolicyVersionBrowser() {
+  const [query, setQuery] = useState('');
+  const [versions, setVersions] = useState<PolicyVersionSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (value = '') => {
+    setLoading(true);
+    try {
+      setVersions(await listPolicyVersions(value));
+      setError(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Could not load policy versions.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <>
+      <h2 style={{ fontSize: 15, margin: '0 0 4px' }}>Policy versions</h2>
+      <p
+        style={{ fontSize: 12.5, color: 'var(--ink-muted)', margin: '0 0 8px' }}
+      >
+        Immutable catalog metadata and provenance. Browsing does not publish or
+        approve policy content.
+      </p>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void load(query);
+        }}
+        style={{ display: 'flex', gap: 8, marginBottom: 10 }}
+      >
+        <input
+          aria-label="Search policy versions"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Rule, source, or jurisdiction"
+        />
+        <button className="btn" type="submit">
+          Search
+        </button>
+      </form>
+      {error && (
+        <div role="alert" style={{ color: 'var(--critical)', fontSize: 12.5 }}>
+          {error}
+        </div>
+      )}
+      {loading ? (
+        <div className="card" style={{ padding: 18 }}>
+          Loading…
+        </div>
+      ) : (
+        <DataTable
+          columns={[
+            'Rule',
+            'Version',
+            'Status',
+            'Jurisdiction',
+            'Source',
+            'Effective from',
+          ]}
+          emptyLabel="No policy versions match this search."
+          rows={versions.map((version) => [
+            <span className="mono" key={`${version.id}-rule`}>
+              {version.ruleId}
+            </span>,
+            version.version,
+            version.releaseStatus,
+            version.jurisdictionCode,
+            version.sourceName,
+            new Date(version.effectiveFrom).toLocaleString(),
+          ])}
+        />
+      )}
+    </>
   );
 }
 

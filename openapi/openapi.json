@@ -1540,6 +1540,54 @@
         ]
       }
     },
+    "/v1/platform-admin/policy-versions": {
+      "get": {
+        "operationId": "listPolicyVersions",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          },
+          {
+            "name": "query",
+            "required": false,
+            "in": "query",
+            "description": "Rule, source, or jurisdiction substring.",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyVersionSummaryDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Browse immutable policy-version metadata and source provenance.",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}/communication-messages": {
       "get": {
         "operationId": "listCommunicationMessages",
@@ -3236,6 +3284,66 @@
         },
         "required": [
           "policyVersionId"
+        ]
+      },
+      "PolicyVersionSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ruleId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "releaseStatus": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "PROPOSED",
+              "RELEASED",
+              "SUPERSEDED",
+              "WITHDRAWN",
+              "CORRECTED"
+            ]
+          },
+          "effectiveFrom": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effectiveTo": {
+            "type": "object",
+            "nullable": true
+          },
+          "recordedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "jurisdictionCode": {
+            "type": "string"
+          },
+          "sourcePublishedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ruleId",
+          "version",
+          "releaseStatus",
+          "effectiveFrom",
+          "effectiveTo",
+          "recordedAt",
+          "sourceName",
+          "jurisdictionCode",
+          "sourcePublishedAt"
         ]
       },
       "CommunicationMessage": {

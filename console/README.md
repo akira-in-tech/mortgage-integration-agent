@@ -65,6 +65,6 @@ npm run codegen
 - Client-side-only search on Triage Queue (substring match over currently-loaded rows).
 - The live Keycloak/API/PostgreSQL journey now runs in hosted CI by default (M7-022) as well as locally via `RUN_LIVE_OIDC=true`.
 - Key rotation currently requires invalidating existing OIDC sessions; a versioned multi-key decrypt window is not implemented.
-- No way to browse or search existing policy versions — the policy-impact check needs a version id typed in, from whoever published it.
+- Policy versions are browseable/searchable from Platform Admin only. The tenant-scoped policy-impact check remains advisory and deliberately does not expose platform-wide catalog reads.
 - No key rotation or expiry for either bearer-token credential type (`ApiClient` or the newer `PlatformAdmin`).
 - No unified audit-event trail for platform-admin actions specifically — the manifest/certification/approval/activation rows themselves record who and when, but there's no cross-action log the way tenant `audit_events` gives reviewers.

@@ -599,6 +599,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform-admin/policy-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse immutable policy-version metadata and source provenance. */
+        get: operations["listPolicyVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}/communication-messages": {
         parameters: {
             query?: never;
@@ -1097,6 +1114,23 @@ export interface components {
         CheckPolicyChangeImpactDto: {
             /** Format: uuid */
             policyVersionId: string;
+        };
+        PolicyVersionSummaryDto: {
+            /** Format: uuid */
+            id: string;
+            ruleId: string;
+            version: string;
+            /** @enum {string} */
+            releaseStatus: "DRAFT" | "PROPOSED" | "RELEASED" | "SUPERSEDED" | "WITHDRAWN" | "CORRECTED";
+            /** Format: date-time */
+            effectiveFrom: string;
+            effectiveTo: Record<string, never> | null;
+            /** Format: date-time */
+            recordedAt: string;
+            sourceName: string;
+            jurisdictionCode: string;
+            /** Format: date-time */
+            sourcePublishedAt: string;
         };
         CommunicationMessage: Record<string, never>;
         ApproveCommunicationMessageDto: {
@@ -2349,6 +2383,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    listPolicyVersions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Rule, source, or jurisdiction substring. */
+                query?: unknown;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyVersionSummaryDto"][];
+                };
             };
         };
     };

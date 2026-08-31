@@ -11852,3 +11852,24 @@ Implemented and contract-generated. This closes the endpoint-management half of 
 ### Remaining boundary
 
 Endpoint lifecycle is now present. Per-endpoint outbound rate limiting remains a separate dispatch-control slice; real receiver load/SLO evidence still requires an authorized external receiver.
+
+## M7-040: governed policy-catalog browse
+
+### Status
+
+Implemented and verified at build, generated-contract, and console component levels. This is a read-only operational discovery surface, not policy authoring or a claim that synthetic policy content received legal review.
+
+### Implementation
+
+- Added `GET /v1/platform-admin/policy-versions`, guarded by the isolated platform-admin credential because policy catalog data is shared platform governance rather than any tenant's resource.
+- Search is bounded to 100 rows and matches rule id, source name, or jurisdiction. Each result carries immutable version metadata plus source provenance; it does not make a release editable.
+- Added the corresponding Platform Admin console search/table with explicit loading, empty, and error states.
+- Updated generated OpenAPI and TypeScript client contracts and removed the now-closed policy-browse gap from README/console documentation.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, `npm --prefix console run build`, `npm --prefix console test -- --run src/components/PlatformAdminConsole.test.tsx` (9 passed), and `git diff --check`: passed.
+
+### Remaining boundary
+
+Browsing source provenance cannot turn a demo or externally ingested policy candidate into an approved jurisdiction pack. Publishing still needs the governed policy lifecycle and real legal review.

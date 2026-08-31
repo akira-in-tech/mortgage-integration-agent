@@ -220,6 +220,30 @@ export function listEvaluationReports(): Promise<EvaluationReportSummary[]> {
   return platformAdminRequest('/v1/platform-admin/evaluation-reports');
 }
 
+export interface PolicyVersionSummary {
+  id: string;
+  ruleId: string;
+  version: string;
+  releaseStatus: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  recordedAt: string;
+  sourceName: string;
+  jurisdictionCode: string;
+  sourcePublishedAt: string;
+}
+
+/** Platform-wide catalog metadata for selecting a policy-impact candidate. */
+export function listPolicyVersions(
+  query = '',
+): Promise<PolicyVersionSummary[]> {
+  const parameters = new URLSearchParams({ limit: '50' });
+  if (query.trim()) parameters.set('query', query.trim());
+  return platformAdminRequest(
+    `/v1/platform-admin/policy-versions?${parameters.toString()}`,
+  );
+}
+
 /** Fetches the immutable per-case evidence for the selected saved run. */
 export function getEvaluationReport(
   id: string,
