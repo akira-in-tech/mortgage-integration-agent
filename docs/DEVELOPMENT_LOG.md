@@ -12139,3 +12139,30 @@ The synthetic reviewer credential must remain in AWS Secrets Manager and be
 used only for a human walkthrough. The project still needs a live browser
 flow recording with synthetic case data before this edge can be described as
 demo-verified.
+
+## M7-051: recover the interrupted edge apply without replacing its console bucket
+
+### Status
+
+Implemented; the next protected deployment is required for live verification.
+
+### Implementation
+
+- Added the CloudWatch Logs delivery-control-plane actions required when API
+  Gateway creates the HTTP API access-log subscription. Those calls cannot be
+  constrained to a log-group ARN by the service, so the role is scoped to the
+  five delivery actions only; creating and configuring the staging log group
+  remains ARN-scoped.
+- During the previous apply, AWS created the fixed private console bucket and
+  a later denied provider read tainted its Terraform state record. The deploy
+  workflow now clears only that taint immediately before the full apply. It
+  does not import, delete, rename, or recreate the bucket, and lets the
+  subsequent full graph reconcile every bucket setting normally.
+
+### Verification
+
+- Terraform formatting and staging validation passed. Under Akira's verified
+  AWS identity, the bootstrap plan and apply changed exactly one existing
+  GitHub OIDC role policy in place (0 add, 1 change, 0 destroy) to add the
+  five log-delivery actions. The protected staging workflow remains the live
+  evidence for the in-place console-bucket recovery and edge deployment.

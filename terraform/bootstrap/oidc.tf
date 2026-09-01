@@ -386,6 +386,20 @@ data "aws_iam_policy_document" "deploy_permissions" {
     resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/mortgage-agent-staging*"]
   }
 
+  # API Gateway creates HTTP API access-log subscriptions through the
+  # CloudWatch Logs delivery control plane. Those control-plane calls do not
+  # accept a log-group ARN, so they must be action-scoped; the stage itself
+  # remains limited to the mortgage-agent-staging API by ApiGatewayConsoleEdge.
+  statement {
+    sid    = "ApiGatewayLogDelivery"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery",
+      "logs:DeleteLogDelivery", "logs:ListLogDeliveries",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid       = "TerraformStateBucket"
     effect    = "Allow"

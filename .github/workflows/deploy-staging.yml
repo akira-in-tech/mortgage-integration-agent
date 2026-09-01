@@ -206,6 +206,15 @@ jobs:
       - name: terraform apply
         working-directory: terraform/staging
         run: |
+          # A previous apply created the fixed private console bucket but was
+          # interrupted by an IAM read denial during provider refresh. Terraform
+          # marks that state entry tainted even though the bucket exists and is
+          # the intended object; clear only that local state marker so it is
+          # reconciled in place instead of attempting an invalid same-name
+          # replacement. This command never deletes or recreates a bucket.
+          if terraform state list | grep -Fxq 'aws_s3_bucket.console'; then
+            terraform untaint aws_s3_bucket.console
+          fi
           terraform apply -auto-approve \
             -var="aws_region=${{ vars.AWS_REGION }}" \
             -var="image_tag=${{ github.sha }}"
