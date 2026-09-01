@@ -171,6 +171,9 @@ resource "aws_ecs_service" "temporal" {
   task_definition = aws_ecs_task_definition.temporal.arn
   desired_count   = 1
   launch_type     = "FARGATE"
+  # A successful apply must mean the replacement task is actually stable,
+  # not merely that ECS accepted its desired task-definition revision.
+  wait_for_steady_state = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -231,11 +234,12 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
-  name            = "${local.name}-api"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                  = "${local.name}-api"
+  cluster               = aws_ecs_cluster.this.id
+  task_definition       = aws_ecs_task_definition.api.arn
+  desired_count         = 1
+  launch_type           = "FARGATE"
+  wait_for_steady_state = true
   depends_on = [
     aws_ecs_service.temporal,
     null_resource.migrate,
@@ -292,11 +296,12 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 resource "aws_ecs_service" "worker" {
-  name            = "${local.name}-worker"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.worker.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                  = "${local.name}-worker"
+  cluster               = aws_ecs_cluster.this.id
+  task_definition       = aws_ecs_task_definition.worker.arn
+  desired_count         = 1
+  launch_type           = "FARGATE"
+  wait_for_steady_state = true
   depends_on = [
     aws_ecs_service.temporal,
     null_resource.migrate,

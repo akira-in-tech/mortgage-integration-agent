@@ -12204,3 +12204,9 @@ Implemented; the next protected deployment is required for live verification.
   form, and the environment test proves a ring-only production configuration
   passes. Secrets were inspected only for presence, length, and format; no
   secret value was printed.
+- The edge deploy workflow originally verified readiness immediately after
+  Terraform requested an ECS revision. ECS may still be draining the old task
+  and starting the replacement at that point, so a stale task could return a
+  health 200 while the new task later exits. All three staging services now
+  set Terraform's `wait_for_steady_state`, making task rollout stability a
+  prerequisite for a successful apply and the following HTTP checks.
