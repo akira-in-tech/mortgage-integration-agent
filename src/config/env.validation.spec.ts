@@ -41,6 +41,20 @@ describe('validateEnvironment', () => {
       'postgresql://localhost:5432/mortgage_agent',
     );
     expect(result.SELF_SERVICE_SIGNUP_ENABLED).toBe(false);
+    expect(result.GUEST_SANDBOX_TTL_SECONDS).toBe(3600);
+  });
+
+  it('bounds the anonymous sandbox lifetime', () => {
+    expect(
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '300' }))
+        .GUEST_SANDBOX_TTL_SECONDS,
+    ).toBe(300);
+    expect(() =>
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '299' })),
+    ).toThrow(/GUEST_SANDBOX_TTL_SECONDS/);
+    expect(() =>
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '14401' })),
+    ).toThrow(/GUEST_SANDBOX_TTL_SECONDS/);
   });
 
   it('requires OIDC when self-service signup is enabled', () => {

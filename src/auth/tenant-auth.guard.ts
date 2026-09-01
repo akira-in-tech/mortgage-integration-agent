@@ -1,13 +1,15 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { ApiKeyGuard } from './api-key.guard';
 import { OidcGuard } from './oidc.guard';
+import { GuestSandboxGuard } from './guest-sandbox.guard';
 
 /**
  * The single guard every tenant-scoped controller uses
  * (`@UseGuards(TenantAuthGuard)`, M5-024) — composes `ApiKeyGuard`
- * (machine `api_clients`) and `OidcGuard` (OIDC-linked human `users`/
- * `tenant_memberships`) as *alternatives*, not both required: a request
- * authenticates if either credential type checks out. NestJS's own
+ * (machine `api_clients`), `OidcGuard` (OIDC-linked human `users`/
+ * `tenant_memberships`), and `GuestSandboxGuard` (short-lived synthetic
+ * workspace cookies) as *alternatives*, not all required: a request
+ * authenticates if one credential type checks out. NestJS's own
  * `@UseGuards(...)` only composes guards with AND semantics (every guard
  * must pass); there is no built-in OR, so this class does it explicitly.
  * `ApiKeyGuard` runs first — its own shape check on the bearer token
@@ -23,13 +25,18 @@ export class TenantAuthGuard implements CanActivate {
   constructor(
     private readonly apiKeyGuard: ApiKeyGuard,
     private readonly oidcGuard: OidcGuard,
+    private readonly guestSandboxGuard: GuestSandboxGuard,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     try {
       return await this.apiKeyGuard.canActivate(context);
     } catch {
-      return this.oidcGuard.canActivate(context);
+      try {
+        return await this.oidcGuard.canActivate(context);
+      } catch {
+        return this.guestSandboxGuard.canActivate(context);
+      }
     }
   }
 }

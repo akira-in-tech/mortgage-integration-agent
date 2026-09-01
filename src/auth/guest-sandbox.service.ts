@@ -1,0 +1,291 @@
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
+import { CookieOptions, Request, Response } from 'express';
+import { DataSource, EntityManager, LessThan, Repository } from 'typeorm';
+import { AuthContext } from './auth-context';
+import { GuestSandboxSession } from '../database/entities/guest-sandbox-session.entity';
+import { Tenant } from '../database/entities/tenant.entity';
+import { LoanCase, CaseStatus } from '../database/entities/loan-case.entity';
+import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { LoanType } from '../database/enums/loan-type.enum';
+import { ApiClientRole } from '../database/enums/api-client.enum';
+import { NodeEnvironment } from '../config/env.validation';
+import { readCookie } from './http-cookie';
+
+export const GUEST_SANDBOX_COOKIE = 'meridian_guest_sandbox';
+export const GUEST_SANDBOX_CSRF_COOKIE = 'meridian_guest_sandbox_csrf';
+
+export interface GuestSandboxSummary {
+  authenticated: boolean;
+  tenantId?: string;
+  actorId?: string;
+  csrfToken?: string;
+  expiresAt?: string;
+  caseId?: string;
+}
+
+/**
+ * Creates the public portfolio's disposable workspace. All values are
+ * synthetic and the tenant id is generated server-side; a browser can resume
+ * only its own opaque session and never nominate another visitor's tenant.
+ */
+@Injectable()
+export class GuestSandboxService {
+  private readonly secureCookies: boolean;
+
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @InjectRepository(GuestSandboxSession)
+    private readonly sessionRepository: Repository<GuestSandboxSession>,
+  ) {
+    const environment = configService.get<NodeEnvironment>(
+      'NODE_ENV',
+      NodeEnvironment.Development,
+    );
+    this.secureCookies =
+      environment === NodeEnvironment.Staging ||
+      environment === NodeEnvironment.Production;
+  }
+
+  async create(response: Response): Promise<GuestSandboxSummary> {
+    await this.sessionRepository.delete({ expiresAt: LessThan(new Date()) });
+    const actorId = randomUUID();
+    const now = new Date();
+    const expiresAt = new Date(
+      now.getTime() +
+        this.configService.get<number>('GUEST_SANDBOX_TTL_SECONDS', 3600) *
+          1000,
+    );
+    const sessionToken = this.randomToken();
+    const csrfToken = this.randomToken();
+    const { tenant, seededCase } = await this.dataSource.transaction(
+      async (manager) => {
+        const tenantRepository = manager.getRepository(Tenant);
+        const tenant = await tenantRepository.save(
+          tenantRepository.create({
+            name: `Portfolio sandbox ${randomUUID().slice(0, 8)}`,
+          }),
+        );
+        // Tenant-scoped rows and the corresponding opaque session commit as
+        // one unit. A failed seed cannot leave a reachable empty workspace.
+        await manager.query(
+          `SELECT set_config('app.current_tenant_id', $1, true)`,
+          [tenant.id],
+        );
+        const seededCase = await this.seedCase(manager, tenant.id);
+        const sessionRepository = manager.getRepository(GuestSandboxSession);
+        await sessionRepository.save(
+          sessionRepository.create({
+            sessionTokenHash: this.hash(sessionToken),
+            csrfTokenHash: this.hash(csrfToken),
+            tenantId: tenant.id,
+            actorId,
+            expiresAt,
+            lastUsedAt: now,
+          }),
+        );
+        return { tenant, seededCase };
+      },
+    );
+    this.setCookies(response, sessionToken, csrfToken, expiresAt);
+    return {
+      authenticated: true,
+      tenantId: tenant.id,
+      actorId,
+      csrfToken,
+      expiresAt: expiresAt.toISOString(),
+      caseId: seededCase.id,
+    };
+  }
+
+  async getSession(
+    request: Request,
+    response: Response,
+  ): Promise<GuestSandboxSummary> {
+    try {
+      const { session, csrfToken } = await this.resolve(
+        request,
+        response,
+        false,
+      );
+      return {
+        authenticated: true,
+        tenantId: session.tenantId,
+        actorId: session.actorId,
+        csrfToken,
+        expiresAt: session.expiresAt.toISOString(),
+      };
+    } catch (error) {
+      if (!(error instanceof UnauthorizedException)) throw error;
+      return { authenticated: false };
+    }
+  }
+
+  async authenticate(
+    request: Request,
+    response: Response,
+    requireCsrf: boolean,
+  ): Promise<AuthContext> {
+    const { session } = await this.resolve(request, response, requireCsrf);
+    return {
+      tenantId: session.tenantId,
+      actorId: session.actorId,
+      // The sandbox is intentionally able to demonstrate reviewer decisions,
+      // but only against its new synthetic tenant and simulator-only paths.
+      role: ApiClientRole.REVIEWER,
+      correlationId: randomUUID(),
+    };
+  }
+
+  async logout(request: Request, response: Response): Promise<void> {
+    const { session } = await this.resolve(request, response, true);
+    await this.sessionRepository.delete({ id: session.id });
+    this.clearCookies(response);
+  }
+
+  private async seedCase(
+    manager: EntityManager,
+    tenantId: string,
+  ): Promise<LoanCase> {
+    const caseRepository = manager.getRepository(LoanCase);
+    const loanCase = await caseRepository.save(
+      caseRepository.create({
+        tenantId,
+        idempotencyKey: `portfolio-sandbox-${randomUUID()}`,
+        borrowerId: `synthetic-borrower-${randomUUID().slice(0, 8)}`,
+        requestedAmount: 425000,
+        loanType: LoanType.CONVENTIONAL,
+        // This deliberate mismatch makes the seeded policy pack route the
+        // case to a visible income-review condition after workflow start.
+        statedMonthlyIncome: 1,
+        jurisdictionCode: 'US-CA',
+        status: CaseStatus.DRAFT,
+      }),
+    );
+    const consentRepository = manager.getRepository(ConsentRecord);
+    await consentRepository.save(
+      consentRepository.create({
+        tenantId,
+        caseId: loanCase.id,
+        purpose: 'UNDERWRITING_EVIDENCE',
+        scope: 'INCOME,CREDIT,DOCUMENT,ASSET,IDENTITY',
+        // The workflow dispatches these exact, case-sensitive capabilities.
+        // Keeping the fixture aligned proves consent gates instead of bypassing
+        // them for a portfolio visitor.
+        permittedPurposes: ['UNDERWRITING_EVIDENCE'],
+        permittedDataClasses: [
+          'INCOME',
+          'CREDIT',
+          'DOCUMENT',
+          'ASSET',
+          'IDENTITY',
+        ],
+        grantedAt: new Date(),
+        expiresAt: null,
+        revokedAt: null,
+        revocationReason: null,
+      }),
+    );
+    return loanCase;
+  }
+
+  private async resolve(
+    request: Request,
+    response: Response,
+    requireCsrf: boolean,
+  ): Promise<{ session: GuestSandboxSession; csrfToken: string }> {
+    const rawToken = readCookie(request, GUEST_SANDBOX_COOKIE);
+    if (!rawToken) throw this.unauthorized();
+    const session = await this.sessionRepository.findOneBy({
+      sessionTokenHash: this.hash(rawToken),
+    });
+    if (!session || session.expiresAt.getTime() <= Date.now()) {
+      this.clearCookies(response);
+      throw this.unauthorized();
+    }
+    let csrfToken = readCookie(request, GUEST_SANDBOX_CSRF_COOKIE);
+    if (!csrfToken || this.hash(csrfToken) !== session.csrfTokenHash) {
+      if (requireCsrf) throw this.unauthorized();
+      csrfToken = this.randomToken();
+      session.csrfTokenHash = this.hash(csrfToken);
+      await this.sessionRepository.save(session);
+      response.cookie(
+        GUEST_SANDBOX_CSRF_COOKIE,
+        csrfToken,
+        this.csrfCookieOptions(session.expiresAt),
+      );
+    }
+    if (requireCsrf) {
+      const header = request.headers['x-csrf-token'];
+      if (
+        typeof header !== 'string' ||
+        !this.safeEqual(header, csrfToken) ||
+        this.hash(header) !== session.csrfTokenHash
+      ) {
+        throw this.unauthorized();
+      }
+    }
+    return { session, csrfToken };
+  }
+
+  private setCookies(
+    response: Response,
+    sessionToken: string,
+    csrfToken: string,
+    expiresAt: Date,
+  ): void {
+    response.cookie(GUEST_SANDBOX_COOKIE, sessionToken, {
+      ...this.csrfCookieOptions(expiresAt),
+      httpOnly: true,
+    });
+    response.cookie(
+      GUEST_SANDBOX_CSRF_COOKIE,
+      csrfToken,
+      this.csrfCookieOptions(expiresAt),
+    );
+  }
+
+  private clearCookies(response: Response): void {
+    response.clearCookie(GUEST_SANDBOX_COOKIE, this.csrfCookieOptions());
+    response.clearCookie(GUEST_SANDBOX_CSRF_COOKIE, this.csrfCookieOptions());
+  }
+
+  private csrfCookieOptions(expires?: Date): CookieOptions {
+    return {
+      httpOnly: false,
+      secure: this.secureCookies,
+      sameSite: 'lax',
+      path: '/',
+      ...(expires ? { expires } : {}),
+    };
+  }
+
+  private randomToken(): string {
+    return randomBytes(32).toString('base64url');
+  }
+
+  private hash(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  private safeEqual(left: string, right: string): boolean {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return (
+      leftBuffer.length === rightBuffer.length &&
+      timingSafeEqual(leftBuffer, rightBuffer)
+    );
+  }
+
+  private unauthorized(): UnauthorizedException {
+    return new UnauthorizedException('Invalid or missing API credentials');
+  }
+}

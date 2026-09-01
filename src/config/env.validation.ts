@@ -307,6 +307,14 @@ export class EnvironmentVariables {
   @IsBoolean()
   SELF_SERVICE_SIGNUP_ENABLED: boolean = false;
 
+  // A portfolio visitor gets an isolated, short-lived synthetic workspace.
+  // This must stay bounded so an abandoned browser cannot retain access.
+  @IsOptional()
+  @IsInt()
+  @Min(300)
+  @Max(14_400)
+  GUEST_SANDBOX_TTL_SECONDS: number = 3600;
+
   @IsOptional()
   @IsInt()
   @Min(300)

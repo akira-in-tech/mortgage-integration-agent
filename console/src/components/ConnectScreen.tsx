@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { setStoredToken, setStoredActorId } from '../auth';
 import { beginOidcLogin } from '../oidc';
+import { createDemoSandbox } from '../demo-sandbox';
 
 type Mode = 'bearer' | 'oidc';
 
@@ -15,6 +16,28 @@ export function ConnectScreen({
   const [token, setToken] = useState('');
   const [actorId, setActorId] = useState('');
   const [redirecting, setRedirecting] = useState(false);
+  const [startingSandbox, setStartingSandbox] = useState(false);
+  const [sandboxError, setSandboxError] = useState<string | null>(null);
+
+  async function startSandbox() {
+    setStartingSandbox(true);
+    setSandboxError(null);
+    try {
+      const sandbox = await createDemoSandbox();
+      // Audit fields expect an opaque UUID. The server generates it with the
+      // isolated tenant rather than trusting a browser-chosen display name.
+      setStoredActorId(sandbox.actorId ?? '');
+      onConnected();
+    } catch (error) {
+      setSandboxError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to create a live sandbox.',
+      );
+    } finally {
+      setStartingSandbox(false);
+    }
+  }
 
   function connectWithBearer(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +76,40 @@ export function ConnectScreen({
         >
           Connect to Meridian
         </h1>
+
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void startSandbox()}
+          disabled={startingSandbox}
+          style={{
+            width: '100%',
+            justifyContent: 'center',
+            margin: '16px 0 8px',
+          }}
+        >
+          {startingSandbox ? 'Creating your sandbox…' : 'Try live sandbox'}
+        </button>
+        <p
+          style={{
+            fontSize: 12,
+            color: 'var(--ink-muted)',
+            lineHeight: 1.5,
+            margin: '0 0 18px',
+          }}
+        >
+          No sign-up. Explore a private, synthetic case with agent workflows,
+          policy checks, reviewer actions, and audit history. Your workspace
+          expires automatically.
+        </p>
+        {sandboxError && (
+          <div
+            role="alert"
+            style={{ fontSize: 12, color: '#b42318', marginBottom: 12 }}
+          >
+            {sandboxError}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
           <ModeTab active={mode === 'bearer'} onClick={() => setMode('bearer')}>

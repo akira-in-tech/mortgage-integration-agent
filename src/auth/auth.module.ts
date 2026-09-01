@@ -17,6 +17,10 @@ import { AuthController } from './auth.controller';
 import { OidcSession } from '../database/entities/oidc-session.entity';
 import { OidcSessionService } from './oidc-session.service';
 import { SelfServiceProvisioningService } from './self-service-provisioning.service';
+import { GuestSandboxSession } from '../database/entities/guest-sandbox-session.entity';
+import { GuestSandboxService } from './guest-sandbox.service';
+import { GuestSandboxGuard } from './guest-sandbox.guard';
+import { GuestSandboxController } from './guest-sandbox.controller';
 
 /**
  * `@Global()`: `TenantAuthGuard` is applied via `@UseGuards(TenantAuthGuard)`
@@ -37,6 +41,7 @@ import { SelfServiceProvisioningService } from './self-service-provisioning.serv
       TenantMembership,
       Tenant,
       OidcSession,
+      GuestSandboxSession,
     ]),
     AuditModule,
   ],
@@ -51,8 +56,10 @@ import { SelfServiceProvisioningService } from './self-service-provisioning.serv
     RoleGuard,
     TenantMembershipDirectoryService,
     SelfServiceProvisioningService,
+    GuestSandboxService,
+    GuestSandboxGuard,
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, GuestSandboxController],
   exports: [
     ApiClientService,
     ApiKeyGuard,
@@ -64,6 +71,8 @@ import { SelfServiceProvisioningService } from './self-service-provisioning.serv
     RoleGuard,
     TenantMembershipDirectoryService,
     SelfServiceProvisioningService,
+    GuestSandboxService,
+    GuestSandboxGuard,
   ],
 })
 export class AuthModule {}

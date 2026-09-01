@@ -12325,3 +12325,45 @@ This remains a synthetic demonstration environment. Each public account must
 use its own reachable email address to complete Cognito verification, and it
 must not be used for borrower information, real underwriting, lender approval,
 or movement of funds.
+
+## M7-054: one-click isolated guest sandbox
+
+### Status
+
+Implemented. CI and staged edge verification are recorded after the protected
+workflow and AWS deployment complete.
+
+### Implementation
+
+- Made **Try live sandbox** the primary console entry point. It creates a
+  separate synthetic tenant, one pre-seeded conventional case, a deliberately
+  visible income discrepancy, and the matching `UNDERWRITING_EVIDENCE`
+  consent scope required by the real workflow. The sample is therefore able
+  to exercise policy checks, agent orchestration, reviewer actions, and audit
+  history without using a shared account or real borrower information.
+- Added `guest_sandbox_sessions`, which stores only SHA-256 hashes of opaque
+  session and CSRF tokens. The tenant id and UUID reviewer actor are generated
+  on the server and never accepted from the browser. Tenant, seeded rows, and
+  session are committed as one transaction so a failed seed cannot leave a
+  reachable partial workspace.
+- Extended the existing tenant-authentication OR boundary with a guest-cookie
+  path. It grants `REVIEWER` authority only for that new synthetic tenant;
+  ordinary API-client and OIDC paths remain unchanged. Browser mutations and
+  logout require a matching double-submit CSRF token. The durable public
+  creation endpoint is limited to five requests per minute, while the
+  workspace itself expires after a configurable one-hour default (bounded to
+  five minutes through four hours).
+- The browser persists only a non-authoritative display/resume hint. The
+  actual session remains an HttpOnly cookie; reload restores it by asking the
+  server, and disconnect deletes the server-side session when possible.
+
+### Verification
+
+- Added targeted unit coverage for opaque-token storage, generated tenant and
+  actor authority, workflow-compatible consent scope, CSRF-protected mutation
+  and logout, and bounded sandbox TTL configuration.
+- Formatted the changed TypeScript/TSX sources, checked the working diff for
+  whitespace errors, and transpiled all changed backend and console sources.
+- Full backend/console build, migrations, browser checks, generated-contract
+  drift verification, and the staging edge walkthrough remain required before
+  this entry is considered deployment-verified.
