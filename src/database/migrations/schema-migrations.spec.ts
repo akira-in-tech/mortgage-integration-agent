@@ -105,6 +105,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'evaluation_input_manifests',
       'evaluation_report_records',
       'evidence_facts',
+      'guest_sandbox_sessions',
       'jurisdictions',
       'legal_holds',
       'loan_applications',
@@ -185,8 +186,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // webhook_deliveries -> outbox_events, OIDC sessions -> users, agent
     // budget reservations -> the tenant-matching authoritative budget ledger,
     // aggregate usage -> tenants, reservations -> their aggregate month
-    // agent_runs -> its optional bounded model invocation
-    expect(foreignKeys).toHaveLength(23);
+    // agent_runs -> its optional bounded model invocation, guest sandbox
+    // sessions -> their disposable tenant
+    expect(foreignKeys).toHaveLength(24);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -227,6 +229,15 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       { column_name: 'rateWindowAttempts', column_default: '0' },
       { column_name: 'rateWindowStartedAt', column_default: null },
     ]);
+  });
+
+  it('reverts guest-sandbox session metadata without removing its synthetic case prerequisites', async () => {
+    expect(await tableNames()).toContain('guest_sandbox_sessions');
+    await scratchDataSource.undoLastMigration();
+    expect(await tableNames()).not.toContain('guest_sandbox_sessions');
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['consent_records', 'loan_cases', 'tenants']),
+    );
   });
 
   it('reverts document-vault metadata without removing the case aggregate', async () => {
