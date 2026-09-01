@@ -12185,3 +12185,9 @@ Implemented; the next protected deployment is required for live verification.
   route, not because the edge or application was unhealthy. The edge now
   explicitly proxies `/health/{proxy+}` for the same public deployment check;
   those health responses contain no tenant or borrower data.
+- API Gateway route inspection confirmed the health route was deployed, while
+  its HTTP proxy returned the application's `Cannot GET /` response. Named
+  HTTP API routes require an explicit request-path mapping when the integration
+  URI ends at the ALB root. The integration now uses API Gateway's
+  `overwrite:path = $request.path` mapping, preserving `/v1/*`, `/graphql`,
+  and `/health/*` end-to-end without injecting the public host header.

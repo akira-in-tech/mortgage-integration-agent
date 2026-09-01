@@ -65,6 +65,11 @@ resource "aws_apigatewayv2_integration" "app" {
   # from bypassing the HTTPS edge through the ALB's public DNS name.
   request_parameters = {
     "overwrite:header.x-mortgage-edge-origin" = random_password.edge_origin.result
+    # Explicitly preserve the browser path when proxying a named HTTP API
+    # route. Without this mapping API Gateway uses the integration URI's root,
+    # which would turn /v1/*, /graphql, and /health/* into a backend request
+    # for / rather than the route the caller selected.
+    "overwrite:path" = "$request.path"
   }
 }
 
