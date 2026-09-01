@@ -12210,3 +12210,10 @@ Implemented; the next protected deployment is required for live verification.
   health 200 while the new task later exits. All three staging services now
   set Terraform's `wait_for_steady_state`, making task rollout stability a
   prerequisite for a successful apply and the following HTTP checks.
+- That new gate correctly held the next apply while the worker failed its
+  replacement revision: a shared secret list had supplied API-only OIDC client
+  and session secrets to the worker, causing its fail-closed configuration
+  rule to see incomplete human-login settings. Shared runtime secrets and the
+  API-only OIDC secrets are now separate. The worker retains no unnecessary
+  OIDC client or session material, and its environment no longer activates
+  the API's login-validation path.

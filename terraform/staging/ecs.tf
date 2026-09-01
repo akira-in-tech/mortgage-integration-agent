@@ -103,11 +103,18 @@ locals {
   # so the admin URL is still injected here (from Secrets Manager, never
   # plaintext) purely to satisfy that startup check, not because the app
   # connects with it.
+  # All application processes require the database, signing, and provider-data
+  # secrets. Only the browser-facing API is an OIDC relying party, so its
+  # client/session secrets stay separate instead of making worker startup
+  # depend on human-login configuration it never uses.
   app_secret_env = [
     { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
     { name = "APP_DATABASE_URL", valueFrom = aws_secretsmanager_secret.app_database_url.arn },
     { name = "OUTBOX_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.outbox_signing_secret.arn },
     { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
+  ]
+
+  api_oidc_secret_env = [
     { name = "OIDC_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client_secret.arn },
     { name = "OIDC_SESSION_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.oidc_session_encryption_keys.arn },
   ]
@@ -216,7 +223,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "CORS_ALLOWED_ORIGINS", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
     ]
     secrets = [
-      for e in local.app_secret_env : { name = e.name, valueFrom = e.valueFrom }
+      for e in concat(local.app_secret_env, local.api_oidc_secret_env) : { name = e.name, valueFrom = e.valueFrom }
     ]
     logConfiguration = {
       logDriver = "awslogs"
