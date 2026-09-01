@@ -12309,6 +12309,15 @@ then fail closed at the application boundary.
   console lint/unit/build/Playwright, live Keycloak OIDC browser regression,
   container build, Semgrep, secret scanning, production dependency audit, and
   generated-contract drift checks all completed successfully.
+- GitHub Actions staging deployment `33519988652` completed successfully for
+  commit `7456e07`. Terraform updated the Cognito configuration and waited
+  for API, Worker, and Temporal to return to `desired=1`, `running=1`, and
+  `COMPLETED`. Live read-back confirmed public registration and Cognito email
+  verification are enabled. The deployed CloudFront console returned 200 for
+  `/health/ready`, 401 for an unauthenticated membership request, and 302 to
+  Cognito from the BFF login route; following the hosted signup route reached
+  a terminal 200 without creating an account. Direct ALB business access
+  remained 403.
 
 ### Remaining boundary
 
