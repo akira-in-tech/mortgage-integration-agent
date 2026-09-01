@@ -12330,8 +12330,7 @@ or movement of funds.
 
 ### Status
 
-Implemented. CI and staged edge verification are recorded after the protected
-workflow and AWS deployment complete.
+Implemented, CI-verified, and deployed to the synthetic AWS staging edge.
 
 ### Implementation
 
@@ -12375,6 +12374,28 @@ workflow and AWS deployment complete.
   the new REST session endpoint added three OpenAPI operations. The checked-in
   OpenAPI artifact and generated TypeScript client now include those exact
   `POST`/`GET`/`DELETE` operations before the final CI run.
-- Full backend/console build, migrations, browser checks, generated-contract
-  drift verification, and the staging edge walkthrough remain required before
-  this entry is considered deployment-verified.
+- GitHub Actions CI run `33523969485` passed for commit `e5878f1`: backend
+  lint/build/migrations, full Jest and e2e suites, console lint/unit/build/
+  Playwright, live Keycloak OIDC browser regression, container build, Semgrep,
+  secret scanning, production dependency audit, and generated-contract drift
+  checks all completed successfully.
+- GitHub Actions staging deployment `33524379968` then completed successfully
+  for the same commit. It built the immutable image and supply-chain evidence,
+  applied Terraform, ran the migration task, and waited for the ECS services
+  to reach steady state before publishing the updated console through the
+  existing CloudFront distribution.
+- A direct CloudFront-only synthetic verification returned `200` for
+  readiness and `201` for each of two new guest workspaces. Their server
+  generated tenant, actor, and case ids differed; resuming the first cookie
+  returned that same tenant and actor. A POST GraphQL query without CSRF was
+  rejected as `UNAUTHENTICATED`; a CSRF-bearing query returned only its own
+  seeded case; and a request for the second sandbox's case returned a
+  tenant-scoped rejection with no cross-tenant data. Finally, a fresh
+  synthetic sandbox started its real Temporal case-conditions workflow and
+  received a workflow id and run id. No real borrower or institution data was
+  read, written, or transmitted.
+- The edge harness briefly received an unauthenticated response after writing
+  a no-Set-Cookie session-status response back into the same curl cookie-jar
+  output path, which emptied the test jar. Repeating with the jar read-only
+  restored the expected session and workflow behavior; this was a harness
+  state-management error, not a server-side session or CSRF bypass.
