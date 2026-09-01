@@ -12191,3 +12191,9 @@ Implemented; the next protected deployment is required for live verification.
   URI ends at the ALB root. The integration now uses API Gateway's
   `overwrite:path = $request.path` mapping, preserving `/v1/*`, `/graphql`,
   and `/health/*` end-to-end without injecting the public host header.
+- ECS task-definition inspection and API logs exposed a final authentication
+  blocker: Cognito's Terraform `endpoint` is a hostname, while the app's
+  production-like environment validation correctly requires an HTTPS issuer
+  URL. The API task now receives `https://` plus the Cognito endpoint. A
+  former readiness 200 came from the prior healthy task and is not treated as
+  proof of the new OIDC configuration; the redeploy must prove login itself.

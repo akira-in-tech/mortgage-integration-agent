@@ -201,7 +201,11 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PORT", value = "3000" },
       { name = "DECISION_PROVIDER", value = "rules" },
       { name = "TEMPORAL_ADDRESS", value = "${local.temporal_dns}:7233" },
-      { name = "OIDC_ISSUER_URL", value = aws_cognito_user_pool.console.endpoint },
+      # Cognito exposes its issuer hostname without a URI scheme. The
+      # application validates OIDC issuers as HTTPS URLs before startup, so
+      # construct the standards-compliant issuer instead of passing the bare
+      # provider hostname into the task environment.
+      { name = "OIDC_ISSUER_URL", value = "https://${aws_cognito_user_pool.console.endpoint}" },
       { name = "OIDC_AUDIENCE", value = aws_cognito_user_pool_client.console.id },
       { name = "OIDC_CLIENT_ID", value = aws_cognito_user_pool_client.console.id },
       { name = "OIDC_CALLBACK_URL", value = "https://${aws_cloudfront_distribution.console.domain_name}/v1/auth/session/callback" },
