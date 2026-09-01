@@ -16,6 +16,7 @@ import { TenantMembershipDirectoryService } from './tenant-membership-directory.
 import { AuthController } from './auth.controller';
 import { OidcSession } from '../database/entities/oidc-session.entity';
 import { OidcSessionService } from './oidc-session.service';
+import { SelfServiceProvisioningService } from './self-service-provisioning.service';
 
 /**
  * `@Global()`: `TenantAuthGuard` is applied via `@UseGuards(TenantAuthGuard)`
@@ -49,6 +50,7 @@ import { OidcSessionService } from './oidc-session.service';
     TenantAuthGuard,
     RoleGuard,
     TenantMembershipDirectoryService,
+    SelfServiceProvisioningService,
   ],
   controllers: [AuthController],
   exports: [
@@ -61,6 +63,7 @@ import { OidcSessionService } from './oidc-session.service';
     TenantAuthGuard,
     RoleGuard,
     TenantMembershipDirectoryService,
+    SelfServiceProvisioningService,
   ],
 })
 export class AuthModule {}

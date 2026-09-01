@@ -40,6 +40,23 @@ describe('validateEnvironment', () => {
     expect(result.DATABASE_URL).toBe(
       'postgresql://localhost:5432/mortgage_agent',
     );
+    expect(result.SELF_SERVICE_SIGNUP_ENABLED).toBe(false);
+  });
+
+  it('requires OIDC when self-service signup is enabled', () => {
+    expect(() =>
+      validateEnvironment(baseConfig({ SELF_SERVICE_SIGNUP_ENABLED: 'true' })),
+    ).toThrow(/OIDC_ISSUER_URL and OIDC_AUDIENCE/);
+
+    expect(
+      validateEnvironment(
+        baseConfig({
+          SELF_SERVICE_SIGNUP_ENABLED: 'true',
+          OIDC_ISSUER_URL: 'https://identity.example.test',
+          OIDC_AUDIENCE: 'mortgage-console',
+        }),
+      ).SELF_SERVICE_SIGNUP_ENABLED,
+    ).toBe(true);
   });
 
   it('accepts an explicit, fully specified config', () => {

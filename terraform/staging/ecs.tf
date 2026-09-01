@@ -221,6 +221,10 @@ resource "aws_ecs_task_definition" "api" {
       { name = "OIDC_CALLBACK_URL", value = "https://${aws_cloudfront_distribution.console.domain_name}/v1/auth/session/callback" },
       { name = "CONSOLE_ORIGIN", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
       { name = "CORS_ALLOWED_ORIGINS", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
+      # Public Cognito registration is safe only with application-side tenant
+      # isolation. The API creates a new empty workspace, never a membership
+      # in the shared walkthrough tenant, for a newly verified identity.
+      { name = "SELF_SERVICE_SIGNUP_ENABLED", value = "true" },
     ]
     secrets = [
       for e in concat(local.app_secret_env, local.api_oidc_secret_env) : { name = e.name, valueFrom = e.valueFrom }

@@ -4,6 +4,7 @@ import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 
 export interface OidcClaims extends JWTPayload {
   sub: string;
+  email?: string;
 }
 
 export interface OidcDiscoveryDocument {
@@ -66,6 +67,23 @@ export class OidcService {
    * discipline for this exact same reason.
    */
   async verify(token: string): Promise<OidcClaims> {
+    return this.verifyToken(token, 'access');
+  }
+
+  /**
+   * A new self-service user is provisioned from an ID token only: unlike an
+   * access token, its `email` claim is identity metadata returned under the
+   * requested OIDC `email` scope. Signature, issuer, and client checks stay
+   * identical to the access-token path before that metadata is trusted.
+   */
+  async verifyIdToken(token: string): Promise<OidcClaims> {
+    return this.verifyToken(token, 'id');
+  }
+
+  private async verifyToken(
+    token: string,
+    expectedTokenUse: 'access' | 'id',
+  ): Promise<OidcClaims> {
     if (!this.issuer || !this.audience) {
       throw new UnauthorizedException('OIDC is not configured');
     }
@@ -80,8 +98,11 @@ export class OidcService {
       if (!this.matchesAudience(payload, this.audience)) {
         throw new Error('token audience does not match configured client');
       }
-      if (payload.token_use !== undefined && payload.token_use !== 'access') {
-        throw new Error('token is not an access token');
+      if (
+        payload.token_use !== undefined &&
+        payload.token_use !== expectedTokenUse
+      ) {
+        throw new Error(`token is not an ${expectedTokenUse} token`);
       }
       if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
         throw new Error('token has no sub claim');

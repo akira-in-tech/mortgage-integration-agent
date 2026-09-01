@@ -15,6 +15,7 @@ import { User } from '../database/entities/user.entity';
 import { NodeEnvironment } from '../config/env.validation';
 import { OidcClaims, OidcService, OidcTokenResponse } from './oidc.service';
 import { readCookie } from './http-cookie';
+import { SelfServiceProvisioningService } from './self-service-provisioning.service';
 
 export const OIDC_SESSION_COOKIE = 'meridian_session';
 export const OIDC_CSRF_COOKIE = 'meridian_csrf';
@@ -63,6 +64,7 @@ export class OidcSessionService {
     private readonly sessionRepository: Repository<OidcSession>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly selfServiceProvisioning: SelfServiceProvisioningService,
   ) {
     const nodeEnv = configService.get<NodeEnvironment>(
       'NODE_ENV',
@@ -145,7 +147,13 @@ export class OidcSessionService {
       codeVerifier: verifier,
     });
     const claims = await this.oidcService.verify(tokens.access_token);
-    const user = await this.userRepository.findOneBy({ subject: claims.sub });
+    const identityClaims = tokens.id_token
+      ? await this.oidcService.verifyIdToken(tokens.id_token)
+      : undefined;
+    const user = await this.selfServiceProvisioning.resolveUser(
+      claims,
+      identityClaims,
+    );
     if (!user) {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }

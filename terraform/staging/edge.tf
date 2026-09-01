@@ -233,7 +233,12 @@ resource "aws_cognito_user_pool" "console" {
   deletion_protection = "INACTIVE"
   mfa_configuration   = "OFF"
   username_configuration { case_sensitive = false }
-  admin_create_user_config { allow_admin_create_user_only = true }
+  # The persistent staging demo permits a person to create an account from
+  # Cognito's hosted UI. Application-side provisioning still creates an
+  # isolated tenant and least-privilege membership; registration never grants
+  # access to the shared synthetic-reviewer workspace.
+  admin_create_user_config { allow_admin_create_user_only = false }
+  auto_verified_attributes = ["email"]
 
   password_policy {
     minimum_length                   = 16

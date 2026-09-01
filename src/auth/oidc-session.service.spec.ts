@@ -44,6 +44,7 @@ describe('OidcSessionService', () => {
     delete: jest.Mock;
     findOneBy: jest.Mock;
   };
+  let selfServiceProvisioning: { resolveUser: jest.Mock };
   let response: Pick<Response, 'cookie' | 'clearCookie'>;
   let service: OidcSessionService;
 
@@ -58,6 +59,9 @@ describe('OidcSessionService', () => {
         expires_in: 300,
       }),
       verify: jest.fn().mockResolvedValue({ sub: USER.subject }),
+      verifyIdToken: jest
+        .fn()
+        .mockResolvedValue({ sub: USER.subject, email: USER.email }),
       refresh: jest.fn(),
       buildLogoutUrl: jest.fn().mockResolvedValue('https://idp/logout'),
     };
@@ -78,6 +82,9 @@ describe('OidcSessionService', () => {
         subject === USER.subject || id === USER.id ? USER : null,
       ),
     };
+    selfServiceProvisioning = {
+      resolveUser: jest.fn().mockResolvedValue(USER),
+    };
     const config = new ConfigService({
       NODE_ENV: 'test',
       OIDC_CALLBACK_URL: 'http://localhost:5173/v1/auth/session/callback',
@@ -94,6 +101,7 @@ describe('OidcSessionService', () => {
       config,
       sessionRepository as never,
       userRepository as never,
+      selfServiceProvisioning as never,
     );
   });
 
@@ -152,6 +160,10 @@ describe('OidcSessionService', () => {
     expect(stored?.encryptedTokenBundle).toMatch(/^v2\.legacy\./);
     expect(stored?.encryptedTokenBundle).not.toContain('provider-access-token');
     expect(JSON.stringify(stored)).not.toContain('provider-refresh-token');
+    expect(selfServiceProvisioning.resolveUser).toHaveBeenCalledWith(
+      { sub: USER.subject },
+      { sub: USER.subject, email: USER.email },
+    );
 
     const sessionCookie = (response.cookie as jest.Mock).mock.calls.find(
       ([name]) => name === OIDC_SESSION_COOKIE,

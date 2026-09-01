@@ -294,6 +294,19 @@ export class EnvironmentVariables {
   )
   OIDC_SESSION_ENCRYPTION_KEYS?: string;
 
+  // Self-service registration remains opt-in. When enabled, the OIDC session
+  // completion flow creates an isolated empty tenant with the routine
+  // PARTNER role; it never grants access to another tenant's cases.
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  SELF_SERVICE_SIGNUP_ENABLED: boolean = false;
+
   @IsOptional()
   @IsInt()
   @Min(300)
@@ -408,7 +421,8 @@ export function validateEnvironment(
     validatedConfig.OIDC_CALLBACK_URL ||
     validatedConfig.CONSOLE_ORIGIN ||
     validatedConfig.OIDC_SESSION_ENCRYPTION_KEY ||
-    validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS,
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS ||
+    validatedConfig.SELF_SERVICE_SIGNUP_ENABLED,
   );
   if (
     issuerConfigured !== audienceConfigured ||

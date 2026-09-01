@@ -23,6 +23,11 @@ personal credential. Its state lives in the S3 backend that
 - A staging-only task provisions one synthetic Cognito reviewer into the
   application's separate `users` and `tenant_memberships` authorization model.
   It neither creates real borrower identities nor relaxes tenant checks.
+- Cognito's hosted UI allows public email-verified registration. On first
+  callback, the API creates a separate empty tenant with a `PARTNER`
+  membership; it never gives a new account access to the shared synthetic
+  reviewer tenant or its cases. `REVIEWER` approvals still require explicit
+  operator provisioning.
 
 This is a persistent synthetic demo, not a production lending deployment. Do
 not enter borrower data, rely on its policy simulations, or treat Cognito demo

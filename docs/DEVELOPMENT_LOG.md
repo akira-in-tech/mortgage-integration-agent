@@ -12257,3 +12257,59 @@ no UI recording has been created and no synthetic password was entered or
 printed. The next walkthrough should use the Cognito redirect above, retrieve
 the existing synthetic-reviewer password directly from AWS Secrets Manager
 under the operator's identity, and capture only synthetic case data.
+
+## M7-053: public self-service staging registration with tenant isolation
+
+### Status
+
+Implemented for the persistent synthetic staging console. Final CI/deployment
+verification is required before treating the changed Cognito configuration as
+live.
+
+### Problem
+
+The prior Cognito user pool deliberately allowed only administrator-created
+accounts. That protected the first walkthrough credential, but it also meant a
+person opening the hosted login page could not create their own demo account.
+Merely enabling Cognito self-registration would be incomplete: the API's
+separate authorization model requires a `users` row and a tenant membership,
+so a newly registered person would otherwise finish OAuth successfully and
+then fail closed at the application boundary.
+
+### Implementation
+
+- Enabled Cognito hosted-UI registration and required email verification in
+  staging. Registration remains identity-provider-only; the API does not
+  become an authorization server and does not mint machine credentials.
+- Added the explicit, default-off `SELF_SERVICE_SIGNUP_ENABLED` environment
+  gate. Staging alone sets it true; every other deployment retains the
+  previous operator-provisioned behavior unless it deliberately opts in.
+- Added `SelfServiceProvisioningService`. A successful Authorization Code
+  callback still verifies the access token for session authority, then verifies
+  the returned ID token independently before trusting its scoped email claim.
+  The two subjects must match.
+- For a first verified identity, one transaction creates an empty tenant, a
+  global OIDC-linked user, and exactly one `PARTNER` membership. The tenant
+  name carries no email or other identity attribute. Existing users keep their
+  current memberships unchanged, and a PostgreSQL unique-subject race rolls
+  back the losing transaction and resumes the already-committed identity.
+- Registration cannot attach a user to the synthetic reviewer tenant, infer a
+  tenant id from the browser, issue a machine credential, or grant
+  `REVIEWER` authority. Reviewer-only protected communications and decisions
+  remain separately gated.
+
+### Verification
+
+- Terraform staging formatting and static configuration validation passed.
+- Targeted unit coverage was added for disabled registration, unchanged
+  operator-provisioned users, verified-email provisioning with the `PARTNER`
+  role, and mismatched access/ID-token subjects. Backend lint, build, and the
+  targeted suite are run by CI before deployment; their results are recorded
+  with the deployment commit.
+
+### Remaining boundary
+
+This remains a synthetic demonstration environment. Each public account must
+use its own reachable email address to complete Cognito verification, and it
+must not be used for borrower information, real underwriting, lender approval,
+or movement of funds.
