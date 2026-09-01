@@ -80,6 +80,16 @@ resource "aws_apigatewayv2_route" "graphql" {
   target    = "integrations/${aws_apigatewayv2_integration.app.id}"
 }
 
+# Deployment verification uses the same public HTTPS edge as the browser, so
+# readiness must be routable through API Gateway as well as the ALB. The app's
+# health endpoints expose no tenant or borrower data; authenticated business
+# routes remain limited to the /v1 and /graphql routes above.
+resource "aws_apigatewayv2_route" "health" {
+  api_id    = aws_apigatewayv2_api.edge.id
+  route_key = "ANY /health/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.app.id}"
+}
+
 resource "aws_apigatewayv2_stage" "edge" {
   api_id      = aws_apigatewayv2_api.edge.id
   name        = "$default"

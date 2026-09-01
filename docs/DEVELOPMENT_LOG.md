@@ -12179,3 +12179,9 @@ Implemented; the next protected deployment is required for live verification.
   single successful execution. Terraform correctly rejects an `untaint` call
   for a healthy state entry, so retaining it would turn the next ordinary
   deployment into a false failure instead of adding safety.
+- Independent edge checks then confirmed a TLS-verified 200 for the console,
+  a 403 for a direct ALB application route, and a 200 for direct ALB readiness.
+  The CloudFront readiness request was 404 because HTTP API had no health
+  route, not because the edge or application was unhealthy. The edge now
+  explicitly proxies `/health/{proxy+}` for the same public deployment check;
+  those health responses contain no tenant or borrower data.
