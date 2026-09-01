@@ -142,7 +142,7 @@ resource "aws_cloudfront_distribution" "console" {
   default_cache_behavior {
     target_origin_id       = "console-assets"
     viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    allowed_methods        = ["HEAD", "GET", "OPTIONS"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
@@ -152,17 +152,20 @@ resource "aws_cloudfront_distribution" "console" {
     path_pattern             = "/v1/*"
     target_origin_id         = "api-edge"
     viewer_protocol_policy   = "https-only"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]
+    allowed_methods          = ["HEAD", "DELETE", "POST", "GET", "OPTIONS", "PUT", "PATCH"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.api.id
   }
 
   ordered_cache_behavior {
-    path_pattern             = "/graphql"
-    target_origin_id         = "api-edge"
-    viewer_protocol_policy   = "https-only"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS", "POST"]
+    path_pattern           = "/graphql"
+    target_origin_id       = "api-edge"
+    viewer_protocol_policy = "https-only"
+    # CloudFront supports only its three documented method sets. GraphQL needs
+    # POST, so it must use the full mutating set; application routes and the
+    # authenticated API layer remain the authority for accepted operations.
+    allowed_methods          = ["HEAD", "DELETE", "POST", "GET", "OPTIONS", "PUT", "PATCH"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.api.id
@@ -172,7 +175,7 @@ resource "aws_cloudfront_distribution" "console" {
     path_pattern             = "/health/*"
     target_origin_id         = "api-edge"
     viewer_protocol_policy   = "https-only"
-    allowed_methods          = ["GET", "HEAD", "OPTIONS"]
+    allowed_methods          = ["HEAD", "GET", "OPTIONS"]
     cached_methods           = ["GET", "HEAD"]
     cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
     origin_request_policy_id = aws_cloudfront_origin_request_policy.api.id

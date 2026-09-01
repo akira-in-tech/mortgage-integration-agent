@@ -12164,5 +12164,14 @@ Implemented; the next protected deployment is required for live verification.
 - Terraform formatting and staging validation passed. Under Akira's verified
   AWS identity, the bootstrap plan and apply changed exactly one existing
   GitHub OIDC role policy in place (0 add, 1 change, 0 destroy) to add the
-  five log-delivery actions. The protected staging workflow remains the live
-  evidence for the in-place console-bucket recovery and edge deployment.
+  five log-delivery actions. The next protected workflow confirmed that the
+  taint recovery reconciled the existing console bucket in place, and both the
+  migration and staging-only synthetic-reviewer bootstrap exited 0.
+- That apply exposed two AWS service-contract requirements rather than a
+  bucket-state failure: first-time HTTP API log delivery also needs the Logs
+  resource-policy actions, and CloudFront only accepts one of its three exact
+  allowed-method sets. The IAM policy now adds only the two resource-policy
+  actions; the CloudFront behaviours use the documented method-set ordering.
+  GraphQL must use the full mutating set because CloudFront has no four-method
+  GET/HEAD/OPTIONS/POST option. Application routing and authenticated API
+  controls still reject unsupported operations.
