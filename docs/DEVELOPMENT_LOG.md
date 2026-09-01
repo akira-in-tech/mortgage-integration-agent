@@ -12303,9 +12303,12 @@ then fail closed at the application boundary.
 - Terraform staging formatting and static configuration validation passed.
 - Targeted unit coverage was added for disabled registration, unchanged
   operator-provisioned users, verified-email provisioning with the `PARTNER`
-  role, and mismatched access/ID-token subjects. Backend lint, build, and the
-  targeted suite are run by CI before deployment; their results are recorded
-  with the deployment commit.
+  role, and mismatched access/ID-token subjects.
+- GitHub Actions CI run `33519562463` passed for commit `3674e52`: backend
+  lint/build/migrations, the full forced-exit Jest suite, backend e2e,
+  console lint/unit/build/Playwright, live Keycloak OIDC browser regression,
+  container build, Semgrep, secret scanning, production dependency audit, and
+  generated-contract drift checks all completed successfully.
 
 ### Remaining boundary
 
