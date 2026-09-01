@@ -12175,3 +12175,7 @@ Implemented; the next protected deployment is required for live verification.
   GraphQL must use the full mutating set because CloudFront has no four-method
   GET/HEAD/OPTIONS/POST option. Application routing and authenticated API
   controls still reject unsupported operations.
+- The recovery command was then removed from the persistent workflow after its
+  single successful execution. Terraform correctly rejects an `untaint` call
+  for a healthy state entry, so retaining it would turn the next ordinary
+  deployment into a false failure instead of adding safety.
