@@ -12364,6 +12364,12 @@ workflow and AWS deployment complete.
   and logout, and bounded sandbox TTL configuration.
 - Formatted the changed TypeScript/TSX sources, checked the working diff for
   whitespace errors, and transpiled all changed backend and console sources.
+- The first protected CI run caught an incomplete cumulative-migration test
+  update, not a failed migration: its ordered rollback sequence must remove
+  the newest migration before asserting the preceding document-vault schema.
+  The suite now asserts the new table and foreign key in the fully migrated
+  shape, then explicitly rolls the guest-session migration back before the
+  existing reverse-order assertions continue.
 - Full backend/console build, migrations, browser checks, generated-contract
   drift verification, and the staging edge walkthrough remain required before
   this entry is considered deployment-verified.
