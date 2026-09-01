@@ -12222,3 +12222,38 @@ Implemented; the next protected deployment is required for live verification.
   had image metadata reads but lacked ECR's per-layer download action. The role
   now adds only `ecr:GetDownloadUrlForLayer`, scoped to the existing
   `mortgage-agent*` repositories; no registry-wide read is granted.
+
+## M7-052: live AWS-only authenticated staging edge
+
+### Status
+
+Infrastructure deployment and machine-verifiable edge checks completed. A
+human-browser recording remains pending, and must use only the synthetic
+reviewer account with no real borrower data.
+
+### Live verification
+
+- GitHub Actions run `33492019400` completed successfully for commit
+  `f3a3446`. It built and pulled the immutable image, generated and verified
+  SBOM/provenance attestations, completed Terraform apply, and published the
+  private S3 console through CloudFront.
+- The AWS-managed CloudFront hostname is `d136v61al3mroo.cloudfront.net` and
+  its distribution status is `Deployed`. The console and `/health/ready` each
+  returned a TLS-verified HTTP 200 through that hostname.
+- The same edge returned 401 for `/v1/auth/me/tenants` without a session and
+  a 302 from `/v1/auth/session/login` to the configured Cognito hosted domain.
+  Direct ALB business access returned 403 while direct ALB readiness returned
+  200, proving the intended edge-origin boundary without concealing deploy
+  health.
+- Temporal, API, and Worker each reached desired count 1 with rollout state
+  `COMPLETED`. The API startup log confirmed its full route registration; the
+  worker started its Temporal workflow bundle without receiving API-only OIDC
+  client/session secrets.
+
+### Remaining boundary
+
+The local browser-control service was unavailable during this verification, so
+no UI recording has been created and no synthetic password was entered or
+printed. The next walkthrough should use the Cognito redirect above, retrieve
+the existing synthetic-reviewer password directly from AWS Secrets Manager
+under the operator's identity, and capture only synthetic case data.
