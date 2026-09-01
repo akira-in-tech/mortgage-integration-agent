@@ -420,7 +420,13 @@ export function validateEnvironment(
   }
   if (productionLike && issuerConfigured) {
     const productionErrors: string[] = [];
-    if (!validatedConfig.OIDC_SESSION_ENCRYPTION_KEY) {
+    // Deployments may use either the legacy single key or the rotatable key
+    // ring. Requiring only the legacy variable here would reject the safer
+    // key-ring configuration after schema validation has already accepted it.
+    if (
+      !validatedConfig.OIDC_SESSION_ENCRYPTION_KEY &&
+      !validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS
+    ) {
       productionErrors.push(
         'OIDC_SESSION_ENCRYPTION_KEY or OIDC_SESSION_ENCRYPTION_KEYS is required when OIDC is enabled in staging or production',
       );

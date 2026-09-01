@@ -12197,3 +12197,10 @@ Implemented; the next protected deployment is required for live verification.
   URL. The API task now receives `https://` plus the Cognito endpoint. A
   former readiness 200 came from the prior healthy task and is not treated as
   proof of the new OIDC configuration; the redeploy must prove login itself.
+- The replacement task then reached the application validator and exposed a
+  code-level regression: the schema accepted the rotatable
+  `OIDC_SESSION_ENCRYPTION_KEYS` ring but the production-like guard checked
+  only the legacy single-key field. The guard now accepts either configured
+  form, and the environment test proves a ring-only production configuration
+  passes. Secrets were inspected only for presence, length, and format; no
+  secret value was printed.

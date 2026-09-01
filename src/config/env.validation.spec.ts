@@ -324,6 +324,17 @@ describe('validateEnvironment', () => {
         }),
       );
       expect(result.OIDC_SESSION_ENCRYPTION_KEY).toBe('a'.repeat(64));
+
+      const keyRingResult = validateEnvironment(
+        baseConfig({
+          ...oidcConfig,
+          NODE_ENV: 'production',
+          OIDC_SESSION_ENCRYPTION_KEYS: `staging-v1:${'b'.repeat(64)}`,
+        }),
+      );
+      expect(keyRingResult.OIDC_SESSION_ENCRYPTION_KEYS).toBe(
+        `staging-v1:${'b'.repeat(64)}`,
+      );
     });
 
     it('requires explicit HTTPS callback and console origins in production', () => {
