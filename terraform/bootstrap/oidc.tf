@@ -95,7 +95,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "ecr:ListTagsForResource",
       "ecr:PutLifecyclePolicy", "ecr:GetLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
       "ecr:BatchDeleteImage", "ecr:ListImages", "ecr:DescribeImages",
-      "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer",
       "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload",
     ]
     resources = ["arn:aws:ecr:*:${data.aws_caller_identity.current.account_id}:repository/mortgage-agent*"]

@@ -12217,3 +12217,8 @@ Implemented; the next protected deployment is required for live verification.
   API-only OIDC secrets are now separate. The worker retains no unnecessary
   OIDC client or session material, and its environment no longer activates
   the API's login-validation path.
+- The recovery workflow then failed before Terraform while pulling its own
+  immutable ECR image for SBOM/provenance verification. The deploy role already
+  had image metadata reads but lacked ECR's per-layer download action. The role
+  now adds only `ecr:GetDownloadUrlForLayer`, scoped to the existing
+  `mortgage-agent*` repositories; no registry-wide read is granted.
