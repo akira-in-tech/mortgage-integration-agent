@@ -12370,6 +12370,11 @@ workflow and AWS deployment complete.
   The suite now asserts the new table and foreign key in the fully migrated
   shape, then explicitly rolls the guest-session migration back before the
   existing reverse-order assertions continue.
+- The next protected run completed migration, build, unit, integration, and
+  browser checks, then correctly stopped at the generated-contract drift gate:
+  the new REST session endpoint added three OpenAPI operations. The checked-in
+  OpenAPI artifact and generated TypeScript client now include those exact
+  `POST`/`GET`/`DELETE` operations before the final CI run.
 - Full backend/console build, migrations, browser checks, generated-contract
   drift verification, and the staging edge walkthrough remain required before
   this entry is considered deployment-verified.

@@ -620,6 +620,47 @@
         ]
       }
     },
+    "/v1/demo-sandbox/session": {
+      "post": {
+        "operationId": "createGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      },
+      "get": {
+        "operationId": "getGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      },
+      "delete": {
+        "operationId": "deleteGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      }
+    },
     "/v1/audit-events": {
       "get": {
         "operationId": "listAuditEvents",
