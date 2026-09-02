@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useQuery } from '@apollo/client';
+import { useMutation, useQuery } from '@apollo/client';
 import { CASE_QUERY } from '../graphql/queries';
+import { START_WORKFLOW_RUN_MUTATION } from '../graphql/mutations';
 import { StatusPill } from './StatusPill';
 import { DocIcon } from './icons';
 import { useCaseMutations } from '../useCaseMutations';
@@ -11,6 +12,7 @@ import { ConditionsTab } from './tabs/ConditionsTab';
 import { TimelineTab } from './tabs/TimelineTab';
 import { CommunicationsTab } from './tabs/CommunicationsTab';
 import { AuditTab } from './tabs/AuditTab';
+import { SandboxGuide } from './SandboxGuide';
 
 type TabId =
   | 'overview'
@@ -33,9 +35,11 @@ const TERMINAL_STATUSES = new Set(['CLOSED', 'READY_FOR_UNDERWRITING']);
 
 export function CaseDetail({
   caseId,
+  isSandbox = false,
   onOpenDossier,
 }: {
   caseId: string;
+  isSandbox?: boolean;
   onOpenDossier: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -44,7 +48,18 @@ export function CaseDetail({
 
   const { data, loading, error } = useQuery(CASE_QUERY, {
     variables: { caseId },
+    // A sandbox contains exactly one isolated synthetic case. Polling this
+    // narrow query makes Temporal's asynchronous transitions visible without
+    // turning the normal authenticated operations console into a polling UI.
+    pollInterval: isSandbox ? 2_500 : 0,
   });
+  const [startWorkflow, startWorkflowState] = useMutation(
+    START_WORKFLOW_RUN_MUTATION,
+    {
+      refetchQueries: [{ query: CASE_QUERY, variables: { caseId } }],
+      awaitRefetchQueries: true,
+    },
+  );
   const {
     escalate,
     escalating: escalateInFlight,
@@ -78,6 +93,13 @@ export function CaseDetail({
     await escalate(escalateReason.trim());
     setEscalating(false);
     setEscalateReason('');
+  }
+
+  function startSandboxEvaluation() {
+    // The server keeps the start idempotent per case. Retrying after a brief
+    // network interruption therefore resumes the same workflow rather than
+    // creating a second evaluation for the synthetic record.
+    void startWorkflow({ variables: { caseId } });
   }
 
   return (
@@ -186,6 +208,14 @@ export function CaseDetail({
             {mutationError.message}
           </div>
         )}
+        {startWorkflowState.error && (
+          <div
+            role="alert"
+            style={{ fontSize: 12, color: 'var(--critical)', marginTop: 10 }}
+          >
+            {startWorkflowState.error.message}
+          </div>
+        )}
 
         <div
           style={{
@@ -262,6 +292,15 @@ export function CaseDetail({
           padding: '24px 32px',
         }}
       >
+        {isSandbox && (
+          <SandboxGuide
+            status={loanCase.status}
+            openConditionCount={openConditionCount}
+            starting={startWorkflowState.loading}
+            onStartEvaluation={startSandboxEvaluation}
+            onOpenTab={setActiveTab}
+          />
+        )}
         {activeTab === 'overview' && <OverviewTab loanCase={loanCase} />}
         {activeTab === 'evidence' && <EvidenceTab loanCase={loanCase} />}
         {activeTab === 'conditions' && <ConditionsTab loanCase={loanCase} />}

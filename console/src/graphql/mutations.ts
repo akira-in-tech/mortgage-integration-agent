@@ -16,6 +16,15 @@ export const ESCALATE_CASE_MUTATION = graphql(`
   }
 `);
 
+export const START_WORKFLOW_RUN_MUTATION = graphql(`
+  mutation StartWorkflowRun($caseId: ID!) {
+    startWorkflowRun(caseId: $caseId) {
+      workflowId
+      runId
+    }
+  }
+`);
+
 export const APPROVE_COMMUNICATION_MESSAGE_MUTATION = graphql(`
   mutation ApproveCommunicationMessage(
     $messageId: ID!

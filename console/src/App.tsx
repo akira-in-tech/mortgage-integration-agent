@@ -28,6 +28,7 @@ import {
   clearDemoSandbox,
   closeDemoSandbox,
   getDemoSandboxActorId,
+  getDemoSandboxCaseId,
   hasDemoSandbox,
   loadDemoSandbox,
 } from './demo-sandbox';
@@ -58,6 +59,7 @@ export function App() {
         return loadDemoSandbox().then((sandbox) => {
           if (sandbox.authenticated) {
             setStoredActorId(sandbox.actorId ?? '');
+            setSelectedCaseId(sandbox.caseId ?? null);
             setConnected(true);
           }
         });
@@ -125,6 +127,11 @@ export function App() {
     return (
       <ConnectScreen
         onConnected={() => setConnected(true)}
+        onSandboxConnected={(caseId) => {
+          setSelectedCaseId(caseId ?? null);
+          setView('queue');
+          setConnected(true);
+        }}
         onPlatformAdmin={() => setPlatformAdminMode(true)}
       />
     );
@@ -247,6 +254,10 @@ export function App() {
               {selectedCaseId ? (
                 <CaseDetail
                   caseId={selectedCaseId}
+                  isSandbox={
+                    hasDemoSandbox() &&
+                    selectedCaseId === getDemoSandboxCaseId()
+                  }
                   onOpenDossier={() => setDossierCaseId(selectedCaseId)}
                 />
               ) : (

@@ -12399,3 +12399,41 @@ Implemented, CI-verified, and deployed to the synthetic AWS staging edge.
   output path, which emptied the test jar. Repeating with the jar read-only
   restored the expected session and workflow behavior; this was a harness
   state-management error, not a server-side session or CSRF bypass.
+
+## M7-055: guided synthetic-case walkthrough
+
+### Status
+
+Implemented; protected CI and staging verification are pending this change.
+
+### Implementation
+
+- Turned the guest sandbox from an access-only entry point into a guided
+  product path. Creating or resuming a workspace now focuses its one seeded
+  synthetic case instead of leaving a visitor at an empty case-detail state.
+  The browser preserves the returned case id only as a tenant-matched display
+  hint; the HttpOnly session cookie remains the sole authority source.
+- Added a four-stage case guide that derives its next action from durable
+  case status and open-condition data: inspect the synthetic evidence, start
+  the case workflow, resolve a reviewer condition, then inspect the audit
+  trail. It uses plain-language boundary disclosure so the flow cannot be
+  mistaken for a borrower portal, lender decision, provider integration, or
+  money movement product.
+- Connected the primary guide action to the existing idempotent
+  `startWorkflowRun` mutation. It launches the same Temporal workflow that
+  the API supports, refetches afterward, and polls only the visitor's single
+  sandbox case while transitions are occurring. Normal bearer-token and OIDC
+  operations remain non-polling and retain their existing screens.
+- Added focused component coverage for the draft-to-workflow action and the
+  condition-review transition. Generated GraphQL artifacts include the new
+  typed workflow-start operation.
+
+### Verification
+
+- Checked the working diff for whitespace errors and formatted the authored
+  TypeScript/TSX files. The local console test and code-generation commands
+  again did not return within their normal window in this synchronized
+  workspace, including from a temporary copy; their child processes were
+  stopped before continuing. The protected GitHub CI workflow is therefore
+  the authoritative build, generated-contract, unit, browser, and security
+  verification for this change.

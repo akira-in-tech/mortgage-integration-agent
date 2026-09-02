@@ -59,6 +59,10 @@ export function getDemoSandboxActorId(): string | null {
   return currentSession?.actorId ?? null;
 }
 
+export function getDemoSandboxCaseId(): string | null {
+  return currentSession?.caseId ?? null;
+}
+
 export function clearDemoSandbox(): DemoSandboxSession {
   currentSession = null;
   window.localStorage.removeItem(STORAGE_KEY);
@@ -66,15 +70,36 @@ export function clearDemoSandbox(): DemoSandboxSession {
 }
 
 function store(session: DemoSandboxSession): DemoSandboxSession {
-  currentSession = session.authenticated ? session : null;
+  // The resume endpoint deliberately omits the case id: the HttpOnly cookie
+  // is authoritative and the UI must not treat browser storage as access
+  // control. Preserve only the matching, non-sensitive display hint so a
+  // returning demo visitor lands back on the synthetic case they created.
+  const storedHint = readStoredHint();
+  const caseId =
+    session.caseId ??
+    (session.tenantId === storedHint?.tenantId ? storedHint.caseId : undefined);
+  const sessionWithHint = caseId ? { ...session, caseId } : session;
+  currentSession = sessionWithHint.authenticated ? sessionWithHint : null;
   if (session.authenticated) {
     // The value is only a display/resume hint. The server's HttpOnly cookie,
     // not local storage, remains the actual sandbox credential.
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionWithHint));
   } else {
     window.localStorage.removeItem(STORAGE_KEY);
   }
-  return session;
+  return sessionWithHint;
+}
+
+function readStoredHint(): DemoSandboxSession | null {
+  try {
+    const value = window.localStorage.getItem(STORAGE_KEY);
+    return value ? validate(JSON.parse(value)) : null;
+  } catch {
+    // A stale or manually edited hint cannot block a new cookie-backed
+    // sandbox session. It is safe to ignore because it never authorizes API
+    // access and is replaced by the next valid response.
+    return null;
+  }
 }
 
 function validate(value: unknown): DemoSandboxSession {
