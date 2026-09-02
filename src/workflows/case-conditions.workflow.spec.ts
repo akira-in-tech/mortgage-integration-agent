@@ -271,7 +271,10 @@ describeOrSkip('caseConditionsWorkflow', () => {
           { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
         ],
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // The last activity before the durable condition boundary was invoked.
+      // This avoids guessing that a contended CI worker reached that boundary
+      // after 500 ms while preserving the restart-without-a-live-worker proof.
+      await waitForMockCalls(activities.evaluateConditions as jest.Mock, 1);
     });
 
     // No worker is running at all right now. Signal anyway — Temporal

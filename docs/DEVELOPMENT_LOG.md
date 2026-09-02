@@ -12813,3 +12813,29 @@ npm run build
 ```
 
 The next protected CI run also exercises migration, backend and console tests, generated-contract drift, container build, SAST, secret scanning, and observability validation.
+
+## M7-065: Deterministic worker-restart workflow test
+
+### Status
+
+Implemented locally; protected CI is required because the regression occurred only under its contended real Temporal environment.
+
+### Problem
+
+After the dependency-audit remediation, the full CI suite surfaced an unrelated flaky Temporal test: `loses no acknowledged work across a worker restart while durably waiting` exceeded its 20-second file timeout. The test used a fixed 500 ms sleep before shutting down the first worker. On a slow runner that sleep does not prove the workflow has completed evidence collection and reached its final pre-wait activity, so the test can race its own worker restart.
+
+### Implementation
+
+- Replaced that sleep with the existing bounded `waitForMockCalls()` helper, waiting until `evaluateConditions` is invoked once.
+- `evaluateConditions` is the last activity before the workflow's durable condition wait in this test path. Observing that real activity boundary is the relevant synchronization point; it preserves the assertion that the second worker resumes acknowledged history and consumes a signal queued while no worker is live.
+- The helper retains its explicit 10-second diagnostic deadline, making a real scheduler failure actionable instead of silently increasing every workflow-test timeout.
+
+### Verification plan
+
+```text
+npm run lint:check
+npm run build
+npm test -- --ci --runInBand --forceExit
+```
+
+The full protected CI run must also complete the live database, Temporal, Keycloak/OIDC, console, generated-contract, container, security, and configuration gates.
