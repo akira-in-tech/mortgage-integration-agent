@@ -12510,3 +12510,36 @@ Implemented; replacement protected CI is pending.
 - Local lint did not return within its normal window in this synchronized
   workspace and was stopped without changing files. The next protected CI run
   is the authoritative validation gate for this workflow and test correction.
+
+## M7-059: guided guest sandbox release evidence
+
+### Status
+
+Released to the persistent AWS staging environment.
+
+### Implementation
+
+- Published the guided synthetic-case experience behind the existing AWS
+  CloudFront HTTPS edge. Visitors can select the sandbox entry point, receive
+  an isolated synthetic tenant and case, follow the evidence/policy/condition/
+  audit guide, and invoke the existing idempotent Temporal workflow action.
+- The walkthrough remains intentionally bounded: it uses synthetic records and
+  deterministic adapters only, and it neither makes a lending decision nor
+  moves funds or calls an external lender or verification provider.
+
+### Verification
+
+- Protected CI run `33581871324` passed all jobs, including backend lint,
+  build, migrations, Jest, API e2e, Temporal workflow coverage, live OIDC
+  console e2e, generated-contract drift checks, console lint/unit/build/
+  Playwright, container build, Semgrep, secret scanning, production dependency
+  audit, and observability configuration validation.
+- AWS deploy run `33582137668` completed successfully. It built and pushed an
+  immutable image, created and cryptographically verified build-provenance and
+  SBOM attestations, applied Terraform, published the private-S3/CloudFront
+  console, and received real 200 health responses through both the deployed
+  API and public HTTPS edge.
+- A fresh public-edge smoke test returned 201 for sandbox creation, 200 for
+  cookie-backed session recovery, and 200 for a CSRF-protected GraphQL
+  `startWorkflowRun` request with a valid workflow identifier. Response
+  contents and cookie values were not retained or logged.
