@@ -267,3 +267,141 @@ describeOrSkip('purgeTenantData (M7-055)', () => {
     ).resolves.toBeUndefined();
   });
 });
+
+/**
+ * A real regression test for a real bug that shipped and broke staging:
+ * every delete in `purgeTenantData()` used to run on the bare `DataSource`,
+ * never setting `app.current_tenant_id` — harmless against the superuser
+ * `DATABASE_URL` role every other spec in this file (and CI's own test
+ * run) connects as, since a superuser is unconditionally exempt from row-
+ * level security regardless of `FORCE ROW LEVEL SECURITY`. Real staging
+ * connects as `mortgage_app` (the `AppRuntimeRole` migration's genuinely
+ * restricted role) instead, and under that role every delete above
+ * silently matched zero rows: `loan_cases`, `evidence_facts`,
+ * `consent_records`, and effectively every other table this function
+ * touches carry a real RLS policy keyed on that session variable. The
+ * final `Tenant.delete()` -- the one table with no RLS policy at all --
+ * then hit a real, live FK violation against the `loan_cases` row nothing
+ * upstream had actually deleted. Confirmed by reproducing the exact
+ * production error (`FK_d6c46cfe1f225adcf486c7f95a3`) against a freshly
+ * migrated database connected as the real `mortgage_app` role before this
+ * fix, and confirming it deletes cleanly after.
+ *
+ * This only proves anything where RLS is actually enforced: CI runs real
+ * migrations before `npm test` (see `.github/workflows/ci.yml`), so its
+ * `mortgage_app` role and every table's RLS policy are both genuinely
+ * present -- but this machine's long-lived local dev database was built
+ * by `synchronize`, which never ran the RLS-creating migrations, so
+ * `loan_cases` here has no RLS policy at all and this test would pass
+ * vacuously even against the old, buggy code. `describeOrSkip` below only
+ * covers "is `mortgage_app` reachable at all" for that reason -- CI, not
+ * this machine, is the real bar for this test, matching how this
+ * codebase already treats its own fresh-vs-long-lived-database gap
+ * elsewhere (see `audit-event.service.spec.ts`'s append-only-trigger
+ * tests).
+ */
+describeOrSkip(
+  'purgeTenantData under the real RLS-restricted role (M7-060)',
+  () => {
+    let restrictedDataSource: DataSource;
+    let dataSource: DataSource;
+    const jurisdictionCode = 'US-PURGE-RLS-SPEC';
+
+    beforeAll(async () => {
+      const appPassword =
+        process.env.APP_DATABASE_ROLE_PASSWORD ?? 'mortgage_app_demo';
+      const restrictedUrl = new URL(DATABASE_URL as string);
+      restrictedUrl.username = 'mortgage_app';
+      restrictedUrl.password = appPassword;
+
+      restrictedDataSource = new DataSource({
+        type: 'postgres',
+        url: restrictedUrl.toString(),
+        entities: [Tenant, LoanCase, Jurisdiction],
+      });
+      await restrictedDataSource.initialize();
+
+      dataSource = new DataSource({
+        type: 'postgres',
+        url: DATABASE_URL,
+        entities: [Jurisdiction],
+      });
+      await dataSource.initialize();
+      await dataSource.getRepository(Jurisdiction).save(
+        dataSource.getRepository(Jurisdiction).create({
+          code: jurisdictionCode,
+          level: JurisdictionLevel.STATE,
+          name: 'purge-tenant-data RLS spec jurisdiction',
+          coverageStatus: JurisdictionCoverageStatus.COVERED,
+        }),
+      );
+    });
+
+    afterAll(async () => {
+      if (dataSource?.isInitialized) {
+        await dataSource
+          .getRepository(Jurisdiction)
+          .delete({ code: jurisdictionCode });
+        await dataSource.destroy();
+      }
+      if (restrictedDataSource?.isInitialized) {
+        await restrictedDataSource.destroy();
+      }
+    });
+
+    it('actually deletes an RLS-protected loan_case (and the tenant row) instead of silently matching nothing', async () => {
+      const tenant = await restrictedDataSource
+        .getRepository(Tenant)
+        .save(
+          restrictedDataSource
+            .getRepository(Tenant)
+            .create({ name: 'purge-tenant-data RLS spec tenant' }),
+        );
+      const tenantId = tenant.id;
+
+      // Seeding a row on an RLS-protected table needs the same session
+      // variable a real request sets (GuestSandboxService.create()) --
+      // otherwise the seed insert itself is rejected, not just the purge
+      // this test actually cares about.
+      await restrictedDataSource.transaction(async (manager) => {
+        await manager.query(
+          `SELECT set_config('app.current_tenant_id', $1, true)`,
+          [tenantId],
+        );
+        await manager.getRepository(LoanCase).save(
+          manager.getRepository(LoanCase).create({
+            tenantId,
+            idempotencyKey: `purge-rls-spec-${randomUUID()}`,
+            borrowerId: 'purge-rls-spec-borrower',
+            requestedAmount: 300_000,
+            loanType: LoanType.CONVENTIONAL,
+            statedMonthlyIncome: 9000,
+            jurisdictionCode,
+            status: CaseStatus.DRAFT,
+          }),
+        );
+      });
+
+      await purgeTenantData(restrictedDataSource, tenantId);
+
+      // These reads need tenant context too -- without it RLS hides the row
+      // regardless of whether purge really deleted it, which would make
+      // this assertion pass vacuously either way.
+      const afterCase = await restrictedDataSource.transaction(
+        async (manager) => {
+          await manager.query(
+            `SELECT set_config('app.current_tenant_id', $1, true)`,
+            [tenantId],
+          );
+          return manager.getRepository(LoanCase).findOneBy({ tenantId });
+        },
+      );
+      const afterTenant = await restrictedDataSource
+        .getRepository(Tenant)
+        .findOneBy({ id: tenantId });
+
+      expect(afterCase).toBeNull();
+      expect(afterTenant).toBeNull();
+    });
+  },
+);

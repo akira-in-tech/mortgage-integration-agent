@@ -12597,3 +12597,69 @@ Real, against a live local Postgres (2026-09-02):
 ### Next safe step
 
 Not attempted here, named honestly: a real Temporal-server test that actually calls `.cancel()` on a live workflow handle and observes the `catch(isCancellation) -> CancellationScope.nonCancellable(markWorkflowCancelled)` path fire end to end. `case-conditions.workflow.spec.ts`'s own real-Temporal suite already proves the surrounding recovery/duplicate-signal mechanics against a live server; adding a live cancellation test to it is a real, separate, closable gap, not attempted in this slice given the time this session had already spent recovering from real environment resource contention. The remaining M7-030–054 audit findings not acted on here (M7-032's adapter-spec duplication left in place, M7-044's dispatch-service-level rate-limit test, M7-036's console Cancel-branch UI coverage) are each smaller and lower-severity than the six closed above — not assumed as the next task without asking first.
+
+## M7-060: fix a real, live production 500 — `purgeTenantData()` never set the RLS session variable, so every delete under the real restricted role silently matched nothing
+
+### Status
+
+Root-caused and fixed against direct, real evidence from the live staging deployment. Verified by reproducing the exact production error locally against a freshly migrated database connected as the real restricted role, confirming the fix resolves it under the same conditions, and adding a permanent regression test.
+
+### Background
+
+Immediately after M7-055 merged, the user asked to actually trigger a real `deploy-staging.yml` run rather than treat CI green as sufficient — a real, explicit request to verify the live deployment, not just the pipeline. The run succeeded; `ecs describe-tasks` confirmed the API and worker tasks were running the exact merged image digest. Live verification then went further than a health check: a real `curl -i -X POST` against the public `/v1/demo-sandbox/session` endpoint returned a real `HTTP/2 500`, not the expected `200`. This was not reported by the user — it surfaced only because this session chose to exercise the live endpoint for real instead of stopping at "the deploy succeeded."
+
+### Root cause
+
+`aws logs tail` on `/ecs/mortgage-agent-staging-api` surfaced the real stack trace and Postgres driver error:
+
+```text
+QueryFailedError: update or delete on table "tenants" violates foreign key
+constraint "FK_d6c46cfe1f225adcf486c7f95a3" on table "loan_cases"
+    at async purgeTenantData (/app/dist/database/purge-tenant-data.js:73:5)
+    at async GuestSandboxService.purgeExpiredSessions (.../guest-sandbox.service.js:117:13)
+    at async GuestSandboxService.create (.../guest-sandbox.service.js:43:9)
+query: 'DELETE FROM "tenants" WHERE "id" = $1'
+code: '23503'
+detail: 'Key (id)=(6feb990a-...) is still referenced from table "loan_cases".'
+```
+
+`purgeTenantData()` (M7-055) ran every delete on the bare `DataSource` — it never called this codebase's own `runInTenantContext()` (`src/database/tenant-context.ts`), the only place application code sets `app.current_tenant_id`. Nearly every table the function touches (`loan_cases`, `evidence_facts`, `consent_records`, `agent_budget_reservations`, and effectively everything else with a `tenantId` column) carries a real `FORCE ROW LEVEL SECURITY` policy keyed on that session variable. Without it, a role that is not RLS-exempt sees zero rows on every one of those tables — the deletes did not error, they silently matched nothing. `Tenant.delete()` — the one table in the whole function with no RLS policy at all, since it has no `tenantId` column — then hit Postgres's real FK integrity check (which is not filtered by RLS) against a `loan_cases` row that was, in fact, never removed.
+
+This was invisible to every local and CI test run for the same reason: both connect via a superuser-equivalent role (`mortgage`, bootstrapped by `POSTGRES_USER` on the stock `postgres:16-alpine` image), and PostgreSQL superusers are unconditionally exempt from row-level security regardless of `FORCE ROW LEVEL SECURITY`. Real staging/production instead connect through `APP_DATABASE_URL`, using the genuinely restricted `mortgage_app` role the `AppRuntimeRole` migration provisions specifically so RLS applies to the app's own traffic (M5-002/M5-003) — that migration's own comment already named the exact mechanism this bug violated. The bug was systemic, not a rare edge case: every expired guest-sandbox tenant that had reached `create()`'s own case-seeding step (every one of them, by construction) would hit this on its very next cleanup pass.
+
+### Fix
+
+`purgeTenantData()` now runs its entire body inside one `runInTenantContext(dataSource, tenantId, ...)` transaction, using the transaction's own `EntityManager` for every delete instead of the bare `DataSource` (`hasMetadata()` schema-introspection calls stay on `DataSource` — that answer doesn't depend on which manager asks). This matches the pattern every other tenant-scoped service in this codebase already follows (`CaseQueryService`, `ConsentService`, `ProviderPlatform*`, etc.).
+
+### Verification
+
+```text
+Root cause reproduced and the fix confirmed for real (2026-09-02), against a
+throwaway Docker Postgres that actually ran every real migration (not this
+machine's synchronize-built dev database, which has no RLS policies at all
+and cannot exercise this bug either way) connected as the real mortgage_app
+role:
+- Before the fix: purgeTenantData() threw the exact production error
+  (FK_d6c46cfe1f225adcf486c7f95a3); the loan_case row was confirmed still
+  present afterward under the same tenant context.
+- After the fix: purgeTenantData() completed with no error; both the
+  loan_case and tenant rows were confirmed actually gone.
+- npx tsc --noEmit: 0 errors
+- npm run lint: clean
+- npm run build: clean
+- purge-tenant-data.spec.ts, guest-sandbox.service.spec.ts, runner.spec.ts,
+  check-tenant-isolation-rls.spec.ts: all passed (94 tests)
+- A permanent regression test was added to purge-tenant-data.spec.ts,
+  connecting as the real mortgage_app role. It only proves anything where
+  RLS is actually enforced: CI runs real migrations before npm test, so
+  mortgage_app and every RLS policy genuinely exist there; this machine's
+  own synchronize-built dev database does not carry the RLS-creating
+  migrations, so the same test passes vacuously here regardless of the
+  fix -- named honestly, the same gap this codebase already documents for
+  audit-event.service.spec.ts's append-only-trigger tests. CI is the real
+  bar for this test, not this machine.
+```
+
+### Next safe step
+
+Re-run `deploy-staging.yml` with this fix, then repeat the exact live `curl -i -X POST /v1/demo-sandbox/session` check that found this bug to confirm a real `200` this time — not assumed from CI green alone, the same discipline that surfaced the bug in the first place.
