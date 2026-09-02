@@ -12750,3 +12750,39 @@ The follow-up CI run (`33650195491`) passed the runtime suite far enough to gene
 
 - Run the complete migration-chain test against a disposable PostgreSQL database, then run the full CI suite.
 - Live-verify the worker's private Qwen research path after the pending staging inference deployment has completed successfully. The existing synthetic connector remains the only source; no real legal source, legal conclusion, or reviewed state-policy coverage is represented by this feature.
+
+## M7-063: Product-facing live-demo entry point
+
+### Status
+
+Implemented and verified against the persistent synthetic AWS staging environment.
+
+### Problem
+
+The repository had a real public guest sandbox and a guided in-console walkthrough, but its README opened as an internal implementation reference. A portfolio visitor had to infer the product outcome, locate the sandbox entry point, and distinguish the safe simulated workflow from a real lending claim.
+
+### Implementation
+
+- Reframed the README around Meridian's user outcome: an explainable underwriting-readiness handoff built from durable workflows, policy controls, governed AI assistance, and human review.
+- Added the verified public CloudFront sandbox as the first call to action, with a four-step walkthrough that matches the existing isolated guest-sandbox flow.
+- Made the safety boundary visible before technical setup: every sandbox is generated, cookie-isolated, CSRF-protected, time-bounded, and cleaned up after expiry; it cannot access real borrower data, providers, funds movement, or lending authority.
+- Added a capability table that distinguishes demonstrated product mechanics from future real-provider and real-policy release requirements.
+- Retained the full local setup, architecture, API, testing, and operations material as developer reference after the product entry point.
+
+### Verification
+
+```text
+GET  https://d136v61al3mroo.cloudfront.net/health/ready
+  200
+
+POST https://d136v61al3mroo.cloudfront.net/v1/demo-sandbox/session
+  201
+```
+
+The request verification recorded status codes only; no cookie, tenant, case, or response content was retained. `terraform output -raw console_url` resolves to the same public URL. This documentation-only slice also requires `git diff --check` and local Markdown-link/anchor validation before commit.
+
+### Known limits
+
+- The persistent URL is an AWS-managed `cloudfront.net` hostname because the project intentionally has no purchased custom domain.
+- The staging rollout currently demonstrates the synthetic case workflow. Platform-admin policy research and real provider promotion remain privileged operational surfaces, not public sandbox actions.
+- A successful sandbox walkthrough is not evidence of real lender, provider, legal, or production authorization.

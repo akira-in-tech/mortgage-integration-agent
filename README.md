@@ -1,14 +1,42 @@
-# mortgage-integration-agent
+# Meridian
 
-A vendor-neutral lending-operations platform for durable case workflows, policy-governed Agent actions, provider integrations, and human review. The repository runs with deterministic synthetic data by default and can optionally use a local open-weight model through Ollama.
+**Policy-governed lending operations for teams that need every case action to be explainable.**
 
-Built with NestJS, REST/OpenAPI, GraphQL/Apollo, Temporal, LangGraph.js, PostgreSQL/TypeORM, React, and OIDC. No paid AI API key is required.
+Meridian is a vendor-neutral, mortgage-first operations workspace for moving a lending case from evidence collection to a clear underwriting handoff. It coordinates durable workflows, policy-bound evaluation, provider work, AI-assisted routing, and human review without treating a model or a simulator as the final authority.
 
-> The current integrations and decisions are simulations for development and demonstration. They are not official lender, GSE, or automated underwriting system findings.
+[Try the live synthetic sandbox](https://d136v61al3mroo.cloudfront.net) · [Run locally](#run-locally) · [Explore the architecture](#architecture)
+
+> The public sandbox contains only generated data. It does not make a credit decision, access a real provider, move money, or represent a lender, GSE, or automated-underwriting finding.
+
+## Try the product
+
+The live staging demo is intentionally frictionless: open the link above and select **Try live sandbox**. No sign-up or credential is required.
+
+1. A server-created, isolated tenant and synthetic conventional-mortgage case open automatically.
+2. Inspect the evidence the workflow will use, then select **Run simulated evaluation**.
+3. Review the deliberately triggered income-verification condition and satisfy or waive it as the sandbox reviewer.
+4. Open the audit trail to see the workflow, policy binding, reviewer action, and resulting handoff state.
+
+Each sandbox has an opaque, `HttpOnly`, CSRF-protected session and expires after one hour. Its tenant and related synthetic records are automatically removed after expiry, so one visitor cannot view another visitor's workspace.
+
+## What Meridian demonstrates
+
+| Capability | Product behavior |
+| --- | --- |
+| **Case readiness** | A durable Temporal workflow gathers synthetic evidence, opens conditions, waits for reviewers, and survives process restarts. |
+| **Policy as a control plane** | Immutable policy bindings, source freshness checks, applicability guards, and explicit re-evaluation impact assessment keep the workflow from silently using stale or ambiguous policy. |
+| **Governed AI assistance** | An optional private Qwen planner can choose only bounded workflow routes. Deterministic tools, budgets, schema validation, and human-review escalation remain authoritative. |
+| **Policy research with evidence** | Source revisions, expired freshness, coverage gaps, and applicability conflicts enqueue citation-bound reviewer research; retrieval happens off the evaluation path and cannot publish policy or change a case outcome. |
+| **Operational accountability** | Tenant isolation, consent and purpose checks, provider-operation lineage, reviewer actions, and chronological audit history make a case explainable after the fact. |
+| **Integration-ready boundaries** | Provider adapters, authorization gates, signed webhooks, REST/OpenAPI, GraphQL, and a generated TypeScript client allow real integrations to be introduced through controlled ports later. |
+
+## Product boundary
+
+Meridian is a **synthetic product demo and integration-ready architecture**, not a lending institution or an automated underwriting system. The repository deliberately does not claim real-data authorization, reviewed jurisdictional policy coverage, provider certification, a credit decision, funds movement, closing, or settlement. Those capabilities require separately governed providers, legal review, operational controls, and release evidence.
 
 ## Current delivery status
 
-The durable synthetic workflow, policy engine, bounded Agent runtime, provider gateway, tenant security controls, signed webhooks, generated client, and React operations console are implemented on the active development branch. The repository is not yet represented as production-approved: real reviewed policy coverage, provider-specific authorization/certification, real-data approval, and the remaining release gates still apply.
+The durable synthetic workflow, policy engine, bounded Agent runtime, provider gateway, tenant security controls, signed webhooks, generated client, and React operations console are implemented. The public AWS staging sandbox is a persistent, browser-accessible demonstration of that constrained workflow. It is not represented as production-approved: real reviewed policy coverage, provider-specific authorization/certification, real-data approval, and remaining release gates still apply.
 
 **Workflow cancellation and recovery (M7-036).** REVIEWER-only operations tooling shows each tenant's live running or terminally interrupted Temporal executions. A cancellation request stops orchestration only—it does not claim that an in-flight provider call was cancelled. Terminal non-success runs can be recovered as a separately auditable execution; recovery reuses exactly one already-open durable condition, restarts collection only when no condition exists, and fails closed to manual review if multiple active conditions make the intended state ambiguous. This protects against duplicated conditions while retaining provider reconciliation as the authority for uncertain external outcomes.
 
@@ -43,7 +71,7 @@ The older `evaluateLoan` GraphQL query remains available as a compatibility demo
      audit and lineage          sandbox adapters
 ```
 
-## Tech Stack
+## Product architecture
 
 | Layer          | Technology                                                                                             |
 | -------------- | ------------------------------------------------------------------------------------------------------ |
@@ -60,7 +88,7 @@ The older `evaluateLoan` GraphQL query remains available as a compatibility demo
 | Validation     | class-validator, class-transformer                                                                     |
 | Testing        | Jest, Supertest, Temporal integration tests, Vitest                                                    |
 
-## Compatibility demo
+## Run locally
 
 **No API key, no database, no setup:**
 
@@ -254,7 +282,7 @@ There is no `/v1/loan-cases` endpoint for creating a tenant itself; seed one dir
 
 This REST surface is `@nestjs/swagger`-decorated with explicit, stable `operationId`s (Section 15.3: "stable operation identifiers for SDK generation") — `npm run generate:openapi` boots the real app and writes the resulting document to the checked-in `openapi/openapi.json` (Section 15.3: "checked and published OpenAPI artifact"); `npm run generate:client` runs [`openapi-typescript`](https://openapi-ts.dev) against that file to produce a genuinely generated `client/generated/schema.d.ts`, which `client/index.ts` (a thin [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/) wrapper) uses to make every call fully typed. In development, the API server also serves an interactive Swagger UI at `/api-docs` — gated to `NODE_ENV=development` for the same reason the GraphQL Playground already is (charter 16.1: interactive documentation leaks the full surface to anyone who can reach it).
 
-With PostgreSQL, the API, Temporal, and the worker running as described in [Full platform via Docker Compose](#compatibility-demo), run the generated-client walkthrough with:
+With PostgreSQL, the API, Temporal, and the worker running as described in [Full platform via Docker Compose](#run-locally), run the generated-client walkthrough with:
 
 ```bash
 DATABASE_URL=postgres://... API_BASE_URL=http://localhost:3000 npm run quickstart
