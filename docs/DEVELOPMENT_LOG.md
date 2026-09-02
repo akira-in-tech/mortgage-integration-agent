@@ -12663,3 +12663,44 @@ role:
 ### Next safe step
 
 Re-run `deploy-staging.yml` with this fix, then repeat the exact live `curl -i -X POST /v1/demo-sandbox/session` check that found this bug to confirm a real `200` this time — not assumed from CI green alone, the same discipline that surfaced the bug in the first place.
+
+## M7-061: Private, immutable Qwen inference plane for the governed worker
+
+### Status
+
+Implemented in source and awaiting protected CI plus a real AWS staging rollout. This entry intentionally makes no live-inference claim until the deployed ECS task serves a schema-constrained planner request.
+
+### Problem
+
+The repository had a governed `OllamaAgentPlanner` and an explicit Qwen configuration, but the persistent AWS demo ran `DECISION_PROVIDER=rules` in both tasks. A visitor could exercise the workflow but not the open-weight planning path it was designed to support.
+
+### Implementation
+
+- Added `Dockerfile.ollama`, pinning the Ollama base-image digest and baking `qwen3.5:9b` into a separate immutable image. API and worker images do not inherit the multi-GB model artifact.
+- Added a second immutable, scan-on-push ECR repository with a short retention policy suited to large model artifacts.
+- Added an ECS Fargate inference service, private Cloud Map DNS, a dedicated security group, bounded context/concurrency, persistent model residency, readiness-gated warm-up, CloudWatch logs, and deployment circuit-breaker rollback.
+- Exposed port 11434 only from the application security group. No CloudFront, API Gateway, ALB, or browser route reaches the model service.
+- Enabled `DECISION_PROVIDER=ollama` only in the durable worker, retaining deterministic API compatibility endpoints. The worker can use Qwen only through the existing two-edge LangGraph planner, whose schema validation, token reservation, immutable provenance, allowlisted deterministic tools, and mandatory human-review routes are unchanged.
+- Extended the OIDC deployment workflow to create/import/build/push the separate image, pull its exact ECR digest, generate its SBOM, and attest build provenance plus SBOM before Terraform references it.
+
+### Decisions and boundaries
+
+- **Dedicated CPU Fargate service, not API sidecar:** model memory and warm-up cannot destabilize browser traffic or ordinary API deployments. This is intentionally a small persistent demo inference plane, not a claim of GPU-scale throughput.
+- **Baked model instead of startup pull:** recovery must not silently receive a newer tag or wait on an unbounded registry download. The build's immutable ECR digest becomes the deployed artifact identity.
+- **Worker-only model access:** user-facing compatibility evaluation must not evade Temporal's authoritative budget, audit, and review controls.
+- **Thinking remains disabled:** this model gets only server-owned booleans/enums and may return one of two JSON routes. It cannot receive borrower values, interpret policy, approve communications, select arbitrary tools, or execute effects.
+
+### Verification before rollout
+
+```text
+terraform fmt -check -diff terraform/staging: passed
+npm run lint:check: passed
+npm run build: passed
+git diff --check: passed
+```
+
+### Remaining live verification
+
+- Protected repository CI must pass the full lint/build/migration/Temporal/E2E/security suite.
+- The manual GitHub OIDC deployment must build and attest the Qwen image, register a healthy inference task, and update the worker task definition to `DECISION_PROVIDER=ollama`.
+- A synthetic guest-sandbox workflow must produce a durable model invocation with no prompt/response body persisted, while an unavailable/invalid response still routes to manual review.

@@ -1,0 +1,22 @@
+# The digest, rather than a mutable tag, makes the inference runtime part of
+# the deployable supply-chain artifact. The multi-architecture index contains
+# the amd64 image used by ECS Fargate.
+FROM ollama/ollama@sha256:020e4134285e2ef4d8fd801234176de3b4faadc992a3eb06c8e66a2f9d4c4ba2
+
+# Keep the exact model selection explicit in both the built image and the ECS
+# task definition. A deployment never downloads a different model at startup.
+ARG OLLAMA_MODEL=qwen3.5:9b
+
+# Bake the model into the immutable image. Runtime tasks only start the server
+# and warm the already-present model, avoiding an unbounded registry download
+# during a recovery or rollout.
+RUN set -eux; \
+    OLLAMA_HOST=127.0.0.1:11434 ollama serve >/tmp/ollama-build.log 2>&1 & server_pid=$!; \
+    until ollama list >/dev/null 2>&1; do sleep 1; done; \
+    ollama pull "${OLLAMA_MODEL}"; \
+    kill "${server_pid}"; \
+    wait "${server_pid}" || true
+
+# ECS overrides this with a readiness-gated startup command. The image still
+# has a safe default for local inspection or one-off diagnostics.
+CMD ["serve"]

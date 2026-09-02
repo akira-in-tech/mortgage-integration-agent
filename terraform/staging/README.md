@@ -8,9 +8,14 @@ personal credential. Its state lives in the S3 backend that
 
 ## Scope
 
-- API (`main.ts`), Worker (`worker.ts`), and a self-hosted Temporal
-  server — the same three processes `docker-compose.yml` runs locally,
-  on the same RDS Postgres.
+- API (`main.ts`), Worker (`worker.ts`), a self-hosted Temporal server, and a
+  private Qwen/Ollama inference task, on the same RDS Postgres. The worker is
+  the only Ollama caller: it can submit only the bounded, schema-constrained
+  planner request and retains deterministic policy/tool authority.
+- The model is baked into a separately attested immutable ECR image, warmed
+  before its ECS health check passes, reachable only as
+  `ollama.mortgage-agent-staging.local:11434` from the application security
+  group, and never exposed through CloudFront, API Gateway, or the ALB.
 - CloudFront's AWS-managed `cloudfront.net` hostname provides the public
   HTTPS console. The S3 origin is private and readable only through CloudFront.
 - Cognito is the real OIDC issuer. The API remains an OIDC relying party and

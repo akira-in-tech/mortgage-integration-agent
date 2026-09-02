@@ -32,6 +32,24 @@ variable "fargate_memory" {
   default     = 512
 }
 
+variable "ollama_fargate_cpu" {
+  description = "CPU units for the private Qwen inference task. The model is isolated from the API and worker so model capacity can be tuned independently."
+  type        = number
+  default     = 4096
+}
+
+variable "ollama_fargate_memory" {
+  description = "MiB for the private Qwen inference task; enough for the 9B quantized model and its bounded serving context."
+  type        = number
+  default     = 16384
+}
+
+variable "ollama_ephemeral_storage_gib" {
+  description = "Fargate ephemeral storage for the preloaded Qwen image and bounded Ollama runtime cache."
+  type        = number
+  default     = 30
+}
+
 variable "log_retention_days" {
   type    = number
   default = 14

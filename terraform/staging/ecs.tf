@@ -24,6 +24,22 @@ resource "aws_service_discovery_service" "temporal" {
   }
 }
 
+# The inference plane gets its own private DNS name and security group. It is
+# intentionally not a public API and never receives browser traffic.
+resource "aws_service_discovery_service" "ollama" {
+  name = "ollama"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.this.id
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+  }
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${local.name}-api"
   retention_in_days = var.log_retention_days
@@ -41,6 +57,11 @@ resource "aws_cloudwatch_log_group" "temporal" {
 
 resource "aws_cloudwatch_log_group" "migrate" {
   name              = "/ecs/${local.name}-migrate"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "ollama" {
+  name              = "/ecs/${local.name}-ollama"
   retention_in_days = var.log_retention_days
 }
 
@@ -95,7 +116,9 @@ resource "aws_iam_role_policy" "execution_secrets" {
 
 locals {
   ecr_image    = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
+  ollama_image = "${aws_ecr_repository.ollama.repository_url}:${var.image_tag}"
   temporal_dns = "temporal.${aws_service_discovery_private_dns_namespace.this.name}"
+  ollama_dns   = "ollama.${aws_service_discovery_private_dns_namespace.this.name}"
 
   # DATABASE_URL is a real requirement of env.validation.ts in every
   # environment, but createTypeOrmOptions() swaps in APP_DATABASE_URL
@@ -118,6 +141,92 @@ locals {
     { name = "OIDC_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client_secret.arn },
     { name = "OIDC_SESSION_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.oidc_session_encryption_keys.arn },
   ]
+}
+
+# --- Private Qwen inference plane ---
+# The Qwen image has the model weights baked in at CI build time. This avoids
+# live download drift and lets ECS health check an already-warmed model before
+# the worker begins routing any workflow through it.
+resource "aws_ecs_task_definition" "ollama" {
+  family                   = "${local.name}-ollama"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.ollama_fargate_cpu
+  memory                   = var.ollama_fargate_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+
+  ephemeral_storage {
+    size_in_gib = var.ollama_ephemeral_storage_gib
+  }
+
+  container_definitions = jsonencode([{
+    name       = "ollama"
+    image      = local.ollama_image
+    essential  = true
+    entryPoint = ["/bin/sh", "-c"]
+    command = [<<-EOT
+      set -eu
+      ollama serve &
+      server_pid=$!
+      trap 'kill "$server_pid"; wait "$server_pid"' TERM INT
+      until ollama list >/dev/null 2>&1; do sleep 1; done
+      ollama run "$OLLAMA_MODEL" 'Return only READY.' >/dev/null
+      touch /tmp/model-ready
+      wait "$server_pid"
+    EOT
+    ]
+    portMappings = [{ containerPort = 11434, protocol = "tcp" }]
+    environment = [
+      { name = "OLLAMA_HOST", value = "0.0.0.0:11434" },
+      { name = "OLLAMA_MODEL", value = "qwen3.5:9b" },
+      # The runtime only permits one bounded workflow planner call at a time;
+      # retaining the warmed model removes repeated cold-load latency.
+      { name = "OLLAMA_KEEP_ALIVE", value = "-1" },
+      { name = "OLLAMA_NUM_PARALLEL", value = "1" },
+      { name = "OLLAMA_CONTEXT_LENGTH", value = "2048" },
+    ]
+    healthCheck = {
+      command     = ["CMD-SHELL", "test -f /tmp/model-ready && ollama list >/dev/null 2>&1"]
+      interval    = 30
+      timeout     = 10
+      retries     = 5
+      startPeriod = 180
+    }
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.ollama.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "ollama"
+      }
+    }
+  }])
+
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_ecs_service" "ollama" {
+  name                  = "${local.name}-ollama"
+  cluster               = aws_ecs_cluster.this.id
+  task_definition       = aws_ecs_task_definition.ollama.arn
+  desired_count         = 1
+  launch_type           = "FARGATE"
+  wait_for_steady_state = true
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.inference.id]
+    assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.ollama.arn
+  }
 }
 
 # --- Temporal (self-hosted, same image and Postgres backend the local
@@ -285,7 +394,13 @@ resource "aws_ecs_task_definition" "worker" {
     command = ["node", "dist/worker"]
     environment = [
       { name = "NODE_ENV", value = "staging" },
-      { name = "DECISION_PROVIDER", value = "rules" },
+      # Only the durable worker owns the bounded LangGraph planner. The API
+      # stays deterministic, so an interactive request cannot bypass the
+      # workflow's budget, provenance, and review routing controls.
+      { name = "DECISION_PROVIDER", value = "ollama" },
+      { name = "OLLAMA_BASE_URL", value = "http://${local.ollama_dns}:11434" },
+      { name = "OLLAMA_MODEL", value = "qwen3.5:9b" },
+      { name = "OLLAMA_TIMEOUT_MS", value = "120000" },
       { name = "TEMPORAL_ADDRESS", value = "${local.temporal_dns}:7233" },
     ]
     secrets = [
@@ -315,6 +430,7 @@ resource "aws_ecs_service" "worker" {
   wait_for_steady_state = true
   depends_on = [
     aws_ecs_service.temporal,
+    aws_ecs_service.ollama,
     null_resource.migrate,
     null_resource.synthetic_demo_bootstrap,
   ]
