@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -109,6 +109,11 @@ export class PolicyResearchService {
     @InjectRepository(PolicySource)
     private readonly sourceRepository: Repository<PolicySource>,
     private readonly configService: ConfigService,
+    // The HTTP client is a test seam, not an application dependency. Marking
+    // it with an explicit optional token prevents Nest from trying to resolve
+    // the global `Function` constructor during normal AppModule bootstrap.
+    @Optional()
+    @Inject('POLICY_RESEARCH_HTTP_CLIENT')
     private readonly httpClient: typeof fetch = fetch,
   ) {}
 

@@ -12740,6 +12740,10 @@ npm test -- --runInBand --no-cache schema-migrations.spec.ts
 
 The focused tests prove all four requested condition classifications, idempotent queueing, immutable revision passage retrieval/citation persistence, and that Qwen is invoked only after retrieval with source checksums present and no borrower text in the model payload.
 
+### CI failure and resolution
+
+The first protected CI run for this slice (`33649622711`) applied the complete migration chain successfully, then exposed a real E2E bootstrap defect: the optional `httpClient = fetch` constructor parameter was emitted as a Nest dependency on the global `Function` constructor. Direct unit construction masked that defect, while the full `AppModule` correctly failed to resolve it. The seam now uses the explicit optional `POLICY_RESEARCH_HTTP_CLIENT` token, so ordinary runtime construction uses the global fetch default and tests can still inject a mock. A dedicated Nest testing-module regression test proves the service boots without registering that test-only token. The fix is committed separately and must pass a new protected CI run before the slice is considered fully verified.
+
 ### Remaining release evidence
 
 - Run the complete migration-chain test against a disposable PostgreSQL database, then run the full CI suite.

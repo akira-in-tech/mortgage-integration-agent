@@ -1,4 +1,10 @@
 import { PolicyResearchRun } from '../database/entities/policy-research-run.entity';
+import { PolicyResearchCitation } from '../database/entities/policy-research-citation.entity';
+import { PolicySource } from '../database/entities/policy-source.entity';
+import { PolicySourceRevision } from '../database/entities/policy-source-revision.entity';
+import { ConfigService } from '@nestjs/config';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Test } from '@nestjs/testing';
 import {
   PolicyResearchStatus,
   PolicyResearchTrigger,
@@ -92,6 +98,23 @@ function createHarness(options?: {
 }
 
 describe('PolicyResearchService', () => {
+  it('boots through Nest DI without registering the test-only HTTP seam', async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PolicyResearchService,
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: getRepositoryToken(PolicyResearchRun), useValue: {} },
+        { provide: getRepositoryToken(PolicyResearchCitation), useValue: {} },
+        { provide: getRepositoryToken(PolicySourceRevision), useValue: {} },
+        { provide: getRepositoryToken(PolicySource), useValue: {} },
+      ],
+    }).compile();
+    expect(moduleRef.get(PolicyResearchService)).toBeInstanceOf(
+      PolicyResearchService,
+    );
+    await moduleRef.close();
+  });
+
   it('queues the four named policy conditions once without case or borrower context', async () => {
     const { service, savedRuns } = createHarness();
     const context = {
