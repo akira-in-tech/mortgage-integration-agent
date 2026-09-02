@@ -12460,3 +12460,24 @@ Implemented; replacement protected CI is pending.
   failed the console TypeScript build on the strict-null issue above. The
   failure was fixed before any staging deployment, and a new CI run is the
   required verification gate.
+
+## M7-057: generated-artifact byte-format correction
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Restored the code generator's no-final-newline convention for its two
+  checked-in GraphQL artifacts. The generated operation content was already
+  correct; this change removes only the trailing newline bytes introduced
+  while applying the generated artifact update.
+
+### Verification
+
+- GitHub Actions CI run `33581103597` passed backend build, migration,
+  backend Jest/e2e, live OIDC regression, console lint/unit/build/Playwright,
+  container build, Semgrep, secret scanning, dependency audit, and
+  observability validation. Its only failure was the generated-contract gate,
+  which reported exactly the two final-newline differences corrected here.
