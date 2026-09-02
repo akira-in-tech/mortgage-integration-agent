@@ -105,6 +105,25 @@ describeOrSkip('caseConditionsWorkflow', () => {
     }
   }
 
+  async function waitForMockCalls(
+    mock: jest.Mock,
+    expectedCalls: number,
+  ): Promise<void> {
+    // Temporal scheduling is intentionally asynchronous. Waiting for the
+    // observed activity boundary makes these workflow tests deterministic on
+    // both a developer machine and a contended CI runner, unlike a fixed
+    // wall-clock delay.
+    const deadline = Date.now() + 10_000;
+    while (mock.mock.calls.length < expectedCalls) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for activity to reach ${expectedCalls} calls`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
   it('completes straight-through when evaluateConditions finds no open condition', async () => {
     const activities = makeMockActivities();
     const taskQueue = `test-${uuidv4()}`;
@@ -444,11 +463,10 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markManualReview).not.toHaveBeenCalled();
   });
 
-  // The heaviest test in the file: two sequential 500ms settle-waits plus
-  // three real evaluateConditions round trips. Covered by the file-wide
-  // jest.setTimeout(20_000) above — a Worker left running by a timed-out
-  // test makes env.teardown() itself throw in afterAll, hanging the whole
-  // process indefinitely with no --forceExit, so it's worth avoiding.
+  // The heaviest test in the file: three real evaluateConditions round trips.
+  // Covered by the file-wide jest.setTimeout(20_000) above — a Worker left
+  // running by a timed-out test makes env.teardown() itself throw in afterAll,
+  // hanging the whole process indefinitely with no --forceExit.
   it('supports multiple interrupt cycles before the evaluation finally resolves', async () => {
     const evaluateConditions = jest
       .fn()
@@ -473,11 +491,11 @@ describeOrSkip('caseConditionsWorkflow', () => {
         ],
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await waitForMockCalls(activities.markWaitingForReview as jest.Mock, 1);
       await handle.signal(resumeInterruptedEvaluationSignal, {
         actorId: 'reviewer-5',
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await waitForMockCalls(activities.markWaitingForReview as jest.Mock, 2);
       await handle.signal(resumeInterruptedEvaluationSignal, {
         actorId: 'reviewer-5',
       });

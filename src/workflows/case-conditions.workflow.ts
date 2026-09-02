@@ -184,12 +184,16 @@ async function runCaseConditionsWorkflow(
       caseId,
       reason: evaluation.reviewReason,
     });
+    // Clear only the resolution from a completed interrupt cycle before
+    // publishing the next review state. A reviewer signal that arrives while
+    // markWaitingForReview is in flight is then retained by the handler and
+    // satisfies the durable wait below instead of being accidentally erased.
+    interruptResolution = undefined;
     await activities.markWaitingForReview({
       tenantId,
       caseId,
       reason: evaluation.reviewReason ?? 'ambiguity requires review',
     });
-    interruptResolution = undefined;
     await condition(() => interruptResolution !== undefined);
     interruptResolution = undefined;
   }

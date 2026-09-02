@@ -12481,3 +12481,32 @@ Implemented; replacement protected CI is pending.
   container build, Semgrep, secret scanning, dependency audit, and
   observability validation. Its only failure was the generated-contract gate,
   which reported exactly the two final-newline differences corrected here.
+
+## M7-058: deterministic interrupted-workflow resume
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Corrected the interrupted-evaluation loop so the prior cycle's signal is
+  cleared before the review-state activity begins. A reviewer resumption that
+  reaches Temporal while that activity is completing is now retained for the
+  durable wait instead of being cleared afterward.
+- Replaced the multi-interrupt workflow test's two fixed 500ms sleeps with a
+  bounded wait for the mocked review-state activity. The test now synchronizes
+  with the actual workflow boundary and remains meaningful on slower CI
+  runners.
+
+### Verification
+
+- GitHub Actions CI run `33581434178` passed lint, build, migrations, console
+  lint/unit/build/Playwright, container build, Semgrep, secret scanning,
+  dependency audit, and observability validation, but failed one existing
+  Temporal workflow test. The failure was a 20-second timeout in the second
+  interrupt cycle, consistent with a race between its fixed sleep and the
+  durable wait. No staging deployment was performed from that failed run.
+- Local lint did not return within its normal window in this synchronized
+  workspace and was stopped without changing files. The next protected CI run
+  is the authoritative validation gate for this workflow and test correction.
