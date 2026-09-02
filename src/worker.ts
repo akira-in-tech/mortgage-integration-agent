@@ -16,6 +16,7 @@ import { ProviderKillSwitchService } from './provider-platform/provider-kill-swi
 import { ProviderPromotionService } from './provider-platform/provider-promotion.service';
 import { ProviderReconciliationService } from './provider-platform/provider-reconciliation.service';
 import { PolicySourceMonitorService } from './policy/policy-source-monitor.service';
+import { PolicyResearchService } from './policy/policy-research.service';
 import {
   DemoPolicySourceConnector,
   fetchDemoBulletin,
@@ -186,6 +187,25 @@ async function bootstrap(): Promise<void> {
     );
   }
 
+  // Policy discovery has a durable database queue, separate from policy
+  // evaluation. A timer is sufficient here because `claimNextRun()` uses
+  // SKIP LOCKED; a restart leaves QUEUED work intact and a second worker
+  // cannot synthesize the same item concurrently.
+  const policyResearchService = appContext.get(PolicyResearchService);
+  const policyResearchIntervalMs = configService.get<number>(
+    'POLICY_RESEARCH_INTERVAL_MS',
+    300_000,
+  );
+  const processPolicyResearch = () =>
+    policyResearchService.processPendingRuns().catch((error) => {
+      console.error('Policy research tick failed:', error);
+    });
+  processPolicyResearch();
+  const policyResearchTimer = setInterval(
+    processPolicyResearch,
+    policyResearchIntervalMs,
+  );
+
   // M7-055: the guest sandbox's own session-expiry sweep used to run only
   // opportunistically, inside create() itself, so cleanup couldn't outpace
   // creation under sustained traffic to that public, unauthenticated
@@ -239,6 +259,7 @@ async function bootstrap(): Promise<void> {
   } finally {
     clearInterval(webhookDispatchTimer);
     clearInterval(providerReconciliationTimer);
+    clearInterval(policyResearchTimer);
     clearInterval(guestSandboxCleanupTimer);
     if (policySourceMonitorTimer) {
       clearInterval(policySourceMonitorTimer);

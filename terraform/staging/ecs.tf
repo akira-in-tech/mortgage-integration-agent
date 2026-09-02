@@ -401,6 +401,13 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "OLLAMA_BASE_URL", value = "http://${local.ollama_dns}:11434" },
       { name = "OLLAMA_MODEL", value = "qwen3.5:9b" },
       { name = "OLLAMA_TIMEOUT_MS", value = "120000" },
+      # Policy research is a separate, citation-bound background task. It
+      # receives no borrower data and cannot activate policy; only this worker
+      # can use Qwen to synthesize its advisory, reviewer-facing candidate.
+      { name = "POLICY_RESEARCH_PROVIDER", value = "ollama" },
+      { name = "POLICY_RESEARCH_INTERVAL_MS", value = "300000" },
+      { name = "POLICY_RESEARCH_TIMEOUT_MS", value = "120000" },
+      { name = "POLICY_RESEARCH_LEASE_MS", value = "600000" },
       { name = "TEMPORAL_ADDRESS", value = "${local.temporal_dns}:7233" },
     ]
     secrets = [

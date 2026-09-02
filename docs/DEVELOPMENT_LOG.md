@@ -12704,3 +12704,43 @@ git diff --check: passed
 - Protected repository CI must pass the full lint/build/migration/Temporal/E2E/security suite.
 - The manual GitHub OIDC deployment must build and attest the Qwen image, register a healthy inference task, and update the worker task definition to `DECISION_PROVIDER=ollama`.
 - A synthetic guest-sandbox workflow must produce a durable model invocation with no prompt/response body persisted, while an unavailable/invalid response still routes to manual review.
+
+## M7-062: Citation-bound policy research RAG for source and applicability changes
+
+### Status
+
+Implemented and unit-verified. The migration-chain verification is environment-gated because this checkout has no `DATABASE_URL`; it must run in CI or against a disposable migrated PostgreSQL database before any deployment claim.
+
+### Problem
+
+The policy subsystem could detect a new synthetic source revision, stale source freshness, absent reviewed coverage, and overlapping released policy versions. It safely routed the latter three cases to review, but gave a reviewer no durable research queue, source-passage retrieval, citation record, or bounded Qwen research synthesis. Calling an LLM from every evaluation would also make policy confirmation slow, costly, and non-deterministic.
+
+### Implementation
+
+- Added `policy_research_runs` and `policy_research_citations` with a reversible migration. Research requests retain only jurisdiction/product/lifecycle context and bounded resolver reasons; they never store case identifiers, borrower evidence, or provider findings.
+- Added four explicit triggers: `NEW_SOURCE_REVISION`, `SOURCE_FRESHNESS_EXPIRED`, `COVERAGE_GAP`, and `APPLICABILITY_CONFLICT`. Requests are fingerprint-deduplicated, so a retrying evaluation does not create another model call for the same observed policy state.
+- Wired the source monitor to queue work only after an immutable candidate revision is saved. Wired the resolver to enqueue only after it has already determined a known fail-closed reason; an unavailable queue is logged and cannot alter `REVIEW_REQUIRED`.
+- Added the worker-side `SKIP LOCKED` queue consumer. It flattens immutable structured source content into bounded, path-addressable passages, ranks them deterministically against a policy-only research query, persists source checksum/path/excerpt digest citations, then writes a candidate brief. A bounded lease reclaims work after a worker crash; a reclaimed run deletes its partial citations and rebuilds them from immutable source content, while a unique run/rank constraint prevents duplicate reviewer evidence.
+- Added an `extractive` local default and an `ollama` provider. The latter sends only the policy query and retrieved passages to the private Qwen endpoint, disables thinking, requires a strict JSON shape, caps output/citations, and records no raw model prompt or response. Invalid/unavailable model output marks the advisory research item failed; it never changes coverage, releases policy, or changes an evaluation result.
+- Added a platform-admin, read-only evidence endpoint: `GET /v1/platform-admin/policy-research-runs`. It exposes research status and persisted citations, not a publication control.
+- Updated the synthetic bulletin to contain explicit synthetic sections so the complete source-monitor -> retrieval -> citation mechanism can be demonstrated without representing a real regulator feed.
+
+### Verification
+
+```text
+npm run lint:check
+  passed
+npm run build
+  passed
+npm test -- --runInBand --no-cache policy-research.service.spec.ts
+  3 passed
+npm test -- --runInBand --no-cache schema-migrations.spec.ts
+  skipped: DATABASE_URL is not configured in this checkout
+```
+
+The focused tests prove all four requested condition classifications, idempotent queueing, immutable revision passage retrieval/citation persistence, and that Qwen is invoked only after retrieval with source checksums present and no borrower text in the model payload.
+
+### Remaining release evidence
+
+- Run the complete migration-chain test against a disposable PostgreSQL database, then run the full CI suite.
+- Live-verify the worker's private Qwen research path after the pending staging inference deployment has completed successfully. The existing synthetic connector remains the only source; no real legal source, legal conclusion, or reviewed state-policy coverage is represented by this feature.

@@ -118,6 +118,8 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'policy_applicability',
       'policy_catalog_generation',
       'policy_change_impact_assessments',
+      'policy_research_citations',
+      'policy_research_runs',
       'policy_source_revisions',
       'policy_sources',
       'policy_transition_approvals',
@@ -188,7 +190,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // aggregate usage -> tenants, reservations -> their aggregate month
     // agent_runs -> its optional bounded model invocation, guest sandbox
     // sessions -> their disposable tenant
-    expect(foreignKeys).toHaveLength(24);
+    expect(foreignKeys).toHaveLength(28);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -229,6 +231,21 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       { column_name: 'rateWindowAttempts', column_default: '0' },
       { column_name: 'rateWindowStartedAt', column_default: null },
     ]);
+  });
+
+  it('reverts citation-bound policy research without removing source evidence', async () => {
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining([
+        'policy_research_runs',
+        'policy_research_citations',
+      ]),
+    );
+    await scratchDataSource.undoLastMigration();
+    expect(await tableNames()).not.toContain('policy_research_runs');
+    expect(await tableNames()).not.toContain('policy_research_citations');
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['policy_sources', 'policy_source_revisions']),
+    );
   });
 
   it('reverts guest-sandbox session metadata without removing its synthetic case prerequisites', async () => {

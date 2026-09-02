@@ -20,6 +20,8 @@ import { CommunicationTemplate } from './entities/communication-template.entity'
 import { CommunicationMessage } from './entities/communication-message.entity';
 import { CommunicationApproval } from './entities/communication-approval.entity';
 import { DocumentRecord } from './entities/document-record.entity';
+import { PolicyResearchRun } from './entities/policy-research-run.entity';
+import { PolicyResearchCitation } from './entities/policy-research-citation.entity';
 
 /**
  * DatabaseModule registers all entities and can be used as a central place
@@ -48,6 +50,8 @@ import { DocumentRecord } from './entities/document-record.entity';
       CommunicationMessage,
       CommunicationApproval,
       DocumentRecord,
+      PolicyResearchRun,
+      PolicyResearchCitation,
     ]),
   ],
   exports: [TypeOrmModule],
