@@ -12786,3 +12786,30 @@ The request verification recorded status codes only; no cookie, tenant, case, or
 - The persistent URL is an AWS-managed `cloudfront.net` hostname because the project intentionally has no purchased custom domain.
 - The staging rollout currently demonstrates the synthetic case workflow. Platform-admin policy research and real provider promotion remain privileged operational surfaces, not public sandbox actions.
 - A successful sandbox walkthrough is not evidence of real lender, provider, legal, or production authorization.
+
+## M7-064: Production dependency-audit remediation
+
+### Status
+
+Implemented locally; protected CI must confirm the regenerated lockfile and full suite.
+
+### Problem
+
+The CI run for the product-demo documentation discovered newly published advisories in transitive production dependency versions. `fast-uri@3.1.5` was affected by high-severity host-normalization and SSRF advisories, while `qs@6.15.3` had moderate-severity parsing/denial-of-service advisories. The previous protected run had passed before the advisory database changed.
+
+### Implementation
+
+- Added exact root npm overrides for `fast-uri@3.1.6` and `qs@6.16.0`.
+- The overrides stay inside the parent packages' compatible version ranges: `ajv@8.18.0` requests `fast-uri` `^3.0.1`; the Express and Superagent dependency paths accept the patched `qs` major version.
+- Regenerated the lockfile rather than applying a broad dependency upgrade, so this remediation changes only the vulnerable transitive versions.
+
+### Verification plan
+
+```text
+npm audit --omit=dev --audit-level=high
+npm --prefix console audit --omit=dev --audit-level=high
+npm run lint:check
+npm run build
+```
+
+The next protected CI run also exercises migration, backend and console tests, generated-contract drift, container build, SAST, secret scanning, and observability validation.
