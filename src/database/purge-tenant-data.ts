@@ -1,9 +1,11 @@
 import {
   DataSource,
+  EntityManager,
   EntityTarget,
   FindOptionsWhere,
   ObjectLiteral,
 } from 'typeorm';
+import { runInTenantContext } from './tenant-context';
 import { LoanCase } from './entities/loan-case.entity';
 import { EvidenceFact } from './entities/evidence-fact.entity';
 import { LoanCondition } from './entities/loan-condition.entity';
@@ -63,6 +65,20 @@ import { Tenant } from './entities/tenant.entity';
  * its own entity list just to satisfy this one shared helper.
  * `hasMetadata()` is a real registration check, not a guess.
  *
+ * Every table this function touches except `Tenant` itself carries a real
+ * `FORCE ROW LEVEL SECURITY` policy keyed on `app.current_tenant_id` (see
+ * `database/tenant-context.ts`) — a role that isn't exempt from RLS (this
+ * codebase's real staging/production runtime role, deliberately not a
+ * superuser) sees zero rows on every one of those tables without it, so
+ * every delete below silently matches nothing instead of erroring. This
+ * was a real bug here through M7-055: every query ran on the bare
+ * `DataSource`, so cleanup appeared to work against a local/CI Postgres
+ * connected as an RLS-exempt superuser, then deleted nothing on real
+ * staging and only surfaced when `Tenant.delete()` — the one unprotected
+ * table — hit the real, still-there `loan_cases` row's FK. The whole
+ * function now runs inside one `runInTenantContext()` transaction so
+ * every delete below carries the tenant context RLS requires.
+ *
  * Deliberately NOT deleted: `audit_events` (append-only by design — its own
  * migration's trigger rejects DELETE unconditionally, the same reason
  * `provider-kill-switch-drill.ts` can't clean up its own audit trail
@@ -76,17 +92,32 @@ export async function purgeTenantData(
   dataSource: DataSource,
   tenantId: string,
 ): Promise<void> {
+  await runInTenantContext(dataSource, tenantId, async (manager) => {
+    await purgeTenantDataWithManager(dataSource, manager, tenantId);
+  });
+}
+
+async function purgeTenantDataWithManager(
+  dataSource: DataSource,
+  manager: EntityManager,
+  tenantId: string,
+): Promise<void> {
   const deleteIfKnown = async <T extends ObjectLiteral>(
     entity: EntityTarget<T>,
     where: Record<string, unknown>,
   ): Promise<void> => {
+    // `hasMetadata()` is schema introspection, not a query — it's the same
+    // answer regardless of which manager/transaction asks, so this stays
+    // on `dataSource` even though the actual delete below runs against
+    // `manager` (the `runInTenantContext` transaction, so RLS-protected
+    // tables actually see the tenant context they require).
     if (!dataSource.hasMetadata(entity)) return;
     // Every real call site below passes a plain {tenantId} (or similar)
     // object matching that entity's own real column — TypeORM's generic
     // `delete()` signature can't infer that from an unconstrained `T`,
     // so this cast states what's already true by construction rather
     // than working around a real type mismatch.
-    await dataSource.getRepository(entity).delete(where as FindOptionsWhere<T>);
+    await manager.getRepository(entity).delete(where as FindOptionsWhere<T>);
   };
 
   // Reservations first, explicitly — real `agent_budget_reservations`
@@ -102,15 +133,15 @@ export async function purgeTenantData(
   await deleteIfKnown(TenantAgentBudgetUsage, { tenantId });
 
   if (dataSource.hasMetadata(AgentRun)) {
-    const agentRuns = await dataSource
+    const agentRuns = await manager
       .getRepository(AgentRun)
       .find({ where: { tenantId } });
     if (agentRuns.length && dataSource.hasMetadata(ToolAttempt)) {
-      await dataSource
+      await manager
         .getRepository(ToolAttempt)
         .delete(agentRuns.map((r) => ({ agentRunId: r.id })));
     }
-    await dataSource.getRepository(AgentRun).delete({ tenantId });
+    await manager.getRepository(AgentRun).delete({ tenantId });
   }
   await deleteIfKnown(AgentModelInvocation, { tenantId });
 
@@ -124,16 +155,16 @@ export async function purgeTenantData(
   await deleteIfKnown(CasePolicySnapshot, { tenantId });
 
   if (dataSource.hasMetadata(LoanCondition)) {
-    const conditions = await dataSource
+    const conditions = await manager
       .getRepository(LoanCondition)
       .find({ where: { tenantId } });
     if (conditions.length && dataSource.hasMetadata(ConditionTransition)) {
-      await dataSource
+      await manager
         .getRepository(ConditionTransition)
         .delete(conditions.map((c) => ({ conditionId: c.id })));
     }
     if (conditions.length) {
-      await dataSource
+      await manager
         .getRepository(LoanCondition)
         .delete(conditions.map((c) => ({ id: c.id })));
     }
@@ -145,6 +176,6 @@ export async function purgeTenantData(
   // LoanCase and Tenant are the two tables every real caller of this
   // function must register — not guarded, deliberately: a caller with
   // neither has nothing for this function to do in the first place.
-  await dataSource.getRepository(LoanCase).delete({ tenantId });
-  await dataSource.getRepository(Tenant).delete({ id: tenantId });
+  await manager.getRepository(LoanCase).delete({ tenantId });
+  await manager.getRepository(Tenant).delete({ id: tenantId });
 }
