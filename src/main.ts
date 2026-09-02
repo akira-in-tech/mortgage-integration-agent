@@ -4,12 +4,17 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule } from '@nestjs/swagger';
+import { DataSource } from 'typeorm';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { NodeEnvironment } from './config/env.validation';
 import { resolveCorsOrigin } from './config/cors';
 import { buildOpenApiDocument } from './openapi.config';
 import { getActiveTraceFields } from './observability/trace-context';
+import {
+  describeTenantIsolationRlsGaps,
+  findTenantIsolationRlsGaps,
+} from './database/check-tenant-isolation-rls';
 
 // Explicit, not Express's implicit default — the charter (16.1) requires
 // request-size limits to be a deliberate decision, not an accident of
@@ -93,6 +98,33 @@ async function bootstrap(): Promise<void> {
   // `npm run generate:openapi`, not served live in every environment.
   if (isDevelopment) {
     SwaggerModule.setup('api-docs', app, buildOpenApiDocument(app));
+  }
+
+  // M7-055: a real audit found this codebase's own long-lived local dev
+  // database can have row-level security silently disabled on nearly
+  // every tenant-scoped table (built via `synchronize` instead of the
+  // real migration chain, which is the only thing that actually applies
+  // the `ENABLE ROW LEVEL SECURITY`/`FORCE ROW LEVEL SECURITY` statements)
+  // — tenant isolation fails open there, with nothing surfacing that
+  // until someone happens to run the tenant-isolation spec suite
+  // directly. Staging/production fail closed and refuse to boot; local
+  // development gets a loud, impossible-to-miss warning instead of a
+  // silent trust-boundary gap, since hard-failing there would break the
+  // documented, existing local-dev workflow this codebase already has.
+  const rlsGaps = await findTenantIsolationRlsGaps(app.get(DataSource));
+  if (rlsGaps.length > 0) {
+    const lines = describeTenantIsolationRlsGaps(rlsGaps);
+    if (
+      nodeEnv === NodeEnvironment.Staging ||
+      nodeEnv === NodeEnvironment.Production
+    ) {
+      throw new Error(
+        `Refusing to start in ${nodeEnv}: tenant isolation (row-level security) is missing on ${rlsGaps.length} table(s): ${lines.join('; ')}. Run the real migration chain (npm run migration:run) against this database, not a synchronize-built schema.`,
+      );
+    }
+    console.warn(
+      `WARNING: row-level security is missing on ${rlsGaps.length} tenant-scoped table(s) — tenant isolation fails open on this database: ${lines.join('; ')}. This is a known local-dev quirk when the schema was built via synchronize instead of "npm run migration:run" — fine for casual local development, but never trust cross-tenant test results against this database until it's fixed.`,
+    );
   }
 
   const port = configService.get<number>('PORT', 3000);

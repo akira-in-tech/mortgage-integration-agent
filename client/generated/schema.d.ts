@@ -315,7 +315,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Download bounded tenant audit evidence as JSON. */
+        /** Download the tenant's complete audit evidence as JSON. */
         get: operations["exportAuditEvents"];
         put?: never;
         post?: never;
@@ -1812,9 +1812,7 @@ export interface operations {
     };
     exportAuditEvents: {
         parameters: {
-            query?: {
-                limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;

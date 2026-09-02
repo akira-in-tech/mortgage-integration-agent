@@ -12543,3 +12543,57 @@ Released to the persistent AWS staging environment.
   cookie-backed session recovery, and 200 for a CSRF-protected GraphQL
   `startWorkflowRun` request with a valid workflow identifier. Response
   contents and cookie values were not retained or logged.
+
+## M7-055: six real gaps from a fresh M7-030–054 audit — orphaned sandbox data, RLS blind spot, cancellation test coverage, audit export truncation, key-rotation proof
+
+### Status
+
+Implemented and verified against real local PostgreSQL. Closes six specific, real, previously-undisclosed gaps a fresh line-by-line audit of M7-030 through M7-054 found — the same audit discipline this project has applied to itself since M7-028, this time turned on the 44 commits landed since this session last touched the repository directly.
+
+### Background
+
+The user asked what stood between this project and production readiness for its own existing (synthetic) scope. Four parallel audit agents, mirroring the M7-028/M7-029 audit's own methodology, each independently re-verified a slice of M7-030–054 against real code and real tests rather than trusting the dev log's own self-reporting. Asked to close the concrete findings.
+
+### What changed
+
+1. **A real `tsc --noEmit` regression on the branch head** (`src/auth/oidc-session.service.spec.ts`): a mock object's declared type was missing `verifyIdToken`, even though the mock literal itself already had it — the object literal's excess-property check was failing at the type level. Fixed the type, not the literal.
+
+2. **Guest sandbox orphaned data (the highest-severity finding)**: `GuestSandboxService.create()`'s own expired-session sweep only ever deleted the session row itself — the real tenant/case/evidence/consent rows a guided-tour session created were never deleted, and this is a public, unauthenticated endpoint. `src/database/purge-tenant-data.ts` (new) is a single, shared, foreign-key-safe "delete everything a synthetic tenant could have created" function — `deleteIfKnown()` skips a table when the caller's own `DataSource` never registered that entity, so the same function stays callable from a narrowly-scoped spec's `DataSource` and the full app's. `evaluation/runner.ts`'s own `cleanupEvaluationRun()` (which had the exact same "never deletes the tenant row itself" gap, worked around for years by every one of its own tests doing a redundant manual `Tenant.delete()` afterward) now delegates to it too, closing that gap as a side effect rather than leaving two divergent copies of the same fragile logic. `GuestSandboxService.purgeExpiredSessions()` is called both opportunistically inside `create()` and on a real interval from `worker.ts` (`GUEST_SANDBOX_CLEANUP_INTERVAL_MS`, default 5 minutes) — the same "plain interval, not a Temporal workflow" pattern `WebhookDispatchService`/`ProviderReconciliationService` already established, so cleanup no longer depends on traffic volume to keep up with a public endpoint.
+
+3. **Row-level security silently disabled on most tenant-scoped tables in a `synchronize`-built database**: a real, structural check (`src/database/check-tenant-isolation-rls.ts`) queries `pg_class`/`information_schema.columns` directly for every table with a `tenantId` column and flags any that lack RLS — derived dynamically, not a hardcoded table list, so it stays correct as the schema grows. Three tables (`api_clients`, `tenant_memberships`, `guest_sandbox_sessions`) are a real, reviewed, documented exception: each is queried specifically to _resolve_ which tenant a caller belongs to, before any tenant context exists to enforce RLS against — RLS-protecting the table that establishes tenant identity is a bootstrapping contradiction, not a stricter guarantee. Wired into both `main.ts` and `worker.ts` at boot: staging/production refuse to start with a real gap present; development logs a loud, specific warning and continues, since hard-failing there would break this codebase's own documented local-dev workflow.
+
+4. **`case-conditions.activities.ts`'s two real database-backed recovery/cancellation activities had zero direct test coverage**: `prepareWorkflowRecovery` (the query that decides whether to reuse one open condition, restart collection, or route to review) and `markWorkflowCancelled` (the race-guarded status write) were only ever exercised through `case-conditions.workflow.spec.ts`'s fully-mocked-activities suite, which proves Temporal's own signal/replay mechanics, not this SQL. Added real, Postgres-backed tests for all three `prepareWorkflowRecovery` outcomes (`RESTART_COLLECTION`, `REUSE_OPEN_CONDITION` via a real condition opened through the real `evaluateConditions` path, and `REVIEW_REQUIRED` with two real active conditions) and both `markWorkflowCancelled` branches (regresses an in-progress case to `MANUAL_REVIEW`; does _not_ regress an already-`READY_FOR_UNDERWRITING` or already-`CLOSED` case — the exact race the activity's own comment names).
+
+5. **Audit export silently capped at 1,000 events with no indication anything was missing**: `AuditEventService.listAll()` (new) walks a tenant's complete real history with real keyset pagination on `(createdAt, id)`, and only reports `truncated: true` after a real existence check past its own (50,000-event) safety cap actually finds more rows — never a guess. `GET /v1/audit-events/export` now uses it and includes `truncated` in the downloaded JSON; the checked-in OpenAPI description's stale "audit-export is not yet built" line is corrected. `GET /v1/audit-events` (the console's bounded recent-activity view) is unchanged.
+
+6. **`OIDC_SESSION_ENCRYPTION_KEYS` key-ring rotation had no dedicated test and no operator documentation** — the one encryption mechanism in this codebase without either, unlike its sibling `PROVIDER_DATA_ENCRYPTION_KEYS`. Added real tests proving a session created before rotation still decrypts under a retired-but-retained key, gets re-encrypted under the new current key on its next refresh, and is genuinely unreadable by a service that never learned the new key or that dropped an old one from its ring entirely. `docs/OPERATIONS.md` now documents the real mechanism: no backfill script exists, deliberately — every real read path re-encrypts under the current key, so a session-length wait (`OIDC_SESSION_MAX_AGE_SECONDS`) after rotation finishes the migration on its own before a retired key is safe to drop.
+
+7. **Two stale documentation claims corrected**: `README.md`'s and `PROJECT_CHARTER.md`'s Section 29 staging paragraphs still said Keycloak/console deployment was declined for lack of a custom domain — true when written, but M7-050/M7-052 subsequently achieved browser-trusted HTTPS with zero custom domain via CloudFront's own default certificate plus a real Cognito user pool, live-verified. Both now say so.
+
+### A real orphaned-data cleanup, done by hand, along the way
+
+Two real orphaned rows (and, in one case, dozens of dependent rows) turned up in this machine's own long-lived dev database from earlier failed attempts at this same fix — `purgeTenantData()` throwing partway through before the `hasMetadata()` guards were correct left a `loan_cases` row referencing a jurisdiction that a later test's own cleanup then couldn't delete (`FK` violation), the exact category of problem this slice's own fix (item 2) exists to prevent for the guest sandbox. Cleaned up directly via `psql`, confirmed via a real re-run afterward — not itself a code defect, but reported plainly since it happened during this work.
+
+### Verification
+
+```text
+Real, against a live local Postgres (2026-09-02):
+- purge-tenant-data.spec.ts, check-tenant-isolation-rls.spec.ts,
+  runner.spec.ts, guest-sandbox.service.spec.ts,
+  oidc-session.service.spec.ts, case-conditions.activities.spec.ts:
+  all passed
+- npm run build: clean
+- npm run lint:check: clean (after one auto-fix pass)
+- npx tsc --noEmit: 0 errors (the real oidc-session.service.spec.ts
+  regression this slice found and fixed)
+- audit-event.service.spec.ts's two append-only-trigger tests remain
+  failing on this machine's specific long-lived local database — a
+  pre-existing, already-documented local-environment gap (no migration
+  ever ran the real trigger-creating SQL there), unrelated to this slice
+  and confirmed by direct psql inspection (no trigger present), not
+  re-litigated here
+```
+
+### Next safe step
+
+Not attempted here, named honestly: a real Temporal-server test that actually calls `.cancel()` on a live workflow handle and observes the `catch(isCancellation) -> CancellationScope.nonCancellable(markWorkflowCancelled)` path fire end to end. `case-conditions.workflow.spec.ts`'s own real-Temporal suite already proves the surrounding recovery/duplicate-signal mechanics against a live server; adding a live cancellation test to it is a real, separate, closable gap, not attempted in this slice given the time this session had already spent recovering from real environment resource contention. The remaining M7-030–054 audit findings not acted on here (M7-032's adapter-spec duplication left in place, M7-044's dispatch-service-level rate-limit test, M7-036's console Cancel-branch UI coverage) are each smaller and lower-severity than the six closed above — not assumed as the next task without asking first.

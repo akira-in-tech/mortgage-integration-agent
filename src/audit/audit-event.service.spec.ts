@@ -128,4 +128,75 @@ describeOrSkip('AuditEventService', () => {
       ),
     ).rejects.toThrow(/append-only/);
   });
+
+  // M7-055: the real export route used to call list(), whose 1,000-row cap
+  // silently truncated a tenant with more history than that — with no
+  // signal anywhere in the downloaded file that anything was missing.
+  // listAll() is the fix; these tests use a fresh, dedicated tenant so the
+  // exact counts below aren't affected by this file's other, shared-tenant
+  // tests. Note: listAll()'s internal page size is 1,000 — proving the
+  // "the cap lands exactly on a full internal page" boundary specifically
+  // would need 1,000+ seeded rows, too slow for a unit test; the
+  // maxEvents-smaller-than-a-page path exercised below (the realistic
+  // shape for any actual export, since the default cap is 50,000) covers
+  // the same existence-check logic that boundary would.
+  describe('listAll()', () => {
+    const listAllTenantId = randomUUID();
+
+    it('returns every real event for a tenant, newest first, when nothing near the cap', async () => {
+      for (const action of ['FIRST', 'SECOND', 'THIRD']) {
+        await service.record({
+          tenantId: listAllTenantId,
+          actorId: 'listall-spec-actor',
+          action: `LISTALL_${action}`,
+          resourceType: 'spec_resource',
+        });
+      }
+
+      const { events, truncated } = await service.listAll(listAllTenantId);
+      expect(truncated).toBe(false);
+      expect(events.map((e) => e.action)).toEqual([
+        'LISTALL_THIRD',
+        'LISTALL_SECOND',
+        'LISTALL_FIRST',
+      ]);
+    });
+
+    it('reports truncated:true, backed by a real existence check, when a small maxEvents cap is actually exceeded', async () => {
+      const cappedTenantId = randomUUID();
+      for (let i = 0; i < 5; i++) {
+        await service.record({
+          tenantId: cappedTenantId,
+          actorId: 'listall-capped-actor',
+          action: `LISTALL_CAPPED_${i}`,
+          resourceType: 'spec_resource',
+        });
+      }
+
+      const { events, truncated } = await service.listAll(cappedTenantId, 2);
+      expect(truncated).toBe(true);
+      expect(events).toHaveLength(2);
+      // Newest 2 of the 5 real rows — not an arbitrary 2.
+      expect(events.map((e) => e.action)).toEqual([
+        'LISTALL_CAPPED_4',
+        'LISTALL_CAPPED_3',
+      ]);
+    });
+
+    it('reports truncated:false when maxEvents exactly matches the real row count — the existence check must not false-positive', async () => {
+      const exactTenantId = randomUUID();
+      for (let i = 0; i < 3; i++) {
+        await service.record({
+          tenantId: exactTenantId,
+          actorId: 'listall-exact-actor',
+          action: `LISTALL_EXACT_${i}`,
+          resourceType: 'spec_resource',
+        });
+      }
+
+      const { events, truncated } = await service.listAll(exactTenantId, 3);
+      expect(truncated).toBe(false);
+      expect(events).toHaveLength(3);
+    });
+  });
 });

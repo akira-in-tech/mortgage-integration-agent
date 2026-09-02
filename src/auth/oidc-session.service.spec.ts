@@ -35,6 +35,7 @@ describe('OidcSessionService', () => {
     buildAuthorizationUrl: jest.Mock;
     exchangeAuthorizationCode: jest.Mock;
     verify: jest.Mock;
+    verifyIdToken: jest.Mock;
     refresh: jest.Mock;
     buildLogoutUrl: jest.Mock;
   };
@@ -45,6 +46,7 @@ describe('OidcSessionService', () => {
     findOneBy: jest.Mock;
   };
   let selfServiceProvisioning: { resolveUser: jest.Mock };
+  let userRepository: { findOneBy: jest.Mock };
   let response: Pick<Response, 'cookie' | 'clearCookie'>;
   let service: OidcSessionService;
 
@@ -77,7 +79,7 @@ describe('OidcSessionService', () => {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       findOneBy: jest.fn(async () => stored),
     };
-    const userRepository = {
+    userRepository = {
       findOneBy: jest.fn(async ({ subject, id }) =>
         subject === USER.subject || id === USER.id ? USER : null,
       ),
@@ -288,5 +290,138 @@ describe('OidcSessionService', () => {
       OIDC_SESSION_COOKIE,
       expect.objectContaining({ path: '/' }),
     );
+  });
+
+  // M7-055: an M7-047 audit found the key-ring rotation mechanism was the
+  // one encryption feature in this codebase with no dedicated rotation
+  // test and no operator documentation, unlike its sibling
+  // SensitiveJsonCipher (provider/evidence encryption), which has both.
+  // encrypt()/decrypt() are private, so this proves the real behavior
+  // through the same public completeLogin()/authenticateCookie() surface
+  // every other test in this file already uses — two real service
+  // instances sharing the same in-memory session store, one configured
+  // before a rotation and one after, exactly the way a real deployment
+  // would roll a new OIDC_SESSION_ENCRYPTION_KEYS value out.
+  describe('OIDC_SESSION_ENCRYPTION_KEYS rotation', () => {
+    const oldKey = 'a'.repeat(64);
+    const newKey = 'b'.repeat(64);
+
+    function buildService(keyRing: string): OidcSessionService {
+      const config = new ConfigService({
+        NODE_ENV: 'test',
+        OIDC_CALLBACK_URL: 'http://localhost:5173/v1/auth/session/callback',
+        CONSOLE_ORIGIN: 'http://localhost:5173',
+        OIDC_SESSION_ENCRYPTION_KEYS: keyRing,
+        OIDC_SESSION_MAX_AGE_SECONDS: 28_800,
+      });
+      return new OidcSessionService(
+        oidcService as never,
+        config,
+        sessionRepository as never,
+        userRepository as never,
+        selfServiceProvisioning as never,
+      );
+    }
+
+    it('decrypts a session created before rotation using the retired key still in the ring, then re-encrypts it under the new current key on refresh', async () => {
+      const preRotationService = buildService(`legacy:${oldKey}`);
+      await preRotationService.completeLogin(
+        requestWithCookies({
+          meridian_login_state: 'state',
+          meridian_login_verifier: 'verifier',
+        }),
+        response as Response,
+        'code',
+        'state',
+      );
+      expect(stored?.encryptedTokenBundle).toMatch(/^v2\.legacy\./);
+      const sessionCall = (response.cookie as jest.Mock).mock.calls.find(
+        ([name]) => name === OIDC_SESSION_COOKIE,
+      );
+      const csrfCall = (response.cookie as jest.Mock).mock.calls.find(
+        ([name]) => name === OIDC_CSRF_COOKIE,
+      );
+      const cookies = {
+        [OIDC_SESSION_COOKIE]: sessionCall[1] as string,
+        [OIDC_CSRF_COOKIE]: csrfCall[1] as string,
+      };
+
+      // Rotation: a new current key, the old one retained under its same
+      // id so sessions issued before rotation keep working.
+      const postRotationService = buildService(
+        `current:${newKey},legacy:${oldKey}`,
+      );
+
+      await expect(
+        postRotationService.authenticateCookie(
+          requestWithCookies(cookies, cookies[OIDC_CSRF_COOKIE]),
+          response as Response,
+          true,
+        ),
+      ).resolves.toMatchObject({ user: USER });
+
+      // Force a refresh so the stored ciphertext gets rewritten — it must
+      // now be encrypted under the new current key, not the retired one.
+      if (!stored) throw new Error('test session was not stored');
+      stored.accessExpiresAt = new Date(Date.now() - 1);
+      oidcService.refresh.mockResolvedValue({
+        access_token: 'rotated-access-token',
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 600,
+      });
+      await postRotationService.authenticateCookie(
+        requestWithCookies(cookies, cookies[OIDC_CSRF_COOKIE]),
+        response as Response,
+        false,
+      );
+      expect(stored.encryptedTokenBundle).toMatch(/^v2\.current\./);
+
+      // And a service that never learned about the new key can no longer
+      // read the now-current-key-encrypted session — proves the ring is
+      // really keyed by id, not "any previously-issued key still works."
+      await expect(
+        preRotationService.authenticateCookie(
+          requestWithCookies(cookies, cookies[OIDC_CSRF_COOKIE]),
+          response as Response,
+          true,
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('rejects a session encrypted under a key that has since been fully retired (dropped from the ring, not just rotated past)', async () => {
+      const beforeDropService = buildService(`old:${oldKey}`);
+      await beforeDropService.completeLogin(
+        requestWithCookies({
+          meridian_login_state: 'state',
+          meridian_login_verifier: 'verifier',
+        }),
+        response as Response,
+        'code',
+        'state',
+      );
+      const sessionCall = (response.cookie as jest.Mock).mock.calls.find(
+        ([name]) => name === OIDC_SESSION_COOKIE,
+      );
+      const csrfCall = (response.cookie as jest.Mock).mock.calls.find(
+        ([name]) => name === OIDC_CSRF_COOKIE,
+      );
+      const cookies = {
+        [OIDC_SESSION_COOKIE]: sessionCall[1] as string,
+        [OIDC_CSRF_COOKIE]: csrfCall[1] as string,
+      };
+
+      // "old" is gone from the ring entirely, not retained — the real
+      // operational mistake key-ring rotation is meant to let an operator
+      // avoid making by mistake, proven here as a real rejection rather
+      // than assumed.
+      const afterDropService = buildService(`current:${newKey}`);
+      await expect(
+        afterDropService.authenticateCookie(
+          requestWithCookies(cookies, cookies[OIDC_CSRF_COOKIE]),
+          response as Response,
+          true,
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
   });
 });

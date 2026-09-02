@@ -18,6 +18,7 @@ import { LoanType } from '../database/enums/loan-type.enum';
 import { ApiClientRole } from '../database/enums/api-client.enum';
 import { NodeEnvironment } from '../config/env.validation';
 import { readCookie } from './http-cookie';
+import { purgeTenantData } from '../database/purge-tenant-data';
 
 export const GUEST_SANDBOX_COOKIE = 'meridian_guest_sandbox';
 export const GUEST_SANDBOX_CSRF_COOKIE = 'meridian_guest_sandbox_csrf';
@@ -35,6 +36,18 @@ export interface GuestSandboxSummary {
  * Creates the public portfolio's disposable workspace. All values are
  * synthetic and the tenant id is generated server-side; a browser can resume
  * only its own opaque session and never nominate another visitor's tenant.
+ *
+ * `purgeExpiredSessions()` (M7-055) closes a real, previously-undisclosed
+ * gap: the session row's own TTL was enforced, but the tenant/case/consent
+ * rows a session's guided tour created were never deleted — every visit to
+ * this public, unauthenticated endpoint permanently grew real staging RDS,
+ * forever. Called from two places: opportunistically at the top of
+ * `create()` (this service's own original cleanup point, kept as a
+ * fallback for any environment not running the worker process), and on a
+ * real interval from `worker.ts` (`GUEST_SANDBOX_CLEANUP_INTERVAL_MS`) —
+ * the same "plain interval, not a Temporal workflow" pattern
+ * `WebhookDispatchService`/`ProviderReconciliationService` already
+ * established, so cleanup doesn't depend on traffic volume to keep up.
  */
 @Injectable()
 export class GuestSandboxService {
@@ -56,7 +69,7 @@ export class GuestSandboxService {
   }
 
   async create(response: Response): Promise<GuestSandboxSummary> {
-    await this.sessionRepository.delete({ expiresAt: LessThan(new Date()) });
+    await this.purgeExpiredSessions();
     const actorId = randomUUID();
     const now = new Date();
     const expiresAt = new Date(
@@ -149,6 +162,30 @@ export class GuestSandboxService {
     const { session } = await this.resolve(request, response, true);
     await this.sessionRepository.delete({ id: session.id });
     this.clearCookies(response);
+  }
+
+  /**
+   * Every expired session's real tenant/case/evidence/condition/consent
+   * footprint — everything the guided tour could have created — is
+   * genuinely deleted here, not just the session row that used to be the
+   * only thing this cleared. Each expired tenant is purged (and its own
+   * session row removed) as an independent unit: one slow or failing purge
+   * must not block every other expired session from being cleaned up.
+   * Returns the number of tenants actually purged, for the worker's own
+   * tick logging.
+   */
+  async purgeExpiredSessions(): Promise<number> {
+    const expired = await this.sessionRepository.find({
+      where: { expiresAt: LessThan(new Date()) },
+      select: ['id', 'tenantId'],
+    });
+    let purged = 0;
+    for (const session of expired) {
+      await purgeTenantData(this.dataSource, session.tenantId);
+      await this.sessionRepository.delete({ id: session.id });
+      purged += 1;
+    }
+    return purged;
   }
 
   private async seedCase(

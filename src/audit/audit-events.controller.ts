@@ -55,17 +55,23 @@ export class AuditEventsController {
 
   @ApiOperation({
     operationId: 'exportAuditEvents',
-    summary: 'Download bounded tenant audit evidence as JSON.',
+    summary: "Download the tenant's complete audit evidence as JSON.",
   })
-  @ApiQuery({ name: 'limit', required: false, minimum: 1, maximum: 1000 })
   @ApiProduces('application/json')
   @Get('export')
   async export(
     @CurrentAuth() auth: AuthContext,
-    @Query('limit', new DefaultValuePipe(1000), ParseIntPipe) limit: number,
     @Res() response: Response,
   ): Promise<void> {
-    const events = await this.auditEventService.list(auth.tenantId, limit);
+    // M7-055: this used to silently cap at 1,000 rows with no indication
+    // in the downloaded file that anything was missing — a tenant with
+    // more history than that got a quietly-incomplete export. listAll()
+    // walks the tenant's real, complete history with keyset pagination
+    // and only sets `truncated` when a real existence check past its own
+    // (very large) safety cap actually finds more rows, not as a guess.
+    const { events, truncated } = await this.auditEventService.listAll(
+      auth.tenantId,
+    );
     const generatedAt = new Date().toISOString();
     response
       .status(200)
@@ -74,6 +80,13 @@ export class AuditEventsController {
         'content-disposition',
         'attachment; filename="audit-events.json"',
       )
-      .send(JSON.stringify({ generatedAt, tenantId: auth.tenantId, events }));
+      .send(
+        JSON.stringify({
+          generatedAt,
+          tenantId: auth.tenantId,
+          truncated,
+          events,
+        }),
+      );
   }
 }

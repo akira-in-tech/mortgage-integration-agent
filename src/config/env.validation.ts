@@ -315,6 +315,14 @@ export class EnvironmentVariables {
   @Max(14_400)
   GUEST_SANDBOX_TTL_SECONDS: number = 3600;
 
+  // How often the Worker service sweeps expired guest-sandbox sessions and
+  // purges the real tenant/case/evidence/consent rows they created (M7-055)
+  // — this is the actual data-cleanup interval, not the session TTL above.
+  @IsOptional()
+  @IsInt()
+  @Min(10_000)
+  GUEST_SANDBOX_CLEANUP_INTERVAL_MS: number = 300_000;
+
   @IsOptional()
   @IsInt()
   @Min(300)
