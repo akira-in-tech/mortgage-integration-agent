@@ -77,7 +77,9 @@ function store(session: DemoSandboxSession): DemoSandboxSession {
   const storedHint = readStoredHint();
   const caseId =
     session.caseId ??
-    (session.tenantId === storedHint?.tenantId ? storedHint.caseId : undefined);
+    (storedHint !== null && session.tenantId === storedHint.tenantId
+      ? storedHint.caseId
+      : undefined);
   const sessionWithHint = caseId ? { ...session, caseId } : session;
   currentSession = sessionWithHint.authenticated ? sessionWithHint : null;
   if (session.authenticated) {

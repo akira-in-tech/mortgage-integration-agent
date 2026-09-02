@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { SandboxGuide, getSandboxGuideState } from './SandboxGuide';
+import { SandboxGuide } from './SandboxGuide';
+import { getSandboxGuideState } from './sandbox-guide-state';
 
 describe('SandboxGuide', () => {
   it('maps the initial draft case to the real workflow start action', () => {

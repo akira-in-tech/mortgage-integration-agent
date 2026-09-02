@@ -12437,3 +12437,26 @@ Implemented; protected CI and staging verification are pending this change.
   stopped before continuing. The protected GitHub CI workflow is therefore
   the authoritative build, generated-contract, unit, browser, and security
   verification for this change.
+
+## M7-056: guided sandbox CI type correction
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Corrected the strict-null-safe restore path for the non-authoritative
+  sandbox display hint. A missing or malformed local value now remains an
+  ordinary no-case-id resume state instead of relying on optional-chain
+  narrowing that TypeScript cannot prove.
+- Moved pure guide-state derivation into its own module. The visual guide now
+  exports only a React component, preserving fast-refresh boundaries while
+  keeping the workflow-state mapping directly unit-testable.
+
+### Verification
+
+- GitHub Actions CI run `33580984891` completed the console unit suite but
+  failed the console TypeScript build on the strict-null issue above. The
+  failure was fixed before any staging deployment, and a new CI run is the
+  required verification gate.
