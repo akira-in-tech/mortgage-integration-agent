@@ -12744,6 +12744,8 @@ The focused tests prove all four requested condition classifications, idempotent
 
 The first protected CI run for this slice (`33649622711`) applied the complete migration chain successfully, then exposed a real E2E bootstrap defect: the optional `httpClient = fetch` constructor parameter was emitted as a Nest dependency on the global `Function` constructor. Direct unit construction masked that defect, while the full `AppModule` correctly failed to resolve it. The seam now uses the explicit optional `POLICY_RESEARCH_HTTP_CLIENT` token, so ordinary runtime construction uses the global fetch default and tests can still inject a mock. A dedicated Nest testing-module regression test proves the service boots without registering that test-only token. The fix is committed separately and must pass a new protected CI run before the slice is considered fully verified.
 
+The follow-up CI run (`33650195491`) passed the runtime suite far enough to generate the OpenAPI document and typed client, then correctly rejected the working tree because this new read endpoint added generated contract output. Regenerated `openapi/openapi.json` and `client/generated/schema.d.ts` from the current source against a fully migrated, disposable PostgreSQL database in the project's isolated Docker network; their diff is committed separately. The historical local development database was not reset because its synchronize-built schema has no migration history and must not be treated as disposable.
+
 ### Remaining release evidence
 
 - Run the complete migration-chain test against a disposable PostgreSQL database, then run the full CI suite.

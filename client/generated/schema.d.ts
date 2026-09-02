@@ -666,6 +666,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform-admin/policy-research-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse advisory, citation-bound policy research evidence. */
+        get: operations["listPolicyResearchRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}/communication-messages": {
         parameters: {
             query?: never;
@@ -1182,6 +1199,31 @@ export interface components {
             jurisdictionCode: string;
             /** Format: date-time */
             sourcePublishedAt: string;
+        };
+        PolicyResearchCitationDto: {
+            sourceChecksum: string;
+            location: string;
+            excerpt: string;
+            excerptDigest: string;
+            rank: number;
+            relevanceScore: string;
+        };
+        PolicyResearchRunDto: {
+            id: string;
+            trigger: string;
+            status: string;
+            jurisdictionCode: string;
+            productCode?: Record<string, never>;
+            lifecycleEvent?: Record<string, never>;
+            unresolvedReasons: string[];
+            researchQuery: string;
+            candidateSummary?: Record<string, never>;
+            changeSignals?: string[];
+            synthesisProvider?: Record<string, never>;
+            failureDetail?: Record<string, never>;
+            /** Format: date-time */
+            requestedAt: string;
+            citations: components["schemas"]["PolicyResearchCitationDto"][];
         };
         CommunicationMessage: Record<string, never>;
         ApproveCommunicationMessageDto: {
@@ -2548,6 +2590,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PolicyVersionSummaryDto"][];
+                };
+            };
+        };
+    };
+    listPolicyResearchRuns: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyResearchRunDto"][];
                 };
             };
         };
