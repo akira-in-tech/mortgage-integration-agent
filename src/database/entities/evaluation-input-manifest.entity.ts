@@ -16,9 +16,11 @@ export interface EvaluationManifestEvidenceRef {
 /**
  * Section 10.5's `EvaluationInputManifest`, honestly scoped: fields with a
  * real backing subsystem today are populated from that subsystem;
- * `authorizationDecisionId`, `consentVersionRefs`, and
- * `modelAndPromptManifestId` stay null/empty because no authorization-grant,
- * consent-versioning, or Agent model-call subsystem exists yet (the M3
+ * `authorizationDecisionId` and `consentVersionRefs` stay null/empty because
+ * no evaluation-level authorization-decision or consent-versioning reference
+ * exists yet. `modelAndPromptManifestId` remains null for deterministic runs
+ * and references the content-free Agent model invocation for model-routed
+ * runs. The M3
  * Agent's own `consentStatus` is itself a hardcoded 'VALID' placeholder —
  * see `lending-operations-agent-runtime.ts` — so there is no real consent
  * *version* to reference). `calculationRefs` stays empty for the same
@@ -52,7 +54,7 @@ export class EvaluationInputManifest {
   @Column({ type: 'integer' })
   caseVersion!: number;
 
-  /** No authorization-grant subsystem exists yet (Section 11) — always null until one does. */
+  /** No evaluation-level authorization-decision reference exists yet. */
   @Column({ type: 'varchar', length: 200, nullable: true })
   authorizationDecisionId!: string | null;
 
@@ -76,7 +78,7 @@ export class EvaluationInputManifest {
   @Column({ type: 'varchar', length: 20 })
   evaluatorVersion!: string;
 
-  /** The M3 Agent graph makes no model calls — always null until one does. */
+  /** Null for deterministic runs; otherwise references agent_model_invocations. */
   @Column({ type: 'varchar', length: 200, nullable: true })
   modelAndPromptManifestId!: string | null;
 

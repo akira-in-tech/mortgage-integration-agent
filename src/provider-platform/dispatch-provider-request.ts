@@ -1,5 +1,8 @@
 import { ProviderAuthorizationService } from './provider-authorization.service';
-import { ProviderOperationIntentService } from './provider-operation-intent.service';
+import {
+  ProviderIntentConflictError,
+  ProviderOperationIntentService,
+} from './provider-operation-intent.service';
 import { ProviderRegistryService } from './provider-registry.service';
 import { ProviderKillSwitchService } from './provider-kill-switch.service';
 import { ProviderPromotionService } from './provider-promotion.service';
@@ -15,6 +18,8 @@ import {
   operationalTelemetry,
   ProviderOutcome,
 } from '../observability/operational-telemetry';
+import { validateProviderFinding } from './provider-finding-contract';
+import { PermissiblePurposeService } from './permissible-purpose.service';
 
 export interface DispatchProviderRequestDeps {
   registry: ProviderRegistryService;
@@ -23,6 +28,7 @@ export interface DispatchProviderRequestDeps {
   consentService: ConsentService;
   killSwitchService: ProviderKillSwitchService;
   promotionService: ProviderPromotionService;
+  permissiblePurposeService: PermissiblePurposeService;
 }
 
 /**
@@ -72,6 +78,28 @@ export class ProviderRevalidationError extends Error {
   }
 }
 
+/** A retry found an existing effect whose state makes another submit unsafe. */
+export class ProviderIntentReplayBlockedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderIntentReplayBlockedError';
+  }
+}
+
+export class ProviderConsentScopeError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProviderConsentScopeError';
+  }
+}
+
+export class PermissiblePurposeError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'PermissiblePurposeError';
+  }
+}
+
 export interface DispatchProviderRequestParams {
   tenantId: string;
   caseId: string;
@@ -81,8 +109,12 @@ export interface DispatchProviderRequestParams {
   request: Record<string, unknown>;
   purposeCode: string;
   permittedDataClasses: string[];
+  /** Stable across retries for one logical effect. Defaults to one evidence request per case/capability/purpose. */
+  logicalOperationKey?: string;
   /** Section 11.5's field-bound authorization (M5-028) — see `ProviderAuthorizationGrant`'s own entity comment. Unset means every current caller's existing behavior: the normalized finding returns unfiltered. */
   permittedFields?: string[];
+  /** Required for non-simulator consumer-report dispatches. Simulator credit creates a marked synthetic-only decision. */
+  permissiblePurposeDecisionId?: string;
 }
 
 /**
@@ -203,10 +235,52 @@ export async function dispatchProviderRequest<TFinding>(
         // M5-005: attach the case's own active consent record (if any) to the
         // grant being issued, so revalidate() can later confirm it's still
         // granted and unrevoked (Section 11.5) immediately before dispatch.
-        const consentRecordId = await deps.consentService.activeRecordId(
+        const consentRecord = await deps.consentService.activeRecordForPurpose(
           params.tenantId,
           params.caseId,
+          params.purposeCode,
+          params.permittedDataClasses,
         );
+        if (!consentRecord) {
+          telemetryOutcome = 'authorization_rejected';
+          throw new ProviderConsentScopeError(
+            `no active consent authorizes purpose=${params.purposeCode} dataClasses=${params.permittedDataClasses.join(',')}`,
+          );
+        }
+
+        const purposeContext = {
+          tenantId: params.tenantId,
+          caseId: params.caseId,
+          borrowerSubjectId: params.borrowerSubjectId,
+          capability: params.capability,
+          purposeCode: params.purposeCode,
+          permittedDataClasses: params.permittedDataClasses,
+          mode,
+        };
+        let permissiblePurposeDecisionId = params.permissiblePurposeDecisionId;
+        if (params.capability === ProviderCapability.CREDIT) {
+          if (!permissiblePurposeDecisionId && mode === 'SIMULATOR') {
+            permissiblePurposeDecisionId =
+              await deps.permissiblePurposeService.issueSynthetic(
+                purposeContext,
+              );
+          }
+          if (!permissiblePurposeDecisionId) {
+            telemetryOutcome = 'authorization_rejected';
+            throw new PermissiblePurposeError(
+              'consumer-report dispatch requires a transaction-specific permissible-purpose decision',
+            );
+          }
+          const purposeValidation =
+            await deps.permissiblePurposeService.validate(
+              permissiblePurposeDecisionId,
+              purposeContext,
+            );
+          if (!purposeValidation.valid) {
+            telemetryOutcome = 'authorization_rejected';
+            throw new PermissiblePurposeError(purposeValidation.reason);
+          }
+        }
 
         const grant = await deps.authorizationService.issue({
           tenantId: params.tenantId,
@@ -217,7 +291,8 @@ export async function dispatchProviderRequest<TFinding>(
           purposeCode: params.purposeCode,
           permittedDataClasses: params.permittedDataClasses,
           permittedFields: params.permittedFields,
-          consentRecordIds: consentRecordId ? [consentRecordId] : [],
+          consentRecordIds: [consentRecord.id],
+          permissiblePurposeDecisionId,
         });
 
         const intent = await deps.intentService.prepare({
@@ -227,8 +302,26 @@ export async function dispatchProviderRequest<TFinding>(
           capability: params.capability,
           effectClass: adapter.operation.effectClass,
           authorizationGrantId: grant.id,
+          logicalOperationKey:
+            params.logicalOperationKey ??
+            `${params.caseId}:${params.capability}:${params.purposeCode}`,
           requestPayloadForFingerprint: params.request,
         });
+
+        if (intent.state === 'SUCCEEDED') {
+          if (intent.normalizedFinding === undefined) {
+            throw new ProviderIntentReplayBlockedError(
+              `logical provider operation "${intent.logicalOperationKey}" already succeeded but has no replayable normalized finding`,
+            );
+          }
+          telemetryOutcome = 'succeeded';
+          return intent.normalizedFinding as TFinding;
+        }
+        if (intent.state !== 'PREPARED') {
+          throw new ProviderIntentReplayBlockedError(
+            `logical provider operation "${intent.logicalOperationKey}" is ${intent.state}; another provider submission is blocked pending reconciliation or a new logical operation key`,
+          );
+        }
 
         const revalidation = await deps.authorizationService.revalidate(
           grant.id,
@@ -245,35 +338,74 @@ export async function dispatchProviderRequest<TFinding>(
           throw new ProviderRevalidationError(revalidation.reason);
         }
 
+        // Re-check consumer-report authority at the final external-call
+        // boundary so expiry or revocation after grant issuance fails closed.
+        if (permissiblePurposeDecisionId) {
+          const purposeValidation =
+            await deps.permissiblePurposeService.validate(
+              permissiblePurposeDecisionId,
+              purposeContext,
+            );
+          if (!purposeValidation.valid) {
+            telemetryOutcome = 'authorization_rejected';
+            await deps.intentService.markFailedFinal(
+              intent.tenantId,
+              intent.id,
+            );
+            throw new PermissiblePurposeError(purposeValidation.reason);
+          }
+        }
+
         await deps.intentService.markDispatched(intent.tenantId, intent.id);
+        let receipt: SynchronousProviderReceipt<unknown> | undefined;
         try {
-          const receipt = (await adapter.submit(
+          receipt = (await adapter.submit(
             params.request,
             intent,
             revalidation.grant,
             { tenantId: params.tenantId, caseId: params.caseId },
           )) as SynchronousProviderReceipt<unknown>;
-          await deps.intentService.markSucceeded(intent.tenantId, intent.id);
-          const finding = adapter.normalize(receipt.payload, {
-            tenantId: params.tenantId,
-            caseId: params.caseId,
-          }) as TFinding;
+          const finding = validateProviderFinding(
+            params.capability,
+            adapter.normalize(receipt.payload, {
+              tenantId: params.tenantId,
+              caseId: params.caseId,
+            }) as TFinding,
+            { observedAt: receipt.observedAt },
+          );
           // Section 11.5's field-bound authorization (M5-028) — filtered
           // against the freshly revalidated grant's own permittedFields, not
           // params.permittedFields directly, the same "trust the revalidated
           // state, not the original request" discipline revalidate() itself
           // exists for.
-          telemetryOutcome = 'succeeded';
-          return filterToPermittedFields(
+          const filteredFinding = filterToPermittedFields(
             finding,
             revalidation.grant.permittedFields,
           );
+          await deps.intentService.markSucceeded(
+            intent.tenantId,
+            intent.id,
+            receipt,
+            filteredFinding,
+          );
+          telemetryOutcome = 'succeeded';
+          return filteredFinding;
         } catch (error) {
           if (error instanceof SyntheticProviderRejectionError) {
             telemetryOutcome = 'provider_rejected';
             await deps.intentService.markFailedFinal(
               intent.tenantId,
               intent.id,
+            );
+          } else if (receipt !== undefined) {
+            // The provider completed, but its receipt could not be normalized.
+            // This is a terminal platform-contract failure, not an ambiguous
+            // provider outcome and never a reason to submit the effect again.
+            telemetryOutcome = 'provider_rejected';
+            await deps.intentService.markFailedFinal(
+              intent.tenantId,
+              intent.id,
+              receipt,
             );
           } else {
             telemetryOutcome = 'outcome_unknown';
@@ -310,3 +442,5 @@ export async function dispatchProviderRequest<TFinding>(
     );
   }
 }
+
+export { ProviderIntentConflictError };

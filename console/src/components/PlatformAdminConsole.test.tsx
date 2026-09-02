@@ -307,6 +307,74 @@ describe('PlatformAdminConsole — a separate credential world from the tenant c
     expect(screen.getByText('90%')).toBeInTheDocument();
   });
 
+  it('inspects immutable evaluation evidence with category metrics and failed fixtures', async () => {
+    setStoredPlatformAdminToken(TOKEN);
+    vi.stubGlobal(
+      'fetch',
+      routeFetch({
+        manifests: () => jsonResponse([]),
+        activations: () => jsonResponse([]),
+        'evaluation-reports/report-1': () =>
+          jsonResponse({
+            id: 'report-1',
+            report: {
+              generatedAt: '2026-08-01T00:00:00.000Z',
+              codeRevision: { gitCommit: 'abc1234def', gitBranch: 'main' },
+              summary: {
+                totalCases: 2,
+                passed: 1,
+                failed: 1,
+                conditionRecall: 1,
+                conditionPrecision: 0.5,
+                byCategory: {
+                  normal: { total: 1, passed: 1 },
+                  boundary: { total: 1, passed: 0 },
+                },
+              },
+              results: [
+                {
+                  fixtureId: 'boundary-income-difference',
+                  category: 'boundary',
+                  expectedOutcome: 'CONDITION_OPENED',
+                  actualOutcome: 'NO_CONDITION',
+                  actualConditionCode: undefined,
+                  passed: false,
+                  detail: 'Expected a condition at the threshold boundary.',
+                },
+              ],
+            },
+          }),
+        'evaluation-reports': () =>
+          jsonResponse([
+            {
+              id: 'report-1',
+              generatedAt: '2026-08-01T00:00:00.000Z',
+              gitCommit: 'abc1234def',
+              gitBranch: 'main',
+              totalCases: 2,
+              passed: 1,
+              failed: 1,
+              conditionRecall: 1,
+              conditionPrecision: 0.5,
+            },
+          ]),
+      }),
+    );
+    const user = userEvent.setup();
+    render(<PlatformAdminConsole onExit={() => {}} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Inspect' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Evaluation run dashboard' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('50%').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('boundary-income-difference')).toBeInTheDocument();
+    expect(
+      screen.getByText('Expected a condition at the threshold boundary.'),
+    ).toBeInTheDocument();
+  });
+
   it('downloading a report fetches the real file with the admin credential and hands the browser a real filename', async () => {
     setStoredPlatformAdminToken(TOKEN);
     const reportBody = JSON.stringify({ some: 'real report content' });

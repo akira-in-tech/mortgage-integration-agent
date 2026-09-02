@@ -4,9 +4,10 @@ import { LoanService } from './loan.service';
 import { LoanApplication } from '../database/entities/loan-application.entity';
 import { AgentResult } from '../agent/agent.types';
 import { EvaluateLoanInput, LoanType } from './loan.model';
+import { LoanDecisionStatus } from '../database/enums/loan-decision.enum';
 
 const MOCK_APPROVED_RESULT: AgentResult = {
-  decision: 'APPROVED',
+  decision: LoanDecisionStatus.APPROVED,
   confidence: 0.92,
   reasoning:
     'Strong credit score of 740, DTI of 32%, stable employment, all documents verified.',
@@ -40,7 +41,7 @@ const MOCK_APPROVED_RESULT: AgentResult = {
 };
 
 const MOCK_CONDITIONAL_RESULT: AgentResult = {
-  decision: 'CONDITIONAL',
+  decision: LoanDecisionStatus.CONDITIONAL,
   confidence: 0.71,
   reasoning: 'Credit score below 700 threshold but within FHA guidelines.',
   conditions: [
@@ -76,7 +77,7 @@ const MOCK_CONDITIONAL_RESULT: AgentResult = {
 };
 
 const MOCK_DENIED_RESULT: AgentResult = {
-  decision: 'DENIED',
+  decision: LoanDecisionStatus.DENIED,
   confidence: 0.88,
   reasoning: 'Credit score of 560 is below the 580 minimum for FHA loans.',
   conditions: [],

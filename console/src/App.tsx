@@ -10,7 +10,12 @@ import { AdminQueues } from './components/AdminQueues';
 import { PlatformAdminConsole } from './components/PlatformAdminConsole';
 import { ConnectScreen } from './components/ConnectScreen';
 import { TenantSelectionScreen } from './components/TenantSelectionScreen';
-import { getStoredActorId, getStoredToken, clearSession } from './auth';
+import {
+  getStoredActorId,
+  getStoredToken,
+  clearSession,
+  setStoredActorId,
+} from './auth';
 import {
   loadOidcSession,
   hasOidcSession,
@@ -19,6 +24,14 @@ import {
   beginOidcLogout,
 } from './oidc';
 import { SearchIcon } from './components/icons';
+import {
+  clearDemoSandbox,
+  closeDemoSandbox,
+  getDemoSandboxActorId,
+  getDemoSandboxCaseId,
+  hasDemoSandbox,
+  loadDemoSandbox,
+} from './demo-sandbox';
 
 export function App() {
   const [checkingOidcCallback, setCheckingOidcCallback] = useState(true);
@@ -37,10 +50,19 @@ export function App() {
   useEffect(() => {
     loadOidcSession()
       .then((session) => {
-        if (!session.authenticated) return;
-        setMemberships(session.memberships);
-        setConnected(hasOidcSession());
-        setSelectingTenant(!hasOidcSession());
+        if (session.authenticated) {
+          setMemberships(session.memberships);
+          setConnected(hasOidcSession());
+          setSelectingTenant(!hasOidcSession());
+          return;
+        }
+        return loadDemoSandbox().then((sandbox) => {
+          if (sandbox.authenticated) {
+            setStoredActorId(sandbox.actorId ?? '');
+            setSelectedCaseId(sandbox.caseId ?? null);
+            setConnected(true);
+          }
+        });
       })
       // An unavailable identity endpoint must not strand machine-token users
       // on the startup screen; operational queries still report their own
@@ -59,6 +81,8 @@ export function App() {
       void beginOidcLogout();
     } else {
       clearOidcSession();
+      if (hasDemoSandbox()) void closeDemoSandbox();
+      else clearDemoSandbox();
     }
   }
 
@@ -103,6 +127,11 @@ export function App() {
     return (
       <ConnectScreen
         onConnected={() => setConnected(true)}
+        onSandboxConnected={(caseId) => {
+          setSelectedCaseId(caseId ?? null);
+          setView('queue');
+          setConnected(true);
+        }}
         onPlatformAdmin={() => setPlatformAdminMode(true)}
       />
     );
@@ -117,7 +146,7 @@ export function App() {
     );
   }
 
-  const actorId = getStoredActorId() ?? '';
+  const actorId = getDemoSandboxActorId() ?? getStoredActorId() ?? '';
   const initials = actorId
     .split(/[\s-]+/)
     .map((part) => part[0])
@@ -225,6 +254,10 @@ export function App() {
               {selectedCaseId ? (
                 <CaseDetail
                   caseId={selectedCaseId}
+                  isSandbox={
+                    hasDemoSandbox() &&
+                    selectedCaseId === getDemoSandboxCaseId()
+                  }
                   onOpenDossier={() => setDossierCaseId(selectedCaseId)}
                 />
               ) : (

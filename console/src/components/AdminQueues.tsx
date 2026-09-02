@@ -4,8 +4,12 @@ import {
   listOpenDataDispositionTasks,
   resolveProviderOperationIntent,
   resolveDataDispositionTask,
+  listWorkflowOperations,
+  cancelWorkflowRun,
+  recoverWorkflowRun,
   type ProviderOperationIntentQueueItem,
   type DataDispositionTaskQueueItem,
+  type WorkflowOperationQueueItem,
 } from '../admin-queues-api';
 import { DataTable } from './DataTable';
 
@@ -18,15 +22,19 @@ export function AdminQueues() {
     [],
   );
   const [tasks, setTasks] = useState<DataDispositionTaskQueueItem[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowOperationQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [intentsError, setIntentsError] = useState<string | null>(null);
   const [tasksError, setTasksError] = useState<string | null>(null);
+  const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [intentsResult, tasksResult] = await Promise.allSettled([
-      listProviderOperationIntentsNeedingReconciliation(),
-      listOpenDataDispositionTasks(),
-    ]);
+    const [intentsResult, tasksResult, workflowsResult] =
+      await Promise.allSettled([
+        listProviderOperationIntentsNeedingReconciliation(),
+        listOpenDataDispositionTasks(),
+        listWorkflowOperations(),
+      ]);
     if (intentsResult.status === 'fulfilled') {
       setIntents(intentsResult.value);
       setIntentsError(null);
@@ -38,6 +46,12 @@ export function AdminQueues() {
       setTasksError(null);
     } else {
       setTasksError(tasksResult.reason.message);
+    }
+    if (workflowsResult.status === 'fulfilled') {
+      setWorkflows(workflowsResult.value);
+      setWorkflowsError(null);
+    } else {
+      setWorkflowsError(workflowsResult.reason.message);
     }
     setLoading(false);
   }, []);
@@ -84,12 +98,156 @@ export function AdminQueues() {
         onResolved={refresh}
       />
 
+      <WorkflowOperationsSection
+        workflows={workflows}
+        error={workflowsError}
+        onChanged={refresh}
+      />
+
       <DataDispositionSection
         tasks={tasks}
         error={tasksError}
         onResolved={refresh}
       />
     </div>
+  );
+}
+
+function WorkflowOperationsSection({
+  workflows,
+  error,
+  onChanged,
+}: {
+  workflows: WorkflowOperationQueueItem[];
+  error: string | null;
+  onChanged: () => void;
+}) {
+  const [selected, setSelected] = useState<WorkflowOperationQueueItem | null>(
+    null,
+  );
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function submit(action: 'cancel' | 'recover') {
+    if (!selected || reason.trim().length < 10) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      if (action === 'cancel') {
+        await cancelWorkflowRun(selected.caseId, selected.runId, {
+          reason: reason.trim(),
+        });
+        setMessage(
+          'Cancellation requested. Provider outcomes remain subject to reconciliation.',
+        );
+      } else {
+        const recovered = await recoverWorkflowRun(
+          selected.caseId,
+          selected.runId,
+          {
+            reason: reason.trim(),
+          },
+        );
+        setMessage(`Recovery started as ${recovered.runId.slice(0, 8)}.`);
+      }
+      setSelected(null);
+      setReason('');
+      onChanged();
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : 'Could not update workflow.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section
+      aria-labelledby="workflow-operations-heading"
+      style={{ marginBottom: 28 }}
+    >
+      <h2
+        id="workflow-operations-heading"
+        style={{ fontSize: 15, margin: '0 0 5px' }}
+      >
+        Workflow operations
+      </h2>
+      <p style={{ fontSize: 12.5, color: 'var(--ink-muted)', marginTop: 0 }}>
+        Cancel a running orchestration or recover a failed one. Cancellation
+        does not prove an in-flight provider call was cancelled.
+      </p>
+      {error ? (
+        <InlineError>
+          Queue unavailable: {error}. Reviewer access is required.
+        </InlineError>
+      ) : (
+        <DataTable
+          columns={[
+            'Updated',
+            'Case',
+            'Run',
+            'Workflow',
+            'Case state',
+            'Action',
+          ]}
+          emptyLabel="No workflow operations need attention."
+          rows={workflows.map((workflow) => [
+            new Date(workflow.caseUpdatedAt).toLocaleString(),
+            <span className="mono" key={`${workflow.runId}-case`}>
+              {workflow.caseId.slice(0, 8)}
+            </span>,
+            <span className="mono" key={`${workflow.runId}-run`}>
+              {workflow.runId.slice(0, 8)}
+            </span>,
+            workflow.status,
+            workflow.caseStatus,
+            <button
+              key={`${workflow.runId}-action`}
+              type="button"
+              className="btn"
+              onClick={() => {
+                setSelected(workflow);
+                setMessage(null);
+              }}
+            >
+              {workflow.status === 'RUNNING' ? 'Cancel' : 'Recover'}
+            </button>,
+          ])}
+        />
+      )}
+
+      {selected && (
+        <ResolutionForm
+          heading={`${selected.status === 'RUNNING' ? 'Cancel' : 'Recover'} workflow ${selected.runId.slice(0, 8)}`}
+          note={reason}
+          onNoteChange={setReason}
+          submitting={submitting}
+          onCancel={() => {
+            setSelected(null);
+            setReason('');
+          }}
+          actions={[
+            {
+              label:
+                selected.status === 'RUNNING'
+                  ? 'Request cancellation'
+                  : 'Start recovery',
+              onClick: () =>
+                void submit(
+                  selected.status === 'RUNNING' ? 'cancel' : 'recover',
+                ),
+            },
+          ]}
+        />
+      )}
+      {message && (
+        <div aria-live="polite" style={{ marginTop: 10, fontSize: 12.5 }}>
+          {message}
+        </div>
+      )}
+    </section>
   );
 }
 

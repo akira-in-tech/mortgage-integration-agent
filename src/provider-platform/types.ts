@@ -13,7 +13,7 @@ import { StructurallyExcludedCommandClass } from '../common/structural-exclusion
  * docs/DEVELOPMENT_LOG.md's M4-001 and M4-007 entries).
  */
 
-/** Section 7.2's target capability vocabulary. Only INCOME/CREDIT/DOCUMENT have a real registered adapter — ASSET/IDENTITY are named but unbuilt (Known gap). */
+/** Section 7.2's capability vocabulary. Every value has a registered simulator adapter; the durable case workflow currently consumes income, credit, and document evidence. */
 export enum ProviderCapability {
   INCOME = 'INCOME',
   ASSET = 'ASSET',
@@ -22,7 +22,7 @@ export enum ProviderCapability {
   DOCUMENT = 'DOCUMENT',
 }
 
-/** Section 11.1. Only `SIMULATOR` has a real implementation anywhere in this codebase. */
+/** Section 11.1. `SIMULATOR` and one credential-gated `AUTHORIZED_SANDBOX` adapter are implemented; `PRODUCTION_BYOC` remains a governed target mode. */
 export type ProviderMode =
   'SIMULATOR' | 'AUTHORIZED_SANDBOX' | 'PRODUCTION_BYOC';
 
@@ -57,8 +57,8 @@ export interface ProviderStatus {
 }
 
 /**
- * This codebase's own convention for its `SIMULATOR`-only, synchronous
- * adapters — not a shape the charter mandates. Every current `submit()`
+ * This codebase's convention for its current synchronous adapters — not a
+ * shape the charter mandates. Every current `submit()`
  * both dispatches and completes in one call, so its receipt is always
  * already terminal; `dispatch-provider-request.ts`'s generic dispatch
  * helper relies on every registered adapter's receipt following this
@@ -69,6 +69,15 @@ export interface ProviderStatus {
 export interface SynchronousProviderReceipt<TPayload> {
   status: 'COMPLETE';
   payload: TPayload;
+  /** Adapter-observed completion time used by the canonical freshness gate. */
+  observedAt: string;
+}
+
+export function completeProviderReceipt<TPayload>(
+  payload: TPayload,
+  observedAt = new Date(),
+): SynchronousProviderReceipt<TPayload> {
+  return { status: 'COMPLETE', payload, observedAt: observedAt.toISOString() };
 }
 
 /** Section 11.5. */
@@ -119,13 +128,16 @@ export interface ProviderOperationIntent {
   effectClass: ProviderEffectClass;
   requestFingerprint: string;
   idempotencyKey: string;
+  logicalOperationKey: string;
   authorizationGrantId: string;
   state: ProviderOperationIntentState;
+  providerReceipt?: unknown;
+  normalizedFinding?: unknown;
 }
 
 /**
  * Section 11.3's `ProviderAdapter<TRequest, TReceipt, TFinding>`. Every
- * current implementation is `SIMULATOR`-mode and synchronous — `submit()`
+ * current implementation is synchronous — `submit()`
  * both dispatches and completes in one call, so `TReceipt` is always
  * already in a terminal state and `poll()`/`cancel()` are never
  * implemented (there's nothing asynchronous to poll or cancel). The

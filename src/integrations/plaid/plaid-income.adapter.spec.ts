@@ -32,7 +32,11 @@ describe('PlaidIncomeAdapter', () => {
     const receipt = await adapter.submit({ borrowerId: 'borrower-1' });
 
     expect(getIncomeData).toHaveBeenCalledWith('borrower-1');
-    expect(receipt).toEqual({ status: 'COMPLETE', payload: GOOD_INCOME });
+    expect(receipt).toMatchObject({
+      status: 'COMPLETE',
+      payload: GOOD_INCOME,
+      observedAt: expect.any(String),
+    });
   });
 
   it('submit() propagates a rejection from the underlying PlaidService unchanged', async () => {

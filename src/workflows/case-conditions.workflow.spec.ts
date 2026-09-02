@@ -28,6 +28,9 @@ function makeMockActivities(
 ): CaseConditionsActivities {
   return {
     markCollectingEvidence: jest.fn().mockResolvedValue(undefined),
+    prepareWorkflowRecovery: jest
+      .fn()
+      .mockResolvedValue({ outcome: 'RESTART_COLLECTION' }),
     fetchIncomeEvidence: jest.fn().mockResolvedValue({
       monthlyIncome: 8000,
       employmentStatus: 'FULL_TIME',
@@ -54,6 +57,7 @@ function makeMockActivities(
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
     markWaitingForReview: jest.fn().mockResolvedValue(undefined),
     markManualReview: jest.fn().mockResolvedValue(undefined),
+    markWorkflowCancelled: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as CaseConditionsActivities;
 }
@@ -98,6 +102,25 @@ describeOrSkip('caseConditionsWorkflow', () => {
     } finally {
       worker.shutdown();
       await runPromise;
+    }
+  }
+
+  async function waitForMockCalls(
+    mock: jest.Mock,
+    expectedCalls: number,
+  ): Promise<void> {
+    // Temporal scheduling is intentionally asynchronous. Waiting for the
+    // observed activity boundary makes these workflow tests deterministic on
+    // both a developer machine and a contended CI runner, unlike a fixed
+    // wall-clock delay.
+    const deadline = Date.now() + 10_000;
+    while (mock.mock.calls.length < expectedCalls) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for activity to reach ${expectedCalls} calls`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }
 
@@ -176,6 +199,54 @@ describeOrSkip('caseConditionsWorkflow', () => {
       tenantId: 'tenant-1',
       caseId: 'case-1',
     });
+  });
+
+  it('reuses exactly one durable open condition during recovery instead of collecting and evaluating again', async () => {
+    const activities = makeMockActivities({
+      prepareWorkflowRecovery: jest.fn().mockResolvedValue({
+        outcome: 'REUSE_OPEN_CONDITION',
+        conditionId: 'condition-from-cancelled-run',
+      }),
+    });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const result = await runWorker(activities, taskQueue, async () => {
+      const handle = await env.client.workflow.start(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          {
+            tenantId: 'tenant-1',
+            caseId: 'case-1',
+            borrowerId: 'borrower-1',
+            recoveryOfRunId: 'cancelled-run-1',
+          },
+        ],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await handle.signal(resolveConditionSignal, {
+        actorId: 'reviewer-1',
+        resolution: 'SATISFIED',
+        reason: 'Existing condition is now satisfied.',
+      });
+      return handle.result();
+    });
+
+    expect(result).toEqual({
+      finalStatus: CaseStatus.READY_FOR_UNDERWRITING,
+      conditionId: 'condition-from-cancelled-run',
+    });
+    expect(activities.prepareWorkflowRecovery).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      caseId: 'case-1',
+      recoveryOfRunId: 'cancelled-run-1',
+    });
+    expect(activities.markCollectingEvidence).not.toHaveBeenCalled();
+    expect(activities.fetchIncomeEvidence).not.toHaveBeenCalled();
+    expect(activities.evaluateConditions).not.toHaveBeenCalled();
+    expect(activities.resolveCondition).toHaveBeenCalledWith(
+      expect.objectContaining({ conditionId: 'condition-from-cancelled-run' }),
+    );
   });
 
   it('loses no acknowledged work across a worker restart while durably waiting', async () => {
@@ -392,11 +463,10 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.markManualReview).not.toHaveBeenCalled();
   });
 
-  // The heaviest test in the file: two sequential 500ms settle-waits plus
-  // three real evaluateConditions round trips. Covered by the file-wide
-  // jest.setTimeout(20_000) above — a Worker left running by a timed-out
-  // test makes env.teardown() itself throw in afterAll, hanging the whole
-  // process indefinitely with no --forceExit, so it's worth avoiding.
+  // The heaviest test in the file: three real evaluateConditions round trips.
+  // Covered by the file-wide jest.setTimeout(20_000) above — a Worker left
+  // running by a timed-out test makes env.teardown() itself throw in afterAll,
+  // hanging the whole process indefinitely with no --forceExit.
   it('supports multiple interrupt cycles before the evaluation finally resolves', async () => {
     const evaluateConditions = jest
       .fn()
@@ -421,11 +491,11 @@ describeOrSkip('caseConditionsWorkflow', () => {
         ],
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await waitForMockCalls(activities.markWaitingForReview as jest.Mock, 1);
       await handle.signal(resumeInterruptedEvaluationSignal, {
         actorId: 'reviewer-5',
       });
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await waitForMockCalls(activities.markWaitingForReview as jest.Mock, 2);
       await handle.signal(resumeInterruptedEvaluationSignal, {
         actorId: 'reviewer-5',
       });

@@ -40,6 +40,24 @@ output "public_subnet_ids" {
   value = aws_subnet.public[*].id
 }
 
+output "console_url" {
+  description = "Public AWS-managed HTTPS URL for the synthetic operations console."
+  value       = "https://${aws_cloudfront_distribution.console.domain_name}"
+}
+
+output "console_bucket_name" {
+  description = "Private console-asset bucket populated only by the staging CI workflow."
+  value       = aws_s3_bucket.console.id
+}
+
+output "cloudfront_distribution_id" {
+  value = aws_cloudfront_distribution.console.id
+}
+
+output "cognito_user_pool_id" {
+  value = aws_cognito_user_pool.console.id
+}
+
 output "rds_db_subnet_group_name" {
   value = aws_db_subnet_group.this.name
 }

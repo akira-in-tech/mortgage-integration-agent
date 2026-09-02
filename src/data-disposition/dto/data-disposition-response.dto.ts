@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsIn } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { DataDispositionTask } from '../../database/entities/data-disposition-task.entity';
 
 // One row in the "needs a decision" list a reviewer sees.
@@ -22,6 +22,12 @@ export class DataDispositionTaskQueueItemDto {
   @ApiProperty({ format: 'date-time' })
   createdAt!: string;
 
+  @ApiPropertyOptional({ format: 'date-time' })
+  backupExpiryDueAt?: string;
+
+  @ApiProperty({ type: Number })
+  affectedProviderIntentCount!: number;
+
   static from(task: DataDispositionTask): DataDispositionTaskQueueItemDto {
     return {
       id: task.id,
@@ -30,6 +36,8 @@ export class DataDispositionTaskQueueItemDto {
       status: task.status,
       reason: task.reason,
       createdAt: task.createdAt.toISOString(),
+      backupExpiryDueAt: task.backupExpiryDueAt?.toISOString(),
+      affectedProviderIntentCount: task.affectedProviderIntentIds.length,
     };
   }
 }
@@ -40,4 +48,15 @@ export class ResolveDataDispositionTaskDto {
   @ApiProperty({ enum: ['DELETE', 'ANONYMIZE', 'RETAIN'] })
   @IsIn(['DELETE', 'ANONYMIZE', 'RETAIN'])
   action!: 'DELETE' | 'ANONYMIZE' | 'RETAIN';
+}
+
+export class VerifyBackupExpiryDto {
+  @ApiProperty({
+    description:
+      'Non-sensitive operator or provider evidence reference proving backup expiry.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  verificationReference!: string;
 }

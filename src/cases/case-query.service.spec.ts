@@ -293,6 +293,9 @@ describeOrSkip('CaseQueryService (Section 15.2, M6)', () => {
         effectClass: 'REUSABLE_LOOKUP',
         requestFingerprint: 'e'.repeat(64),
         idempotencyKey: randomUUID(),
+        logicalOperationKey: randomUUID(),
+        providerReceipt: null,
+        normalizedFinding: null,
         authorizationGrantId: randomUUID(),
       }),
     );

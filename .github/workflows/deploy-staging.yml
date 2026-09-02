@@ -2,10 +2,10 @@ name: Deploy staging
 
 # Manual only — this touches real AWS resources and costs real money
 # while running, unlike every other workflow in this repository.
-# Charter Section 29 item 6's own Phase 1 (see docs/DEVELOPMENT_LOG.md's
-# M7-024 entry): API + Worker + a self-hosted Temporal server behind a
-# public HTTP load balancer, no domain/TLS yet, no Keycloak/console
-# deployed yet.
+# The AWS-only staging edge extends the original API/Worker/Temporal stack
+# with a private S3 console behind CloudFront's AWS-managed HTTPS hostname,
+# Cognito OIDC, and HTTP API. It deliberately uses no custom domain and
+# still carries only synthetic demo data.
 on:
   workflow_dispatch: {}
 
@@ -213,6 +213,24 @@ jobs:
         # this step directly — Terraform never proceeds to update
         # api/worker with a schema they don't match.
 
+      # The console is a static, private S3 origin behind CloudFront. Its API
+      # calls deliberately remain relative (`/v1`, `/graphql`), so browser
+      # sessions stay first-party on the AWS-managed CloudFront hostname and
+      # no provider token or backend URL enters the Vite bundle.
+      - name: Build and publish the synthetic operations console
+        working-directory: terraform/staging
+        run: |
+          npm --prefix ../../console ci --include=dev
+          VITE_API_URL= VITE_GRAPHQL_URL=/graphql npm --prefix ../../console run build
+          console_bucket=$(terraform output -raw console_bucket_name)
+          distribution_id=$(terraform output -raw cloudfront_distribution_id)
+          aws s3 sync ../../console/dist "s3://$console_bucket" \
+            --delete --exclude 'index.html' \
+            --cache-control 'public,max-age=31536000,immutable'
+          aws s3 cp ../../console/dist/index.html "s3://$console_bucket/index.html" \
+            --cache-control 'no-store' --content-type 'text/html'
+          aws cloudfront create-invalidation --distribution-id "$distribution_id" --paths '/*'
+
       # The real verification step. A clean `terraform apply` proves
       # the infrastructure exists; it does not prove the new deploy is
       # actually serving traffic. This does.
@@ -230,4 +248,20 @@ jobs:
             sleep 10
           done
           echo "Staging API never returned a real 200 from /health/ready" >&2
+          exit 1
+
+      - name: Verify the public HTTPS console edge is serving
+        working-directory: terraform/staging
+        run: |
+          console_url=$(terraform output -raw console_url)
+          echo "Checking $console_url/health/ready ..."
+          for i in $(seq 1 30); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' "$console_url/health/ready" || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "Real 200 from the AWS-managed HTTPS edge."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "CloudFront edge never returned a real 200 from /health/ready" >&2
           exit 1

@@ -101,7 +101,9 @@ describeOrSkip('TenantAuthGuard (Section 16.1, M5-024)', () => {
       dataSource.getRepository(User),
       dataSource.getRepository(TenantMembership),
     );
-    guard = new TenantAuthGuard(apiKeyGuard, oidcGuard);
+    guard = new TenantAuthGuard(apiKeyGuard, oidcGuard, {
+      canActivate: jest.fn().mockRejectedValue(new UnauthorizedException()),
+    } as never);
   });
 
   afterAll(async () => {

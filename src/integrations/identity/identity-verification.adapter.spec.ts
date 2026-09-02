@@ -34,7 +34,11 @@ describe('IdentityVerificationAdapter', () => {
     const receipt = await adapter.submit({ borrowerId: 'borrower-1' });
 
     expect(verifyIdentity).toHaveBeenCalledWith('borrower-1');
-    expect(receipt).toEqual({ status: 'COMPLETE', payload: VERIFIED });
+    expect(receipt).toMatchObject({
+      status: 'COMPLETE',
+      payload: VERIFIED,
+      observedAt: expect.any(String),
+    });
   });
 
   it('submit() propagates a rejection from the underlying IdentityService unchanged', async () => {

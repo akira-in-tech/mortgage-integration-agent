@@ -1,4 +1,4 @@
-# Three real secrets, generated once and stored in Secrets Manager —
+# Runtime secrets, generated once and stored in Secrets Manager —
 # never in Terraform state as plaintext beyond what the provider itself
 # necessarily tracks, never as a plain ECS task-definition environment
 # variable. See src/database/migrations/1787082648663-AppRuntimeRole.ts
@@ -18,6 +18,10 @@ resource "random_password" "app_role" {
 resource "random_password" "outbox_signing_secret" {
   length  = 40
   special = false
+}
+
+resource "random_id" "provider_data_key" {
+  byte_length = 32
 }
 
 resource "aws_secretsmanager_secret" "rds_master_password" {
@@ -55,6 +59,16 @@ resource "aws_secretsmanager_secret" "outbox_signing_secret" {
 resource "aws_secretsmanager_secret_version" "outbox_signing_secret" {
   secret_id     = aws_secretsmanager_secret.outbox_signing_secret.id
   secret_string = random_password.outbox_signing_secret.result
+}
+
+resource "aws_secretsmanager_secret" "provider_data_encryption_keys" {
+  name                    = "mortgage-agent-staging/provider-data-encryption-keys"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "provider_data_encryption_keys" {
+  secret_id     = aws_secretsmanager_secret.provider_data_encryption_keys.id
+  secret_string = "staging-v1:${random_id.provider_data_key.hex}"
 }
 
 # ECS task-definition `secrets` can only inject a *whole* environment
@@ -95,4 +109,38 @@ resource "aws_secretsmanager_secret" "app_database_url" {
 resource "aws_secretsmanager_secret_version" "app_database_url" {
   secret_id     = aws_secretsmanager_secret.app_database_url.id
   secret_string = "postgres://mortgage_app:${random_password.app_role.result}@${aws_db_instance.this.address}:5432/mortgage_agent?sslmode=no-verify" # see database_url above
+}
+
+resource "aws_secretsmanager_secret" "oidc_client_secret" {
+  name                    = "mortgage-agent-staging/oidc-client-secret"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "oidc_client_secret" {
+  secret_id     = aws_secretsmanager_secret.oidc_client_secret.id
+  secret_string = aws_cognito_user_pool_client.console.client_secret
+}
+
+resource "aws_secretsmanager_secret" "oidc_session_encryption_keys" {
+  name                    = "mortgage-agent-staging/oidc-session-encryption-keys"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "oidc_session_encryption_keys" {
+  secret_id     = aws_secretsmanager_secret.oidc_session_encryption_keys.id
+  secret_string = "staging-v1:${random_id.oidc_session_key.hex}"
+}
+
+# The synthetic reviewer's password is a one-time walkthrough credential.
+# Keep it in Secrets Manager, never in a Terraform output or CI log, so a
+# human operator can retrieve it under their AWS identity without turning a
+# simulated account into a repository secret.
+resource "aws_secretsmanager_secret" "synthetic_reviewer_password" {
+  name                    = "mortgage-agent-staging/synthetic-reviewer-password"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "synthetic_reviewer_password" {
+  secret_id     = aws_secretsmanager_secret.synthetic_reviewer_password.id
+  secret_string = random_password.cognito_demo_password.result
 }

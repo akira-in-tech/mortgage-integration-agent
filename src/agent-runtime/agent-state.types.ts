@@ -72,6 +72,7 @@ export interface LendingOperationsAgentState {
   policyBindingId?: string;
   modelVersion?: string;
   promptVersion?: string;
+  modelAndPromptManifestId?: string;
   remainingStepBudget: number;
   remainingDurationBudgetMs: number;
   remainingTokenBudget: number;

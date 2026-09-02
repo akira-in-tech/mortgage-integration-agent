@@ -33,7 +33,11 @@ describe('CreditReportAdapter', () => {
     const receipt = await adapter.submit({ borrowerId: 'borrower-1' });
 
     expect(getCreditData).toHaveBeenCalledWith('borrower-1');
-    expect(receipt).toEqual({ status: 'COMPLETE', payload: GOOD_CREDIT });
+    expect(receipt).toMatchObject({
+      status: 'COMPLETE',
+      payload: GOOD_CREDIT,
+      observedAt: expect.any(String),
+    });
   });
 
   it('submit() propagates a rejection from the underlying CreditService unchanged', async () => {

@@ -95,7 +95,7 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "ecr:ListTagsForResource",
       "ecr:PutLifecyclePolicy", "ecr:GetLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
       "ecr:BatchDeleteImage", "ecr:ListImages", "ecr:DescribeImages",
-      "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer",
       "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload",
     ]
     resources = ["arn:aws:ecr:*:${data.aws_caller_identity.current.account_id}:repository/mortgage-agent*"]
@@ -281,6 +281,124 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "route53:ListHostedZones", "route53:ListHostedZonesByName",
       "route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets",
       "route53:GetChange", "route53:ChangeTagsForResource", "route53:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  # The browser demo is still AWS-only when no custom domain is purchased:
+  # a private S3 origin serves the console through CloudFront's AWS-managed
+  # HTTPS hostname, while HTTP API proxies the existing ECS control plane.
+  # These create/list APIs have no practical resource ARN at creation time,
+  # so they are scoped by service action and the staging module's fixed names.
+  statement {
+    sid    = "CloudFrontConsoleEdge"
+    effect = "Allow"
+    actions = [
+      "cloudfront:CreateDistribution", "cloudfront:DeleteDistribution",
+      "cloudfront:GetDistribution", "cloudfront:GetDistributionConfig",
+      "cloudfront:UpdateDistribution", "cloudfront:CreateInvalidation",
+      "cloudfront:ListDistributions", "cloudfront:ListCachePolicies",
+      "cloudfront:GetCachePolicy",
+      "cloudfront:CreateOriginAccessControl",
+      "cloudfront:GetOriginAccessControl", "cloudfront:UpdateOriginAccessControl",
+      "cloudfront:DeleteOriginAccessControl",
+      "cloudfront:CreateOriginRequestPolicy", "cloudfront:GetOriginRequestPolicy",
+      "cloudfront:UpdateOriginRequestPolicy", "cloudfront:DeleteOriginRequestPolicy",
+      "cloudfront:ListOriginRequestPolicies",
+      "cloudfront:TagResource", "cloudfront:UntagResource", "cloudfront:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ApiGatewayConsoleEdge"
+    effect = "Allow"
+    actions = [
+      "apigateway:GET", "apigateway:POST", "apigateway:PATCH", "apigateway:DELETE",
+      "apigateway:PUT", "apigateway:TagResource", "apigateway:UntagResource",
+    ]
+    # API Gateway v2 creates an API and then applies default tags through its
+    # separate `/tags/arn.../v2/apis/...` resource path. Keep both the v1/v2
+    # API paths and that tag endpoint explicit instead of opening all API
+    # Gateway resources to the deployment role.
+    resources = [
+      "arn:aws:apigateway:*::/apis*",
+      "arn:aws:apigateway:*::/v2/apis*",
+      "arn:aws:apigateway:*::/tags/*",
+    ]
+  }
+
+  statement {
+    sid    = "CognitoSyntheticDemo"
+    effect = "Allow"
+    actions = [
+      "cognito-idp:CreateUserPool", "cognito-idp:DeleteUserPool", "cognito-idp:DescribeUserPool",
+      "cognito-idp:UpdateUserPool", "cognito-idp:ListUserPools", "cognito-idp:TagResource",
+      "cognito-idp:UntagResource", "cognito-idp:ListTagsForResource",
+      "cognito-idp:CreateUserPoolClient", "cognito-idp:DeleteUserPoolClient",
+      "cognito-idp:DescribeUserPoolClient", "cognito-idp:UpdateUserPoolClient",
+      "cognito-idp:ListUserPoolClients", "cognito-idp:CreateUserPoolDomain",
+      "cognito-idp:DeleteUserPoolDomain", "cognito-idp:DescribeUserPoolDomain",
+      "cognito-idp:AdminCreateUser", "cognito-idp:AdminSetUserPassword",
+      "cognito-idp:AdminDeleteUser", "cognito-idp:AdminGetUser", "cognito-idp:ListUsers",
+      "cognito-idp:GetUserPoolMfaConfig", "cognito-idp:SetUserPoolMfaConfig",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ConsoleAssetBucket"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket", "s3:DeleteBucket", "s3:GetBucketLocation",
+      "s3:GetBucketPolicy", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
+      "s3:GetBucketPublicAccessBlock", "s3:PutBucketPublicAccessBlock",
+      "s3:GetBucketOwnershipControls", "s3:PutBucketOwnershipControls",
+      "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+      "s3:GetBucketTagging", "s3:PutBucketTagging",
+      "s3:GetBucketAcl",
+      # The AWS provider reads several optional bucket attributes (ACL, CORS,
+      # lifecycle, website, and encryption) while reconciling one bucket.
+      # Scope all of those read-only queries to this fixed private console
+      # bucket instead of growing a cross-bucket permission one API at a time.
+      "s3:Get*",
+    ]
+    resources = [
+      "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}",
+      "arn:aws:s3:::mortgage-agent-staging-console-${data.aws_caller_identity.current.account_id}/*",
+    ]
+  }
+
+  statement {
+    sid       = "ConsoleAssetBucketCreate"
+    effect    = "Allow"
+    actions   = ["s3:CreateBucket"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ApiGatewayLogs"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy",
+      "logs:TagResource", "logs:ListTagsForResource",
+    ]
+    resources = ["arn:aws:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/apigateway/mortgage-agent-staging*"]
+  }
+
+  # API Gateway creates HTTP API access-log subscriptions through the
+  # CloudWatch Logs delivery control plane. On the first delivery for a log
+  # group, CloudWatch also writes a service resource policy. Those control-
+  # plane calls do not accept a log-group ARN, so they must be action-scoped;
+  # the stage itself remains limited to the mortgage-agent-staging API by
+  # ApiGatewayConsoleEdge.
+  statement {
+    sid    = "ApiGatewayLogDelivery"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery",
+      "logs:DeleteLogDelivery", "logs:ListLogDeliveries",
+      "logs:PutResourcePolicy", "logs:DescribeResourcePolicies",
     ]
     resources = ["*"]
   }

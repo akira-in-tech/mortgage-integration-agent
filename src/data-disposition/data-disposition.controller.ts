@@ -27,6 +27,7 @@ import { DataDispositionService } from './data-disposition.service';
 import {
   DataDispositionTaskQueueItemDto,
   ResolveDataDispositionTaskDto,
+  VerifyBackupExpiryDto,
 } from './dto/data-disposition-response.dto';
 import { TenantAuthGuard } from '../auth/tenant-auth.guard';
 import { RoleGuard } from '../auth/role.guard';
@@ -76,6 +77,24 @@ export class DataDispositionController {
   }
 
   @ApiOperation({
+    operationId: 'listDataDispositionTasksAwaitingBackupExpiry',
+    summary: 'List tasks waiting for managed-backup retention expiry',
+  })
+  @Get('backup-expiry')
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async listAwaitingBackupExpiry(
+    @CurrentAuth() auth: AuthContext,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ): Promise<DataDispositionTaskQueueItemDto[]> {
+    const tasks = await this.dispositionService.listAwaitingBackupExpiry(
+      auth.tenantId,
+      limit,
+    );
+    return tasks.map(DataDispositionTaskQueueItemDto.from);
+  }
+
+  @ApiOperation({
     operationId: 'resolveDataDispositionTask',
     summary: 'Delete, anonymize, or retain the evidence a task covers',
   })
@@ -115,5 +134,27 @@ export class DataDispositionController {
     }
 
     return DataDispositionTaskQueueItemDto.from(resolved);
+  }
+
+  @ApiOperation({
+    operationId: 'verifyDataDispositionBackupExpiry',
+    summary: 'Verify backup expiry after the retention window closes',
+  })
+  @Post(':taskId/verify-backup-expiry')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RoleGuard)
+  @RequireRole(ApiClientRole.REVIEWER)
+  async verifyBackupExpiry(
+    @CurrentAuth() auth: AuthContext,
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() dto: VerifyBackupExpiryDto,
+  ): Promise<DataDispositionTaskQueueItemDto> {
+    const task = await this.dispositionService.verifyBackupExpiry(
+      auth.tenantId,
+      taskId,
+      auth.actorId,
+      dto.verificationReference,
+    );
+    return DataDispositionTaskQueueItemDto.from(task);
   }
 }

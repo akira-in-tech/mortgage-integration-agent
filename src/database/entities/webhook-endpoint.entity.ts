@@ -52,6 +52,17 @@ export class WebhookEndpoint {
   })
   status!: WebhookEndpointStatus;
 
+  /** Durable per-endpoint ceiling for outbound attempts. */
+  @ApiProperty({ minimum: 1, maximum: 600 })
+  @Column({ type: 'int', default: 60 })
+  outboundRateLimitPerMinute!: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  rateWindowStartedAt!: Date | null;
+
+  @Column({ type: 'int', default: 0 })
+  rateWindowAttempts!: number;
+
   @ApiProperty()
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;

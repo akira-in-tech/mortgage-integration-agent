@@ -15,6 +15,7 @@ import { User } from '../database/entities/user.entity';
 import { NodeEnvironment } from '../config/env.validation';
 import { OidcClaims, OidcService, OidcTokenResponse } from './oidc.service';
 import { readCookie } from './http-cookie';
+import { SelfServiceProvisioningService } from './self-service-provisioning.service';
 
 export const OIDC_SESSION_COOKIE = 'meridian_session';
 export const OIDC_CSRF_COOKIE = 'meridian_csrf';
@@ -53,7 +54,8 @@ export class OidcSessionService {
   private readonly consoleOrigin: string;
   private readonly secureCookies: boolean;
   private readonly sessionMaxAgeSeconds: number;
-  private readonly encryptionKey: Buffer;
+  private readonly currentEncryptionKeyId: string;
+  private readonly encryptionKeys: Map<string, Buffer>;
 
   constructor(
     private readonly oidcService: OidcService,
@@ -62,6 +64,7 @@ export class OidcSessionService {
     private readonly sessionRepository: Repository<OidcSession>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly selfServiceProvisioning: SelfServiceProvisioningService,
   ) {
     const nodeEnv = configService.get<NodeEnvironment>(
       'NODE_ENV',
@@ -79,8 +82,29 @@ export class OidcSessionService {
       'OIDC_SESSION_MAX_AGE_SECONDS',
       28_800,
     );
-    const key = configService.get<string>('OIDC_SESSION_ENCRYPTION_KEY');
-    this.encryptionKey = key ? Buffer.from(key, 'hex') : DEV_ENCRYPTION_KEY;
+    const keyRing = configService.get<string>('OIDC_SESSION_ENCRYPTION_KEYS');
+    const legacyKey = configService.get<string>('OIDC_SESSION_ENCRYPTION_KEY');
+    const entries = keyRing
+      ? keyRing.split(',').map((entry) => {
+          const separator = entry.indexOf(':');
+          return [
+            entry.slice(0, separator),
+            entry.slice(separator + 1),
+          ] as const;
+        })
+      : [['legacy', legacyKey ?? DEV_ENCRYPTION_KEY.toString('hex')] as const];
+    if (
+      entries.some(
+        ([id, key]) =>
+          !/^[A-Za-z0-9._-]{1,64}$/.test(id) || !/^[0-9a-fA-F]{64}$/.test(key),
+      )
+    ) {
+      throw new Error('invalid OIDC session encryption key ring');
+    }
+    this.currentEncryptionKeyId = entries[0][0];
+    this.encryptionKeys = new Map(
+      entries.map(([id, key]) => [id, Buffer.from(key, 'hex')]),
+    );
   }
 
   async beginLogin(response: Response, returnTo = '/'): Promise<string> {
@@ -123,7 +147,13 @@ export class OidcSessionService {
       codeVerifier: verifier,
     });
     const claims = await this.oidcService.verify(tokens.access_token);
-    const user = await this.userRepository.findOneBy({ subject: claims.sub });
+    const identityClaims = tokens.id_token
+      ? await this.oidcService.verifyIdToken(tokens.id_token)
+      : undefined;
+    const user = await this.selfServiceProvisioning.resolveUser(
+      claims,
+      identityClaims,
+    );
     if (!user) {
       throw new UnauthorizedException('Invalid or missing API credentials');
     }
@@ -292,14 +322,17 @@ export class OidcSessionService {
 
   private encrypt(bundle: TokenBundle, aad: string): string {
     const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
+    const key = this.encryptionKeys.get(this.currentEncryptionKeyId);
+    if (!key) throw new Error('OIDC session encryption key unavailable');
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
     cipher.setAAD(Buffer.from(aad));
     const ciphertext = Buffer.concat([
       cipher.update(JSON.stringify(bundle), 'utf8'),
       cipher.final(),
     ]);
     return [
-      'v1',
+      'v2',
+      this.currentEncryptionKeyId,
       iv.toString('base64url'),
       cipher.getAuthTag().toString('base64url'),
       ciphertext.toString('base64url'),
@@ -308,17 +341,31 @@ export class OidcSessionService {
 
   private decrypt(value: string, aad: string): TokenBundle {
     try {
-      const [version, iv, tag, ciphertext] = value.split('.');
-      if (version !== 'v1' || !iv || !tag || !ciphertext) throw new Error();
+      const parts = value.split('.');
+      const [version, keyId, iv, tag, ciphertext] = parts;
+      const v1 = version === 'v1';
+      const effectiveKeyId = v1 ? 'legacy' : keyId;
+      const effectiveIv = v1 ? keyId : iv;
+      const effectiveTag = v1 ? iv : tag;
+      const effectiveCiphertext = v1 ? tag : ciphertext;
+      if (
+        !effectiveKeyId ||
+        !effectiveIv ||
+        !effectiveTag ||
+        !effectiveCiphertext
+      )
+        throw new Error();
+      const key = this.encryptionKeys.get(effectiveKeyId);
+      if (!key) throw new Error();
       const decipher = createDecipheriv(
         'aes-256-gcm',
-        this.encryptionKey,
-        Buffer.from(iv, 'base64url'),
+        key,
+        Buffer.from(effectiveIv, 'base64url'),
       );
       decipher.setAAD(Buffer.from(aad));
-      decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+      decipher.setAuthTag(Buffer.from(effectiveTag, 'base64url'));
       const plaintext = Buffer.concat([
-        decipher.update(Buffer.from(ciphertext, 'base64url')),
+        decipher.update(Buffer.from(effectiveCiphertext, 'base64url')),
         decipher.final(),
       ]).toString('utf8');
       const bundle = JSON.parse(plaintext) as Partial<TokenBundle>;

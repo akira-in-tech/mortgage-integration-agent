@@ -2,6 +2,11 @@ import { ApolloClient, InMemoryCache, HttpLink, from } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { getStoredToken } from './auth';
 import { getOidcCsrfToken, hasOidcSession, getOidcTenantId } from './oidc';
+import {
+  getDemoSandboxCsrfToken,
+  getDemoSandboxTenantId,
+  hasDemoSandbox,
+} from './demo-sandbox';
 
 const GRAPHQL_URL = import.meta.env.VITE_GRAPHQL_URL ?? '/graphql';
 
@@ -12,6 +17,19 @@ const httpLink = new HttpLink({ uri: GRAPHQL_URL, credentials: 'include' });
 // skew boundary still gets a token that's valid for the request it's
 // actually attached to.
 const authLink = setContext(async (_, { headers }) => {
+  if (hasDemoSandbox()) {
+    const tenantId = getDemoSandboxTenantId();
+    const csrfToken = getDemoSandboxCsrfToken();
+    if (tenantId && csrfToken) {
+      return {
+        headers: {
+          ...headers,
+          'x-tenant-id': tenantId,
+          'x-csrf-token': csrfToken,
+        },
+      };
+    }
+  }
   if (hasOidcSession()) {
     const tenantId = getOidcTenantId();
     const csrfToken = getOidcCsrfToken();

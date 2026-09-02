@@ -14,10 +14,19 @@ function baseConfig(
   };
   if (
     ['staging', 'production'].includes(String(overrides.NODE_ENV)) &&
-    !Object.hasOwn(overrides, 'APP_DATABASE_URL')
+    !Object.prototype.hasOwnProperty.call(overrides, 'APP_DATABASE_URL')
   ) {
     config.APP_DATABASE_URL =
       'postgresql://mortgage_app@localhost:5432/mortgage_agent';
+  }
+  if (
+    ['staging', 'production'].includes(String(overrides.NODE_ENV)) &&
+    !Object.prototype.hasOwnProperty.call(
+      overrides,
+      'PROVIDER_DATA_ENCRYPTION_KEYS',
+    )
+  ) {
+    config.PROVIDER_DATA_ENCRYPTION_KEYS = `provider-v1:${'a'.repeat(64)}`;
   }
   return config;
 }
@@ -31,6 +40,37 @@ describe('validateEnvironment', () => {
     expect(result.DATABASE_URL).toBe(
       'postgresql://localhost:5432/mortgage_agent',
     );
+    expect(result.SELF_SERVICE_SIGNUP_ENABLED).toBe(false);
+    expect(result.GUEST_SANDBOX_TTL_SECONDS).toBe(3600);
+  });
+
+  it('bounds the anonymous sandbox lifetime', () => {
+    expect(
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '300' }))
+        .GUEST_SANDBOX_TTL_SECONDS,
+    ).toBe(300);
+    expect(() =>
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '299' })),
+    ).toThrow(/GUEST_SANDBOX_TTL_SECONDS/);
+    expect(() =>
+      validateEnvironment(baseConfig({ GUEST_SANDBOX_TTL_SECONDS: '14401' })),
+    ).toThrow(/GUEST_SANDBOX_TTL_SECONDS/);
+  });
+
+  it('requires OIDC when self-service signup is enabled', () => {
+    expect(() =>
+      validateEnvironment(baseConfig({ SELF_SERVICE_SIGNUP_ENABLED: 'true' })),
+    ).toThrow(/OIDC_ISSUER_URL and OIDC_AUDIENCE/);
+
+    expect(
+      validateEnvironment(
+        baseConfig({
+          SELF_SERVICE_SIGNUP_ENABLED: 'true',
+          OIDC_ISSUER_URL: 'https://identity.example.test',
+          OIDC_AUDIENCE: 'mortgage-console',
+        }),
+      ).SELF_SERVICE_SIGNUP_ENABLED,
+    ).toBe(true);
   });
 
   it('accepts an explicit, fully specified config', () => {
@@ -315,6 +355,17 @@ describe('validateEnvironment', () => {
         }),
       );
       expect(result.OIDC_SESSION_ENCRYPTION_KEY).toBe('a'.repeat(64));
+
+      const keyRingResult = validateEnvironment(
+        baseConfig({
+          ...oidcConfig,
+          NODE_ENV: 'production',
+          OIDC_SESSION_ENCRYPTION_KEYS: `staging-v1:${'b'.repeat(64)}`,
+        }),
+      );
+      expect(keyRingResult.OIDC_SESSION_ENCRYPTION_KEYS).toBe(
+        `staging-v1:${'b'.repeat(64)}`,
+      );
     });
 
     it('requires explicit HTTPS callback and console origins in production', () => {
@@ -373,6 +424,65 @@ describe('validateEnvironment', () => {
           }),
         ),
       ).toThrow(/scheme and authority/);
+    });
+  });
+
+  describe('provider field encryption boundary', () => {
+    it('requires a provider key ring in staging and production', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            NODE_ENV: 'staging',
+            PROVIDER_DATA_ENCRYPTION_KEYS: undefined,
+          }),
+        ),
+      ).toThrow(/PROVIDER_DATA_ENCRYPTION_KEYS/);
+    });
+
+    it('validates a rotation key ring and backup-retention window', () => {
+      const keyRing = `provider-v2:${'b'.repeat(64)},provider-v1:${'a'.repeat(64)}`;
+      const result = validateEnvironment(
+        baseConfig({
+          PROVIDER_DATA_ENCRYPTION_KEYS: keyRing,
+          BACKUP_RETENTION_HOURS: '48',
+        }),
+      );
+      expect(result.PROVIDER_DATA_ENCRYPTION_KEYS).toBe(keyRing);
+      expect(result.BACKUP_RETENTION_HOURS).toBe(48);
+    });
+  });
+
+  describe('bounded local Agent planner', () => {
+    it('validates the conservative planner token and output limits', () => {
+      const result = validateEnvironment(
+        baseConfig({
+          AGENT_PLANNER_TOKEN_BUDGET: '2048',
+          AGENT_PLANNER_MAX_OUTPUT_TOKENS: '256',
+          AGENT_PLANNER_MIN_CONFIDENCE_BPS: '8500',
+        }),
+      );
+      expect(result.AGENT_PLANNER_TOKEN_BUDGET).toBe(2048);
+      expect(result.AGENT_PLANNER_MAX_OUTPUT_TOKENS).toBe(256);
+      expect(result.AGENT_PLANNER_MIN_CONFIDENCE_BPS).toBe(8500);
+    });
+
+    it('rejects an output cap larger than the authoritative reservation', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({
+            AGENT_PLANNER_TOKEN_BUDGET: '256',
+            AGENT_PLANNER_MAX_OUTPUT_TOKENS: '512',
+          }),
+        ),
+      ).toThrow(/MAX_OUTPUT_TOKENS cannot exceed/);
+    });
+
+    it('rejects a confidence floor outside basis-point bounds', () => {
+      expect(() =>
+        validateEnvironment(
+          baseConfig({ AGENT_PLANNER_MIN_CONFIDENCE_BPS: '10001' }),
+        ),
+      ).toThrow(/AGENT_PLANNER_MIN_CONFIDENCE_BPS/);
     });
   });
 });

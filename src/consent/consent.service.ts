@@ -9,8 +9,16 @@ import {
 } from '../database/tenant-context';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 
-const DEFAULT_PURPOSE = 'CASE_PROCESSING';
-const DEFAULT_SCOPE = 'CASE_PROCESSING';
+export const DEFAULT_PROVIDER_PURPOSE = 'UNDERWRITING_EVIDENCE';
+export const DEFAULT_PROVIDER_DATA_CLASSES = [
+  'INCOME',
+  'CREDIT',
+  'DOCUMENT',
+  'ASSET',
+  'IDENTITY',
+] as const;
+const DEFAULT_PURPOSE = DEFAULT_PROVIDER_PURPOSE;
+const DEFAULT_SCOPE = DEFAULT_PROVIDER_DATA_CLASSES.join(',');
 
 /**
  * Section 14.1's `consent_records`, and the concrete fix for M0-010's own
@@ -61,6 +69,14 @@ export class ConsentService {
           caseId,
           purpose,
           scope,
+          permittedPurposes: [purpose],
+          permittedDataClasses:
+            scope === DEFAULT_SCOPE
+              ? [...DEFAULT_PROVIDER_DATA_CLASSES]
+              : scope
+                  .split(',')
+                  .map((value) => value.trim())
+                  .filter(Boolean),
           grantedAt: new Date(),
           expiresAt: null,
           revokedAt: null,
@@ -140,6 +156,25 @@ export class ConsentService {
     return record?.id ?? null;
   }
 
+  /** Returns an active record only when it authorizes the exact purpose and every requested data class. */
+  async activeRecordForPurpose(
+    tenantId: string,
+    caseId: string,
+    purpose: string,
+    dataClasses: string[],
+  ): Promise<ConsentRecord | null> {
+    const record = await this.mostRecentRecord(tenantId, caseId);
+    if (!record || record.revokedAt) return null;
+    if (record.expiresAt && record.expiresAt.getTime() <= Date.now()) {
+      return null;
+    }
+    if (!record.permittedPurposes.includes(purpose)) return null;
+    const permitted = new Set(record.permittedDataClasses);
+    return dataClasses.every((dataClass) => permitted.has(dataClass))
+      ? record
+      : null;
+  }
+
   /** Section 15.1's `GET .../consents` (M5-031) — the full history for a case, newest first, matching `getStatus()`'s own ordering: a case can have more than one row over time (a revoke followed by a fresh grant), and every one stays a real, permanent record. */
   async listForCase(
     tenantId: string,
@@ -177,7 +212,15 @@ export class ConsentService {
    * here would only duplicate a check that's already been made, not add
    * a real guarantee.
    */
-  async isRecordValid(recordId: string): Promise<boolean> {
+  async isRecordValid(
+    recordId: string,
+    expected?: {
+      tenantId: string;
+      caseId: string;
+      purpose: string;
+      dataClasses: string[];
+    },
+  ): Promise<boolean> {
     const record = await runWithRlsBypass(this.dataSource, (manager) =>
       manager.getRepository(ConsentRecord).findOneBy({ id: recordId }),
     );
@@ -185,6 +228,19 @@ export class ConsentService {
     if (record.revokedAt) return false;
     if (record.expiresAt && record.expiresAt.getTime() <= Date.now()) {
       return false;
+    }
+    if (expected) {
+      if (
+        record.tenantId !== expected.tenantId ||
+        record.caseId !== expected.caseId ||
+        !record.permittedPurposes.includes(expected.purpose)
+      ) {
+        return false;
+      }
+      const permitted = new Set(record.permittedDataClasses);
+      if (!expected.dataClasses.every((value) => permitted.has(value))) {
+        return false;
+      }
     }
     return true;
   }

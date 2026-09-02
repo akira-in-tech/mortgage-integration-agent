@@ -157,4 +157,97 @@ describeOrSkip('WebhookEndpointService', () => {
       service.findByIdOrFail(tenantId, '99999999-9999-9999-9999-999999999999'),
     ).rejects.toThrow('not found');
   });
+
+  it('lists, safely updates, and disables only the requested tenant endpoint', async () => {
+    const endpoint = await service.create(tenantId, {
+      targetUrl: 'https://example.com/lifecycle-original',
+      eventTypes: ['loan_case.created'],
+    });
+    endpointIds.push(endpoint.id);
+
+    const listed = await service.list(tenantId);
+    expect(listed.map((item) => item.id)).toContain(endpoint.id);
+
+    const updated = await service.update(tenantId, endpoint.id, {
+      targetUrl: 'https://example.com/lifecycle-updated',
+      eventTypes: ['condition.opened'],
+    });
+    expect(updated).toMatchObject({
+      id: endpoint.id,
+      targetUrl: 'https://example.com/lifecycle-updated',
+      eventTypes: ['condition.opened'],
+      secret: endpoint.secret,
+      status: WebhookEndpointStatus.ACTIVE,
+    });
+
+    const disabled = await service.disable(tenantId, endpoint.id);
+    expect(disabled.status).toBe(WebhookEndpointStatus.DISABLED);
+    await expect(
+      service.update(tenantId, '99999999-9999-9999-9999-999999999999', {
+        eventTypes: ['condition.opened'],
+      }),
+    ).rejects.toThrow('not found');
+  });
+
+  it('rejects an unsafe target when editing an existing endpoint', async () => {
+    const endpoint = await service.create(tenantId, {
+      targetUrl: 'https://example.com/update-guard',
+      eventTypes: ['loan_case.created'],
+    });
+    endpointIds.push(endpoint.id);
+
+    await expect(
+      service.update(tenantId, endpoint.id, {
+        targetUrl: 'http://169.254.169.254/metadata',
+      }),
+    ).rejects.toThrow('private or reserved address');
+
+    expect(
+      (await service.findByIdOrFail(tenantId, endpoint.id)).targetUrl,
+    ).toBe('https://example.com/update-guard');
+  });
+
+  it('atomically reserves only the configured number of attempts in a UTC-minute window', async () => {
+    const endpoint = await service.create(tenantId, {
+      targetUrl: 'https://example.com/rate-limited',
+      eventTypes: ['loan_case.created'],
+    });
+    endpointIds.push(endpoint.id);
+    await service.update(tenantId, endpoint.id, {
+      outboundRateLimitPerMinute: 1,
+    });
+
+    const firstMinute = new Date('2026-08-31T12:34:12.000Z');
+    const first = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      firstMinute,
+    );
+    const blocked = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      new Date('2026-08-31T12:34:59.000Z'),
+    );
+    const nextWindow = await service.reserveOutboundAttempt(
+      tenantId,
+      endpoint.id,
+      new Date('2026-08-31T12:35:00.000Z'),
+    );
+
+    // The database update is the shared coordinator across worker replicas;
+    // this proof verifies both a blocked second reservation and the next
+    // window's reset without relying on process-local counters.
+    expect(first).toEqual({
+      reserved: true,
+      nextWindowAt: new Date('2026-08-31T12:35:00.000Z'),
+    });
+    expect(blocked).toEqual({
+      reserved: false,
+      nextWindowAt: new Date('2026-08-31T12:35:00.000Z'),
+    });
+    expect(nextWindow).toEqual({
+      reserved: true,
+      nextWindowAt: new Date('2026-08-31T12:36:00.000Z'),
+    });
+  });
 });

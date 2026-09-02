@@ -25,6 +25,7 @@ describeOrSkip('ProviderReconciliationService (Section 11.5, M5-027)', () => {
       capability: ProviderCapability.INCOME,
       effectClass: 'REUSABLE_LOOKUP' as const,
       authorizationGrantId: randomUUID(),
+      logicalOperationKey: randomUUID(),
       requestPayloadForFingerprint: { borrowerId: 'reconciliation-spec' },
     };
   }
@@ -59,9 +60,11 @@ describeOrSkip('ProviderReconciliationService (Section 11.5, M5-027)', () => {
     const tenantB = randomUUID();
     const staleA = await intentService.prepare(baseInput(tenantA));
     intentIds.push(staleA.id);
+    await intentService.markDispatched(tenantA, staleA.id);
     await intentService.markOutcomeUnknown(tenantA, staleA.id);
     const staleB = await intentService.prepare(baseInput(tenantB));
     intentIds.push(staleB.id);
+    await intentService.markDispatched(tenantB, staleB.id);
     await intentService.markOutcomeUnknown(tenantB, staleB.id);
 
     // Both intents' updatedAt is "now" (just written) — reconciling with
@@ -89,6 +92,7 @@ describeOrSkip('ProviderReconciliationService (Section 11.5, M5-027)', () => {
     const tenantId = randomUUID();
     const fresh = await intentService.prepare(baseInput(tenantId));
     intentIds.push(fresh.id);
+    await intentService.markDispatched(tenantId, fresh.id);
     await intentService.markOutcomeUnknown(tenantId, fresh.id);
 
     // "now" is only 1 second after the intent was marked — nowhere near

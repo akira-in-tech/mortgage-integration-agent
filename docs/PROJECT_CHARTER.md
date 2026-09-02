@@ -2,13 +2,13 @@
 
 > Mortgage-first, lending-extensible autonomous operations platform
 
-| Field | Value |
-| --- | --- |
-| Document status | Target-state charter; implementation plan, not a production-readiness claim |
-| Version | 2.12 |
-| Repository | `mortgage-integration-agent` |
-| Product model | Vendor-neutral API, operations console, Agent control plane, and developer sandbox |
-| Launch model | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
+| Field           | Value                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------- |
+| Document status | Target-state charter; implementation plan, not a production-readiness claim                       |
+| Version         | 2.29                                                                                              |
+| Repository      | `mortgage-integration-agent`                                                                      |
+| Product model   | Vendor-neutral API, operations console, Agent control plane, and developer sandbox                |
+| Launch model    | Synthetic data and deterministic simulators first; authorized integrations later through adapters |
 
 ## 1. Purpose and status language
 
@@ -58,19 +58,19 @@ The repository currently contains verified local vertical slices for:
 - a bounded LangGraph.js Agent runtime with registered tools, PostgreSQL-authoritative per-tool budget reservations, tool-boundary enforcement, REVIEWER-only reconciliation for unresolved outcomes, tenant UTC-month aggregate provider-call/cost ceilings, mandatory-review routing, immutable evaluation manifests, and persisted run history;
 - simulator adapters for income, credit, document, asset, and identity capabilities plus one credential-gated Plaid income sandbox adapter;
 - provider authorization grants, operation intents, reconciliation, kill switch, promotion records, signed webhooks with SSRF/redirect protection at dispatch, deterministic failure scenarios, and a generated TypeScript client;
+- stable logical provider-effect identities, canonical request fingerprints, replay-safe idempotency keys, compare-and-swap intent transitions, and persisted synchronous receipts/results;
+- AES-256-GCM field encryption for evidence values, provider receipts, and normalized findings, with authenticated envelopes, a multi-key rotation window, production fail-closed legacy reads, and a pre-rollout backfill/rotation task;
 - API-client and OIDC authentication (same-origin Authorization Code + PKCE backend-for-frontend session, tenant discovery, and upstream logout propagation), two-role RBAC, consent enforcement, legal holds, data-disposition review, and negative authorization tests;
 - a React operations console with case queue, dashboard, dossier, communications review, Agent-budget usage/reconciliation, and live activity polling;
-- CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, and dependency audits, plus an automated Playwright/axe browser and accessibility gate (a separate credential-gated live-Keycloak browser journey stays opt-in, not enforced by default);
+- CI enforcement of console lint/tests/build, generated-contract drift (OpenAPI, TypeScript client, GraphQL codegen), a clean production container build, dependency audits, Playwright/axe coverage, and the credential-gated live-Keycloak browser journey on every push and pull request;
 - an opt-in local OpenTelemetry stack (Collector, Tempo, Prometheus, Grafana) with SLO recording rules, alerts, a provisioned dashboard, and an operator runbook (`docs/OPERATIONS.md`);
-- no-paid-model default execution and an optional local Ollama/Qwen compatibility decision provider.
+- no-paid-model default execution and an optional governed local Ollama/Qwen planner in the authoritative LangGraph runtime; the legacy compatibility path remains separate.
 
 The following release boundaries remain open and are not represented as implemented:
 
-- external policy-source monitoring/ingestion connectors and broader reviewed jurisdiction coverage (Section 29 item 4);
-- per-purpose consent, permissible-purpose decisions, complete data lineage, object storage, and deletion/backup verification;
-- complete administration and recovery queues (operational replay/cancel/recovery controls are not yet exposed through the console — see M6's own note);
-- a deployed Keycloak/console for staging (declined by the user — no domain purchase, HTTPS is a hard requirement for OIDC in staging/production);
-- the provider certification/kill-switch exercise (Section 29 item 6's last piece);
+- external policy-source connector mechanisms are implemented; real reviewed source connectors and broader reviewed jurisdiction coverage remain open (Section 29 item 4);
+- lineage and disposition beyond the currently implemented evidence/provider-result stores (documents, prompts, evaluation artifacts, caches, indexes, and object storage do not yet exist); managed-backup expiry still requires an authoritative external operator/provider evidence reference;
+- real provider adapter authorization, production provider credentials, or real-data approval (the AWS-only CloudFront/Cognito synthetic console is a staging demonstration, not such approval);
 - production provider adapters, real-data approval, or official underwriting integrations.
 
 Infrastructure as code, deployed synthetic staging, supply-chain scans (SBOM/build-provenance attestation), load/soak evidence, and backup/restore drills are now implemented and live-verified against a real AWS account (M7-024/M7-025/M7-026) — this bullet previously listed them as open, which was accurate when written but is stale now that all of them have real, dated evidence recorded in `docs/DEVELOPMENT_LOG.md`. Downloadable evaluation evidence is also implemented (M7-023).
@@ -79,15 +79,15 @@ The legacy `evaluateLoan` path remains a one-shot compatibility demo. Its `APPRO
 
 ### 3.1 Current workflow audit
 
-| Area | Implemented behavior | Production implication |
-| --- | --- | --- |
-| Intake | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations. | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks. |
-| Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence. | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated. |
-| Policy | Released versions resolve across the full covered jurisdiction ancestry; every registered source must satisfy its freshness objective; allowlisted transition rules use the immutable application receipt time for grandfathering; resolver releases, source deadlines, scheduled boundaries, and catalog changes invalidate reuse before evaluation binds an immutable snapshot. | External source monitoring/ingestion and broader reviewed jurisdiction coverage remain open; stale, incomplete, cyclic, or unsupported policy context fails closed to review. |
-| Agent | A bounded LangGraph runtime invokes allowlisted tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; stale, exhausted, expired, unconfigured, and replayed unresolved effects route safely; REVIEWER-only reconciliation preserves actor, reason, and audit evidence. | Current tools declare zero token/provider/cost usage; real cost-bearing adapters still require their provider-certification and operational gates. |
-| Workflow | Temporal owns durable wait, signal, resume, retry, and process-restart recovery. | Operations replay/cancel/recovery controls are not all exposed through the console. |
-| Outcome | Cases reach readiness or review states; protected communications require exact-render human approval. | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement. |
-| Trust | OIDC/API clients, RBAC, consent, RLS, audit events, provider grants, operation intents, and data-disposition tasks are present. | Purpose-level consent, complete lineage, encrypted object storage, and deployed control evidence remain open. |
+| Area     | Implemented behavior                                                                                                                                                                                                                                                                                                                                                              | Production implication                                                                                                                                                                                                                          |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Intake   | Tenant-authenticated REST creates an idempotent case; GraphQL exposes list/detail and operations mutations.                                                                                                                                                                                                                                                                       | The synthetic product does not establish regulated application-completeness dates or formal credit-action clocks.                                                                                                                               |
+| Evidence | Provider adapters normalize five capability types; the durable workflow currently dispatches income, credit, and document evidence.                                                                                                                                                                                                                                               | Asset and identity adapters exist but are not yet driven by the main workflow; real-provider evidence remains authorization-gated.                                                                                                              |
+| Policy   | Released versions resolve across the full covered jurisdiction ancestry; every registered source must satisfy its freshness objective; allowlisted transition rules use the immutable application receipt time for grandfathering; resolver releases, source deadlines, scheduled boundaries, and catalog changes invalidate reuse before evaluation binds an immutable snapshot. | External source monitoring/ingestion and broader reviewed jurisdiction coverage remain open; stale, incomplete, cyclic, or unsupported policy context fails closed to review.                                                                   |
+| Agent    | A bounded LangGraph runtime optionally uses a schema-constrained local-model planner for one of two routes, then invokes allowlisted deterministic tools only through PostgreSQL-authoritative workflow reservations and UTC-month tenant provider-call/cost ceilings; model provenance and token use are durable and replay-safe.                                                | The model cannot evaluate policy, decide credit, approve communication, name tools, or execute effects; malformed, unavailable, or uncertain output routes to human review. Current deterministic tools declare zero token/provider/cost usage. |
+| Workflow | Temporal owns durable wait, signal, resume, retry, process-restart recovery, reviewer cancellation, and terminal-run recovery. Recovery reuses exactly one durable active condition and fails closed on ambiguity.                                                                                                                                                                | Cancellation ends orchestration only; current synchronous provider adapters do not assert provider-side cancellation, so ambiguous effects still enter reconciliation.                                                                          |
+| Outcome  | Cases reach readiness or review states; protected communications require exact-render human approval.                                                                                                                                                                                                                                                                             | No platform result is a formal credit decision, adverse-action notice, rate lock, closing, funding, or funds movement.                                                                                                                          |
+| Trust    | OIDC/API clients, RBAC, purpose-bound consent, transaction-specific consumer-report permissible-purpose decisions, RLS, audit events, provider grants, operation intents, encrypted borrower-derived JSON fields, and lineage-aware data-disposition tasks are present.                                                                                                           | Stores not yet implemented (documents, prompts, caches, indexes, objects) need their own lineage before introduction; real backup expiry needs external evidence and real-data approval remains open.                                           |
 
 ## 4. Product position
 
@@ -203,16 +203,16 @@ Billing is outside the initial launch scope. Cost attribution is part of the dom
 
 ### 6.1 Case statuses
 
-| Status | Meaning |
-| --- | --- |
-| `DRAFT` | Case exists but required intake data has not been submitted. |
-| `COLLECTING_EVIDENCE` | Approved evidence-gathering work is active. |
-| `CONDITIONS_OPEN` | One or more operational conditions require resolution. |
-| `WAITING_FOR_INFORMATION` | Workflow is durably paused for additional evidence. |
-| `WAITING_FOR_REVIEW` | A protected or ambiguous action requires a person. |
-| `READY_FOR_UNDERWRITING` | Configured evidence and readiness conditions are satisfied. |
-| `MANUAL_REVIEW` | The case cannot proceed safely within the configured automation boundary. |
-| `CLOSED` | Work ended by an authorized actor or downstream lifecycle event. |
+| Status                    | Meaning                                                                   |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `DRAFT`                   | Case exists but required intake data has not been submitted.              |
+| `COLLECTING_EVIDENCE`     | Approved evidence-gathering work is active.                               |
+| `CONDITIONS_OPEN`         | One or more operational conditions require resolution.                    |
+| `WAITING_FOR_INFORMATION` | Workflow is durably paused for additional evidence.                       |
+| `WAITING_FOR_REVIEW`      | A protected or ambiguous action requires a person.                        |
+| `READY_FOR_UNDERWRITING`  | Configured evidence and readiness conditions are satisfied.               |
+| `MANUAL_REVIEW`           | The case cannot proceed safely within the configured automation boundary. |
+| `CLOSED`                  | Work ended by an authorized actor or downstream lifecycle event.          |
 
 These statuses describe workflow readiness, not formal credit decisions.
 
@@ -251,17 +251,17 @@ Communication classification and template enforcement are deterministic applicat
 
 Mortgage production is not one universal linear workflow: product, channel, jurisdiction, lender policy, and case facts change the required path. The platform therefore records authoritative milestone events and coordinates a bounded operations segment rather than pretending to own the lender's entire origination process.
 
-| Lifecycle area | Representative milestones | Initial product relationship | Authority boundary |
-| --- | --- | --- | --- |
-| Shopping, inquiry, and prequalification | Product exploration, inquiry, prequalification | Outside launch scope; may enter as context | The platform must not infer that a regulated application was received. |
-| Application intake and initial disclosure triggers | Application-received event, required initial disclosures, intent to proceed | Integration boundary; record downstream-confirmed events and deadlines | The lender or authorized system determines legal application status and performs disclosures. |
-| Processing and evidence assembly | Collect and verify income, assets, credit, identity, occupancy, and documents | Core launch scope with synthetic evidence | The platform may identify evidence gaps but does not make a credit decision. |
-| Collateral and third-party work | Appraisal or valuation, title, flood, insurance, fraud, and other required services | Selected simulators later; real orders require authorized adapters | Provider and lender results remain attributable and authoritative. |
-| Underwriting | Evaluate capacity, credit, collateral, eligibility, and approved exceptions | Prepare an evidence-complete package and ingest downstream conditions | An authorized lender or underwriting system owns formal approval, suspension, or denial. |
-| Conditions and re-evaluation | Operational conditions, underwriter conditions, new evidence, changed circumstances | Core conditions-resolution loop | The platform may resolve operational work; only the authorized owner clears decision conditions. |
-| Action and consumer notification | Approval, counteroffer, incompleteness, withdrawal, or adverse action and required notices | Track external status; protected drafting may be added later | Formal action and legally required communication remain outside autonomous Agent authority. |
-| Clear-to-close, closing, and funding | Final verification, closing disclosure, consummation, settlement, funding | Future integrations may ingest status and coordinate non-monetary tasks only | Authorized lender, settlement, and funding systems remain authoritative; the platform cannot issue clear-to-close, create a legal disclosure, direct settlement, or initiate, approve, hold, or disburse funds. |
-| Post-closing and servicing handoff | Quality control, delivery, boarding, servicing, corrections | Future integrations may ingest status and coordinate non-monetary tasks only | Downstream operational and compliance owners retain authority; capital delivery and servicing money movement remain outside this charter. |
+| Lifecycle area                                     | Representative milestones                                                                  | Initial product relationship                                                 | Authority boundary                                                                                                                                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shopping, inquiry, and prequalification            | Product exploration, inquiry, prequalification                                             | Outside launch scope; may enter as context                                   | The platform must not infer that a regulated application was received.                                                                                                                                          |
+| Application intake and initial disclosure triggers | Application-received event, required initial disclosures, intent to proceed                | Integration boundary; record downstream-confirmed events and deadlines       | The lender or authorized system determines legal application status and performs disclosures.                                                                                                                   |
+| Processing and evidence assembly                   | Collect and verify income, assets, credit, identity, occupancy, and documents              | Core launch scope with synthetic evidence                                    | The platform may identify evidence gaps but does not make a credit decision.                                                                                                                                    |
+| Collateral and third-party work                    | Appraisal or valuation, title, flood, insurance, fraud, and other required services        | Selected simulators later; real orders require authorized adapters           | Provider and lender results remain attributable and authoritative.                                                                                                                                              |
+| Underwriting                                       | Evaluate capacity, credit, collateral, eligibility, and approved exceptions                | Prepare an evidence-complete package and ingest downstream conditions        | An authorized lender or underwriting system owns formal approval, suspension, or denial.                                                                                                                        |
+| Conditions and re-evaluation                       | Operational conditions, underwriter conditions, new evidence, changed circumstances        | Core conditions-resolution loop                                              | The platform may resolve operational work; only the authorized owner clears decision conditions.                                                                                                                |
+| Action and consumer notification                   | Approval, counteroffer, incompleteness, withdrawal, or adverse action and required notices | Track external status; protected drafting may be added later                 | Formal action and legally required communication remain outside autonomous Agent authority.                                                                                                                     |
+| Clear-to-close, closing, and funding               | Final verification, closing disclosure, consummation, settlement, funding                  | Future integrations may ingest status and coordinate non-monetary tasks only | Authorized lender, settlement, and funding systems remain authoritative; the platform cannot issue clear-to-close, create a legal disclosure, direct settlement, or initiate, approve, hold, or disburse funds. |
+| Post-closing and servicing handoff                 | Quality control, delivery, boarding, servicing, corrections                                | Future integrations may ingest status and coordinate non-monetary tasks only | Downstream operational and compliance owners retain authority; capital delivery and servicing money movement remain outside this charter.                                                                       |
 
 `READY_FOR_UNDERWRITING` means only that configured evidence-readiness checks passed. `CONDITIONS_OPEN` means operational work remains. Neither status means conditional approval, final approval, clear-to-close, funding authorization, or satisfaction of a legal notice obligation.
 
@@ -444,25 +444,25 @@ Budget fields are server-issued observations, not model authority. At every grap
 
 ### 9.4 Registered tools
 
-| Tool | Purpose | Side effect | Approval boundary |
-| --- | --- | --- | --- |
-| `check_case_completeness` | Validate required intake fields | None | No |
-| `inspect_documents` | Extract candidate facts from synthetic documents | Document processing | Consent required |
-| `fetch_income_evidence` | Request income capability | Provider submission | Consent and budget required |
-| `fetch_asset_evidence` | Request asset capability | Provider submission | Consent and budget required |
-| `fetch_credit_evidence` | Request credit-summary capability | Provider submission | Consent and budget required |
-| `check_identity_consistency` | Compare synthetic identity evidence | Provider submission | Consent required |
-| `calculate_qualified_income` | Request a policy-bound income calculation | Versioned calculation | Mandatory policy-binding validation |
-| `calculate_dti` | Execute deterministic calculation | Versioned calculation | No |
-| `calculate_ltv` | Execute deterministic calculation | Versioned calculation | No |
-| `compare_evidence` | Detect missing, stale, or conflicting facts | None | No |
-| `check_policy_change_impact` | Compare an approved policy change with open cases | Creates impact assessment | No; cannot change case applicability |
-| `evaluate_policy` | Request guarded evaluation of current applicable policy | Creates assessment | Mandatory policy-binding validation |
-| `create_condition` | Materialize a policy-supported operational condition | Case mutation | Validated binding and evaluation required |
-| `draft_information_request` | Prepare a remediation request | Draft only | No |
-| `send_information_request` | Deliver an external message | External communication | Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content; formal notices outside product scope remain prohibited |
-| `escalate_to_reviewer` | Pause and create review task | Workflow transition | No |
-| `publish_case_update` | Deliver a signed machine webhook | External communication | Only already-authorized committed integration events; borrower-facing protected communication content is prohibited |
+| Tool                         | Purpose                                                 | Side effect               | Approval boundary                                                                                                                                                                                                 |
+| ---------------------------- | ------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `check_case_completeness`    | Validate required intake fields                         | None                      | No                                                                                                                                                                                                                |
+| `inspect_documents`          | Extract candidate facts from synthetic documents        | Document processing       | Consent required                                                                                                                                                                                                  |
+| `fetch_income_evidence`      | Request income capability                               | Provider submission       | Consent and budget required                                                                                                                                                                                       |
+| `fetch_asset_evidence`       | Request asset capability                                | Provider submission       | Consent and budget required                                                                                                                                                                                       |
+| `fetch_credit_evidence`      | Request credit-summary capability                       | Provider submission       | Consent and budget required                                                                                                                                                                                       |
+| `check_identity_consistency` | Compare synthetic identity evidence                     | Provider submission       | Consent required                                                                                                                                                                                                  |
+| `calculate_qualified_income` | Request a policy-bound income calculation               | Versioned calculation     | Mandatory policy-binding validation                                                                                                                                                                               |
+| `calculate_dti`              | Execute deterministic calculation                       | Versioned calculation     | No                                                                                                                                                                                                                |
+| `calculate_ltv`              | Execute deterministic calculation                       | Versioned calculation     | No                                                                                                                                                                                                                |
+| `compare_evidence`           | Detect missing, stale, or conflicting facts             | None                      | No                                                                                                                                                                                                                |
+| `check_policy_change_impact` | Compare an approved policy change with open cases       | Creates impact assessment | No; cannot change case applicability                                                                                                                                                                              |
+| `evaluate_policy`            | Request guarded evaluation of current applicable policy | Creates assessment        | Mandatory policy-binding validation                                                                                                                                                                               |
+| `create_condition`           | Materialize a policy-supported operational condition    | Case mutation             | Validated binding and evaluation required                                                                                                                                                                         |
+| `draft_information_request`  | Prepare a remediation request                           | Draft only                | No                                                                                                                                                                                                                |
+| `send_information_request`   | Deliver an external message                             | External communication    | Configured policy only for a version-pinned routine operational template; exact human approval is mandatory for protected, uncertain, or modified content; formal notices outside product scope remain prohibited |
+| `escalate_to_reviewer`       | Pause and create review task                            | Workflow transition       | No                                                                                                                                                                                                                |
+| `publish_case_update`        | Deliver a signed machine webhook                        | External communication    | Only already-authorized committed integration events; borrower-facing protected communication content is prohibited                                                                                               |
 
 `validate_policy_binding` is deliberately not an Agent tool. It is an unavoidable application-service guard invoked server-side for every evaluation request, including re-evaluations and retries. The Agent cannot omit it, supply its result, or choose an older snapshot.
 
@@ -979,6 +979,8 @@ Every adapter passes the same reusable suite:
 
 The same suite runs against simulators and authorized sandboxes. A production certification run additionally verifies endpoint and credential isolation, real authentication behavior, representative schema variance, webhook signatures, documented rate limits, support correlation identifiers, canary routing, kill-switch behavior, and rollback to a safe provider state.
 
+Current implementation status: M7-032 provides a reusable suite for every implemented simulator and the authorized Plaid sandbox adapter, plus one strict post-normalization dispatch gate for all five canonical finding types. Timestamp freshness and malformed, partial, out-of-range, extra-field, and cross-field-contradictory findings fail closed and retain the rejected receipt. This is verified only for the current synchronous adapter contract. Async polling, callbacks, cancellation races, provider-specific rate/auth behavior, redaction, and fallback semantics remain required evidence for any adapter tuple that declares those capabilities; they are not inferred from the synchronous suite.
+
 ### 11.8 Real-data enablement boundary
 
 The codebase is **provider-integration-ready** for a declared provider/capability/adapter-version/schema-profile tuple only when that already implemented adapter can be enabled through a promotion manifest and secret activation with no domain or workflow code change. It becomes **production-approved** for real data only after all of the following are evidenced for the specific tenant, provider, capability, adapter version, schema profile, product, jurisdiction, and environment:
@@ -1070,27 +1072,27 @@ Domain and application contracts do not import web frameworks, model SDKs, queue
 
 ## 13. Target technology stack
 
-| Layer | Target | Rationale |
-| --- | --- | --- |
-| Runtime | Node.js 24 LTS | Active LTS production baseline; non-LTS Current releases are deferred. |
-| Language | TypeScript 6, strict | Stable bridge for tools requiring the programmatic compiler API; TypeScript 7 adoption is compatibility-gated. |
-| Backend | NestJS 11 + Express 5 | Mature modular TypeScript framework and supported migration path. |
-| Partner API | REST + OpenAPI 3.1 | Broad Fintech interoperability and SDK generation. |
-| Operations API | GraphQL + Apollo Server | Flexible case, evidence, and timeline querying for the console. |
-| Database | PostgreSQL 18 | Supported relational system of record with transactions, JSON, RLS, and indexing. |
-| Data access | TypeORM 0.3 patched + explicit SQL where warranted | Preserve current investment; migrations and transaction boundaries stay explicit. |
-| Durable execution | Temporal + TypeScript SDK | Long-running waits, retries, signals, recovery, and workflow versioning. |
-| Agent runtime | `AgentRuntime` port with LangGraph.js v1 adapter | Stateful bounded Agent execution without framework lock-in. |
-| Policy | Versioned internal DSL + deterministic evaluator | Testable authority independent of model behavior. |
-| Local inference | Ollama + Qwen3.5-9B | Free local structured inference for the target development machine. |
-| Production inference | Model Gateway + private vLLM-compatible serving | OpenAI-compatible, model-neutral serving boundary. |
-| Web | React 19 + TypeScript + query/state tooling | Mainstream operations UI with explicit loading, error, and recovery states. |
-| Object storage | S3-compatible storage; MinIO locally | Durable document and raw-payload boundary with lifecycle support. |
-| Identity | Managed OIDC/OAuth 2.0 + scoped API clients; FAPI 2.0 profile where ecosystem-compatible | Use established high-security financial API patterns without implementing authorization security in the domain core. |
-| Telemetry | OpenTelemetry | Vendor-neutral traces, metrics, logs, and context propagation. |
-| Tests | Jest, Supertest, Testcontainers, property and contract tests | Layered correctness and integration evidence. |
-| Infrastructure | Terraform/OpenTofu + AWS ECS Fargate target | Portable infrastructure definitions without premature Kubernetes. |
-| CI/CD | GitHub Actions + OIDC | Short-lived cloud credentials and auditable gates. |
+| Layer                | Target                                                                                   | Rationale                                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Runtime              | Node.js 24 LTS                                                                           | Active LTS production baseline; non-LTS Current releases are deferred.                                               |
+| Language             | TypeScript 6, strict                                                                     | Stable bridge for tools requiring the programmatic compiler API; TypeScript 7 adoption is compatibility-gated.       |
+| Backend              | NestJS 11 + Express 5                                                                    | Mature modular TypeScript framework and supported migration path.                                                    |
+| Partner API          | REST + OpenAPI 3.1                                                                       | Broad Fintech interoperability and SDK generation.                                                                   |
+| Operations API       | GraphQL + Apollo Server                                                                  | Flexible case, evidence, and timeline querying for the console.                                                      |
+| Database             | PostgreSQL 18                                                                            | Supported relational system of record with transactions, JSON, RLS, and indexing.                                    |
+| Data access          | TypeORM 0.3 patched + explicit SQL where warranted                                       | Preserve current investment; migrations and transaction boundaries stay explicit.                                    |
+| Durable execution    | Temporal + TypeScript SDK                                                                | Long-running waits, retries, signals, recovery, and workflow versioning.                                             |
+| Agent runtime        | `AgentRuntime` port with LangGraph.js v1 adapter                                         | Stateful bounded Agent execution without framework lock-in.                                                          |
+| Policy               | Versioned internal DSL + deterministic evaluator                                         | Testable authority independent of model behavior.                                                                    |
+| Local inference      | Ollama + Qwen3.5-9B                                                                      | Free local structured inference for the target development machine.                                                  |
+| Production inference | Model Gateway + private vLLM-compatible serving                                          | OpenAI-compatible, model-neutral serving boundary.                                                                   |
+| Web                  | React 19 + TypeScript + query/state tooling                                              | Mainstream operations UI with explicit loading, error, and recovery states.                                          |
+| Object storage       | S3-compatible storage; MinIO locally                                                     | Durable document and raw-payload boundary with lifecycle support.                                                    |
+| Identity             | Managed OIDC/OAuth 2.0 + scoped API clients; FAPI 2.0 profile where ecosystem-compatible | Use established high-security financial API patterns without implementing authorization security in the domain core. |
+| Telemetry            | OpenTelemetry                                                                            | Vendor-neutral traces, metrics, logs, and context propagation.                                                       |
+| Tests                | Jest, Supertest, Testcontainers, property and contract tests                             | Layered correctness and integration evidence.                                                                        |
+| Infrastructure       | Terraform/OpenTofu + AWS ECS Fargate target                                              | Portable infrastructure definitions without premature Kubernetes.                                                    |
+| CI/CD                | GitHub Actions + OIDC                                                                    | Short-lived cloud credentials and auditable gates.                                                                   |
 
 Exact patch versions are selected, locked, security-scanned, and compatibility-tested in the implementation commit. Newest is not synonymous with safest: Active LTS and ecosystem support take precedence over version numbers.
 
@@ -1100,62 +1102,62 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 
 ### 14.1 Core entities
 
-| Entity | Purpose |
-| --- | --- |
-| `tenants` | Organization boundary and configuration. |
-| `users` | OIDC-linked human identity. |
-| `tenant_memberships` | Role assignment by tenant. |
-| `api_clients` | Scoped machine identity and key metadata. |
-| `loan_cases` | Versioned aggregate and current workflow readiness. |
-| `borrowers` | Minimized borrower profile with encrypted sensitive fields. |
-| `consent_records` | Purpose, scope, policy version, grant, expiration, and revocation evidence. |
-| `documents` | Object metadata, checksum, media type, scan, and retention state. |
-| `evidence_facts` | Typed facts with source, confidence, validity, and lineage. |
-| `evidence_conflicts` | Contradictory fact relationships and resolution state. |
-| `jurisdictions` | Stable codes, levels, parent relationships, and supported coverage status. |
-| `policy_sources` | Authorized source registry, owner, jurisdiction, retrieval mode, and freshness objective. |
-| `policy_source_revisions` | Immutable retrieved content metadata, checksum, publication time, and system-time history. |
-| `policy_packs` | Composable federal, jurisdiction, product, program, and tenant policy metadata. |
-| `policy_versions` | Immutable DSL, valid-time interval, release status, approvals, and test manifest. |
-| `policy_applicability` | Typed scope, triggering event, precedence, and approved transition criteria. |
-| `policy_change_events` | Detected, scheduled, activated, corrected, withdrawn, or superseded change history. |
+| Entity                          | Purpose                                                                                                                                               |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenants`                       | Organization boundary and configuration.                                                                                                              |
+| `users`                         | OIDC-linked human identity.                                                                                                                           |
+| `tenant_memberships`            | Role assignment by tenant.                                                                                                                            |
+| `api_clients`                   | Scoped machine identity and key metadata.                                                                                                             |
+| `loan_cases`                    | Versioned aggregate and current workflow readiness.                                                                                                   |
+| `borrowers`                     | Minimized borrower profile with encrypted sensitive fields.                                                                                           |
+| `consent_records`               | Purpose, scope, policy version, grant, expiration, and revocation evidence.                                                                           |
+| `documents`                     | Object metadata, checksum, media type, scan, and retention state.                                                                                     |
+| `evidence_facts`                | Typed facts with source, confidence, validity, and lineage.                                                                                           |
+| `evidence_conflicts`            | Contradictory fact relationships and resolution state.                                                                                                |
+| `jurisdictions`                 | Stable codes, levels, parent relationships, and supported coverage status.                                                                            |
+| `policy_sources`                | Authorized source registry, owner, jurisdiction, retrieval mode, and freshness objective.                                                             |
+| `policy_source_revisions`       | Immutable retrieved content metadata, checksum, publication time, and system-time history.                                                            |
+| `policy_packs`                  | Composable federal, jurisdiction, product, program, and tenant policy metadata.                                                                       |
+| `policy_versions`               | Immutable DSL, valid-time interval, release status, approvals, and test manifest.                                                                     |
+| `policy_applicability`          | Typed scope, triggering event, precedence, and approved transition criteria.                                                                          |
+| `policy_change_events`          | Detected, scheduled, activated, corrected, withdrawn, or superseded change history.                                                                   |
 | `policy_dependency_generations` | Authoritative generations and next boundaries for catalog, jurisdiction, product, program, tenant, lifecycle, coverage, and resolver dependency keys. |
-| `case_policy_snapshots` | Immutable resolved versions, source revisions, context hash, and resolution reasons. |
-| `case_policy_bindings` | Reusable case-to-snapshot binding with dependency vector, selector version, relevant-facts hash, time boundary, and invalidation state. |
-| `policy_impact_assessments` | Dry-run comparison and disposition for potentially affected open cases. |
-| `evaluation_input_manifests` | Immutable case, authorization, consent, evidence, calculation, policy, evaluator, and optional model-version references. |
-| `policy_evaluations` | Input-manifest ID, binding validation observation, evaluator version, rule execution, and outcome. |
-| `loan_conditions` | Condition lifecycle and required evidence. |
-| `condition_transitions` | Actor-attributed condition state history. |
-| `provider_connections` | Tenant provider mode and credential reference. |
-| `provider_authorization_grants` | Case-, subject-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound external-call authority. |
-| `provider_operation_intents` | Durable request fingerprint, effect class, idempotency key, authorization, and dispatch outcome. |
-| `provider_attempts` | Attempt, latency, error, retry, and cost metadata. |
-| `provider_reconciliations` | Evidence and resolution of ambiguous, delayed, cancelled, or externally completed operations. |
-| `provider_findings` | Normalized results and provenance. |
-| `provider_promotion_manifests` | Immutable adapter, schema, endpoint, control, and secret-reference desired state. |
-| `provider_certifications` | Append-only manifest-scoped test report, artifact digest, validity, outcome, and revocation history. |
-| `provider_approvals` | Append-only manifest-scoped independent approval, expiry, rejection, and revocation history. |
-| `provider_activations` | Versioned environment activation, suspension, disablement, and actor history. |
-| `workflow_runs` | Durable business workflow identity and status. |
-| `workflow_steps` | User-facing activity timeline and failure state. |
-| `agent_runs` | Runtime, model, prompt, budgets, tools, and final route. |
-| `agent_budget_ledgers` | Versioned run, workflow, and tenant step, duration, token, provider-call, cost limit, usage, reservation, and currency state. |
-| `agent_budget_reservations` | Atomic cost and capacity reservations for in-flight or outcome-unknown work. |
-| `tool_attempts` | Arguments hash, result hash, side effect, and outcome. |
-| `review_tasks` | Pending protected action or exception review. |
-| `review_decisions` | Reviewer result, rationale, version, and override history. |
-| `communication_templates` | Immutable tenant-approved routine template, locale, variable, attachment, recipient, channel, purpose, and validity rules. |
-| `communication_classifications` | Deterministic routine, protected, or uncertain decision with reasons, policy version, and rendered-content hash. |
-| `communication_approvals` | Exact protected message, recipient, channel, locale, attachment, sender, reviewer, expiry, and revocation evidence. |
-| `communication_deliveries` | Idempotent attempt, approval or template reference, exact render hash, destination, and terminal outcome. |
-| `idempotency_keys` | Tenant, route, key, request hash, and response reference. |
-| `webhook_endpoints` | Destination, secret reference, subscriptions, and state. |
-| `webhook_deliveries` | Signed attempt history and replay state. |
-| `legal_holds` | Scoped hold authority, reason, owner, validity, review, and release history. |
-| `data_disposition_tasks` | Lineage-aware retention, deletion, anonymization, hold, and verification state. |
-| `audit_events` | Append-only actor, action, resource, and security history. |
-| `outbox_events` | Transactionally committed events awaiting publication. |
+| `case_policy_snapshots`         | Immutable resolved versions, source revisions, context hash, and resolution reasons.                                                                  |
+| `case_policy_bindings`          | Reusable case-to-snapshot binding with dependency vector, selector version, relevant-facts hash, time boundary, and invalidation state.               |
+| `policy_impact_assessments`     | Dry-run comparison and disposition for potentially affected open cases.                                                                               |
+| `evaluation_input_manifests`    | Immutable case, authorization, consent, evidence, calculation, policy, evaluator, and optional model-version references.                              |
+| `policy_evaluations`            | Input-manifest ID, binding validation observation, evaluator version, rule execution, and outcome.                                                    |
+| `loan_conditions`               | Condition lifecycle and required evidence.                                                                                                            |
+| `condition_transitions`         | Actor-attributed condition state history.                                                                                                             |
+| `provider_connections`          | Tenant provider mode and credential reference.                                                                                                        |
+| `provider_authorization_grants` | Case-, subject-, provider-, capability-, purpose-, data-class-, optionally field-, and time-bound external-call authority.                            |
+| `provider_operation_intents`    | Durable request fingerprint, effect class, idempotency key, authorization, and dispatch outcome.                                                      |
+| `provider_attempts`             | Attempt, latency, error, retry, and cost metadata.                                                                                                    |
+| `provider_reconciliations`      | Evidence and resolution of ambiguous, delayed, cancelled, or externally completed operations.                                                         |
+| `provider_findings`             | Normalized results and provenance.                                                                                                                    |
+| `provider_promotion_manifests`  | Immutable adapter, schema, endpoint, control, and secret-reference desired state.                                                                     |
+| `provider_certifications`       | Append-only manifest-scoped test report, artifact digest, validity, outcome, and revocation history.                                                  |
+| `provider_approvals`            | Append-only manifest-scoped independent approval, expiry, rejection, and revocation history.                                                          |
+| `provider_activations`          | Versioned environment activation, suspension, disablement, and actor history.                                                                         |
+| `workflow_runs`                 | Durable business workflow identity and status.                                                                                                        |
+| `workflow_steps`                | User-facing activity timeline and failure state.                                                                                                      |
+| `agent_runs`                    | Runtime, model, prompt, budgets, tools, and final route.                                                                                              |
+| `agent_budget_ledgers`          | Versioned run, workflow, and tenant step, duration, token, provider-call, cost limit, usage, reservation, and currency state.                         |
+| `agent_budget_reservations`     | Atomic cost and capacity reservations for in-flight or outcome-unknown work.                                                                          |
+| `tool_attempts`                 | Arguments hash, result hash, side effect, and outcome.                                                                                                |
+| `review_tasks`                  | Pending protected action or exception review.                                                                                                         |
+| `review_decisions`              | Reviewer result, rationale, version, and override history.                                                                                            |
+| `communication_templates`       | Immutable tenant-approved routine template, locale, variable, attachment, recipient, channel, purpose, and validity rules.                            |
+| `communication_classifications` | Deterministic routine, protected, or uncertain decision with reasons, policy version, and rendered-content hash.                                      |
+| `communication_approvals`       | Exact protected message, recipient, channel, locale, attachment, sender, reviewer, expiry, and revocation evidence.                                   |
+| `communication_deliveries`      | Idempotent attempt, approval or template reference, exact render hash, destination, and terminal outcome.                                             |
+| `idempotency_keys`              | Tenant, route, key, request hash, and response reference.                                                                                             |
+| `webhook_endpoints`             | Destination, secret reference, subscriptions, and state.                                                                                              |
+| `webhook_deliveries`            | Signed attempt history and replay state.                                                                                                              |
+| `legal_holds`                   | Scoped hold authority, reason, owner, validity, review, and release history.                                                                          |
+| `data_disposition_tasks`        | Lineage-aware retention, deletion, anonymization, hold, and verification state.                                                                       |
+| `audit_events`                  | Append-only actor, action, resource, and security history.                                                                                            |
+| `outbox_events`                 | Transactionally committed events awaiting publication.                                                                                                |
 
 ### 14.2 Data rules
 
@@ -1174,12 +1176,12 @@ TypeScript 7 is released but does not yet expose the same programmatic API used 
 - Agent budget observations are derived from trusted deadlines and a versioned ledger; models and clients cannot supply, extend, reset, or race a budget reservation.
 - Protected communication approval is bound to the exact rendered-content hash, recipient, channel, locale, attachments, sender, and validity interval; changing any bound field invalidates reuse.
 - Routine communication delivery requires an exact active template version and allowlisted variable set; classification uncertainty fails closed to human review.
-- Raw provider payloads are encrypted, access-controlled, and short-lived.
+- Evidence values, provider receipts, and normalized findings are encrypted as authenticated field envelopes; staging/production reject legacy plaintext and rotate keys through an ordered decrypt window.
 - Documents live in object storage rather than relational binary columns.
 - Logs contain identifiers, classifications, and hashes instead of full borrower data.
 - Public demos and automated tests use visibly synthetic data only.
-- Retention and deletion traverse document, evidence, normalized finding, cache, search index, prompt, evaluation artifact, object, and backup lineage; legal holds are explicit, scoped, reviewable, and never inferred from an undeletable implementation detail.
-- Deletion verification records what was deleted, anonymized, retained under a valid hold, or pending backup expiry without retaining the removed content itself.
+- Retention and deletion must traverse every store that actually exists. The current implementation snapshots evidence and provider-result lineage; future document, cache, search-index, prompt, evaluation-artifact, and object stores cannot launch until they join the same disposition graph. Legal holds are explicit, scoped, reviewable, and never inferred from an undeletable implementation detail.
+- Deletion/anonymization locks snapshotted provider intents, cancels work not yet dispatched, and blocks while a dispatched or ambiguous outcome could reintroduce data. Primary deletion then remains `COMPLETED` until the configured backup-retention window has passed and a reviewer records a non-sensitive authoritative backup-expiry reference; only then is it `VERIFIED`.
 
 ## 15. API and developer experience
 
@@ -1525,16 +1527,16 @@ Delivery proceeds through runnable vertical slices. Each milestone ends with a d
 
 ### Milestone status
 
-| Milestone | Outcome | Status |
-| --- | --- | --- |
-| M0 | Stable free model baseline and independent product charter | Implemented |
-| M1 | Supported runtime, migrations, and security baseline | Implemented |
-| M2 | Durable loan case, evidence, and condition workflow | Implemented |
-| M3 | Temporal policy resolution, bounded Agent tools, and human review | Partially implemented |
-| M4 | Provider gateway, partner API, webhooks, and sandbox | Partially implemented |
-| M5 | Tenant trust boundary and audit controls | Partially implemented |
-| M6 | Operations console and release evaluation | Partially implemented |
-| M7 | Synthetic staging and provider-integration-readiness evidence | Partially implemented |
+| Milestone | Outcome                                                           | Status                |
+| --------- | ----------------------------------------------------------------- | --------------------- |
+| M0        | Stable free model baseline and independent product charter        | Implemented           |
+| M1        | Supported runtime, migrations, and security baseline              | Implemented           |
+| M2        | Durable loan case, evidence, and condition workflow               | Implemented           |
+| M3        | Temporal policy resolution, bounded Agent tools, and human review | Partially implemented |
+| M4        | Provider gateway, partner API, webhooks, and sandbox              | Partially implemented |
+| M5        | Tenant trust boundary and audit controls                          | Partially implemented |
+| M6        | Operations console and release evaluation                         | Partially implemented |
+| M7        | Synthetic staging and provider-integration-readiness evidence     | Partially implemented |
 
 ### M0 — Product foundation
 
@@ -1697,7 +1699,7 @@ Exit evidence:
 - accessibility and unhappy-path checks pass;
 - no sensitive fixture content appears in telemetry or unauthorized views.
 
-Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation, provider reconciliation, data-disposition, policy-impact, and provider promotion all have real console screens (the last behind its own separate platform-admin credential, not the tenant one — see M7-020); downloadable evaluation reports (M7-023) use that same credential. Still open: a fuller evaluation dashboard (today it's a list-and-download table, not visualizations/trends) and operational replay/cancellation/recovery controls.
+Real progress so far: the OpenTelemetry dashboards and alerts are built (an opt-in local stack — see M7's own note below). Agent-budget usage/reconciliation, provider reconciliation, data-disposition, policy-impact, provider promotion, workflow operations, and evaluation reports all have real console screens (the last two behind their appropriate least-privilege credentials). The workflow queue is REVIEWER-only and is backed by live Temporal descriptions rather than a stale copied status; it can request cancellation of a running execution and recover only terminal non-success executions. Recovery does not collect/evaluate again when exactly one durable open condition exists, preventing duplicate conditions. Platform Admin evaluation inspection exposes saved category metrics and failed synthetic fixtures without recomputing or overstating a release result.
 
 ### M7 — Synthetic staging and provider-integration readiness
 
@@ -1722,7 +1724,7 @@ Exit evidence:
 - absence of optional provider credentials does not block synthetic-launch-ready status, but it prevents a provider-integration-ready claim and remains an explicit unverified boundary;
 - the release remains explicitly synthetic and is not represented as approved for real borrower data.
 
-Real progress so far: SLO dashboards, alerts, and a runbook (`docs/OPERATIONS.md`) are built, running on a free local OpenTelemetry stack. CI enforces console/backend tests, generated-contract drift, a container build, dependency audits, and (M7-021) real secret scanning and SAST; a browser and automated-accessibility gate runs by default, including (M7-022) the live-Keycloak/PostgreSQL login journey, no longer opt-in only. Terraform + GitHub OIDC deployment for a real (Phase 1) AWS staging environment is live and verified against a real account (M7-024) — a real ALB `200`, not just a structural check. Load/soak, backup/restore, and failure-recovery drills (M7-025) have all run for real against it, with real, dated results recorded. Every deployed image now carries a real, independently-verified SBOM and build-provenance attestation (M7-026). Keycloak/console deployment is declined by the user (no domain), not pursued further here. The kill switch was found to already be real, live, per-request enforcement (`dispatch-provider-request.ts` reads `ProviderActivation` fresh on every non-`SIMULATOR` dispatch) — M7-027 closed the real gap, which was proof, not enforcement: a Jest round trip (activate → real dispatch succeeds → deactivate → real dispatch rejected) and a standalone, repeatable `npm run kill-switch-drill` script, both passing for real. M7-027 also built the connector/monitoring mechanism for item 4 (`PolicySourceConnector`, `PolicySourceMonitorService`, a real demo connector proven end to end against a live Postgres) — explicitly *not* real reviewed jurisdiction content, which needs real legal review this session cannot provide or fabricate.
+Real progress so far: SLO dashboards, alerts, and a runbook (`docs/OPERATIONS.md`) are built, running on a free local OpenTelemetry stack. CI enforces console/backend tests, generated-contract drift, a container build, dependency audits, and (M7-021) real secret scanning and SAST; a browser and automated-accessibility gate runs by default, including (M7-022) the live-Keycloak/PostgreSQL login journey, no longer opt-in only. Terraform + GitHub OIDC deployment for a real (Phase 1) AWS staging environment is live and verified against a real account (M7-024) — a real ALB `200`, not just a structural check. Load/soak, backup/restore, and failure-recovery drills (M7-025) have all run for real against it, with real, dated results recorded. Every deployed image now carries a real, independently-verified SBOM and build-provenance attestation (M7-026). M7-050 configures a CloudFront default HTTPS hostname, private S3 console, API Gateway edge, and Cognito OIDC without requiring a custom domain; it remains pending a live deployment and browser walkthrough. The kill switch was found to already be real, live, per-request enforcement (`dispatch-provider-request.ts` reads `ProviderActivation` fresh on every non-`SIMULATOR` dispatch) — M7-027 closed the real gap, which was proof, not enforcement: a Jest round trip (activate → real dispatch succeeds → deactivate → real dispatch rejected) and a standalone, repeatable `npm run kill-switch-drill` script, both passing for real. M7-027 also built the connector/monitoring mechanism for item 4 (`PolicySourceConnector`, `PolicySourceMonitorService`, a real demo connector proven end to end against a live Postgres) — explicitly _not_ real reviewed jurisdiction content, which needs real legal review this session cannot provide or fabricate.
 
 ## 21. Product and operational metrics
 
@@ -1851,32 +1853,32 @@ Real progress so far: SLO dashboards, alerts, and a runbook (`docs/OPERATIONS.md
 
 ## 23. Risks and mitigation
 
-| Risk | Mitigation |
-| --- | --- |
-| Product becomes a generic Agent demo | Keep the conditions loop, evidence graph, policy lifecycle, and provider failures central. |
-| Product becomes a copy of one company | Maintain independent positioning, public standards, provider neutrality, and a multi-lending extension model. |
-| Model output is mistaken for a lending decision | Use workflow-readiness vocabulary, deterministic authority, visible provenance, and human review. |
-| Architecture grows faster than evidence | Deliver vertical slices and defer service extraction, Kubernetes, and secondary frameworks. |
-| Temporal and LangGraph duplicate state | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`. |
-| Rules encode hidden errors | Add types, units, property tests, human approval, regression, impact analysis, and rollback. |
-| Policy drift or wrong jurisdiction changes case treatment | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity. |
-| A parent policy, new overlay, resolver, or fact-selector change misses a narrower binding | Validate a complete dependency key set and digest, including empty scopes and hierarchy generations, before every evaluation. |
-| Evaluation bypasses or races policy or evidence state | Make binding validation and immutable input-manifest creation internal application-service guards, use authoritative dependency vectors and hashes, execute in one consistency boundary, and reject mutable-latest reads. |
-| Readiness automation is mistaken for the full approval process | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority. |
-| Provider certification is misread as authority to move funds or perform another structurally excluded action | Enforce a permanent capability denylist across registries, manifests, routers, and Agent tools; require a replacement charter and separate activity-specific review before any boundary change. |
-| Routine-message policy is used to send a protected or legally consequential communication | Use deterministic classification, immutable template allowlists, exact-render human approval for protected content, and fail closed on uncertainty or render drift. |
-| Stale Agent state or concurrent work bypasses duration or cost limits | Enforce trusted absolute deadlines and atomic versioned budget reservations outside the graph; reserve unknown provider cost conservatively. |
-| Provider behavior corrupts case state | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer. |
-| Timeout, retry, cancellation, or fallback duplicates a paid or consumer-impacting operation | Persist effect-classified intents before dispatch, preserve unknown outcomes, reconcile first, reauthorize fallback, and require review where safety is not proven. |
-| Simulator success hides production-provider behavior | Run the same contracts in authorized sandboxes, document parity gaps, certify provider-specific failures, and use controlled canaries with a kill switch. |
-| Real data is enabled by an unsafe environment toggle | Require an approved promotion manifest, managed secret reference, exact scope match, attributable activation, and default-deny production routing. |
-| One administrator certifies and enables an unsafe provider configuration | Separate proposal, certification, approval, and activation; prohibit self-approval; require dual enablement; keep unilateral emergency disable. |
-| Deletion removes a primary record but leaves derived consumer data | Traverse lineage across findings, indexes, caches, model artifacts, objects, and backups; verify disposition and explicitly govern legal holds. |
-| Synthetic demo overstates production | Preserve explicit status labels and prohibit real-data claims without launch gates. |
-| PII reaches models or telemetry | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration. |
-| Latest versions destabilize delivery | Prefer LTS and supported compatibility; gate major upgrades separately. |
-| Expansion breadth obscures product depth | Complete one conventional-mortgage vertical slice before additional product packs. |
-| Cloud cost expands without value | Keep local free defaults, attribute usage, require budgets, and avoid idle model infrastructure. |
+| Risk                                                                                                         | Mitigation                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product becomes a generic Agent demo                                                                         | Keep the conditions loop, evidence graph, policy lifecycle, and provider failures central.                                                                                                                                |
+| Product becomes a copy of one company                                                                        | Maintain independent positioning, public standards, provider neutrality, and a multi-lending extension model.                                                                                                             |
+| Model output is mistaken for a lending decision                                                              | Use workflow-readiness vocabulary, deterministic authority, visible provenance, and human review.                                                                                                                         |
+| Architecture grows faster than evidence                                                                      | Deliver vertical slices and defer service extraction, Kubernetes, and secondary frameworks.                                                                                                                               |
+| Temporal and LangGraph duplicate state                                                                       | Temporal owns durable lifecycle; LangGraph remains bounded behind `AgentRuntime`.                                                                                                                                         |
+| Rules encode hidden errors                                                                                   | Add types, units, property tests, human approval, regression, impact analysis, and rollback.                                                                                                                              |
+| Policy drift or wrong jurisdiction changes case treatment                                                    | Track source freshness and coverage, resolve bitemporal case snapshots, test effective boundaries, assess open-case impact, and fail closed on ambiguity.                                                                 |
+| A parent policy, new overlay, resolver, or fact-selector change misses a narrower binding                    | Validate a complete dependency key set and digest, including empty scopes and hierarchy generations, before every evaluation.                                                                                             |
+| Evaluation bypasses or races policy or evidence state                                                        | Make binding validation and immutable input-manifest creation internal application-service guards, use authoritative dependency vectors and hashes, execute in one consistency boundary, and reject mutable-latest reads. |
+| Readiness automation is mistaken for the full approval process                                               | Model regulated milestones explicitly, label lifecycle ownership, and keep formal underwriting action, notices, closing, and funding outside Agent authority.                                                             |
+| Provider certification is misread as authority to move funds or perform another structurally excluded action | Enforce a permanent capability denylist across registries, manifests, routers, and Agent tools; require a replacement charter and separate activity-specific review before any boundary change.                           |
+| Routine-message policy is used to send a protected or legally consequential communication                    | Use deterministic classification, immutable template allowlists, exact-render human approval for protected content, and fail closed on uncertainty or render drift.                                                       |
+| Stale Agent state or concurrent work bypasses duration or cost limits                                        | Enforce trusted absolute deadlines and atomic versioned budget reservations outside the graph; reserve unknown provider cost conservatively.                                                                              |
+| Provider behavior corrupts case state                                                                        | Normalize through contracts, isolate activities, validate payloads, and commit through the domain layer.                                                                                                                  |
+| Timeout, retry, cancellation, or fallback duplicates a paid or consumer-impacting operation                  | Persist effect-classified intents before dispatch, preserve unknown outcomes, reconcile first, reauthorize fallback, and require review where safety is not proven.                                                       |
+| Simulator success hides production-provider behavior                                                         | Run the same contracts in authorized sandboxes, document parity gaps, certify provider-specific failures, and use controlled canaries with a kill switch.                                                                 |
+| Real data is enabled by an unsafe environment toggle                                                         | Require an approved promotion manifest, managed secret reference, exact scope match, attributable activation, and default-deny production routing.                                                                        |
+| One administrator certifies and enables an unsafe provider configuration                                     | Separate proposal, certification, approval, and activation; prohibit self-approval; require dual enablement; keep unilateral emergency disable.                                                                           |
+| Deletion removes a primary record but leaves derived consumer data                                           | Traverse lineage across findings, indexes, caches, model artifacts, objects, and backups; verify disposition and explicitly govern legal holds.                                                                           |
+| Synthetic demo overstates production                                                                         | Preserve explicit status labels and prohibit real-data claims without launch gates.                                                                                                                                       |
+| PII reaches models or telemetry                                                                              | Minimize inputs, redact at boundaries, test logging, and use tenant-controlled inference configuration.                                                                                                                   |
+| Latest versions destabilize delivery                                                                         | Prefer LTS and supported compatibility; gate major upgrades separately.                                                                                                                                                   |
+| Expansion breadth obscures product depth                                                                     | Complete one conventional-mortgage vertical slice before additional product packs.                                                                                                                                        |
+| Cloud cost expands without value                                                                             | Keep local free defaults, attribute usage, require budgets, and avoid idle model infrastructure.                                                                                                                          |
 
 ## 24. Definition of done
 
@@ -1973,7 +1975,7 @@ The immediate work is the **M6 completion and M7 synthetic-launch sequence**. Ea
 3. **Done**: least-privilege provider reconciliation, provider promotion, data-disposition, and policy-impact operations surfaces now all have console screens (M7-017/M7-018/M7-020). Provider promotion needed more than a screen: its manifests/certifications/approvals/activations have no tenant dimension (M4-007's own design — a provider adapter is registered once, shared by every tenant), so gating it behind the normal tenant `REVIEWER` role would have let any tenant's reviewer promote providers platform-wide. M7-020 built a separate, non-tenant `PlatformAdmin` credential and guard for it instead of reusing the tenant one.
 4. **Mechanism done (M7-027)**: `PolicySourceConnector`/`PolicySourceMonitorService` (mirroring `ProviderAdapter`/`ProviderReconciliationService`) proactively poll `CONNECTOR`-mode sources instead of only checking freshness reactively at evaluation time, recording candidate revisions and flagging schema drift without ever touching a jurisdiction's own reviewed `coverageStatus`. Proven end to end against a real Postgres with a real demo connector and a migration-seeded `US-DEMO` source. **Still open, and not something this session can provide**: real reviewed jurisdiction packs for any actual US state — that needs real legal review, not an agent-authored regulatory corpus (Sections 10.6, 10.8).
 5. **Done**: OpenTelemetry traces/metrics, SLOs, alerts, and a runbook, on a free opt-in local stack, and (M7-023) downloadable evaluation/release evidence — every `npm run evaluate` run is now a real database row, listable and downloadable over REST and from the console, behind the same platform-admin credential provider promotion uses (no tenant owns release evidence any more than it owns a provider's own promotion state).
-6. **Phase 1 done and live (M7-024)**: Terraform + GitHub OIDC deployment for API/Worker/a self-hosted Temporal server, live on real AWS infrastructure — real `terraform apply`, a real one-off migration task exiting 0 against a real RDS instance, real ECS services at steady state, and a real `200` from the deployed ALB (`curl` verified independently, not just the workflow's own check). Getting there for real surfaced 18 genuine bugs across IAM permissions, Terraform's dependency graph, and the application's own migration/SSL assumptions — all recorded in `docs/DEVELOPMENT_LOG.md`'s M7-024 entry, not glossed over. **Done (M7-025)**: a `staging-drill.yml` workflow for load/soak testing, a real backup/restore drill, and a failure-recovery exercise — all three run for real on 2026-08-29 against the live environment: a load test (55k real requests, p95 9.2ms), a real snapshot restored into a temporary instance with 45 real migration records confirmed present, and a real 40s measured outage from killing the running API task. Full results in `docs/DEVELOPMENT_LOG.md`'s M7-025 entry and `docs/OPERATIONS.md`'s SLO table. **Done (M7-026)**: every image `deploy-staging.yml` deploys now gets a real SBOM (Syft, generated from the actual image contents) and a real SLSA build-provenance statement, both Sigstore-backed attestations in GitHub's own attestation store tied to the exact image digest, both independently re-verified with `gh attestation verify` — not just an action exiting 0 (two real bugs surfaced getting a genuinely working verification, recorded in the M7-026 entry). **Declined, not deferred**: Keycloak/console deployment needs a real domain (HTTPS is a hard requirement whenever OIDC is configured in staging/production) — the user explicitly decided not to buy one, so this stays out of scope for this environment unless that decision changes. **Kill-switch exercise done (M7-027)**: reading `dispatch-provider-request.ts` found the kill switch was already real, live, per-request enforcement (every non-`SIMULATOR` dispatch reads `ProviderActivation` fresh) — the real gap was proof, not enforcement. Closed it with a real Jest round trip (activate → dispatch succeeds → deactivate → dispatch rejected) and a standalone, repeatable `npm run kill-switch-drill` script, both passing for real against a live Postgres. Section 29 has no fully-open items left.
+6. **Phase 1 done and live (M7-024)**: Terraform + GitHub OIDC deployment for API/Worker/a self-hosted Temporal server, live on real AWS infrastructure — real `terraform apply`, a real one-off migration task exiting 0 against a real RDS instance, real ECS services at steady state, and a real `200` from the deployed ALB (`curl` verified independently, not just the workflow's own check). Getting there for real surfaced 18 genuine bugs across IAM permissions, Terraform's dependency graph, and the application's own migration/SSL assumptions — all recorded in `docs/DEVELOPMENT_LOG.md`'s M7-024 entry, not glossed over. **Done (M7-025)**: a `staging-drill.yml` workflow for load/soak testing, a real backup/restore drill, and a failure-recovery exercise — all three run for real on 2026-08-29 against the live environment: a load test (55k real requests, p95 9.2ms), a real snapshot restored into a temporary instance with 45 real migration records confirmed present, and a real 40s measured outage from killing the running API task. Full results in `docs/DEVELOPMENT_LOG.md`'s M7-025 entry and `docs/OPERATIONS.md`'s SLO table. **Done (M7-026)**: every image `deploy-staging.yml` deploys now gets a real SBOM (Syft, generated from the actual image contents) and a real SLSA build-provenance statement, both Sigstore-backed attestations in GitHub's own attestation store tied to the exact image digest, both independently re-verified with `gh attestation verify` — not just an action exiting 0 (two real bugs surfaced getting a genuinely working verification, recorded in the M7-026 entry). **Superseded, not declined (M7-050/M7-052)**: the user still won't buy a real domain, but CloudFront's own default `*.cloudfront.net` certificate plus a real AWS Cognito user pool now delivers browser-trusted HTTPS and OIDC with zero custom domain, replacing the originally-planned Keycloak-behind-a-domain path — real Terraform (`terraform/staging/edge.tf`), independently verified live via a real Actions-runner `curl` loop returning `200` from `https://d136v61al3mroo.cloudfront.net/health/ready`. Still open: a human browser click-through of the Cognito hosted-UI login has never been recorded against this deployed edge. **Kill-switch exercise done (M7-027)**: reading `dispatch-provider-request.ts` found the kill switch was already real, live, per-request enforcement (every non-`SIMULATOR` dispatch reads `ProviderActivation` fresh) — the real gap was proof, not enforcement. Closed it with a real Jest round trip (activate → dispatch succeeds → deactivate → dispatch rejected) and a standalone, repeatable `npm run kill-switch-drill` script, both passing for real against a live Postgres. Section 29 has no fully-open items left.
 
 Provider-integration-ready status remains tuple-specific and requires authorized sandbox credentials and current certification evidence. Production-approved status additionally requires external security, privacy, compliance, legal, operational, and provider authorization; source code alone cannot establish it.
 

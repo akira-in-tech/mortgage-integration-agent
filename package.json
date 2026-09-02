@@ -38,8 +38,10 @@
     "evaluate": "ts-node -r tsconfig-paths/register src/evaluation-report.ts",
     "generate:openapi": "ts-node -r tsconfig-paths/register src/generate-openapi-spec.ts",
     "create-api-client": "ts-node -r tsconfig-paths/register src/create-api-client.ts",
+    "manage-api-client": "ts-node -r tsconfig-paths/register src/manage-api-client.ts",
     "create-platform-admin": "ts-node -r tsconfig-paths/register src/create-platform-admin.ts",
     "kill-switch-drill": "ts-node -r tsconfig-paths/register src/provider-kill-switch-drill.ts",
+    "rotate-sensitive-data-encryption": "ts-node -r tsconfig-paths/register src/rotate-sensitive-data-encryption.ts",
     "set-tenant-agent-budget": "ts-node -r tsconfig-paths/register src/set-tenant-agent-budget.ts",
     "set-tenant-agent-aggregate-budget": "ts-node -r tsconfig-paths/register src/set-tenant-agent-aggregate-budget.ts",
     "set-provider-status": "ts-node -r tsconfig-paths/register src/set-provider-status.ts",
@@ -56,6 +58,7 @@
   },
   "dependencies": {
     "@as-integrations/express5": "^1.1.2",
+    "@aws-sdk/client-s3": "^3.1121.0",
     "@langchain/core": "^1.2.8",
     "@langchain/langgraph": "^1.4.10",
     "@nestjs/apollo": "^13.4.4",

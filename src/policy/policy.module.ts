@@ -19,6 +19,9 @@ import { PolicyActivationService } from './policy-activation.service';
 import { EvaluationManifestService } from './evaluation-manifest.service';
 import { PolicyTransitionApprovalService } from './policy-transition-approval.service';
 import { PolicySourceMonitorService } from './policy-source-monitor.service';
+import { PolicyCatalogController } from './policy-catalog.controller';
+import { PlatformAdmin } from '../database/entities/platform-admin.entity';
+import { PlatformAdminGuard } from '../auth/platform-admin.guard';
 
 @Module({
   imports: [
@@ -35,8 +38,10 @@ import { PolicySourceMonitorService } from './policy-source-monitor.service';
       LoanCase,
       EvaluationInputManifest,
       PolicyTransitionApproval,
+      PlatformAdmin,
     ]),
   ],
+  controllers: [PolicyCatalogController],
   providers: [
     PolicyApplicabilityResolverService,
     PolicyEvaluationService,
@@ -45,6 +50,7 @@ import { PolicySourceMonitorService } from './policy-source-monitor.service';
     EvaluationManifestService,
     PolicyTransitionApprovalService,
     PolicySourceMonitorService,
+    PlatformAdminGuard,
   ],
   exports: [
     PolicyApplicabilityResolverService,

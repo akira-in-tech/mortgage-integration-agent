@@ -37,6 +37,8 @@ describe('CasesService', () => {
     resolveCondition: jest.Mock;
     resumeInterruptedEvaluation: jest.Mock;
     getWorkflowStatus: jest.Mock;
+    cancelCaseConditionsWorkflow: jest.Mock;
+    recoverCaseConditionsWorkflow: jest.Mock;
   };
   let caseTimelineService: { getTimeline: jest.Mock };
   let consentService: { grantForCase: jest.Mock; revoke: jest.Mock };
@@ -94,6 +96,8 @@ describe('CasesService', () => {
       resolveCondition: jest.fn(),
       resumeInterruptedEvaluation: jest.fn(),
       getWorkflowStatus: jest.fn(),
+      cancelCaseConditionsWorkflow: jest.fn(),
+      recoverCaseConditionsWorkflow: jest.fn(),
     };
     caseTimelineService = { getTimeline: jest.fn() };
     consentService = {
@@ -309,6 +313,106 @@ describe('CasesService', () => {
       await expect(
         service.getWorkflowRun(TENANT_ID, CASE_ID, 'run-1'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('workflow operations', () => {
+    beforeEach(() => {
+      caseRepo.findOneBy.mockResolvedValue({
+        id: CASE_ID,
+        tenantId: TENANT_ID,
+        borrowerId: 'borrower-1',
+        status: CaseStatus.MANUAL_REVIEW,
+      } as LoanCase);
+    });
+
+    it('cancels only a running exact workflow run', async () => {
+      temporalClient.getWorkflowStatus.mockResolvedValue({
+        workflowId: `case-conditions-${CASE_ID}`,
+        runId: 'run-1',
+        status: 'RUNNING',
+      });
+
+      await service.cancelWorkflow(TENANT_ID, CASE_ID, 'run-1');
+
+      expect(temporalClient.cancelCaseConditionsWorkflow).toHaveBeenCalledWith(
+        CASE_ID,
+        'run-1',
+      );
+    });
+
+    it('does not cancel a terminal run', async () => {
+      temporalClient.getWorkflowStatus.mockResolvedValue({
+        workflowId: `case-conditions-${CASE_ID}`,
+        runId: 'run-1',
+        status: 'CANCELLED',
+      });
+
+      await expect(
+        service.cancelWorkflow(TENANT_ID, CASE_ID, 'run-1'),
+      ).rejects.toThrow('cannot be cancelled');
+      expect(
+        temporalClient.cancelCaseConditionsWorkflow,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('recovers a cancelled execution with the original run id in workflow input', async () => {
+      temporalClient.getWorkflowStatus.mockResolvedValue({
+        workflowId: `case-conditions-${CASE_ID}`,
+        runId: 'run-1',
+        status: 'CANCELLED',
+      });
+      temporalClient.recoverCaseConditionsWorkflow.mockResolvedValue({
+        workflowId: `case-conditions-${CASE_ID}`,
+        runId: 'run-2',
+      });
+
+      await service.recoverWorkflow(TENANT_ID, CASE_ID, 'run-1');
+
+      expect(temporalClient.recoverCaseConditionsWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: TENANT_ID,
+          caseId: CASE_ID,
+          borrowerId: 'borrower-1',
+          recoveryOfRunId: 'run-1',
+        }),
+      );
+    });
+
+    it('does not recover an old terminal run after a later execution exists', async () => {
+      temporalClient.getWorkflowStatus
+        .mockResolvedValueOnce({
+          workflowId: `case-conditions-${CASE_ID}`,
+          runId: 'run-1',
+          status: 'CANCELLED',
+        })
+        .mockResolvedValueOnce({
+          workflowId: `case-conditions-${CASE_ID}`,
+          runId: 'run-2',
+          status: 'FAILED',
+        });
+
+      await expect(
+        service.recoverWorkflow(TENANT_ID, CASE_ID, 'run-1'),
+      ).rejects.toThrow('no longer the latest execution');
+      expect(
+        temporalClient.recoverCaseConditionsWorkflow,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not recover a completed execution', async () => {
+      temporalClient.getWorkflowStatus.mockResolvedValue({
+        workflowId: `case-conditions-${CASE_ID}`,
+        runId: 'run-1',
+        status: 'COMPLETED',
+      });
+
+      await expect(
+        service.recoverWorkflow(TENANT_ID, CASE_ID, 'run-1'),
+      ).rejects.toThrow('cannot be recovered');
+      expect(
+        temporalClient.recoverCaseConditionsWorkflow,
+      ).not.toHaveBeenCalled();
     });
   });
 

@@ -109,7 +109,10 @@ describeOrSkip(
           effectClass: 'REUSABLE_LOOKUP',
           requestFingerprint: 'a'.repeat(64),
           idempotencyKey: randomUUID(),
+          logicalOperationKey: `tenant-isolation-${tenantId}`,
           authorizationGrantId,
+          providerReceipt: null,
+          normalizedFinding: null,
         });
       }
 

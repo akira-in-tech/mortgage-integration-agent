@@ -1121,7 +1121,7 @@ The only entity, `LoanApplication`, had no corresponding migration — the schem
 
 ### Decisions and alternatives
 
-- **A whole disposable database for the migration test, not just a dedicated schema**: an isolated-schema attempt was tried first and failed — TypeORM's Postgres migration generator hardcodes an explicit `"public".` qualifier on `CREATE TYPE` statements for enum columns, so an isolated schema within the *same* database still collided with the real application's already-existing `loan_applications_*_enum` types. A separate database has its own independent `public` schema, so the generated migration's hardcoded qualifier is correct there.
+- **A whole disposable database for the migration test, not just a dedicated schema**: an isolated-schema attempt was tried first and failed — TypeORM's Postgres migration generator hardcodes an explicit `"public".` qualifier on `CREATE TYPE` statements for enum columns, so an isolated schema within the _same_ database still collided with the real application's already-existing `loan_applications_*_enum` types. A separate database has its own independent `public` schema, so the generated migration's hardcoded qualifier is correct there.
 - **Explicit `npm run migration:run` over `migrationsRun: true` at boot**: auto-running migrations from application bootstrap risks concurrent migration attempts if multiple instances start together during a deploy; an explicit, single, ordered CLI step (run before the new instances start) is the safer default until the deploy pipeline itself owns that ordering (M7).
 - **Left `synchronize` policy unchanged (`development`/`test`/`staging` still sync, `production` does not)**: this slice's acceptance criterion, per Section 29 item 4, was adding the explicit migration and confirming the production-safe default already set in M1-001 — not changing which environments use which strategy. The existing local dev database (already schema-synced) was intentionally left untouched; the migration exists for any fresh database, starting with production.
 - **Generated, then hand-verified, over hand-written from scratch**: letting TypeORM diff the entity against an empty database avoids a manually-authored migration silently drifting from what `synchronize` actually produces; the follow-up automated test exists specifically to catch that drift on every future entity change.
@@ -1280,7 +1280,7 @@ Section 29, item 5: add liveness/readiness endpoints, graceful shutdown, secure 
 - **GraphQL requests were silently never rate-limited.** First manual test (`{ __typename }` repeated past the configured limit) never triggered a `ThrottlerException`. Root cause turned out to be twofold:
   1. `__typename` is a meta-field resolved by `graphql-js` itself without invoking any `@Resolver()` method, so it never enters Nest's guard pipeline at all — a testing-methodology mistake, not a code bug. Re-tested against the real `health` query (an actual `@Query()` resolver method) and confirmed requests 1-3 succeeded and request 4 correctly threw `ThrottlerException`.
   2. Independently real: the base `ThrottlerGuard.getRequestResponse()` reads `context.switchToHttp()`, which does not populate the way a GraphQL resolver's arguments do. Fixed by `GqlThrottlerGuard` (`getRequestResponse` overridden to pull `req`/`res` from `GqlExecutionContext`) plus wiring `GraphQLModule`'s `context` factory to expose them — confirmed via `@nestjs/throttler`'s own documented GraphQL recipe, not guessed.
-  Added debug logging temporarily to confirm exactly where the guard was and wasn't being invoked before writing the fix; removed before commit.
+     Added debug logging temporarily to confirm exactly where the guard was and wasn't being invoked before writing the fix; removed before commit.
 - **`npm run build` silently produced no `dist/` output while still reporting success**, discovered while trying to run the built app for this slice's smoke test. Root cause and fix recorded separately as M1-006 below (independent of this slice's acceptance criterion, but found while verifying it).
 
 ### Decisions and alternatives
@@ -1590,7 +1590,7 @@ supertest                            7.2.2
 - **One batched upgrade over piecemeal package-by-package bumps**: NestJS 11 + `@nestjs/graphql` 13 + `@nestjs/apollo` 13 + Apollo Server 5 + GraphQL 16.11+ are a mutually-interlocking peer-dependency set (confirmed by reading every peer range before changing anything) — installing them one at a time would pass through broken intermediate states with no independent value, unlike the smaller slices earlier in M1.
 - **`graphql@16.11+` over the available `graphql@17`, and `typeorm@0.3.31` over the available `typeorm@1.x`**: both are cases where `npm view <pkg> version` alone would have suggested a further major jump neither the charter nor any peer dependency actually calls for; verified via peer ranges before deciding, not assumed from "latest" being available.
 - **`typescript@6.0.3` over `7.0.2`**: matches the charter's explicit existing decision and re-confirms it against current toolchain support (`typescript-eslint`'s `<6.1.0` cap) rather than re-litigating it from scratch.
-- **`nvm`-installed Node, default version left unchanged**: upgrading the *project's* required Node version shouldn't silently change what `node`/`npm` resolve to in the user's other shells or projects; `engines` in `package.json` documents the requirement instead.
+- **`nvm`-installed Node, default version left unchanged**: upgrading the _project's_ required Node version shouldn't silently change what `node`/`npm` resolve to in the user's other shells or projects; `engines` in `package.json` documents the requirement instead.
 - **Real Docker Compose run over `docker build` alone**: M1's exit evidence explicitly lists "Docker" as its own checked item; a build that only proves the image compiles doesn't prove the container actually serves a request against a real database, which is the thing that would actually break silently.
 
 ### Verification
@@ -1664,8 +1664,8 @@ The repository must contain a tenant-keyed case, evidence, and condition schema 
 
 Three distinct problems, each found by actually running the migration workflow end-to-end rather than trusting the generator output:
 
-1. **`migration:generate` failed to type-check `initial-schema.migration.spec.ts`.** `src/database/data-source.ts`'s `migrations` glob (`*.{ts,js}`) matched every `.ts` file in the migrations directory, including the M1-003 spec file. This didn't surface in M1-003 because the spec didn't exist yet when that migration was generated; generating a *second* migration exposed it. `ts-node`'s program loading for the CLI tried to type-check the spec file (which needs Jest's ambient globals) as part of loading the DataSource and failed. Fixed by changing the glob to `[0-9]*.{ts,js}`, matching TypeORM's own `<timestamp>-Name.ts` migration-file naming convention, which excludes any hand-written spec file by construction. Applied the same fix to the spec file's own (separate) migrations glob for consistency.
-2. **The first generation attempt produced a migration that duplicated `loan_applications`.** Generated against a fully empty scratch database, so the diff saw every entity — including the untouched `LoanApplication` — as new. The correct workflow is to apply the *existing* migration to the scratch database first, then generate the next one against that now-partially-migrated state so the diff contains only what's actually new. Deleted the incorrect migration file and regenerated correctly; verified the resulting file only creates the five new tables.
+1. **`migration:generate` failed to type-check `initial-schema.migration.spec.ts`.** `src/database/data-source.ts`'s `migrations` glob (`*.{ts,js}`) matched every `.ts` file in the migrations directory, including the M1-003 spec file. This didn't surface in M1-003 because the spec didn't exist yet when that migration was generated; generating a _second_ migration exposed it. `ts-node`'s program loading for the CLI tried to type-check the spec file (which needs Jest's ambient globals) as part of loading the DataSource and failed. Fixed by changing the glob to `[0-9]*.{ts,js}`, matching TypeORM's own `<timestamp>-Name.ts` migration-file naming convention, which excludes any hand-written spec file by construction. Applied the same fix to the spec file's own (separate) migrations glob for consistency.
+2. **The first generation attempt produced a migration that duplicated `loan_applications`.** Generated against a fully empty scratch database, so the diff saw every entity — including the untouched `LoanApplication` — as new. The correct workflow is to apply the _existing_ migration to the scratch database first, then generate the next one against that now-partially-migrated state so the diff contains only what's actually new. Deleted the incorrect migration file and regenerated correctly; verified the resulting file only creates the five new tables.
 3. **The migration failed on a fresh database with `function uuid_generate_v4() does not exist`.** The new entities use `@PrimaryGeneratedColumn('uuid')`, which needs the Postgres `uuid-ossp` extension; TypeORM's Postgres driver only auto-creates that extension when it discovers a `uuid`-typed column via loaded entity metadata at connect time. The migration test's `DataSource` only declared `migrations`, not `entities` (unlike the real CLI's `data-source.ts`, which declares both) — so the auto-extension step never ran for that connection. Fixed by declaring `entities` in the test's `DataSource` too, matching the real CLI config.
 
 Also confirmed, not just assumed: after running the full unit and e2e suite against the real local `mortgage_agent` database, `\dt` showed all five new tables were auto-created there via `synchronize: true` (unchanged `development` policy from M1-001/M1-003) — expected, and no existing `loan_applications` rows were affected.
@@ -1758,7 +1758,7 @@ There must be exactly one definition of the loan-type and loan-decision vocabula
 
 ### Failures and resolution
 
-- Removing `AgentService`'s own `DECISION_PROVIDER` validation removed the specific behavior a unit test (`'rejects an unsupported provider'`) was checking — that test asserted the *constructor* throws, which is no longer where that validation happens. Deleted it from `agent.service.spec.ts` and added equivalent (and additional: malformed URL, non-positive timeout) coverage to `env.validation.spec.ts`, where the behavior now actually lives, rather than leaving the safety net untested or leaving a now-false assertion in place.
+- Removing `AgentService`'s own `DECISION_PROVIDER` validation removed the specific behavior a unit test (`'rejects an unsupported provider'`) was checking — that test asserted the _constructor_ throws, which is no longer where that validation happens. Deleted it from `agent.service.spec.ts` and added equivalent (and additional: malformed URL, non-positive timeout) coverage to `env.validation.spec.ts`, where the behavior now actually lives, rather than leaving the safety net untested or leaving a now-false assertion in place.
 - The existing mocks in `agent.service.spec.ts` (`get: jest.fn((key) => ...)`) didn't implement `ConfigService.get(key, defaultValue)`'s two-argument fallback contract — they ignored whatever default `AgentService` passed and returned `undefined` for unmocked keys. This didn't matter while `AgentService` did its own `?? fallback` logic, but does now that it relies on the real default-parameter behavior. Updated every mock to accept and return `defaultValue` for unmatched keys, which also made the `'defaults to rules mode when DECISION_PROVIDER is not configured'` test a more accurate test of the actual mechanism instead of an artifact of the old code path.
 - One existing `env.validation.spec.ts` test (`'preserves unrelated environment variables untouched'`) used `DECISION_PROVIDER`/`OLLAMA_MODEL` as its "unrelated" example — accurate when written, no longer accurate now that those became real schema fields. Renamed and switched it to genuinely unrelated variables (`ANTHROPIC_API_KEY`, `DEMO_MODE`) so the test still tests what its name says.
 
@@ -1939,7 +1939,7 @@ Performed by hand against the scratchpad Temporal server, in this order, before 
 3. Killed the worker process entirely (`Ctrl+C`) — zero workers running.
 4. Sent the `resolveCondition` signal from a separate script while still zero workers were running; confirmed Temporal accepted and persisted it server-side (no worker needed to be listening to receive it).
 5. Started a new, independent worker process.
-6. Confirmed the new worker picked up the pending signal, ran `resolveCondition`/`markReadyForUnderwriting`, and the case reached `READY_FOR_UNDERWRITING` — with `markCollectingEvidence` and the fetch activities *not* re-executed (confirmed via their log lines appearing only once, from the first worker), i.e. Temporal replayed the prior history rather than re-running completed work.
+6. Confirmed the new worker picked up the pending signal, ran `resolveCondition`/`markReadyForUnderwriting`, and the case reached `READY_FOR_UNDERWRITING` — with `markCollectingEvidence` and the fetch activities _not_ re-executed (confirmed via their log lines appearing only once, from the first worker), i.e. Temporal replayed the prior history rather than re-running completed work.
 
 This sequence is what `case-conditions.workflow.spec.ts`'s `'loses no acknowledged work across a worker restart while durably waiting'` test automates.
 
@@ -2127,12 +2127,12 @@ Every domain state change this codebase makes that other systems will eventually
 
 ### Problem
 
-Case, evidence, and condition state changes were only ever visible by directly querying Postgres or Temporal's own workflow history. Nothing recorded *that a change happened* as a first-class, independently inspectable fact — which is what M4's webhook delivery, and any future audit or integration consumer, needs to build on. Two of the six activities in `case-conditions.activities.ts` also had a real, separate atomicity gap this work needed to fix before an outbox write could honestly be called "transactional": `evaluateConditions`'s discrepancy branch did a `LoanCondition` insert and a `LoanCase` status update as two independent, non-atomic statements (a crash between them would leave a condition with no case status update reflecting it), and `resolveCondition` had the same gap between its condition-status update and its `ConditionTransition` insert.
+Case, evidence, and condition state changes were only ever visible by directly querying Postgres or Temporal's own workflow history. Nothing recorded _that a change happened_ as a first-class, independently inspectable fact — which is what M4's webhook delivery, and any future audit or integration consumer, needs to build on. Two of the six activities in `case-conditions.activities.ts` also had a real, separate atomicity gap this work needed to fix before an outbox write could honestly be called "transactional": `evaluateConditions`'s discrepancy branch did a `LoanCondition` insert and a `LoanCase` status update as two independent, non-atomic statements (a crash between them would leave a condition with no case status update reflecting it), and `resolveCondition` had the same gap between its condition-status update and its `ConditionTransition` insert.
 
 ### Implementation
 
 - `src/database/entities/outbox-event.entity.ts` — `OutboxEvent`: `tenantId`, `caseId`, `eventType`, `payload` (jsonb), `signature`, `createdAt`, `publishedAt` (nullable, stays null in this slice — no dispatcher exists yet, that's M4). Deliberately has no foreign key to `loan_cases`: an event log should survive changes to the aggregate's own lifecycle, unlike `evidence_facts`/`loan_conditions`, which correctly cascade-delete with their case.
-- `src/database/outbox/outbox-signer.ts` — `signOutboxPayload`/`verifyOutboxSignature`, HMAC-SHA256 over a *canonicalized* (recursively key-sorted) serialization of the payload. The canonicalization is load-bearing, not defensive style: Postgres jsonb does not preserve object key order, so a signature computed from `JSON.stringify(payload)` at write time would not reliably match one recomputed from `JSON.stringify(reloadedPayload)` after a real round-trip through the database — verified empirically (see Verification) rather than assumed.
+- `src/database/outbox/outbox-signer.ts` — `signOutboxPayload`/`verifyOutboxSignature`, HMAC-SHA256 over a _canonicalized_ (recursively key-sorted) serialization of the payload. The canonicalization is load-bearing, not defensive style: Postgres jsonb does not preserve object key order, so a signature computed from `JSON.stringify(payload)` at write time would not reliably match one recomputed from `JSON.stringify(reloadedPayload)` after a real round-trip through the database — verified empirically (see Verification) rather than assumed.
 - `src/database/outbox/outbox-writer.ts` — `writeOutboxEvent(manager, secret, input)`: plain TypeORM, takes the `EntityManager` from an already-open transaction. Not a NestJS provider on purpose — it needs to work both from `src/workflows/case-conditions.activities.ts` (plain functions outside Nest's DI container, per M2-004's design) and from Nest-injected services (`CasesService`).
 - `src/database/outbox/outbox-event-types.ts` — `OutboxEventType` constants for the subset of Section 15.4's catalog this codebase can honestly emit today: `loan_case.created`, `workflow_run.started`/`waiting_for_review`/`completed`, `evidence.updated`, `condition.opened`/`satisfied`/`waived`. Not emitted (see Known gaps): `workflow_run.waiting_for_information`, `workflow_run.failed`, `condition.escalated`, `review.completed` — nothing in this codebase produces those states yet.
 - `src/workflows/case-conditions.activities.ts` — every activity now wraps its domain write(s) and outbox event(s) in one `dataSource.transaction()`. This is also where the two pre-existing atomicity gaps got fixed, as a direct consequence of doing the outbox correctly rather than as separate cleanup: `evaluateConditions`'s condition-insert + case-status-update, and `resolveCondition`'s condition-status-update + transition-insert, are now each one transaction. `evaluateConditions`'s discrepancy branch writes two events in the same transaction (`condition.opened` and `workflow_run.waiting_for_review`) since both are true simultaneously the moment a condition opens.
@@ -2141,7 +2141,7 @@ Case, evidence, and condition state changes were only ever visible by directly q
 - `src/database/migrations/1786817290551-OutboxEvents.ts` — generated against a scratch database with both prior migrations applied (established discipline); creates `outbox_events` and its `(tenantId, caseId)` index.
 - `src/database/migrations/schema-migrations.spec.ts` — extended: `outbox_events` added to the post-migration table list, and a new revert-order test inserted first (since `undoLastMigration()` reverts most-recent-first).
 - `src/worker.ts` — unrelated bugfix found while doing the manual end-to-end proof below (see Failures and resolution).
-- `docs/PROJECT_CHARTER.md` — added `condition.waived` to the Section 15.4 event catalog (a real gap: the catalog had `condition.satisfied` but no counterpart for a reviewer *waiving* rather than the borrower *satisfying* a condition — only visible once something needed to emit the event for real); version 2.7 -> 2.8. Milestone table (Section 3) M2 status left as `Planned` — see Known gaps.
+- `docs/PROJECT_CHARTER.md` — added `condition.waived` to the Section 15.4 event catalog (a real gap: the catalog had `condition.satisfied` but no counterpart for a reviewer _waiving_ rather than the borrower _satisfying_ a condition — only visible once something needed to emit the event for real); version 2.7 -> 2.8. Milestone table (Section 3) M2 status left as `Planned` — see Known gaps.
 
 ### Failures and resolution
 
@@ -2162,10 +2162,10 @@ Case, evidence, and condition state changes were only ever visible by directly q
 
 ### Decisions and alternatives
 
-- **A global `OUTBOX_SIGNING_SECRET`, not a per-endpoint secret**: the full target design (Section 14.1's `webhook_endpoints.secretRef`) signs each webhook delivery with the *destination's own* secret, but that table doesn't exist yet (M4 scope) — there is no destination to have a secret. A single foundation-level secret proves the signing mechanism end-to-end now (every event is tamper-evident from the moment it's committed) without inventing per-endpoint infrastructure ahead of the feature that needs it; M4's dispatcher swaps the secret source, not the signing mechanism itself.
+- **A global `OUTBOX_SIGNING_SECRET`, not a per-endpoint secret**: the full target design (Section 14.1's `webhook_endpoints.secretRef`) signs each webhook delivery with the _destination's own_ secret, but that table doesn't exist yet (M4 scope) — there is no destination to have a secret. A single foundation-level secret proves the signing mechanism end-to-end now (every event is tamper-evident from the moment it's committed) without inventing per-endpoint infrastructure ahead of the feature that needs it; M4's dispatcher swaps the secret source, not the signing mechanism itself.
 - **`OutboxEvent` has no foreign key to `loan_cases`**: every other case-scoped table (`evidence_facts`, `loan_conditions`) intentionally cascade-deletes with its case, because they're live business state owned by the case. An event log is different — it should outlive whatever happens to the case row it describes (matching how `audit_events`, Section 14.1, is described as append-only history, not case-owned state), so a future case-deletion or archival path can't silently take its own event history down with it.
 - **Wrapping every activity write in `dataSource.transaction()` rather than adding a lighter-weight "just don't lose the outbox row" mechanism**: a true transactional outbox requires the state change and the event to be atomic, not merely both-attempted; the two pre-existing non-atomic multi-statement activities (see Problem) meant this slice had to introduce real transaction boundaries regardless, so extending that same boundary to include the outbox write was the direct, non-speculative way to do it — not an unrelated refactor bundled in.
-- **Manual end-to-end verification through the real REST API + a real worker, not just the automated suites**: the automated tests (activities spec, service spec) each verify one layer in isolation with some collaborators mocked. The one thing neither proves is that the whole chain — REST request, DB transaction, Temporal signal, a second activity's transaction — produces the *right sequence* of events for a real case as it actually moves through every state. Running the real API and worker together and reading back all nine events against a synthetic discrepant case (matching the exact production code path) is the same standard of proof M2-004 used for the restart-survival guarantee.
+- **Manual end-to-end verification through the real REST API + a real worker, not just the automated suites**: the automated tests (activities spec, service spec) each verify one layer in isolation with some collaborators mocked. The one thing neither proves is that the whole chain — REST request, DB transaction, Temporal signal, a second activity's transaction — produces the _right sequence_ of events for a real case as it actually moves through every state. Running the real API and worker together and reading back all nine events against a synthetic discrepant case (matching the exact production code path) is the same standard of proof M2-004 used for the restart-survival guarantee.
 
 ### Verification
 
@@ -2257,7 +2257,7 @@ No real provider integration exists in this codebase to observe genuine failure 
 
 ### Failures and resolution
 
-- None specific to this slice — build, lint, and every automated suite passed on first full run after implementation. The one thing worth recording as a design check rather than a failure: initially considered having the *simulators* count attempts (via `@temporalio/activity`'s `Context.current().info.attempt`) so a transient failure could succeed on, say, the 3rd try. Rejected before writing it: `Context.current()` is only valid inside a real Temporal activity execution, and these simulators are shared with the plain NestJS `evaluateLoan` path (via `AgentService`), which never runs inside one — calling it unconditionally would have broken that path for any borrowerId, not just synthetic-failure ones. The simpler, safer design (simulators always fail consistently for a given synthetic borrowerId; Temporal's own retry engine is what actually varies) avoids the problem entirely and is what's implemented.
+- None specific to this slice — build, lint, and every automated suite passed on first full run after implementation. The one thing worth recording as a design check rather than a failure: initially considered having the _simulators_ count attempts (via `@temporalio/activity`'s `Context.current().info.attempt`) so a transient failure could succeed on, say, the 3rd try. Rejected before writing it: `Context.current()` is only valid inside a real Temporal activity execution, and these simulators are shared with the plain NestJS `evaluateLoan` path (via `AgentService`), which never runs inside one — calling it unconditionally would have broken that path for any borrowerId, not just synthetic-failure ones. The simpler, safer design (simulators always fail consistently for a given synthetic borrowerId; Temporal's own retry engine is what actually varies) avoids the problem entirely and is what's implemented.
 
 ### Affected files
 
@@ -2326,7 +2326,7 @@ Temporal + the real dev Postgres database):
 
 ### Known gaps
 
-- Still synthetic: this proves the retry-classification *mechanism* works correctly, not that its classification (which failures are "transient" vs "terminal") matches how a real Plaid/credit-bureau/IDP vendor's errors actually behave — that mapping is real M4 work once real adapters exist.
+- Still synthetic: this proves the retry-classification _mechanism_ works correctly, not that its classification (which failures are "transient" vs "terminal") matches how a real Plaid/credit-bureau/IDP vendor's errors actually behave — that mapping is real M4 work once real adapters exist.
 - The richer target retry model (Section 11.5: `OUTCOME_UNKNOWN` reconciliation, pre-dispatch vs. post-dispatch failure, cost-bearing/consumer-impacting effect classes, cross-provider fallback authorization) is unaddressed — that is explicitly M4 (provider gateway) scope, not something this M2 vertical slice's activities were ever meant to carry.
 - `workflow_run.failed`'s `reason` payload is Temporal's own wrapped error string, not a structured classification (e.g. `{ activityType, failureType, attempts }`) — sufficient for this slice's proof, but a real operations console (M6) would likely want more structure.
 
@@ -2369,7 +2369,7 @@ The platform must be able to durably represent, with real provenance, an authori
 
 ### Decisions and alternatives
 
-- **No `tenant_id` on any of these five tables**: Section 10.1 describes the policy catalog as composable across federal, state/local, product/program, *and* tenant operating-policy layers — implying the catalog itself (at least its federal/state/product layers) is shared platform infrastructure that different tenants' cases draw from, not partitioned per tenant. The charter's own Section 10.7 example carries no tenant reference. A tenant-scoped "tenant operating policy" layer is real, deferred scope (part of the not-yet-built `policy_packs` composability), not an oversight.
+- **No `tenant_id` on any of these five tables**: Section 10.1 describes the policy catalog as composable across federal, state/local, product/program, _and_ tenant operating-policy layers — implying the catalog itself (at least its federal/state/product layers) is shared platform infrastructure that different tenants' cases draw from, not partitioned per tenant. The charter's own Section 10.7 example carries no tenant reference. A tenant-scoped "tenant operating policy" layer is real, deferred scope (part of the not-yet-built `policy_packs` composability), not an oversight.
 - **`PolicyApplicability` kept as a separate table, one row per policy version, not inline columns on `PolicyVersion`**: the target resolver (Section 10.3) matches a case's context against jurisdiction/product/program/lifecycle-event dimensions independently; keeping applicability separate now costs nothing and avoids having to split it out later once the resolver needs to query across it directly (`IDX_policy_applicability_lookup` on `(jurisdictionCode, productCode, lifecycleEvent)` already anticipates that access pattern).
 - **`Jurisdiction.code` as primary key, not a generated uuid**: jurisdiction codes are the stable, human-meaningful identifiers every other policy record's applicability metadata references (`"US-CA"` in the Section 10.7 example) — a surrogate uuid would just be an extra join for no benefit, and codes are exactly the kind of small, curated reference data where a natural key is appropriate.
 - **This slice stops at schema — no DSL parser, validator, evaluator, or resolver**: those are each substantial, independently testable pieces (Section 20: "policy DSL parser, validator, evaluator, immutable versions, and golden tests" is its own scope line, separate from the registry/catalog line this slice closes). Building them against a schema that doesn't exist yet, or building the schema without proving it can hold the real example DSL, would each be the wrong order.
@@ -2442,7 +2442,7 @@ The platform must be able to parse the charter's own Section 10.7 example DSL do
 - **Exactly one condition operator supported (`difference_percent`), modeled as a union rather than a hardcoded single shape**: the charter gives no second example to generalize from, so inventing more operators now would be speculative (violates "no abstractions beyond what's needed"). The union type and the parser's operator-key dispatch are the minimal honest shape of "a DSL with one operator today, room for a second tomorrow" — not a pre-built plugin registry with nothing plugged into it.
 - **Fact-path resolution by plain object navigation, not a real expression-evaluation library**: the DSL's `left`/`right` are simple dot-paths (`"application.monthly_income"`), not arbitrary expressions — a general expression engine would be more machinery than this shape needs, and would reopen exactly the "arbitrary code execution over untrusted content" risk Section 9.7 is written to close off.
 - **Missing or non-numeric facts, and a zero left-hand value, both resolve to `matched: false` with an explanatory reason, not a thrown error**: an inconclusive evaluation isn't the same failure mode as a malformed rule (which does throw, at parse time). Section 10.8's "fails closed" spirit means an ambiguous evaluation should not silently match and create a condition — returning a non-match with a clear reason keeps the caller (a future policy-evaluation service) able to distinguish "this case doesn't need the condition" from "this rule couldn't be evaluated," which is a real distinction the not-yet-built resolver will need.
-- **This slice evaluates one rule in isolation — no resolver, no snapshot, no binding guard**: Section 10.3's applicability resolver (selecting *which* released rule(s) apply to a case) is separate, larger scope with its own bitemporal and dependency-generation machinery; building it before the DSL it resolves against actually exists and is testable would be the wrong order.
+- **This slice evaluates one rule in isolation — no resolver, no snapshot, no binding guard**: Section 10.3's applicability resolver (selecting _which_ released rule(s) apply to a case) is separate, larger scope with its own bitemporal and dependency-generation machinery; building it before the DSL it resolves against actually exists and is testable would be the wrong order.
 
 ### Verification
 
@@ -2468,7 +2468,7 @@ npx jest src/policy --no-coverage
 
 ### Next safe step
 
-Wire `PolicyVersion.dsl` to this parser/evaluator: a small service that loads a released `PolicyVersion` row, parses it once, and evaluates it against a fact context — the first real integration between the M3-001 schema and this slice's pure logic, and a necessary building block before the applicability resolver (Section 10.3) can select *which* version to load in the first place.
+Wire `PolicyVersion.dsl` to this parser/evaluator: a small service that loads a released `PolicyVersion` row, parses it once, and evaluates it against a fact context — the first real integration between the M3-001 schema and this slice's pure logic, and a necessary building block before the applicability resolver (Section 10.3) can select _which_ version to load in the first place.
 
 ## M3-003: Policy applicability resolver
 
@@ -2487,7 +2487,7 @@ Given a jurisdiction, product, lifecycle event, and a point in time, the platfor
   1. Looks up the jurisdiction; anything other than `COVERED` fails closed to `REVIEW_REQUIRED` (Section 10.6: "If declared jurisdiction coverage is incomplete ... validation stops and routes to review").
   2. Finds `PolicyApplicability` rows matching jurisdiction/product/lifecycle-event exactly.
   3. Filters to `PolicyVersion` rows that are `RELEASED` and whose `[effectiveFrom, effectiveTo)` window covers `asOf`.
-  4. Groups survivors by `ruleId`; more than one simultaneously-effective released version of the *same* rule is an unresolved precedence conflict — `REVIEW_REQUIRED`, not "pick the newest" (Section 10.3: "overlapping versions ... produces REVIEW_REQUIRED").
+  4. Groups survivors by `ruleId`; more than one simultaneously-effective released version of the _same_ rule is an unresolved precedence conflict — `REVIEW_REQUIRED`, not "pick the newest" (Section 10.3: "overlapping versions ... produces REVIEW_REQUIRED").
   5. Otherwise `RESOLVED`, with each matched version's `dsl` parsed via M3-002's `parsePolicyRule` before being returned — a resolved reference always carries an already-validated rule, not raw jsonb.
 - `src/policy/policy.module.ts` — new `PolicyModule`, registers the five M3-001 entities via `TypeOrmModule.forFeature` and exports the resolver service; wired into `AppModule` directly (same pattern as `IntegrationsModule`/`AgentModule` — a module providing services with no controller of its own yet).
 - `src/policy/policy-applicability-resolver.service.spec.ts` — real-database integration tests (gated on `DATABASE_URL`, same convention as every other DB-backed suite): single match resolves correctly with a parsed rule; an unrelated lifecycle event resolves to zero matches without being `REVIEW_REQUIRED` (a real "no applicable rules" outcome is not a failure); future-`effectiveFrom`, past-`effectiveTo`, and `DRAFT` versions are all correctly excluded; two overlapping released versions of the same rule and an uncovered/partially-covered jurisdiction both fail closed to `REVIEW_REQUIRED`.
@@ -2502,7 +2502,7 @@ Given a jurisdiction, product, lifecycle event, and a point in time, the platfor
 
 - **Exact jurisdiction-code match only, no ancestry walk**: Section 10.1 describes jurisdiction ancestry (a case in `US-CA` should also pick up a `US`-level federal rule) as part of the full target resolver. Implementing that correctly needs the jurisdiction hierarchy to be walked and reasoned about per-rule, which is real additional scope on top of what this slice proves (the effective-window and overlap-detection logic). Recorded as a Known gap, not silently skipped — a resolver that only matches exact jurisdiction codes will under-match relative to the target design, never over-match, so it fails closed in the same spirit even while incomplete.
 - **In-memory result, no persisted `CasePolicySnapshot`**: Section 10.3's snapshot is immutable, storable, and referenced by later binding-validation logic (Section 10.4) — building persistence for it before anything needs to read a stored snapshot back would be speculative. This slice's `PolicyResolutionResult` is the right shape to eventually wrap in a persisted snapshot, not a dead end.
-- **Overlap detection groups by `ruleId`, not by applicability row**: two *different* rules both applying to the same case at once is normal and expected (Section 10.3's snapshot holds an array of versions) — the ambiguity that must fail closed is specifically two versions *of the same rule* disagreeing about which one is in effect right now.
+- **Overlap detection groups by `ruleId`, not by applicability row**: two _different_ rules both applying to the same case at once is normal and expected (Section 10.3's snapshot holds an array of versions) — the ambiguity that must fail closed is specifically two versions _of the same rule_ disagreeing about which one is in effect right now.
 - **`PolicyApplicabilityResolverService` is a real `@Injectable()` NestJS service (DI, `@InjectRepository`), not a plain factory function**: unlike `case-conditions.activities.ts`'s activities (which deliberately avoid Nest DI because they run inside a Temporal worker with no DI container), this resolver has no such constraint yet — nothing in this slice runs it from inside a workflow/activity — so it follows the same DI pattern as `PlaidService`/`CasesService`. If a future slice needs to call it from an activity, that activity would receive it the same way `case-conditions.activities.ts` already receives `PlaidService` et al.: constructed once and passed in as a dependency, not re-architected.
 
 ### Verification
@@ -2554,7 +2554,7 @@ The M2 case-conditions workflow's decision to open a condition must be made by t
 
 ### Problem (carried over from M3-003's status update)
 
-The charter's own canonical DSL example (Section 10.7) compares a borrower's *stated* income against *verified* income — a fact pair that didn't exist anywhere in the M2 schema (`LoanCase` had no stated-income field, and no jurisdiction concept at all). `hasSyntheticDiscrepancy`'s actual gate was credit/document thresholds, unrelated to the charter's own flagship example. Wiring the two together honestly required adding real schema, not reshaping the DSL example to fit what already existed.
+The charter's own canonical DSL example (Section 10.7) compares a borrower's _stated_ income against _verified_ income — a fact pair that didn't exist anywhere in the M2 schema (`LoanCase` had no stated-income field, and no jurisdiction concept at all). `hasSyntheticDiscrepancy`'s actual gate was credit/document thresholds, unrelated to the charter's own flagship example. Wiring the two together honestly required adding real schema, not reshaping the DSL example to fit what already existed.
 
 ### Implementation
 
@@ -2563,7 +2563,7 @@ The charter's own canonical DSL example (Section 10.7) compares a borrower's *st
 - `src/database/migrations/1786910931703-SeedIncomeDiscrepancyPolicy.ts` — a hand-written **data** migration (not generated — no entity diff produces seed rows) inserting: `US` (FEDERAL) and `US-CA` (STATE, child of `US`, both `COVERED`); a `SYNTHETIC` policy source scoped to `US-CA`; a source revision; a `RELEASED` `PolicyVersion` carrying the Section 10.7 DSL verbatim except for one deliberate change (see Decisions); and its `PolicyApplicability` row (`US-CA` / `CONVENTIONAL_MORTGAGE` / `UNDERWRITING_REVIEW`). Reproducible and revertible the same way schema migrations already are — Section 10.6 frames exactly this ("curated synthetic policy sources") as real, shippable reference data, not a one-off script.
 - `src/policy/product-code.ts` — `loanTypeToProductCode`: explicit mapping from M2's `LoanType` enum (`"CONVENTIONAL"`) to the DSL's product vocabulary (`"CONVENTIONAL_MORTGAGE"`, Section 10.7's own literal) — the two are the same concept in different namespaces, not the same string, so the mapping is a named function, not an assumption.
 - `src/workflows/case-conditions.activities.ts` — `evaluateConditions` rewritten: loads the case's `jurisdictionCode`/`loanType`/`statedMonthlyIncome`, calls `PolicyApplicabilityResolverService.resolve(...)`, builds a `PolicyFactContext` from `statedMonthlyIncome` and the fetched `income.monthlyIncome`, evaluates every resolved version, and opens a condition using the **matched rule's own** `outcome.condition` as the code and the evaluator's own reason string as the description — never a hardcoded string, unlike the old `'SYNTHETIC_DISCREPANCY_REVIEW'`. A `REVIEW_REQUIRED` resolution returns that outcome directly rather than writing case state itself (the caller — the workflow — decides what to do with it). `hasSyntheticDiscrepancy` and its credit/document-threshold logic are deleted, not kept as a fallback.
-- `src/workflows/case-conditions.workflow.ts` — `evaluateConditions`'s result is now a 3-way `outcome` (`'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED'`) instead of a `hasOpenCondition` boolean. `REVIEW_REQUIRED` calls `markManualReview` (M2-007's escape hatch, now with a second real trigger besides retry exhaustion) and returns `MANUAL_REVIEW` — deliberately *not* the durable-wait/condition flow, since an unresolved policy binding is a system-level ambiguity, not a specific resolvable business condition. Credit and document evidence are still fetched and recorded (audit value), just no longer consulted by the decision itself.
+- `src/workflows/case-conditions.workflow.ts` — `evaluateConditions`'s result is now a 3-way `outcome` (`'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED'`) instead of a `hasOpenCondition` boolean. `REVIEW_REQUIRED` calls `markManualReview` (M2-007's escape hatch, now with a second real trigger besides retry exhaustion) and returns `MANUAL_REVIEW` — deliberately _not_ the durable-wait/condition flow, since an unresolved policy binding is a system-level ambiguity, not a specific resolvable business condition. Credit and document evidence are still fetched and recorded (audit value), just no longer consulted by the decision itself.
 - `src/cases/dto/create-case.dto.ts`, `cases.service.ts`, `cases.module.ts` — `CreateCaseDto` gains `statedMonthlyIncome`/`jurisdictionCode`; `CasesService.createCase` validates the jurisdiction exists (404, not a raw FK-violation 500) before attempting the insert, and persists both fields transactionally with the rest of the case row (unchanged transactional-outbox pattern from M2-006).
 - `src/worker.module.ts`, `worker.ts` — the worker process now also resolves `PolicyApplicabilityResolverService` via `PolicyModule` and passes it into the activities factory, the same established pattern as `PlaidService` et al. (M3-003's own stated design, now actually used).
 - Test updates across `case-conditions.activities.spec.ts`, `case-conditions.workflow.spec.ts`, `cases.service.spec.ts`, `test/cases.e2e-spec.ts`, `schema-migrations.spec.ts`, and `database/entities/policy-schema.spec.ts` (the last two needed fixing only because the new seed data now permanently occupies the `synthetic-income-discrepancy-review` / `1.0.0` identity and the `US-CA`/varchar(20) space their fixtures previously assumed were free — see Failures below).
@@ -2571,7 +2571,7 @@ The charter's own canonical DSL example (Section 10.7) compares a borrower's *st
 ### Failures and resolution
 
 - **Leftover test debris found in the real dev database before this slice's schema migration could safely add `NOT NULL` columns**: `loan_cases` had 6 orphaned rows from an "Activities Spec Tenant" whose `afterAll` cleanup apparently didn't complete on some earlier run this session (evidence/outbox rows for it were already gone, case/tenant rows were not — consistent with a run that was interrupted partway through cleanup, e.g. a killed docker-compose stack, rather than a code defect in the cleanup logic itself). Cleaned up manually before proceeding; not otherwise investigated further since it's an artifact of this session's own iteration, not a reproducible bug.
-- **The new `LoanCase.jurisdictionCode` FK made one already-written test unrunnable as designed**: a test meant to prove `PolicyApplicabilityResolverService` fails closed for "jurisdiction has no coverage" tried to create a `LoanCase` referencing a jurisdiction code that was never seeded — but the new FK constraint (added in this same slice) now makes that impossible; a case can only ever reference a jurisdiction that already exists in the catalog. Fixed by seeding a real jurisdiction row with `coverageStatus: NOT_COVERED` instead of using a nonexistent code — a more realistic scenario anyway (a jurisdiction can be catalogued but not yet reviewed for coverage), and one the FK constraint does *not* prevent.
+- **The new `LoanCase.jurisdictionCode` FK made one already-written test unrunnable as designed**: a test meant to prove `PolicyApplicabilityResolverService` fails closed for "jurisdiction has no coverage" tried to create a `LoanCase` referencing a jurisdiction code that was never seeded — but the new FK constraint (added in this same slice) now makes that impossible; a case can only ever reference a jurisdiction that already exists in the catalog. Fixed by seeding a real jurisdiction row with `coverageStatus: NOT_COVERED` instead of using a nonexistent code — a more realistic scenario anyway (a jurisdiction can be catalogued but not yet reviewed for coverage), and one the FK constraint does _not_ prevent.
 - **Two existing test fixtures collided with the newly-seeded permanent data**: `database/entities/policy-schema.spec.ts` used the exact `ruleId`/`version` pair (`synthetic-income-discrepancy-review` / `1.0.0`) the seed migration now permanently owns, hitting `UQ_policy_versions_rule_version`; a resolver test's synthetic jurisdiction code exceeded the (real, correct) `varchar(20)` limit once lengthened to avoid an unrelated collision. Both are test-identity conflicts introduced by this slice's own seed data, not defects in the schema — renamed the test fixtures to be obviously test-scoped and within the real column-length constraint.
 
 ### Affected files
@@ -2591,7 +2591,7 @@ The charter's own canonical DSL example (Section 10.7) compares a borrower's *st
 
 - **Seeded `effective_from` is 2025-01-01, not the charter's literal 2027-01-01**: Section 10.7's own example is dated in what is, relative to this project's actual timeline, the future. Seeding that exact date would make the rule correctly-modeled but permanently inert in the running system until 2027 — nothing could ever prove the wiring works end-to-end against a live `asOf = now()` evaluation. The DSL's operator, fact paths, and 10% threshold are otherwise identical to the charter's text; only the date was adjusted, and why is recorded in the migration file's own comment, not left for a future reader to puzzle out.
 - **`hasSyntheticDiscrepancy` deleted outright, not kept as a fallback or a second policy rule**: it was always documented (M2-004) as "a deliberately simple, deterministic stand-in for the real policy engine that M3 introduces" — keeping it running in parallel once that engine exists would mean two independent, potentially-disagreeing sources of truth for the same decision. Its credit/document-threshold logic could return later as its own DSL rule (the resolver already supports multiple simultaneously-applicable rules), but that's new work with its own DSL operators, not a reason to keep the old hardcoded path alive today.
-- **`REVIEW_REQUIRED` routes to `MANUAL_REVIEW`, not the `CONDITIONS_OPEN`/durable-wait flow**: the DSL's own `outcome.route: "MANUAL_REVIEW"` field could be read as directly selecting a `CaseStatus`, but `outcome.condition` also exists and is what M2's proven, tested `LoanCondition`/`resolveCondition`-signal flow already expects for "a specific resolvable business condition was found." Reserving `MANUAL_REVIEW` for cases where the *system* can't determine applicable policy (no coverage, overlapping versions) — as opposed to a condition the *policy itself* identified — keeps the two failure modes distinguishable, matching how M2-007 already used `MANUAL_REVIEW` for a different system-level failure (exhausted activity retries). This is an interpretation choice the charter doesn't fully specify; recorded here as a judgment call, not an obvious reading.
+- **`REVIEW_REQUIRED` routes to `MANUAL_REVIEW`, not the `CONDITIONS_OPEN`/durable-wait flow**: the DSL's own `outcome.route: "MANUAL_REVIEW"` field could be read as directly selecting a `CaseStatus`, but `outcome.condition` also exists and is what M2's proven, tested `LoanCondition`/`resolveCondition`-signal flow already expects for "a specific resolvable business condition was found." Reserving `MANUAL_REVIEW` for cases where the _system_ can't determine applicable policy (no coverage, overlapping versions) — as opposed to a condition the _policy itself_ identified — keeps the two failure modes distinguishable, matching how M2-007 already used `MANUAL_REVIEW` for a different system-level failure (exhausted activity retries). This is an interpretation choice the charter doesn't fully specify; recorded here as a judgment call, not an obvious reading.
 - **Jurisdiction validated in `CasesService` before the transaction, not left to the FK to reject**: an FK-violation surfaces as a generic Postgres error that would otherwise need its own error-code detection (like the existing unique-violation handling) to turn into a clean 404 — validating up front is simpler and gives a clearer error message (`"Jurisdiction {code} not found"` vs. a raw constraint-name string).
 
 ### Verification
@@ -2645,8 +2645,8 @@ Temporal + the real dev Postgres database):
 
 ### Known gaps
 
-- Credit/document-based conditions (the old `hasSyntheticDiscrepancy` behavior) have no policy-rule equivalent yet — a case with severe derogatory marks or invalid documents but *matching* income no longer opens any condition. This is a real, deliberate scope reduction (see Decisions), not an oversight, but worth flagging plainly: this slice narrows what M2's workflow catches until credit/document rules exist as their own DSL content.
-- Still no `CasePolicySnapshot` persistence, binding-validation guard, or dependency-generation invalidation (M3-003's carried-forward gaps) — this slice proved the resolver and evaluator work correctly *in* the workflow, it didn't add the bitemporal machinery around them.
+- Credit/document-based conditions (the old `hasSyntheticDiscrepancy` behavior) have no policy-rule equivalent yet — a case with severe derogatory marks or invalid documents but _matching_ income no longer opens any condition. This is a real, deliberate scope reduction (see Decisions), not an oversight, but worth flagging plainly: this slice narrows what M2's workflow catches until credit/document rules exist as their own DSL content.
+- Still no `CasePolicySnapshot` persistence, binding-validation guard, or dependency-generation invalidation (M3-003's carried-forward gaps) — this slice proved the resolver and evaluator work correctly _in_ the workflow, it didn't add the bitemporal machinery around them.
 - The seed migration's policy content lives only in `US-CA` — a case in any other jurisdiction (even a covered one, if seeded later) has no applicable rule and always completes straight through, which is a true "no matching policy" `RESOLVED` outcome, not a bug, but worth knowing when testing with other jurisdiction codes.
 
 ### Next safe step
@@ -2666,7 +2666,7 @@ Every policy evaluation for a case must go through an unavoidable guard, never t
 ### Implementation
 
 - `src/database/entities/case-policy-snapshot.entity.ts` — `CasePolicySnapshot`: immutable, one row per distinct resolution outcome (`resolutionStatus`, the matched `versions` with their policy version IDs and effective windows, `unresolvedReasons`, a `contextHash` digest, `resolverVersion`). Never updated in place.
-- `src/database/entities/case-policy-binding.entity.ts` — `CasePolicyBinding`: one active (non-invalidated) row per case, pointing at the snapshot it's currently bound to, with `dependencyDigest`, `boundAt`, `revalidateAfter`, and `invalidatedAt`. A refresh invalidates the prior row rather than deleting it, preserving *why* a case's binding changed, not just that it did.
+- `src/database/entities/case-policy-binding.entity.ts` — `CasePolicyBinding`: one active (non-invalidated) row per case, pointing at the snapshot it's currently bound to, with `dependencyDigest`, `boundAt`, `revalidateAfter`, and `invalidatedAt`. A refresh invalidates the prior row rather than deleting it, preserving _why_ a case's binding changed, not just that it did.
 - `src/database/enums/policy-resolution-status.enum.ts` — `PolicyResolutionStatus` (RESOLVED/REVIEW_REQUIRED), the DB-typed counterpart to `PolicyResolutionResult.status`'s plain string union.
 - `src/policy/policy-digest.ts` — `computeDigest`: a plain SHA-256 content fingerprint (not HMAC-signed like `outbox-signer.ts` — a digest only needs to detect change for one process talking to its own database, not cross a trust boundary). Reuses the same key-canonicalization approach as outbox signing, for the same reason (stable regardless of construction order).
 - `src/policy/policy-evaluation.service.ts` — `PolicyEvaluationService.evaluate(tenantId, caseId, context)`: calls the resolver, computes a digest over the resolution's status/versions/reasons (with `versions` explicitly sorted by `policyVersionId` before hashing — see Failures), then: `REVIEW_REQUIRED` persists a snapshot recording why and invalidates any existing binding (nothing to bind to); otherwise, an existing non-invalidated binding whose digest matches and whose `revalidateAfter` hasn't passed is `REUSED` as-is; anything else is `REFRESHED` — a new snapshot and binding are persisted, and the prior binding (if any) is invalidated.
@@ -2695,7 +2695,7 @@ Every policy evaluation for a case must go through an unavoidable guard, never t
 
 ### Decisions and alternatives
 
-- **The guard always re-runs full resolution — the target design's fast indexed-generation-vector path is not implemented**: Section 10.4's actual mechanism (a bounded, indexed read of 8 dependency-generation keys, incremented atomically on policy activation) needs a `policy_dependency_generations` table and an activation write-path that increments it — neither exists, because nothing in this codebase can activate, withdraw, or supersede a policy version after the fact yet (the only policy content that exists is the one seed migration). Building the fast-path infrastructure before there's any real activation event to invalidate against would be speculative. What's implemented instead — always resolve, then compare a content digest to decide reuse-vs-refresh — delivers the same *correctness* contract (a case's evaluation is provably bound to an immutable snapshot; reuse only happens when nothing relevant changed) without the *performance* property (skip resolution entirely on the fast path). This is a real, named simplification, not a silent shortcut — Section 10.4 itself is flagged in the class-level comments of both `CasePolicyBinding` and `PolicyEvaluationService`.
+- **The guard always re-runs full resolution — the target design's fast indexed-generation-vector path is not implemented**: Section 10.4's actual mechanism (a bounded, indexed read of 8 dependency-generation keys, incremented atomically on policy activation) needs a `policy_dependency_generations` table and an activation write-path that increments it — neither exists, because nothing in this codebase can activate, withdraw, or supersede a policy version after the fact yet (the only policy content that exists is the one seed migration). Building the fast-path infrastructure before there's any real activation event to invalidate against would be speculative. What's implemented instead — always resolve, then compare a content digest to decide reuse-vs-refresh — delivers the same _correctness_ contract (a case's evaluation is provably bound to an immutable snapshot; reuse only happens when nothing relevant changed) without the _performance_ property (skip resolution entirely on the fast path). This is a real, named simplification, not a silent shortcut — Section 10.4 itself is flagged in the class-level comments of both `CasePolicyBinding` and `PolicyEvaluationService`.
 - **`MAX_VALIDATION_INTERVAL_MS` (1 hour) is the only piece of `revalidateAfter`'s definition implemented**: Section 10.4 defines it as "the earliest known scheduled activation boundary, source-freshness deadline, or configured maximum validation interval" — the first two require infrastructure (scheduled activations, freshness tracking) this codebase doesn't have; the third is a plain constant, honestly implementable today.
 - **One active binding per case, refresh invalidates rather than deletes**: matches `CasePolicyBinding`'s own `invalidatedAt` field in the charter's target interface, and preserves the same kind of "what changed and when" audit trail `ConditionTransition` already provides for conditions — deleting and recreating would lose that history for no benefit.
 - **A digest, not a signature, for `dependencyDigest`/`contextHash`**: unlike outbox events (M2-006), which cross a trust boundary and need tamper-evidence, this digest only needs to answer "did the resolver's output change" for one process reading its own database — no secret, no HMAC, matching the general principle of not adding security machinery a threat model doesn't call for.
@@ -2742,7 +2742,7 @@ Temporal stack afterward.
 
 ### Known gaps
 
-- No dependency-generation vector / fast-path validation (see Decisions) — every evaluation call does full resolution work, just not full snapshot/binding *persistence* when nothing changed.
+- No dependency-generation vector / fast-path validation (see Decisions) — every evaluation call does full resolution work, just not full snapshot/binding _persistence_ when nothing changed.
 - No scheduled-activation-boundary or source-freshness-deadline tracking feeding `revalidateAfter` — only the flat maximum-interval fallback exists.
 - No REST/GraphQL surface exposing a case's policy snapshot/binding history for audit/review — the data is there, nothing reads it back yet.
 - Still no `EvaluationInputManifest` (Section 10.5) — the next-larger piece of the policy-evaluation pipeline, referencing `policyBindingId` among other immutable evaluation inputs.
@@ -2755,7 +2755,7 @@ M3's policy side now has schema, DSL engine, resolver, and binding guard all wir
 
 ### Status
 
-Implemented and verified. The first slice of the Agent side of M3 (Section 9) — deliberately scoped to the port/state contract plus a small number of *genuinely implemented* tools, not the full sixteen-entry registered-tools table and not yet the LangGraph.js v1 adapter itself (see Decisions and Known gaps). Mirrors how M3-001 was schema-only before anything executed against it.
+Implemented and verified. The first slice of the Agent side of M3 (Section 9) — deliberately scoped to the port/state contract plus a small number of _genuinely implemented_ tools, not the full sixteen-entry registered-tools table and not yet the LangGraph.js v1 adapter itself (see Decisions and Known gaps). Mirrors how M3-001 was schema-only before anything executed against it.
 
 ### Acceptance criterion
 
@@ -2766,7 +2766,7 @@ An `AgentRuntimePort` interface must exist, matching Section 9.2's runtime-separ
 - `src/agent-runtime/agent-state.types.ts` — `LendingOperationsAgentState` (Section 9.3) and its constituent summary types (`EvidenceSummary`, `ConditionSummary`, `ProviderHealthSummary`, `ToolAttemptSummary`, `AgentAction`, `HumanReviewState`), typed as closely to the charter's interface as this codebase's actual data supports.
 - `src/agent-runtime/agent-runtime.types.ts` — `AgentRuntimePort` (`run(input): Promise<AgentRunResult>`), `AgentRunInput`, `AgentRunBudget`, `AgentRunRoute` (`PROPOSED_ACTION | AWAITING_INFORMATION | INTERRUPTED_FOR_REVIEW | ROUTED_TO_MANUAL_REVIEW`, matching Section 9.5's Agent-loop outcomes). No implementation of this port exists yet — it's the contract a LangGraph.js adapter will satisfy next.
 - `src/agent-runtime/agent-tool.types.ts` — `AgentTool<TArgs, TResult>` (Section 9.4's table columns, typed: `purpose`, `sideEffect`, `approvalBoundary`, `execute`), `buildToolRegistry` (throws on a duplicate tool name — an ambiguous registry is a bug to catch at construction, not a runtime concern), `invokeTool` (never throws; an unregistered tool name or a tool's own exception both come back as a `FAILURE` outcome — Section 20's M3 exit evidence: "unauthorized tools remain unreachable" starts with the registry never crashing the caller over one).
-- `src/agent-runtime/tools/check-case-completeness.tool.ts` — Section 9.4's `check_case_completeness`: checks a case has at least one `EvidenceFact` of each type the M2 workflow's fetch activities produce. Real, correct, not yet called by production code (nothing in the deterministic M2 workflow needs to *ask* this — it always fetches all three unconditionally).
+- `src/agent-runtime/tools/check-case-completeness.tool.ts` — Section 9.4's `check_case_completeness`: checks a case has at least one `EvidenceFact` of each type the M2 workflow's fetch activities produce. Real, correct, not yet called by production code (nothing in the deterministic M2 workflow needs to _ask_ this — it always fetches all three unconditionally).
 - `src/agent-runtime/tools/evaluate-policy.tool.ts` — Section 9.4's `evaluate_policy`: a thin wrapper around the already-built `PolicyEvaluationService` (M3-005), giving it the right tool metadata (`approvalBoundary: 'Mandatory policy-binding validation'`) without any path that bypasses the guard.
 - `src/agent-runtime/tools/create-condition.tool.ts` — Section 9.4's `create_condition`: extracted verbatim from `case-conditions.activities.ts`'s inline condition-opening logic, which now calls this tool instead of duplicating it. In the process, this closes a real gap that's existed since M2-001: `LoanCondition.policySnapshotId` (a column whose own comment said "M3 will make it required... Section 6.2") is now actually populated on every condition created through this path — it wasn't before this slice.
 - `src/workflows/case-conditions.activities.ts` — `evaluateConditions`'s condition-creation branch now calls `createConditionTool(...).execute(...)` instead of an inline transaction; behavior-preserving (all 11 existing tests passed unmodified), plus one new assertion proving `policySnapshotId` is populated.
@@ -2784,7 +2784,7 @@ An `AgentRuntimePort` interface must exist, matching Section 9.2's runtime-separ
 
 - **Three tools implemented for real, not all sixteen stubbed**: Section 9.4's table has entries this codebase has no way to back with real logic yet (`inspect_documents` needs a document-processing capability that doesn't exist; `send_information_request`/`publish_case_update` need the communication-classification system, also unbuilt; `calculate_qualified_income`/`calculate_dti`/`calculate_ltv` need calculation logic never specified). Stubbing all sixteen would produce a registry that looks complete but isn't — exactly the kind of false completeness this project has consistently avoided. Building three real ones and naming the rest as gaps is the honest version of "the registered tools exist."
 - **`create_condition` extracted into a real caller, not built as parallel/unused scaffolding**: a tool nothing calls is unproven — refactoring `case-conditions.activities.ts` to actually use it (rather than leaving the inline logic in place alongside an unused duplicate) is what makes this tool real evidence, not aspirational shape. This also surfaced and fixed the `policySnapshotId` gap, which the refactor would not have caught if the tool had been left uncalled.
-- **`evaluate_policy` is a thin wrapper the M2 workflow does *not* use** (it still calls `PolicyEvaluationService` directly): the workflow's own call is a deterministic Temporal activity step, not an Agent decision — routing it through the tool layer would add indirection with no behavioral benefit. The tool exists for a future LangGraph.js adapter to call the identical guard through the same registry contract every other tool uses, not to replace the workflow's existing, correct direct call.
+- **`evaluate_policy` is a thin wrapper the M2 workflow does _not_ use** (it still calls `PolicyEvaluationService` directly): the workflow's own call is a deterministic Temporal activity step, not an Agent decision — routing it through the tool layer would add indirection with no behavioral benefit. The tool exists for a future LangGraph.js adapter to call the identical guard through the same registry contract every other tool uses, not to replace the workflow's existing, correct direct call.
 - **`invokeTool` never throws**: Section 20's M3 exit evidence explicitly requires "unauthorized tools remain unreachable" — a registry that could crash its caller on a bad tool name would itself be a reliability risk sitting right next to a security boundary. Both "tool doesn't exist" and "tool threw" come back as the same `FAILURE` shape, letting a future runtime implementation treat every tool-invocation failure uniformly.
 - **No NestJS module/DI wiring for the tool registry**: nothing NestJS-DI-managed calls these tools yet (no controller/resolver), and their consumers so far (`case-conditions.activities.ts`) already follow the established "activities avoid heavy DI, receive plain constructed dependencies" pattern (M2-004). Adding a module now would be premature scaffolding for a consumer that doesn't exist.
 - **A distinct `src/agent-runtime/` directory, not reused inside the existing `src/agent/`**: `src/agent/`'s `AgentService`/`RulesUnderwriterService`/`OllamaUnderwriterService` are the legacy one-shot `evaluateLoan` decisioning path, predating and unrelated to Section 9's stateful, bounded, tool-using Agent charter — a real naming collision (both are "the Agent") worth calling out explicitly rather than either renaming the legacy module (out of scope) or conflating two different systems under one directory.
@@ -3009,7 +3009,7 @@ The real M2 Temporal workflow, run through a real worker against a real database
   - `evaluateConditions`'s body replaced: loads the case, builds a `LendingOperationsAgentState` (caseVersion from `LoanCase.version`, an already-existing optimistic-lock column; workflowStatus from the case's own status; consentStatus hardcoded `'VALID'`, same placeholder every other state construction in this codebase uses since no consent-tracking entity exists yet), and calls `agentRuntime.run(...)` with `allowedTools: ['check_case_completeness', 'evaluate_policy', 'create_condition']` and a budget/deadline bounded well inside the workflow's own 30s activity `startToCloseTimeout` (`AGENT_RUN_STEP_BUDGET = 10`, `AGENT_RUN_DURATION_BUDGET_MS = 20_000`).
   - The `AgentRunRoute` result is mapped back to the pre-existing `EvaluateConditionsResult` shape (`'READY' | 'CONDITION_OPENED' | 'REVIEW_REQUIRED'`) so the workflow needs no changes: `PROPOSED_ACTION` with a `create_condition` action → `CONDITION_OPENED`; `PROPOSED_ACTION` with no action → `READY` (the activity itself still performs the `READY_FOR_UNDERWRITING` write + `workflow_run.completed` outbox event, now factored into a shared `finalizeReadyForUnderwriting` helper also used by the `markReadyForUnderwriting` activity — deduplicating what were previously two near-identical inline blocks); `ROUTED_TO_MANUAL_REVIEW` → `REVIEW_REQUIRED`; `AWAITING_INFORMATION`/`INTERRUPTED_FOR_REVIEW` (neither reachable at this call site today) → `REVIEW_REQUIRED`, failing closed rather than treating an unrecognized route as readiness.
   - `EvaluateConditionsInput` changed from `{ tenantId, caseId, income }` to `{ tenantId, caseId, workflowRunId }` — the Agent run's `resolveOutcome` node reads evidence back from the database itself (the same `EvidenceFact` rows the workflow's fetch activities already recorded), so passing `income` through as a parameter is no longer meaningful; `workflowRunId` correlates the Agent run to its Temporal run for Section 9.3's `LendingOperationsAgentState.workflowRunId`.
-  - `workflowRunId` is threaded in as an explicit parameter from the *workflow* (`workflowInfo().runId`, deterministic-safe to call from workflow code) rather than read via `activityInfo()` inside the activity — `@temporalio/activity`'s `Context.current()` throws `Activity context not initialized` when an activity function is invoked directly outside a real Temporal worker execution, which is exactly how `case-conditions.activities.spec.ts` calls every activity in this file. Threading the value in keeps `evaluateConditions` identically callable both ways.
+  - `workflowRunId` is threaded in as an explicit parameter from the _workflow_ (`workflowInfo().runId`, deterministic-safe to call from workflow code) rather than read via `activityInfo()` inside the activity — `@temporalio/activity`'s `Context.current()` throws `Activity context not initialized` when an activity function is invoked directly outside a real Temporal worker execution, which is exactly how `case-conditions.activities.spec.ts` calls every activity in this file. Threading the value in keeps `evaluateConditions` identically callable both ways.
   - Removed now-unused imports (`evaluatePolicyRule`, `PolicyFactContext`, `loanTypeToProductCode`, `UNDERWRITING_REVIEW_LIFECYCLE_EVENT`, `createConditionTool`) — all of that logic now lives inside the Agent runtime's nodes (M3-007).
 - `src/workflows/case-conditions.workflow.ts`: fetches income/credit/document evidence the same as before (still needed for the audit trail and for `check_case_completeness` to find), but no longer destructures/passes `income` — just `await Promise.all([...])`. Calls `evaluateConditions` with `workflowRunId: workflowInfo().runId` instead of `income`.
 - `src/workflows/case-conditions.activities.spec.ts`: added a `seedEvidence` helper (writes real `INCOME`/`CREDIT`/`DOCUMENT` `EvidenceFact` rows) and updated all four `evaluateConditions` call sites to seed evidence first and pass `workflowRunId` instead of `income` — the new implementation genuinely requires real evidence rows to exist (via `check_case_completeness`) rather than accepting income as a bare parameter, which is a real, correct behavioral tightening: it now matches how the workflow actually calls it in production.
@@ -3101,7 +3101,7 @@ Of Section 9.6's twelve mandatory-review-trigger categories, every one that has 
 Re-read against the current codebase state before writing anything, of the twelve triggers:
 
 - **Reachable with real signal today**: unresolved jurisdiction/effective-date/transition-rule conflict (already implemented — `evaluate_policy`'s `REVIEW_REQUIRED` path); step/time budget exhaustion (already implemented — `budgetExceeded`); a tool's own execution failure (already implemented — `invokeTool`'s `FAILURE` outcome routes to review); **consent revoked/missing/expired mid-case** (field exists, was never checked — closed by this slice).
-- **No backing signal exists in this codebase**: contradictory evidence (single-source-per-type model, nothing to contradict); evidence confidence threshold (no confidence field on `EvidenceFact`); malformed *model* output (no model call exists anywhere in this graph); every communication-related trigger (no communication system at all — Section 6.4's classifier is unbuilt); provider result outside the normalized contract (no contract/schema validation layer — that's M4/Section 11 scope); prompt-injection or tool-manipulation signal (there is no prompt for anything to inject into — this graph is deterministic tool orchestration, not model-driven); tenant risk policy category (no tenant configuration surface for this exists); manual waiver/override of a deterministic condition (this happens through `resolveCondition`, a separate human-driven activity outside the Agent run entirely — not something the run itself observes or gates).
+- **No backing signal exists in this codebase**: contradictory evidence (single-source-per-type model, nothing to contradict); evidence confidence threshold (no confidence field on `EvidenceFact`); malformed _model_ output (no model call exists anywhere in this graph); every communication-related trigger (no communication system at all — Section 6.4's classifier is unbuilt); provider result outside the normalized contract (no contract/schema validation layer — that's M4/Section 11 scope); prompt-injection or tool-manipulation signal (there is no prompt for anything to inject into — this graph is deterministic tool orchestration, not model-driven); tenant risk policy category (no tenant configuration surface for this exists); manual waiver/override of a deterministic condition (this happens through `resolveCondition`, a separate human-driven activity outside the Agent run entirely — not something the run itself observes or gates).
 
 Building stub checks for the second group would create the appearance of coverage the system cannot actually back — left as known gaps instead.
 
@@ -3114,7 +3114,7 @@ Building stub checks for the second group would create the appearance of coverag
 #### Compare-and-swap condition/readiness writes (Section 10.5's core protection, honestly scoped)
 
 - `LoanCase.version`'s own doc comment has said "Optimistic concurrency for compare-and-swap writes (Section 10.5, 17.1)" since the column was added — nothing actually checked it. Every existing write used `Repository.update(criteria, partial)`, which TypeORM does not version-guard the way `.save()` on a loaded entity would; a case's version was incrementing on every write, but nothing was ever rejected for having the wrong one.
-- `src/agent-runtime/tools/create-condition.tool.ts`: `CreateConditionArgs` gains `expectedCaseVersion: number`. `execute()` now reads the case fresh inside its transaction and compares `.version` against `expectedCaseVersion` *before* writing anything; a mismatch returns `{ outcome: 'STALE_CASE_VERSION' }` (a typed, non-exceptional result — staleness is an expected outcome in a concurrent system, not a bug) with no condition row, no case mutation, and no outbox events. On a match, the actual `LoanCase` update additionally carries `version: expectedCaseVersion` in its `WHERE` criteria (closing the residual race between the read and the write within the same transaction); if that atomic update still affects zero rows — a true race within the transaction's own lifetime, not the routine case — it throws `StaleCaseVersionError` instead, rolling back the condition insert too.
+- `src/agent-runtime/tools/create-condition.tool.ts`: `CreateConditionArgs` gains `expectedCaseVersion: number`. `execute()` now reads the case fresh inside its transaction and compares `.version` against `expectedCaseVersion` _before_ writing anything; a mismatch returns `{ outcome: 'STALE_CASE_VERSION' }` (a typed, non-exceptional result — staleness is an expected outcome in a concurrent system, not a bug) with no condition row, no case mutation, and no outbox events. On a match, the actual `LoanCase` update additionally carries `version: expectedCaseVersion` in its `WHERE` criteria (closing the residual race between the read and the write within the same transaction); if that atomic update still affects zero rows — a true race within the transaction's own lifetime, not the routine case — it throws `StaleCaseVersionError` instead, rolling back the condition insert too.
 - `CreateConditionResult` changed from a bare `{ conditionId }` to a discriminated union (`{ outcome: 'CREATED'; conditionId }` or `{ outcome: 'STALE_CASE_VERSION' }`).
 - `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`: `resolveOutcomeNode` passes `expectedCaseVersion: state.agentState.caseVersion` (captured once, at the very start of the Agent run, in `LendingOperationsAgentState.caseVersion` — already existed since M3-006) and, on a `STALE_CASE_VERSION` result, throws `StaleCaseVersionError` rather than routing to `ROUTED_TO_MANUAL_REVIEW` — deliberately not treated as a tool failure, since routing a routine concurrency race to a human would be an unnecessary escalation for something the system can self-heal (see Decisions).
 - `src/workflows/case-conditions.activities.ts`: `finalizeReadyForUnderwriting` (the "no condition needed, case ready" write, previously duplicated inline and factored out in M3-008) gains an optional `expectedCaseVersion` parameter using the identical check-in-`WHERE`-clause pattern; `evaluateConditions`'s own call to it now passes `initialState.caseVersion`. The plain `markReadyForUnderwriting` activity (called after a human resolves a condition via signal, not from an evaluation) keeps calling it without `expectedCaseVersion` — that write isn't driven by an aging evaluation snapshot, so CAS protection doesn't apply there.
@@ -3131,9 +3131,9 @@ Building stub checks for the second group would create the appearance of coverag
 ### Decisions and alternatives
 
 - **Token/cost/provider-call budget ledger: deliberately not built this slice.** No tool in this codebase makes a model call or a real outbound provider call — evidence is fetched by separate workflow activities before the Agent run ever starts, and all three registered tools are database-only. Every consumer of these budget dimensions is currently and permanently zero. Building the atomic, versioned, multi-level (run/workflow/tenant) reservation system Section 9.3 describes for dimensions with no real consumer would be exactly the kind of premature scaffolding this codebase has consistently avoided (M3-005 made the identical call for the policy-binding fast path: "no policy-activation write-path exists yet"). Documented as a known gap rather than stubbed.
-- **A full `EvaluationInputManifest` struct was not built.** Roughly half its fields (`authorizationDecisionId`, `consentVersionRefs`, evidence `contentHash`/`adapterVersion`/`normalizationSchemaVersion`, `calculationRefs`) depend on subsystems that don't exist yet (authorization grants, evidence content-hashing, provider adapter versioning, a calculation subsystem). Fabricating placeholder values for those fields would misrepresent what's actually being tracked. Instead, this slice builds the specific protective *behavior* the manifest exists to guarantee for condition writes — the compare-and-swap semantics — using the `LoanCase.version` column that already exists for exactly this purpose. The full manifest struct remains a known gap.
-- **Staleness is a typed tool result, not an exception, for the routine case.** The version mismatch is read and compared *before* any write is attempted, so it's cheap to detect and doesn't need transaction rollback semantics to signal — modeling it as `{ outcome: 'STALE_CASE_VERSION' }` keeps `create_condition.execute()`'s control flow honest (staleness is an expected, common outcome in a system with concurrent evaluations, not a programming error). The one place a real throw remains is the genuinely exceptional residual race inside the same transaction, which does need rollback.
-- **A stale-version result is *not* routed to `ROUTED_TO_MANUAL_REVIEW`; it propagates and lets Temporal retry.** Section 10.5 itself prescribes the fix for staleness: "a concurrent... case mutation... requires a new evaluation manifest" — i.e., re-evaluate, not escalate to a human. `evaluateConditions` is already wrapped in `proxyActivities`' retry policy (3 attempts); letting the failure propagate naturally re-runs the whole evaluation against the case's current state, which is both simpler and more correct than manufacturing a special-case retry mechanism or asking a person to resolve what's fundamentally routine concurrency.
+- **A full `EvaluationInputManifest` struct was not built.** Roughly half its fields (`authorizationDecisionId`, `consentVersionRefs`, evidence `contentHash`/`adapterVersion`/`normalizationSchemaVersion`, `calculationRefs`) depend on subsystems that don't exist yet (authorization grants, evidence content-hashing, provider adapter versioning, a calculation subsystem). Fabricating placeholder values for those fields would misrepresent what's actually being tracked. Instead, this slice builds the specific protective _behavior_ the manifest exists to guarantee for condition writes — the compare-and-swap semantics — using the `LoanCase.version` column that already exists for exactly this purpose. The full manifest struct remains a known gap.
+- **Staleness is a typed tool result, not an exception, for the routine case.** The version mismatch is read and compared _before_ any write is attempted, so it's cheap to detect and doesn't need transaction rollback semantics to signal — modeling it as `{ outcome: 'STALE_CASE_VERSION' }` keeps `create_condition.execute()`'s control flow honest (staleness is an expected, common outcome in a system with concurrent evaluations, not a programming error). The one place a real throw remains is the genuinely exceptional residual race inside the same transaction, which does need rollback.
+- **A stale-version result is _not_ routed to `ROUTED_TO_MANUAL_REVIEW`; it propagates and lets Temporal retry.** Section 10.5 itself prescribes the fix for staleness: "a concurrent... case mutation... requires a new evaluation manifest" — i.e., re-evaluate, not escalate to a human. `evaluateConditions` is already wrapped in `proxyActivities`' retry policy (3 attempts); letting the failure propagate naturally re-runs the whole evaluation against the case's current state, which is both simpler and more correct than manufacturing a special-case retry mechanism or asking a person to resolve what's fundamentally routine concurrency.
 - **`markReadyForUnderwriting` (the post-signal-resolution activity) keeps its unconditional write.** CAS protection matters for writes driven by an evaluation's possibly-stale view of the case; this activity's write is driven by a human's just-delivered signal, not by data gathered earlier in a run — there's no "expected version" concept for it to check against without inventing one that doesn't correspond to anything real.
 
 ### Verification
@@ -3205,11 +3205,11 @@ Of the two things that used to both route to `ROUTED_TO_MANUAL_REVIEW`, only pol
 
 #### Interrupt is not a LangGraph-level suspension
 
-Considered and rejected: using LangGraph's own `interrupt()`/checkpointer primitives to pause and resume mid-graph-execution. Section 9.2's runtime-separation design and Section 9.3's own text ("time spent durably waiting for information or review is governed by workflow timers and is not hidden Agent runtime... **resume may create a new server-authorized run deadline**") both say the long human-wait belongs to Temporal, not to a bounded Agent run — a run interrupts by *ending* (with `INTERRUPTED_FOR_REVIEW`), and resumption is a **new**, independent bounded run, not a magically-continued old one. This is architecturally simpler (no checkpointer, no cross-activity LangGraph state persistence to reason about) and matches how `resolveCondition`'s existing durable-wait-then-continue pattern already works at the workflow level.
+Considered and rejected: using LangGraph's own `interrupt()`/checkpointer primitives to pause and resume mid-graph-execution. Section 9.2's runtime-separation design and Section 9.3's own text ("time spent durably waiting for information or review is governed by workflow timers and is not hidden Agent runtime... **resume may create a new server-authorized run deadline**") both say the long human-wait belongs to Temporal, not to a bounded Agent run — a run interrupts by _ending_ (with `INTERRUPTED_FOR_REVIEW`), and resumption is a **new**, independent bounded run, not a magically-continued old one. This is architecturally simpler (no checkpointer, no cross-activity LangGraph state persistence to reason about) and matches how `resolveCondition`'s existing durable-wait-then-continue pattern already works at the workflow level.
 
 - `src/workflows/case-conditions.signals.ts`: new `resumeInterruptedEvaluationSignal` (`{ actorId, note? }`) — carries no resolution data of its own, mirroring how a reviewer is expected to have already fixed the underlying ambiguity (activated jurisdiction coverage, resolved an overlapping policy version) through some means outside this workflow before signaling "try again."
 - `src/database/enums/case-status.enum.ts`'s `WAITING_FOR_REVIEW` — defined since the schema's first migration, never once set by any code path — is now genuinely used, distinct from `MANUAL_REVIEW`'s "cannot proceed safely within the configured automation boundary" (its own Section 6.1 definition: "a protected or ambiguous action requires a person," exactly this case).
-- `src/database/outbox/outbox-event-types.ts`: new `EvaluationInterrupted` (`evaluation.interrupted`) event — distinct from `WorkflowRunWaitingForReview` (waiting for a reviewer to resolve an *already-opened* condition); this fires before any condition exists.
+- `src/database/outbox/outbox-event-types.ts`: new `EvaluationInterrupted` (`evaluation.interrupted`) event — distinct from `WorkflowRunWaitingForReview` (waiting for a reviewer to resolve an _already-opened_ condition); this fires before any condition exists.
 - `src/workflows/case-conditions.activities.ts`: `EvaluateConditionsResult.outcome` gains `'INTERRUPTED'`, mapped from `AgentRunRoute.INTERRUPTED_FOR_REVIEW` (previously folded into the same fail-closed bucket as the never-reachable `AWAITING_INFORMATION`). New `markWaitingForReview` activity sets the case to `WAITING_FOR_REVIEW` and writes the new outbox event.
 - `src/workflows/case-conditions.workflow.ts`: the evaluate-and-dispatch section is now a loop. On `INTERRUPTED`, it calls `markWaitingForReview`, durably waits (`condition()`) for `resumeInterruptedEvaluationSignal`, resets the local signal variable, and loops back to call `evaluateConditions` again — supporting any number of interrupt cycles, not just one. `REVIEW_REQUIRED` (now only reachable for genuine runtime failures) still routes straight to `MANUAL_REVIEW`, unchanged.
 - `src/workflows/temporal-client.service.ts`: new `resumeInterruptedEvaluation()`, mirroring `resolveCondition()`'s shape and `WorkflowNotFoundError` contract.
@@ -3232,7 +3232,7 @@ Section 15.1's target contract lists exactly one review endpoint (`POST .../revi
 - **Resume re-runs the whole evaluation; it does not accept reviewer-supplied override data.** The signal payload carries no resolution content — a reviewer is expected to fix the ambiguity itself (via direct data access; no dedicated "fix the ambiguity" API exists) and then say "try again." Building a genuine override mechanism (a reviewer directly forcing a specific policy binding despite unresolved ambiguity) would contradict Section 6.3's authority order ("the resolved, released case policy snapshot determine condition state") and is a materially larger, separate feature.
 - **Unbounded interrupt cycles, no cap.** A case can interrupt, resume, and interrupt again indefinitely if the underlying ambiguity keeps recurring. This matches Temporal's standard durable-loop pattern (the workflow yields at every iteration via activity calls and `condition()`) and is arguably correct: a human should keep being asked until the ambiguity is actually resolved, not silently given up on after N tries.
 - **`reviewType` is required, not defaulted, on the generalized endpoint.** A default-to-`CONDITION_RESOLUTION`-when-omitted design would have avoided touching every existing caller, but this codebase's own testing/e2e call sites are the only current callers (no real external contract to preserve yet), and an explicit, always-required discriminator is simpler to validate correctly than conditional-default logic layered on top of `@ValidateIf`.
-- **`TemporalClientService.resolveCondition` keeps its name** (only the `CasesService`/`CasesController` layer's method was renamed to `submitReview`) — it's still a faithful, single-purpose signal-delivery wrapper; the *dispatch* between two review actions belongs one layer up, where the two DTOs' shapes actually diverge.
+- **`TemporalClientService.resolveCondition` keeps its name** (only the `CasesService`/`CasesController` layer's method was renamed to `submitReview`) — it's still a faithful, single-purpose signal-delivery wrapper; the _dispatch_ between two review actions belongs one layer up, where the two DTOs' shapes actually diverge.
 
 ### Verification
 
@@ -3278,10 +3278,10 @@ All synthetic rows deleted afterward; scratch stack torn down.
 
 ### Known gaps
 
-- No dedicated API for a reviewer to actually *fix* an ambiguity (correct a case's jurisdiction, activate policy coverage, resolve an overlapping version) — this slice only provides the interrupt/resume *mechanism*; the fix itself still requires direct data access, same as this manual verification did.
+- No dedicated API for a reviewer to actually _fix_ an ambiguity (correct a case's jurisdiction, activate policy coverage, resolve an overlapping version) — this slice only provides the interrupt/resume _mechanism_; the fix itself still requires direct data access, same as this manual verification did.
 - No timeout or escalation on an interrupted case sitting in `WAITING_FOR_REVIEW` indefinitely — a case can wait forever with no automatic re-routing to `MANUAL_REVIEW` if nobody ever resumes it.
 - No audit trail correlating a specific `resumeInterruptedEvaluationSignal`'s `actorId`/`note` to the outbox event history beyond the signal delivery itself — the `note` is not currently persisted anywhere (not written to any table or outbox payload).
-- Every other Section 9.6 trigger category not already covered (see M3-009's Findings) remains unimplemented for the same reasons as before — this slice only builds the interrupt/resume *mechanism* for the one category (`ambiguity`) that already had a real, honest trigger.
+- Every other Section 9.6 trigger category not already covered (see M3-009's Findings) remains unimplemented for the same reasons as before — this slice only builds the interrupt/resume _mechanism_ for the one category (`ambiguity`) that already had a real, honest trigger.
 
 ### Next safe step
 
@@ -3304,12 +3304,12 @@ Implemented and verified, closing the two largest remaining Section 10 items fro
 - `PolicyCatalogGeneration` (new entity, single row, `id=1`): a global generation counter, deliberately coarsened from the target 8-key vector (catalog/jurisdiction/product/program/tenant/lifecycle/source-coverage/resolver) to one key. This can only ever over-invalidate (an unrelated jurisdiction's policy change bumps the counter every other case's binding also compares against) — never under-invalidate — so correctness holds even though the target's per-dependency precision doesn't.
 - `CasePolicyBinding` gains `observedCatalogGeneration: number` (the generation observed when this binding was created or last confirmed) and `contextKey: string` (`` `${jurisdictionCode}|${productCode}|${lifecycleEvent}` ``, see Failures below for why this second field turned out to be required).
 - `CasePolicySnapshot.versions` now stores each matched rule's parsed `PolicyRuleDocument`, not just id/version refs — needed so the fast path can reconstruct a full `PolicyResolutionResult` from the snapshot alone (`reconstructResolution()`), with zero `PolicyVersion` lookups, when reusing a binding.
-- `PolicyEvaluationService.evaluate()` restructured: first checks `existingBinding.contextKey === currentContextKey && existingBinding.observedCatalogGeneration === currentGeneration && revalidateAfter > now` — if all three hold, returns `REUSED` immediately, no resolver call. Otherwise (generation moved, revalidateAfter expired, or context changed) it resolves for real; if the resolved digest is *still* identical to what's bound (generation moved elsewhere in the catalog but this case's own content didn't), the existing snapshot/binding is reused in place (observed generation and revalidateAfter refreshed, no duplicate snapshot row) rather than minting a new one — real, additional efficiency beyond just the fast path itself.
+- `PolicyEvaluationService.evaluate()` restructured: first checks `existingBinding.contextKey === currentContextKey && existingBinding.observedCatalogGeneration === currentGeneration && revalidateAfter > now` — if all three hold, returns `REUSED` immediately, no resolver call. Otherwise (generation moved, revalidateAfter expired, or context changed) it resolves for real; if the resolved digest is _still_ identical to what's bound (generation moved elsewhere in the catalog but this case's own content didn't), the existing snapshot/binding is reused in place (observed generation and revalidateAfter refreshed, no duplicate snapshot row) rather than minting a new one — real, additional efficiency beyond just the fast path itself.
 
 #### Policy activation and open-case impact assessment (Sections 10.2, 10.6)
 
 - `PolicyActivationService` (new): `activate()` (DRAFT/PROPOSED → RELEASED) and `withdraw()` (RELEASED → WITHDRAWN), each in a transaction that also bumps `PolicyCatalogGeneration`, then triggers `PolicyChangeImpactService.assessImpact()`. Rejects an activation/withdrawal from an invalid starting status (`BadRequestException`). No proposal-approval workflow exists yet (Known gap — this service is the whole activation authority for now, no separate policy-author/policy-approver role distinction).
-- `PolicyChangeImpactService` (new): given a changed `policyVersionId`, finds its `PolicyApplicability` triples, finds every open case matching each triple's jurisdiction/product that has an active `CasePolicyBinding`, dry-runs the resolver against that triple, and classifies each case as `NO_IMPACT` / `REQUIRES_REEVALUATION` / `AMBIGUOUS` (comparing the prior snapshot's resolved version-id set against the dry run's; `AMBIGUOUS` when the dry run itself comes back `REVIEW_REQUIRED`). Persists one `PolicyChangeImpactAssessment` row per case — advisory only, per Section 10.6 ("Impact assessment is advisory until an authorized reviewer approves the transition configuration"): it never touches the case's actual binding or snapshot, only records what the dry run found. A case's *next* real evaluation (already forced onto the slow path by the generation bump) is what actually applies any change.
+- `PolicyChangeImpactService` (new): given a changed `policyVersionId`, finds its `PolicyApplicability` triples, finds every open case matching each triple's jurisdiction/product that has an active `CasePolicyBinding`, dry-runs the resolver against that triple, and classifies each case as `NO_IMPACT` / `REQUIRES_REEVALUATION` / `AMBIGUOUS` (comparing the prior snapshot's resolved version-id set against the dry run's; `AMBIGUOUS` when the dry run itself comes back `REVIEW_REQUIRED`). Persists one `PolicyChangeImpactAssessment` row per case — advisory only, per Section 10.6 ("Impact assessment is advisory until an authorized reviewer approves the transition configuration"): it never touches the case's actual binding or snapshot, only records what the dry run found. A case's _next_ real evaluation (already forced onto the slow path by the generation bump) is what actually applies any change.
 - Known gap: no transition-rule/grandfathering evaluation — `PolicyRuleApplicability.transitionRule` exists and is parsed but nothing evaluates it, so Section 10.6's "future-effective" and "approved grandfathering" outcomes aren't distinguished from `NO_IMPACT`/`REQUIRES_REEVALUATION`.
 - No REST/GraphQL surface calls `PolicyActivationService` yet — verified via real-database tests and direct construction, not through the live API (see Verification).
 
@@ -3317,10 +3317,10 @@ Implemented and verified, closing the two largest remaining Section 10 items fro
 
 Both found by the real-database test suite catching genuinely wrong behavior, not by inspection — exactly what running real tests before committing is for.
 
-1. **Missing `contextKey` allowed the fast path to reuse a binding for the wrong context.** The first fast-path design only compared generation and `revalidateAfter`. `policy-evaluation.service.spec.ts`'s existing "invalidates an existing valid binding if a later evaluation becomes REVIEW_REQUIRED" test — which calls `evaluate()` a second time with a *different* `jurisdictionCode` for the same case, generation unchanged — caught this immediately: the fast path incorrectly returned the first jurisdiction's stale `REUSED` result instead of resolving the new, uncovered one to `REVIEW_REQUIRED`. Fixed by adding `contextKey` to `CasePolicyBinding` and requiring it to match before the fast path (or the slow path's reuse-in-place branch) applies.
+1. **Missing `contextKey` allowed the fast path to reuse a binding for the wrong context.** The first fast-path design only compared generation and `revalidateAfter`. `policy-evaluation.service.spec.ts`'s existing "invalidates an existing valid binding if a later evaluation becomes REVIEW_REQUIRED" test — which calls `evaluate()` a second time with a _different_ `jurisdictionCode` for the same case, generation unchanged — caught this immediately: the fast path incorrectly returned the first jurisdiction's stale `REUSED` result instead of resolving the new, uncovered one to `REVIEW_REQUIRED`. Fixed by adding `contextKey` to `CasePolicyBinding` and requiring it to match before the fast path (or the slow path's reuse-in-place branch) applies.
 2. **`bumpCatalogGeneration`'s raw `UPDATE ... RETURNING` query returned `undefined`.** `policy-activation.service.spec.ts`'s activation/withdrawal tests failed with `result.generation` being `undefined`. Rewritten to use `EntityManager.increment()` followed by a plain `findOneByOrFail()` inside the same transaction — TypeORM-native, no reliance on how a given driver version shapes a raw `RETURNING` result.
 
-A third issue was a test-only bug, not a code bug: an early version of the new fast-path test called `jest.spyOn(...).mockRestore()` *before* asserting on the spy's call count — `mockRestore()` clears recorded calls as part of restoring the original implementation, so the assertion always saw zero calls regardless of actual behavior. Fixed by reordering (assert, then restore) in both new spy-based tests.
+A third issue was a test-only bug, not a code bug: an early version of the new fast-path test called `jest.spyOn(...).mockRestore()` _before_ asserting on the spy's call count — `mockRestore()` clears recorded calls as part of restoring the original implementation, so the assertion always saw zero calls regardless of actual behavior. Fixed by reordering (assert, then restore) in both new spy-based tests.
 
 Verifying against real Postgres surfaced two of these three issues; only the `mockRestore()` ordering would have been generally reproducible against a mocked resolver too — the `contextKey` gap specifically needed a real second `evaluate()` call sequence to observe, and the `RETURNING` shape issue needed a real Postgres driver round trip.
 
@@ -3340,9 +3340,9 @@ Verifying against real Postgres surfaced two of these three issues; only the `mo
 ### Decisions and alternatives
 
 - **Global generation counter, not the target 8-key vector.** The full vector needs dimensions (tenant-scoped policy overlays, program-level policy, source-coverage tracking as a first-class signal) that don't exist as real, independent concepts in this codebase yet — building the full key now would mean most of its dimensions are permanently constant, i.e. decorative. A single global key is honestly coarser but genuinely correct (fail-safe direction: over-, never under-invalidate) and is real infrastructure a case's binding actually depends on today.
-- **Snapshot stores the parsed rule, not just refs.** The alternative (fast path re-fetches `PolicyVersion` rows by id from the snapshot's refs) would still avoid the *resolver's* jurisdiction/coverage/overlap-detection work, but would trade that for N point-reads plus N re-parses on every fast-path hit. Storing the already-parsed rule makes the fast path a single query with no further I/O.
+- **Snapshot stores the parsed rule, not just refs.** The alternative (fast path re-fetches `PolicyVersion` rows by id from the snapshot's refs) would still avoid the _resolver's_ jurisdiction/coverage/overlap-detection work, but would trade that for N point-reads plus N re-parses on every fast-path hit. Storing the already-parsed rule makes the fast path a single query with no further I/O.
 - **Reuse-in-place (not a new snapshot) when generation moved but content didn't.** The pre-M3-011 code always minted a new snapshot once past the initial reuse gate, simply because there was no second check after that point — not a deliberate choice. Since a snapshot's entire purpose is representing distinct resolved content, creating a byte-identical duplicate on every periodic revalidation would be pure bloat with no audit value; refreshing the existing row's generation/`revalidateAfter` in place is strictly more correct.
-- **Impact assessment is fully advisory — no automatic binding invalidation.** Section 10.6 says impact assessment is advisory until an authorized reviewer approves the transition; automatically invalidating bindings the moment an assessment runs would go further than the charter's own model and remove the human decision point it explicitly wants there. The generation bump already guarantees the case's *next* real evaluation takes the slow path regardless — no case can silently keep using stale content forever.
+- **Impact assessment is fully advisory — no automatic binding invalidation.** Section 10.6 says impact assessment is advisory until an authorized reviewer approves the transition; automatically invalidating bindings the moment an assessment runs would go further than the charter's own model and remove the human decision point it explicitly wants there. The generation bump already guarantees the case's _next_ real evaluation takes the slow path regardless — no case can silently keep using stale content forever.
 - **No REST/GraphQL endpoint for activation in this slice.** `PolicyActivationService` is real, tested against a real database, and ready to be called — but Section 15.2 describes this as GraphQL operations-console scope ("policy releases," "activation governance"), a separate, substantial surface-building slice of its own, not a natural extension of what this slice is about (the evaluation-time mechanics).
 
 ### Verification
@@ -3426,7 +3426,7 @@ Given a communication draft, the system must classify it `ROUTINE` only when eve
 
 - `CommunicationTemplate` (new entity): version-pinned, tenant-scoped (`UNIQUE(tenantId, templateKey, version)`), immutable once created — a content change is a new version, the same discipline `PolicyVersion` already uses. `bodyTemplate` uses `{{variableName}}` placeholders; `allowedVariables`/`attachmentsAllowed`/`channel`/`locale`/`recipientRelationship` are the allowlist Section 6.4 requires; `status` (`DRAFT`/`APPROVED`/`RETIRED`) gates whether it can back a routine message at all.
 - `src/communications/communication-render.ts`: pure `renderTemplate()` — exact placeholder substitution only, never free-form concatenation. A placeholder with no supplied value is left visibly unsubstituted (not blanked or dropped) so a reviewer can see exactly what's missing.
-- `src/communications/communication-classifier.ts`: pure `classifyCommunication()` (input + template lookup result → classification), testable with no database. `ROUTINE` requires: no free-form content; a found, `APPROVED` template; matching channel/locale/recipient relationship; attachments within the template's allowance; every supplied variable declared by the template and every declared variable supplied; and no negative-implication keyword in any supplied variable *value* (a deliberately crude, explicit substring blocklist — real sentiment/NLP classification would itself be a model-based judgment, which Section 6.4 requires classification to stay outside of; documented as a known gap, not a claim of semantic understanding). Every failing condition accumulates its own reason rather than stopping at the first.
+- `src/communications/communication-classifier.ts`: pure `classifyCommunication()` (input + template lookup result → classification), testable with no database. `ROUTINE` requires: no free-form content; a found, `APPROVED` template; matching channel/locale/recipient relationship; attachments within the template's allowance; every supplied variable declared by the template and every declared variable supplied; and no negative-implication keyword in any supplied variable _value_ (a deliberately crude, explicit substring blocklist — real sentiment/NLP classification would itself be a model-based judgment, which Section 6.4 requires classification to stay outside of; documented as a known gap, not a claim of semantic understanding). Every failing condition accumulates its own reason rather than stopping at the first.
 - `CommunicationMessage` (new entity): one row per draft, storing the classification, every reason, and the exact `renderedContent` + its `renderedContentHash` (sha256 via the existing `computeDigest()` from `policy-digest.ts` — reused rather than duplicated, since it's already a general-purpose, non-HMAC content fingerprint for one process talking to its own database).
 - `CommunicationApproval` (new entity) + `CommunicationApprovalService`: records a human's approval bound to `message.renderedContentHash` at approval time — the exact-render binding Section 6.4 requires. Rejects approving a `ROUTINE` message (never needed this kind of approval) or an already-approved one. **Not** a registered Agent tool, deliberately: Section 6.4 says "the Agent cannot... supply an approval result."
 - `src/agent-runtime/tools/draft-information-request.tool.ts`: Section 9.4's `draft_information_request` (`purpose: "Prepare a remediation request"`, `approvalBoundary: "No"`) — the fourth real registered tool. Calls `CommunicationMessageService.draft()`, returns the classification and its reasons. Not wired into the LangGraph runtime's graph (no current M2 workflow scenario needs the Agent to send a borrower-facing message — the condition-based flow only opens conditions and waits for reviewer resolution); registered and real, same status `check_case_completeness` had before something needed it.
@@ -3445,7 +3445,7 @@ Given a communication draft, the system must classify it `ROUTINE` only when eve
 ### Decisions and alternatives
 
 - **Negative-implication detection is a keyword blocklist over variable values, not a model.** Section 6.4 lists "negative or ambiguous implication" as one of several conditions that upgrade a message to `PROTECTED`, and Section 6.4's own closing sentence requires classification to be "deterministic application-service guards outside the model." A real semantic/sentiment classifier would itself be exactly the kind of model-based judgment that sentence excludes. A short, explicit, documented substring list is honest about being crude — it catches an obvious case (adverse language leaking into a variable) and nothing subtler.
-- **Only caller-supplied variable *values* are scanned, never the template body.** The template body is human-pre-approved at template-approval time; re-scanning already-reviewed, immutable content on every message would be redundant and could produce a false `PROTECTED` result for content a human already signed off on.
+- **Only caller-supplied variable _values_ are scanned, never the template body.** The template body is human-pre-approved at template-approval time; re-scanning already-reviewed, immutable content on every message would be redundant and could produce a false `PROTECTED` result for content a human already signed off on.
 - **`CommunicationApprovalService` is not a registered Agent tool.** Every other new capability in this codebase becomes a tool if the Agent could plausibly need it; this one deliberately does not, because Section 6.4 states the exclusion explicitly ("the Agent cannot... supply an approval result"), unlike the general default of "build it as a tool if there's a real use."
 - **`draft_information_request` is real but not wired into the LangGraph graph.** Matches the precedent already set by `check_case_completeness` (M3-006): a real, tested, registered tool with no current production caller, because nothing in the M2 workflow's deterministic condition-only flow currently needs the Agent to draft outbound messages. Wiring it in would mean inventing a new trigger condition (when should the Agent decide to request more information via message rather than just opening a condition?) that isn't yet a real, needed behavior.
 - **No real delivery channel, and none faked.** `CommunicationMessage.status` stops at `DRAFTED`/`AWAITING_APPROVAL`/`APPROVED` — there is no `SENT`/`DELIVERED` status, because no code path could honestly reach one. Real message delivery is provider-integration scope (Section 11, M4), the same boundary real credit/income/document provider calls are already behind.
@@ -3639,9 +3639,9 @@ Requested via an ad-hoc M3-closure audit (charter Section 20, M3 scope bullet 5:
 
 - **`evidenceRefs` scopes to exactly the evidence a caller says it used, not every fact on the case.** `EvaluationManifestService.assemble()` takes an `evidence: EvidenceFact[]` array rather than querying all facts for the case itself. `resolveOutcomeNode` today only reads the latest `INCOME` fact for its DSL evaluation — referencing every other fact on the case (credit, document) would overstate what the evaluation actually depended on. The pattern extends cleanly if a future rule reads more fact types: pass more facts in.
 - **The manifest is assembled only when a matched rule is about to justify a condition write, not on every `evaluate_policy` call.** Section 10.5's own text pairs manifest assembly with condition writes specifically ("condition writes use compare-and-swap... requires a new evaluation manifest"); assembling one for every evaluation regardless of outcome would be scope beyond what the charter text actually asks for, and would persist manifests for evaluations that concluded "no condition needed" — audit noise with no corresponding decision to audit.
-- **`authorizationDecisionId`/`consentVersionRefs`/`calculationRefs`/`modelAndPromptManifestId` stay null/empty rather than backfilled with placeholder or synthetic values.** This is the same principle applied throughout the session (`consentStatus`'s hardcoded `'VALID'` placeholder, the deliberately-unbuilt budget ledger): a field with no real backing subsystem gets an honest empty value and a comment explaining why, never a fabricated one that would misrepresent what was actually checked. `consentStatus` itself being a hardcoded placeholder is exactly why `consentVersionRefs` has nothing real to reference — there is no real *version* of a *hardcoded* consent status.
+- **`authorizationDecisionId`/`consentVersionRefs`/`calculationRefs`/`modelAndPromptManifestId` stay null/empty rather than backfilled with placeholder or synthetic values.** This is the same principle applied throughout the session (`consentStatus`'s hardcoded `'VALID'` placeholder, the deliberately-unbuilt budget ledger): a field with no real backing subsystem gets an honest empty value and a comment explaining why, never a fabricated one that would misrepresent what was actually checked. `consentStatus` itself being a hardcoded placeholder is exactly why `consentVersionRefs` has nothing real to reference — there is no real _version_ of a _hardcoded_ consent status.
 - **No FK constraint from `LoanCondition.evaluationManifestId` to `EvaluationInputManifest.id`.** Matches the existing `policySnapshotId` column's own precedent — both reference immutable, append-only, audit-purpose tables where a dangling reference from a hypothetical future deletion pass is an acceptable, already-accepted risk, not a new one this slice introduces.
-- **The manifest itself is not a new enforcement gate.** `create-condition.tool.ts`'s `expectedCaseVersion` compare-and-swap already provides the actual protection Section 10.5 describes (built earlier, before this slice). This slice adds the durable, evidence-backed *record* of what an evaluation read — closing the "no full manifest struct" gap that create-condition.tool.ts's own comment had documented since M3-010 — without duplicating or replacing the existing enforcement.
+- **The manifest itself is not a new enforcement gate.** `create-condition.tool.ts`'s `expectedCaseVersion` compare-and-swap already provides the actual protection Section 10.5 describes (built earlier, before this slice). This slice adds the durable, evidence-backed _record_ of what an evaluation read — closing the "no full manifest struct" gap that create-condition.tool.ts's own comment had documented since M3-010 — without duplicating or replacing the existing enforcement.
 
 ### Verification
 
@@ -3787,7 +3787,7 @@ Implemented and verified. `check_policy_change_impact` — "Compare an approved 
 
 ### Acceptance criterion
 
-Closes the specific gap M3-015 deferred: `PolicyChangeImpactService.assessImpact(policyVersionId)` only ever ran catalog-wide (every case an activation/withdrawal's applicability might affect), which doesn't fit an `AgentTool`'s `{tenantId, caseId}`-scoped contract — "does this policy change affect *my* case?" is a different, real question a case-scoped Agent run can ask on demand, independent of whether an activation/withdrawal ever triggered a scan.
+Closes the specific gap M3-015 deferred: `PolicyChangeImpactService.assessImpact(policyVersionId)` only ever ran catalog-wide (every case an activation/withdrawal's applicability might affect), which doesn't fit an `AgentTool`'s `{tenantId, caseId}`-scoped contract — "does this policy change affect _my_ case?" is a different, real question a case-scoped Agent run can ask on demand, independent of whether an activation/withdrawal ever triggered a scan.
 
 ### Implementation
 
@@ -3803,7 +3803,7 @@ Closes the specific gap M3-015 deferred: `PolicyChangeImpactService.assessImpact
 
 ### Decisions and alternatives
 
-- **Refactored to a shared private `assessOneCase()` rather than duplicating the dry-run-and-classify logic.** `assessImpact`'s loop and the new per-case method now differ only in *how* they arrive at the applicability triple to assess (enumerated from `PolicyApplicability` rows vs. derived directly from one case) — the assessment logic itself (find binding, dry-run, classify, persist) has exactly one implementation, so the two paths can never silently drift apart.
+- **Refactored to a shared private `assessOneCase()` rather than duplicating the dry-run-and-classify logic.** `assessImpact`'s loop and the new per-case method now differ only in _how_ they arrive at the applicability triple to assess (enumerated from `PolicyApplicability` rows vs. derived directly from one case) — the assessment logic itself (find binding, dry-run, classify, persist) has exactly one implementation, so the two paths can never silently drift apart.
 - **No new database table** — reuses the existing `PolicyChangeImpactAssessment` table (M3-011); a per-case assessment is written the same way a catalog-wide scan's per-case assessment already was, just triggered on demand instead of after an activation/withdrawal.
 
 ### Verification
@@ -3858,7 +3858,7 @@ Section 16.1: "separate policy-author and policy-approver roles, with independen
 
 - `PolicyTransitionApproval` (new entity): `policyVersionId`, `proposedBy`/`proposedAt`, `approvedBy`/`approvedAt` (both null until approved), `notes`. One row per proposal — never mutated except once, when `approve()` sets the two approval fields; a second proposal for the same version would be a new row (matching `PolicyVersion`'s own never-mutate-a-released-row discipline), though no code path currently creates a second proposal for the same version since `propose()` requires status `DRAFT` and `propose()` itself moves the version to `PROPOSED`.
 - `PolicyTransitionApprovalService` (new): `propose(policyVersionId, proposedBy, notes?)` requires `DRAFT` status, flips it to `PROPOSED` (the existing, previously-unused `PolicyReleaseStatus.PROPOSED` value — `PolicyActivationService.activate()` already accepted `PROPOSED` as an activatable status without anything setting it). `approve(policyVersionId, approvedBy)` rejects self-approval and rejects when there's no pending proposal. `hasApprovedTransition(policyVersionId)` — the gate `PolicyActivationService.activate()` checks.
-- `PolicyActivationService.activate()`: added a check for `hasApprovedTransition()` before the existing status check proceeds; throws `BadRequestException` with a message pointing at the propose/approve methods if missing. `withdraw()` is deliberately unchanged — Section 16.1's language and M3-011's original Known gap were both specifically about *activation*.
+- `PolicyActivationService.activate()`: added a check for `hasApprovedTransition()` before the existing status check proceeds; throws `BadRequestException` with a message pointing at the propose/approve methods if missing. `withdraw()` is deliberately unchanged — Section 16.1's language and M3-011's original Known gap were both specifically about _activation_.
 
 ### Affected files
 
@@ -3870,9 +3870,9 @@ Section 16.1: "separate policy-author and policy-approver roles, with independen
 
 ### Decisions and alternatives
 
-- **No formal RBAC/OIDC — self-approval rejection is the whole enforcement mechanism.** Section 16.1's first bullet ("OIDC/OAuth 2.0 for people... service-layer RBAC") is entirely unbuilt in this codebase (confirmed by the README's own "No authentication or tenant-scoped access control exists yet"). Building a real roles system just to gate this one workflow would be exactly the kind of premature infrastructure this session has consistently avoided (see the deliberately-unbuilt budget ledger). Comparing two plain actor-id strings is honest about what it actually checks: *a different person approved this*, not *a person with the policy-approver role approved this* — the entity's own comment says so explicitly.
+- **No formal RBAC/OIDC — self-approval rejection is the whole enforcement mechanism.** Section 16.1's first bullet ("OIDC/OAuth 2.0 for people... service-layer RBAC") is entirely unbuilt in this codebase (confirmed by the README's own "No authentication or tenant-scoped access control exists yet"). Building a real roles system just to gate this one workflow would be exactly the kind of premature infrastructure this session has consistently avoided (see the deliberately-unbuilt budget ledger). Comparing two plain actor-id strings is honest about what it actually checks: _a different person approved this_, not _a person with the policy-approver role approved this_ — the entity's own comment says so explicitly.
 - **Reuses the existing, previously dead `PolicyReleaseStatus.PROPOSED` value** rather than adding a new status or a separate boolean flag — the schema already had a place for "author submitted this for release, not yet approved," nothing had ever set it.
-- **`withdraw()` is not gated.** Broadening the same approval requirement to withdrawal was in scope for consideration, but Section 16.1's own language and the specific Known gap this closes are both about *activation*; gating withdrawal too is a real, separate design question (should an emergency withdrawal require the same two-person friction an activation does?) that deserves its own decision, not a default extension bundled into this slice.
+- **`withdraw()` is not gated.** Broadening the same approval requirement to withdrawal was in scope for consideration, but Section 16.1's own language and the specific Known gap this closes are both about _activation_; gating withdrawal too is a real, separate design question (should an emergency withdrawal require the same two-person friction an activation does?) that deserves its own decision, not a default extension bundled into this slice.
 - **`hasApprovedTransition` checks the single most recent proposal for a version, not "any approved proposal ever."** Since `propose()` requires `DRAFT` status and a version can only be `DRAFT` once (it moves to `PROPOSED` immediately), only one proposal per version exists in practice today — but writing the check as "most recent, must be approved" rather than "any approved row exists" keeps the invariant correct if a future change ever allows re-proposing (e.g., after some rejection flow this slice does not build).
 
 ### Verification
@@ -3941,7 +3941,7 @@ Section 9.4's `send_information_request` approval boundary: "Configured policy o
 
 - `CommunicationMessageStatus.SENT` (new enum value) and two new nullable columns on `CommunicationMessage` — `deliveryReference`, `sentAt`.
 - `CommunicationDeliverySimulator` (new, `src/communications/communication-delivery-simulator.ts`): mock delivery channel matching the existing `src/integrations/` simulator pattern — a deterministic synthetic confirmation id (sha256 of message id + content hash), not a real provider call.
-- `CommunicationDeliveryService` (new): `deliver(communicationMessageId)` is the actual gate — ready to send only when `(ROUTINE && DRAFTED)` or `(PROTECTED && APPROVED)`; anything else (still `AWAITING_APPROVAL`, already `SENT`) returns a typed `NOT_READY` result rather than delivering. On success: calls the simulator, updates the message to `SENT` with `deliveryReference`/`sentAt`, and writes a new signed `communication.delivered` outbox event — deliberately *not* including `renderedContent` in the event payload (unlike, say, `condition.opened`'s full description), since a borrower-facing communication's actual content is more sensitive than an internal condition reason and the outbox event only needs to prove delivery happened, not replay what was sent.
+- `CommunicationDeliveryService` (new): `deliver(communicationMessageId)` is the actual gate — ready to send only when `(ROUTINE && DRAFTED)` or `(PROTECTED && APPROVED)`; anything else (still `AWAITING_APPROVAL`, already `SENT`) returns a typed `NOT_READY` result rather than delivering. On success: calls the simulator, updates the message to `SENT` with `deliveryReference`/`sentAt`, and writes a new signed `communication.delivered` outbox event — deliberately _not_ including `renderedContent` in the event payload (unlike, say, `condition.opened`'s full description), since a borrower-facing communication's actual content is more sensitive than an internal condition reason and the outbox event only needs to prove delivery happened, not replay what was sent.
 - `send_information_request` (new Agent tool, `src/agent-runtime/tools/send-information-request.tool.ts`): a thin wrapper, same pattern as `evaluate_policy`. Not wired into the LangGraph graph — same status as `draft_information_request`/`escalate_to_reviewer`/`check_policy_change_impact`.
 - `publish_case_update` (Section 9.4's other communication tool) remains unbuilt this slice — it needs a real webhook subscription/delivery/retry subsystem (Section 11, explicitly M4 scope), not a thin wrapper over something that already exists the way this slice's tool was.
 
@@ -3958,9 +3958,9 @@ Section 9.4's `send_information_request` approval boundary: "Configured policy o
 
 ### Decisions and alternatives
 
-- **A deterministic simulator, not a synthetic-failure-injectable one.** `PlaidService`/`CreditService`/`DocumentService` all support `maybeThrowSyntheticProviderFailure()` keyed on a magic `borrowerId` prefix; a delivery simulator has no natural equivalent input (a `communicationMessageId`, not a borrower id) to key synthetic failure injection on, and this slice's actual point is the *authorization gate* (is this message allowed to send), not provider-flakiness retry behavior — which is what M2's existing retry-classification tests already cover for the evidence-fetching simulators. Adding synthetic delivery failures here would be scope not asked for by this slice's acceptance criterion.
+- **A deterministic simulator, not a synthetic-failure-injectable one.** `PlaidService`/`CreditService`/`DocumentService` all support `maybeThrowSyntheticProviderFailure()` keyed on a magic `borrowerId` prefix; a delivery simulator has no natural equivalent input (a `communicationMessageId`, not a borrower id) to key synthetic failure injection on, and this slice's actual point is the _authorization gate_ (is this message allowed to send), not provider-flakiness retry behavior — which is what M2's existing retry-classification tests already cover for the evidence-fetching simulators. Adding synthetic delivery failures here would be scope not asked for by this slice's acceptance criterion.
 - **`renderedContent` deliberately excluded from the `communication.delivered` outbox payload.** Every other outbox event in this codebase includes full domain detail (e.g. `condition.opened`'s complete DSL-evaluator reason string) — a borrower-facing message's actual delivered text is a different sensitivity class, and the event's purpose (proving delivery happened, with a reference an operator could look up) doesn't need to duplicate it.
-- **No delivery gate change to `CommunicationMessageService.draft()` itself** — `ROUTINE` messages still start at `DRAFTED`, exactly as M3-012 left them; this slice adds what happens *after* that state, not a new drafting behavior.
+- **No delivery gate change to `CommunicationMessageService.draft()` itself** — `ROUTINE` messages still start at `DRAFTED`, exactly as M3-012 left them; this slice adds what happens _after_ that state, not a new drafting behavior.
 
 ### Verification
 
@@ -4033,7 +4033,7 @@ Section 18.2 names a `evaluation/` directory structure and a first-release targe
 - `evaluation/cases/*.json` (12 new fixtures, one file per case): `normal` (4 — two income-matches, two discrepancies, including an overstatement case proving the DSL rule's `Math.abs()` symmetry), `boundary` (2 — 9.90% and 10.10% difference, precisely either side of the seeded rule's ">10%" threshold), `missing-data` (1 — an INCOME evidence fact that exists but is missing the field the rule reads), `policy-coverage` (1 — a jurisdiction that exists but was never reviewed for coverage), `provider-failure` (4 — transient and terminal synthetic failures across the income/credit/document fetch steps). Every numeric value was computed exactly against `PlaidService`'s real deterministic-per-`borrowerId` seed function, not chosen approximately — the boundary cases land at 9.900% and 10.098% difference precisely.
 - `src/evaluation/types.ts`: fixture and report type definitions. `EvaluationCategory` deliberately omits `contradiction` and `adversarial` from Section 18.2's list — no contradiction detector exists (Section 9.6's own documented gap) and no document/model-facing surface exists for an adversarial input to target, so there is nothing real for either category to check.
 - `src/evaluation/runner.ts`: `runCorpus()` calls `createCaseConditionsActivities()` — the exact factory `worker.ts` uses in production — and drives each fixture through `fetchIncomeEvidence`/`fetchCreditEvidence`/`fetchDocumentEvidence`/`evaluateConditions` directly (no Temporal needed, same pattern `case-conditions.activities.spec.ts` already established). `missing-data` fixtures insert a deliberately incomplete `EvidenceFact` instead of calling the real Plaid simulator; `provider-failure` fixtures call only the one fetch step expected to fail (a `SYNTHETIC-TRANSIENT-FAILURE-`/`SYNTHETIC-TERMINAL-FAILURE-` `borrowerId` prefix, the same real fault-injection mechanism `case-conditions.activities.spec.ts`'s retry-classification tests already use) and classify the resulting `ApplicationFailure`. `cleanupEvaluationRun()` deletes every row a run created, tenant-scoped, matching this session's established manual-verification cleanup discipline — so repeated `npm run evaluate` invocations never accumulate synthetic data.
-- `src/evaluation/report.ts`: `buildReport()` computes per-category pass counts and condition precision/recall (defined literally: recall = of cases expecting `CONDITION_OPENED`, the fraction that got it; precision = of cases that actually got `CONDITION_OPENED`, the fraction that were expected to), pins the real git commit/branch (`git rev-parse`, soft-failing to `null` outside a git checkout rather than fabricating a revision) and the real released `PolicyVersion` ids from the database, and explicitly records `modelAndPromptRevisions: null` with a note explaining why — the M3 Agent graph makes no model calls, so there is nothing real to pin, and Section 18.3 requires this be *recorded*, not silently absent.
+- `src/evaluation/report.ts`: `buildReport()` computes per-category pass counts and condition precision/recall (defined literally: recall = of cases expecting `CONDITION_OPENED`, the fraction that got it; precision = of cases that actually got `CONDITION_OPENED`, the fraction that were expected to), pins the real git commit/branch (`git rev-parse`, soft-failing to `null` outside a git checkout rather than fabricating a revision) and the real released `PolicyVersion` ids from the database, and explicitly records `modelAndPromptRevisions: null` with a note explaining why — the M3 Agent graph makes no model calls, so there is nothing real to pin, and Section 18.3 requires this be _recorded_, not silently absent.
 - `src/evaluation-report.ts`: the `npm run evaluate` entry point (`ts-node`, same pattern as `start:worker:dev`) — loads `.env` the same way `data-source.ts` does (outside Nest's DI container), runs the corpus, writes the report, prints a pass/fail summary, exits `1` if any case failed (CI-usable), and cleans up its own synthetic tenant/case data in a `finally` block regardless of outcome.
 
 ### Affected files
@@ -4125,7 +4125,7 @@ Section 20's exit evidence H: "a catalog activation racing with evaluation produ
 ### Implementation
 
 - `case_policy_bindings` gains a **partial unique index**, `IDX_case_policy_bindings_one_active` on `(tenantId, caseId) WHERE "invalidatedAt" IS NULL` — Postgres itself now rejects a second concurrent INSERT of an active binding for the same case, turning a silent data-integrity violation into a catchable, well-understood error.
-- `PolicyEvaluationService.evaluate()`'s final "create a brand-new binding" branch (the only branch that ever inserts a *new* active-binding row — the fast path and the two reuse-in-place branches only ever read or update an existing row by id, which is inherently race-safe) now wraps its `.save()` in a try/catch: on a unique-violation, it re-reads the case's now-current active binding (the concurrent call that won the race) and returns a coherent `REUSED` result referencing it, rather than letting the error propagate. Both callers converge on the exact same winning snapshot/binding.
+- `PolicyEvaluationService.evaluate()`'s final "create a brand-new binding" branch (the only branch that ever inserts a _new_ active-binding row — the fast path and the two reuse-in-place branches only ever read or update an existing row by id, which is inherently race-safe) now wraps its `.save()` in a try/catch: on a unique-violation, it re-reads the case's now-current active binding (the concurrent call that won the race) and returns a coherent `REUSED` result referencing it, rather than letting the error propagate. Both callers converge on the exact same winning snapshot/binding.
 - `isUniqueViolation()` extracted from `CasesService.createCase()` (which already used this exact pattern for its idempotency-key race) into a shared `src/database/postgres-errors.ts` — one detection function for both call sites instead of a second copy drifting from the first.
 - Two new real-database concurrency tests in `policy-evaluation.service.spec.ts`, added under a `describe('concurrency (exit evidence H)')` block:
   1. Two concurrent `evaluate()` calls for the same brand-new case converge on exactly one active binding, one `REFRESHED` + one `REUSED` outcome, both agreeing on the same binding/snapshot id.
@@ -4142,7 +4142,7 @@ Section 20's exit evidence H: "a catalog activation racing with evaluation produ
 
 ### Decisions and alternatives
 
-- **A partial unique index, not a full transaction wrapping the whole `evaluate()` method.** The only step that can create a *second* active row is the final INSERT; every other step either only reads, or updates an *existing* row by id (idempotent under concurrent duplication — two concurrent updates to the same row with the same or equivalent values cause no corruption). Scoping the fix to exactly the one dangerous operation, backed by a real database constraint rather than an application-level lock, means the guarantee holds even against a caller this codebase doesn't control yet (a future second process, a retried Temporal activity attempt overlapping with itself, etc.) — a DB constraint is enforced regardless of which application code path attempts the write.
+- **A partial unique index, not a full transaction wrapping the whole `evaluate()` method.** The only step that can create a _second_ active row is the final INSERT; every other step either only reads, or updates an _existing_ row by id (idempotent under concurrent duplication — two concurrent updates to the same row with the same or equivalent values cause no corruption). Scoping the fix to exactly the one dangerous operation, backed by a real database constraint rather than an application-level lock, means the guarantee holds even against a caller this codebase doesn't control yet (a future second process, a retried Temporal activity attempt overlapping with itself, etc.) — a DB constraint is enforced regardless of which application code path attempts the write.
 - **The concurrency test needed instrumentation to be a real test, not a hope.** An early version of test 1 simply fired two `Promise.all`-started `evaluate()` calls and asserted on the result — it passed even with the unique index temporarily dropped (proven by deliberately dropping it and re-running), because a fast local Postgres round-trip let one call's entire pipeline finish before the other's first read, so the "race" never actually happened. Fixed by using `jest.spyOn` to add a deliberate delay to whichever call's `resolver.resolve()` invocation happens second, guaranteeing genuine overlap. Verified in both directions: the test fails without the recovery-path fix (index dropped, or the catch block removed) and passes reliably (3 consecutive runs) with it — the standard this session holds every real-infra test to, applied here to a concurrency test specifically because concurrency tests are exactly the kind most likely to silently pass without testing anything.
 - **Test 2 (activation race) needed no such instrumentation** — its assertions hold regardless of exact interleaving (both orderings of "generation bump" vs. "read current generation" are already safe per `PolicyCatalogGeneration`'s own "over-, never under-invalidating" design), so it's a real test of an already-safe design, not a race the fix needed to newly guard against.
 
@@ -4191,8 +4191,8 @@ machine):
 
 ### Known gaps
 
-- The fast-path read (`getCurrentGeneration()` + `existingBinding` lookup) and the eventual write are still not wrapped in one database transaction — this slice fixes the one place that could corrupt data (a duplicate active binding), not every theoretical interleaving. A narrower remaining case: two concurrent calls could both take the slow path, both compute the *same* digest, and both attempt the "reuse in place" `UPDATE` on the same existing binding — harmless (idempotent), but not literally atomic. Not fixed here because it cannot produce an inconsistent result, only a redundant identical write.
-- This fixes evaluation-vs-evaluation and evaluation-vs-generation-bump races. A `PolicyActivationService.activate()` racing with *another* `activate()`/`withdraw()` call was not in scope for this slice (Section 20's exit evidence H names activation racing with *evaluation* specifically) and remains untested.
+- The fast-path read (`getCurrentGeneration()` + `existingBinding` lookup) and the eventual write are still not wrapped in one database transaction — this slice fixes the one place that could corrupt data (a duplicate active binding), not every theoretical interleaving. A narrower remaining case: two concurrent calls could both take the slow path, both compute the _same_ digest, and both attempt the "reuse in place" `UPDATE` on the same existing binding — harmless (idempotent), but not literally atomic. Not fixed here because it cannot produce an inconsistent result, only a redundant identical write.
+- This fixes evaluation-vs-evaluation and evaluation-vs-generation-bump races. A `PolicyActivationService.activate()` racing with _another_ `activate()`/`withdraw()` call was not in scope for this slice (Section 20's exit evidence H names activation racing with _evaluation_ specifically) and remains untested.
 
 ### Next safe step
 
@@ -4211,7 +4211,7 @@ Section 20's exit evidence B: "designated review cases always interrupt." Taken 
 ### Implementation
 
 - `src/agent-runtime/mandatory-review-triggers.ts` (new): `MandatoryReviewCategory` (four values this codebase can currently detect — `POLICY_AMBIGUITY`, `CONSENT_INVALID`, `BUDGET_OR_DEADLINE_EXHAUSTED`, `TOOL_EXECUTION_FAILURE`), one `CATEGORY_ROUTES` table mapping each to Section 9.5's two routes, and `classifyMandatoryReviewTrigger(category, detail)` producing a `{category, route, reason}` triple — the reason string itself prefixed with the category (e.g. `[POLICY_AMBIGUITY] jurisdiction "US-ZZ" has no covered policy source`) so it's legible standalone, not only alongside a separate category field.
-- `lending-operations-agent-runtime.ts`: `manualReview()`/`interruptForReview()` (two separate functions, each hardcoding its own route) replaced by one `routeMandatoryReview(agentState, trigger)` that dispatches purely on `trigger.route`. `consentInvalid()`/`budgetExceeded()` now return a classified `MandatoryReviewTrigger | undefined` instead of a bare string; every tool-failure call site and the policy-ambiguity branch now calls `classifyMandatoryReviewTrigger()` explicitly. No routing *behavior* changed — every trigger still takes the exact route it always did — only the *mechanism* deciding that route changed, from four independent inline decisions to one shared table.
+- `lending-operations-agent-runtime.ts`: `manualReview()`/`interruptForReview()` (two separate functions, each hardcoding its own route) replaced by one `routeMandatoryReview(agentState, trigger)` that dispatches purely on `trigger.route`. `consentInvalid()`/`budgetExceeded()` now return a classified `MandatoryReviewTrigger | undefined` instead of a bare string; every tool-failure call site and the policy-ambiguity branch now calls `classifyMandatoryReviewTrigger()` explicitly. No routing _behavior_ changed — every trigger still takes the exact route it always did — only the _mechanism_ deciding that route changed, from four independent inline decisions to one shared table.
 - `HumanReviewState` gained `category?: MandatoryReviewCategory`; `AgentRun` gained a persisted `reviewCategory` column (mirrored as `ReviewCategoryStatus` in `database/enums/agent-run.enum.ts`, matching this codebase's established mirror-don't-import pattern for database entities referencing Agent-runtime types — see `AgentRunRouteStatus`/`ToolAttemptOutcome`'s own precedent). `CaseTimelineService` surfaces `reviewCategory` in its `AGENT_RUN` entries' `detail`, alongside the free-text `reviewReason` — confirmed end-to-end via a real, live case (see Verification).
 
 ### Affected files
@@ -4226,8 +4226,8 @@ Section 20's exit evidence B: "designated review cases always interrupt." Taken 
 
 ### Decisions and alternatives
 
-- **Section 9.5's two-route distinction is preserved, not collapsed.** An earlier framing of this gap (this session's own M3-closure audit) described it as "only ambiguity interrupts; everything else routes to manual review" as if that were an inconsistency to fix toward more interrupting. Re-reading Section 9.5's own loop text closely, that two-route split is clearly the charter's intentional design (a substantive judgment call a reviewer resolves and retries, vs. a run-level failure that shouldn't just resume) — collapsing it would mean, for example, letting a budget-exhausted run "interrupt and resume" as if resuming were safe, which the charter never says. "Unifying routing" is implemented as unifying the *classification mechanism*, which is the real, concrete gap: no single place previously decided or recorded which category a trigger was, only which route it took.
-- **`TOOL_EXECUTION_FAILURE` is labeled honestly as not a literal Section 9.6 category.** Section 9.6 lists "malformed model or tool output" (a *content* problem with an otherwise-successful call) — this Agent's actual tool failures are genuine execution exceptions, not malformed-but-successful results, and this Agent makes no model calls at all. Rather than force-fit these into a Section-9.6-named bucket that doesn't quite match, the category is named for what it actually is, with a comment explaining the mismatch.
+- **Section 9.5's two-route distinction is preserved, not collapsed.** An earlier framing of this gap (this session's own M3-closure audit) described it as "only ambiguity interrupts; everything else routes to manual review" as if that were an inconsistency to fix toward more interrupting. Re-reading Section 9.5's own loop text closely, that two-route split is clearly the charter's intentional design (a substantive judgment call a reviewer resolves and retries, vs. a run-level failure that shouldn't just resume) — collapsing it would mean, for example, letting a budget-exhausted run "interrupt and resume" as if resuming were safe, which the charter never says. "Unifying routing" is implemented as unifying the _classification mechanism_, which is the real, concrete gap: no single place previously decided or recorded which category a trigger was, only which route it took.
+- **`TOOL_EXECUTION_FAILURE` is labeled honestly as not a literal Section 9.6 category.** Section 9.6 lists "malformed model or tool output" (a _content_ problem with an otherwise-successful call) — this Agent's actual tool failures are genuine execution exceptions, not malformed-but-successful results, and this Agent makes no model calls at all. Rather than force-fit these into a Section-9.6-named bucket that doesn't quite match, the category is named for what it actually is, with a comment explaining the mismatch.
 - **Only the four currently-detectable triggers got real categories.** Section 9.6 lists twelve; the other eight (contradictory evidence, evidence-confidence thresholds, unsupported policy interpretation, manual waiver/override, protected-communication triggers, provider-result-outside-contract, prompt-injection signals, tenant-risk-policy categories) have no real detector anywhere in this codebase and were not given placeholder categories — consistent with this session's standing rule against fabricating coverage for a capability that doesn't exist yet.
 - **No behavior change for any existing test or real run** — every trigger takes the exact same route (interrupt vs. manual review) it always did; only the classification path and the new persisted `reviewCategory` field are new. Verified by the fact every pre-existing test in `lending-operations-agent-runtime.spec.ts` still passes with only additive `category` assertions, not changed route expectations.
 
@@ -4306,7 +4306,7 @@ Section 20's exit evidence F: "every evaluation reads one immutable input manife
 
 - `resolveOutcomeNode` (`lending-operations-agent-runtime.ts`) restructured so manifest assembly happens for every completed DSL evaluation outcome, not only the one that leads to `create_condition`:
   - `evaluation.matchedVersions.length === 0` (a resolved, non-ambiguous "no policy applies to this product/jurisdiction/lifecycle" outcome — e.g. a loan product with no seeded rule) now assembles a manifest with empty `evidenceRefs` (nothing was read, since there was nothing to check) before returning `PROPOSED_ACTION` with no condition.
-  - The case where matched policy versions exist but none of their DSL conditions actually matched the case's real evidence (a genuine "checked and it's fine" outcome) now assembles a manifest referencing the evidence that *was* read, in the same place the manifest used to be built only for the matched case — moved earlier so it covers both outcomes uniformly.
+  - The case where matched policy versions exist but none of their DSL conditions actually matched the case's real evidence (a genuine "checked and it's fine" outcome) now assembles a manifest referencing the evidence that _was_ read, in the same place the manifest used to be built only for the matched case — moved earlier so it covers both outcomes uniformly.
   - The already-existing condition-opening path is unchanged in effect (still references the same manifest via `evaluationManifestId`), just now shares the single assembly call site with the no-match path instead of duplicating it.
 - The one deliberate exception: `evaluatePolicyNode`'s `REVIEW_REQUIRED` branch still assembles no manifest, because `PolicyEvaluationService` never creates a binding for an ambiguous resolution — `policyBindingId` (a required manifest field) would have nothing real to reference. Documented in both the branch's own comment and the entity's class comment, not silently left inconsistent.
 
@@ -4318,7 +4318,7 @@ Section 20's exit evidence F: "every evaluation reads one immutable input manife
 
 ### Decisions and alternatives
 
-- **No schema change.** `EvaluationInputManifest`'s shape was already general enough (evidence-agnostic — `evidenceRefs` can legitimately be empty) to represent a "nothing applicable" or "checked, nothing matched" outcome; broadening *when* it's assembled needed no new columns.
+- **No schema change.** `EvaluationInputManifest`'s shape was already general enough (evidence-agnostic — `evidenceRefs` can legitimately be empty) to represent a "nothing applicable" or "checked, nothing matched" outcome; broadening _when_ it's assembled needed no new columns.
 - **`REVIEW_REQUIRED` evaluations stay unmanifested, not force-fit with a placeholder `policyBindingId`.** Consistent with this session's standing rule against fabricating a field with no real value to reference — an ambiguous resolution genuinely has no binding, so a manifest claiming one would misrepresent what was actually read.
 - **The no-match manifest for `matchedVersions.length === 0` references zero evidence, not "every fact on the case."** Matches M3-014's own established scoping principle (`evidenceRefs` reflects exactly what the evaluation actually read) — since no rule needed checking, nothing was read, and the manifest says so honestly rather than padding it with unrelated facts.
 
@@ -4388,7 +4388,7 @@ Section 20's M4 exit evidence's first bullet: "a new simulator adapter is added 
 - `src/provider-platform/types.ts` — the full type layer: `ProviderCapability` (INCOME/ASSET/CREDIT/IDENTITY/DOCUMENT — only INCOME has a real adapter), `ProviderMode` (only `SIMULATOR` is ever implemented), `ProviderEffectClass`, `ProviderOperationIntentState`, and the `ProviderAdapter<TRequest,TReceipt,TFinding>` contract (`submit`/`normalize`/`healthCheck`, with `poll`/`cancel` declared optional for a future asynchronous adapter that doesn't exist yet).
 - `ProviderRegistryService` (`provider-registry.service.ts`) — `register()`/`resolve()`/`listRegistered()` keyed on capability+mode; `resolve()` throws on no match, `register()` throws on a duplicate. Deliberately dumb: Section 11.6's health/cost/fallback-order routing refinement has no real data to optimize over yet, since only one adapter is ever registered per capability today.
 - `ProviderAuthorizationService` (`provider-authorization.service.ts`) — `issue()` persists a `ProviderAuthorizationGrant` with a default 5-minute TTL; `revalidate()` re-reads the grant and checks tenant/case/provider/capability match, revocation, and expiry, returning a typed `{valid: false, reason}` rather than throwing, so the caller decides how to react; `revoke()` sets `revokedAt`.
-- `ProviderOperationIntentService` (`provider-operation-intent.service.ts`) — `prepare()` persists a `PREPARED` intent with a sha256 request fingerprint and a fresh UUID idempotency key *before* any external call; `markDispatched/Succeeded/FailedFinal/OutcomeUnknown()` record the real terminal (or ambiguous) outcome once known. A Temporal retry of the enclosing activity calls `prepare()` again rather than reusing the failed row, so the state history of every real attempt stays intact.
+- `ProviderOperationIntentService` (`provider-operation-intent.service.ts`) — `prepare()` persists a `PREPARED` intent with a sha256 request fingerprint and a fresh UUID idempotency key _before_ any external call; `markDispatched/Succeeded/FailedFinal/OutcomeUnknown()` record the real terminal (or ambiguous) outcome once known. A Temporal retry of the enclosing activity calls `prepare()` again rather than reusing the failed row, so the state history of every real attempt stays intact.
 - `dispatchProviderRequest()` (`dispatch-provider-request.ts`) — the generic dispatch pipeline every capability will eventually route through: resolve the adapter → issue a grant → persist the intent → revalidate the grant → dispatch → classify the outcome onto the intent (`SyntheticProviderRejectionError` → `FAILED_FINAL`, `SyntheticProviderTimeoutError` → `OUTCOME_UNKNOWN`) → normalize. Every current adapter is synchronous (`SynchronousProviderReceipt`), so this helper unwraps `receipt.payload` directly; a real asynchronous adapter would need a poll-until-terminal variant that doesn't exist yet.
 - `PlaidIncomeAdapter` (`integrations/plaid/plaid-income.adapter.ts`) — wraps `PlaidService.getIncomeData()` unchanged; `submit()` only takes the one parameter it actually uses (`request`), following the same pattern `normalize()` in `types.ts` already set for an interface parameter no simulator adapter needs yet.
 - `ProviderAdapterBootstrapService` (`integrations/provider-adapter-bootstrap.service.ts`) — an `OnModuleInit` hook that registers every real adapter this codebase has at process startup; the concrete proof of the exit-evidence bullet is that adding a capability means one adapter class plus one `register()` call here, never a change to the registry, the dispatch helper, or any workflow/Agent code that calls `resolve()`.
@@ -4408,8 +4408,8 @@ Section 20's M4 exit evidence's first bullet: "a new simulator adapter is added 
 
 ### Decisions and alternatives
 
-- **Only income migrated this slice, not credit and document too.** Migrating all three in one slice would have made it impossible to tell whether the registry pattern actually generalizes cleanly or whether the first adapter just happened to fit — M4-002 migrating credit/document with *no* change to the registry, dispatch helper, or authorization/intent services is the real proof of the exit-evidence bullet, not just three adapters existing.
-- **Promotion manifests, certification records, and two-person approval (Section 11.4/11.8) not built.** Every current adapter is `SIMULATOR`-mode; there is no second real provider mode to promote *to* yet, so a promotion-manifest schema would have no real transition to record — same reasoning already applied to the deliberately-deferred budget ledger. `ProviderMode` still names `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` as vocabulary (Section 11.1 names all three), never as a claim this codebase can talk to a real provider.
+- **Only income migrated this slice, not credit and document too.** Migrating all three in one slice would have made it impossible to tell whether the registry pattern actually generalizes cleanly or whether the first adapter just happened to fit — M4-002 migrating credit/document with _no_ change to the registry, dispatch helper, or authorization/intent services is the real proof of the exit-evidence bullet, not just three adapters existing.
+- **Promotion manifests, certification records, and two-person approval (Section 11.4/11.8) not built.** Every current adapter is `SIMULATOR`-mode; there is no second real provider mode to promote _to_ yet, so a promotion-manifest schema would have no real transition to record — same reasoning already applied to the deliberately-deferred budget ledger. `ProviderMode` still names `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` as vocabulary (Section 11.1 names all three), never as a claim this codebase can talk to a real provider.
 - **`ProviderAuthorizationGrant.consentRecordIds` stays always-empty, `permissiblePurposeDecisionId` and `permittedFields` stay always-null.** No consent-record, permissible-purpose, or field-addressable-capability subsystem exists yet — the same honest-null pattern `EvaluationInputManifest` established (M3-014), not a fabricated value for a field this codebase can't back.
 - **No reconciliation worker.** `RECONCILING` is declared in the state enum (matching the charter's full vocabulary) but nothing transitions an intent into it — an `OUTCOME_UNKNOWN` intent stays `OUTCOME_UNKNOWN` until a future reconciliation mechanism exists. Documented as a known gap, not silently unreachable.
 - **An unrecognized (non-synthetic) error from `submit()` leaves its intent in `DISPATCHED` forever.** `dispatchProviderRequest()` only classifies the two synthetic failure types onto the intent before rethrowing; a genuinely unexpected error (a real bug, not a simulated provider failure) propagates unchanged so `callProviderWithRetryClassification`'s existing unclassified-error behavior is preserved exactly, at the cost of that one intent row never reaching a terminal state. Acceptable for a `SIMULATOR`-only codebase where "unrecognized error" today only ever means a real bug in the adapter code, not a real provider being weird.
@@ -4609,9 +4609,9 @@ Section 15.3: "checked and published OpenAPI artifact," "stable operation identi
 ### Decisions and alternatives
 
 - **`openapi/openapi.json` and `client/generated/schema.d.ts` are checked in, unlike `src/schema.gql` (gitignored).** `schema.gql` regenerates automatically on every app start (`autoSchemaFile` in `app.module.ts`) so it's never stale; these two artifacts only regenerate on an explicit `npm run generate:*` step, so leaving them out of git would mean a fresh clone can't typecheck `client/` or serve `/api-docs-json`'s checked-in counterpart until someone remembers to run codegen — bad for exactly the "quickstart" experience this slice is building. Section 15.3's own "checked... OpenAPI artifact" language settles the first one explicitly; the generated client types followed the same reasoning for consistency.
-- **No `@nestjs/swagger` CLI plugin, explicit decorators instead.** Considered and rejected: the plugin only transforms code through the Nest compiler, and this codebase's scripts (including the new `generate-openapi-spec.ts`) run via plain `ts-node` to match `evaluation-report.ts`'s existing convention — a plugin-dependent approach would silently produce a *different*, decorator-less schema depending on which runner generated it. Explicit decorators cost more lines but behave identically everywhere.
+- **No `@nestjs/swagger` CLI plugin, explicit decorators instead.** Considered and rejected: the plugin only transforms code through the Nest compiler, and this codebase's scripts (including the new `generate-openapi-spec.ts`) run via plain `ts-node` to match `evaluation-report.ts`'s existing convention — a plugin-dependent approach would silently produce a _different_, decorator-less schema depending on which runner generated it. Explicit decorators cost more lines but behave identically everywhere.
 - **`openapi-typescript` + `openapi-fetch` over a full codegen tool (e.g. `openapi-typescript-codegen`).** For a 6-endpoint REST surface, a full generated service/model file tree is more machinery than the surface needs — matches this codebase's standing "no premature abstraction" rule. `openapi-typescript`'s output actually is fully generated (never hand-edited); `client/index.ts` is the one small hand-written file, a thin wrapper, not a duplicate of anything the generator already produces.
-- **`npm install openapi-typescript --legacy-peer-deps` broke the app the first time (Errors and fixes below) — fixed via a targeted `package.json` `overrides` entry, not by leaving `--legacy-peer-deps` in place.** `--legacy-peer-deps` disables peer-dependency resolution for the *entire* install, not just the one package with the conflicting peer range; it silently pruned `@apollo/server` (an implicit, unlisted peer of `@nestjs/apollo`/`@apollo/server-plugin-landing-page-graphql-playground` that npm had been auto-installing) along with 27 other packages. The `overrides` entry (`openapi-typescript.typescript` pinned to `$typescript`, the root's own resolved version) satisfies just that one package's peer check without touching how npm resolves anything else.
+- **`npm install openapi-typescript --legacy-peer-deps` broke the app the first time (Errors and fixes below) — fixed via a targeted `package.json` `overrides` entry, not by leaving `--legacy-peer-deps` in place.** `--legacy-peer-deps` disables peer-dependency resolution for the _entire_ install, not just the one package with the conflicting peer range; it silently pruned `@apollo/server` (an implicit, unlisted peer of `@nestjs/apollo`/`@apollo/server-plugin-landing-page-graphql-playground` that npm had been auto-installing) along with 27 other packages. The `overrides` entry (`openapi-typescript.typescript` pinned to `$typescript`, the root's own resolved version) satisfies just that one package's peer check without touching how npm resolves anything else.
 - **Health endpoints (`/health/live`, `/health/ready`) left with NestJS Swagger's default, undecorated operationIds.** They're infra liveness/readiness probes, not part of the Section 15.1 partner API surface this slice's own OpenAPI description explicitly scopes to — not worth the same explicit-`operationId` treatment as the partner-facing endpoints.
 
 ### Verification
@@ -4665,12 +4665,12 @@ Manual live verification (real REST API + real Temporal worker):
 ### Security, privacy, cost, and compatibility
 
 - The interactive `/api-docs` UI is gated to `NODE_ENV=development` only, identical reasoning and identical gate to the existing GraphQL Playground (charter 16.1). The checked-in `openapi/openapi.json` is a static file, not a live introspection endpoint — publishing it is the point (Section 15.3).
-- No new externally-visible *behavior* — every endpoint's actual logic is byte-for-byte unchanged; this slice only adds documentation/typing/tooling around the existing six routes.
+- No new externally-visible _behavior_ — every endpoint's actual logic is byte-for-byte unchanged; this slice only adds documentation/typing/tooling around the existing six routes.
 - `client/quickstart.ts` creates real (visibly synthetic) tenant/case/evidence/condition/agent-run/outbox rows against whatever database it's pointed at — intentional (a quickstart is meant to leave a browsable result behind), documented in `docs/QUICKSTART.md`, and only ever run by a developer against their own local/scratch environment.
 
 ### Known gaps
 
-- Only `CasesController`'s 6 endpoints are documented — the rest of Section 15.1's target partner API (consents, documents, conditions/evidence listing, policy snapshots, provider operations, audit export, webhook endpoints) doesn't exist in this codebase yet, so it isn't represented in the OpenAPI artifact either. The artifact's own `description` field says this explicitly rather than silently looking complete. **Partially closed by normal development, confirmed at M5-030**: every real controller built since this slice (`WebhookEndpointsController`/`WebhookDeliveriesController` at M4-004, `CommunicationMessagesController` at M5-022) was written *with* `@ApiTags`/`@ApiOperation` decoration from the start, not left undocumented — `npm run generate:openapi` covers 100% of this codebase's real routes today (14 documented operations across 4 controllers, confirmed via a real regeneration producing zero diff against the checked-in artifact). What's still true: consents, documents, policy snapshots, provider operations, and audit export still have no REST surface at all — an OpenAPI *documentation* gap this specific bullet named, but really a "these routes were never built" gap, the same category as M4-007/M5-029's own "no admin RBAC surface" finding.
+- Only `CasesController`'s 6 endpoints are documented — the rest of Section 15.1's target partner API (consents, documents, conditions/evidence listing, policy snapshots, provider operations, audit export, webhook endpoints) doesn't exist in this codebase yet, so it isn't represented in the OpenAPI artifact either. The artifact's own `description` field says this explicitly rather than silently looking complete. **Partially closed by normal development, confirmed at M5-030**: every real controller built since this slice (`WebhookEndpointsController`/`WebhookDeliveriesController` at M4-004, `CommunicationMessagesController` at M5-022) was written _with_ `@ApiTags`/`@ApiOperation` decoration from the start, not left undocumented — `npm run generate:openapi` covers 100% of this codebase's real routes today (14 documented operations across 4 controllers, confirmed via a real regeneration producing zero diff against the checked-in artifact). What's still true: consents, documents, policy snapshots, provider operations, and audit export still have no REST surface at all — an OpenAPI _documentation_ gap this specific bullet named, but really a "these routes were never built" gap, the same category as M4-007/M5-029's own "no admin RBAC surface" finding.
 - No RFC 9457 problem-details error format, no request/trace identifiers on responses, no pagination, no rate-limit headers, no API version/deprecation policy, no contract tests for backward compatibility — all named in Section 15.3, none built yet.
 - No authentication on this REST surface at all (unchanged, long-standing gap since M2). **Closed by M5-001 through M5-024** — every real route has required a real credential (`TenantAuthGuard`: machine `api_clients` or OIDC) since M5-001, and this bullet was never updated to say so.
 - A Python generated client (Section 15.1: "may follow after the OpenAPI contract stabilizes") is explicitly out of scope — not attempted.
@@ -4696,7 +4696,7 @@ Section 20's M4 scope: "webhook subscriptions, delivery retries, history, and re
 - `WebhookEndpointService` — `create()` (generates a real `randomBytes(32)` secret, returned once), `findActiveForTenantAndEventType()`, `findByIdOrFail()`.
 - `WebhookDispatchService` — `dispatchPendingEvents({ now? })`: sweeps unpublished outbox events in batches of 50, creates delivery rows for every currently-subscribed active endpoint, marks each event published (meaning "handed to the webhook subsystem," the outbox pattern's standard meaning — not "delivered to everyone"), then attempts every due delivery (fresh, or past its backoff window) with a real `fetch()` POST, a 10s timeout via `AbortController`, and up to 5 attempts before `FAILED_FINAL`. The injectable `now` clock (same pattern as `webhook-signer.ts`'s `verifyWebhookSignature`) lets tests simulate a backoff window elapsing without a real wall-clock wait, without making production's actual backoff intervals artificially short.
 - `WebhookEndpointsController`/`WebhookDeliveriesController` — the charter's exact two routes, `@nestjs/swagger`-decorated the same way M4-003 decorated `CasesController` (explicit `operationId`s, `@ApiProperty()` throughout).
-- `worker.ts` gained a `setInterval`-driven poll loop (`WEBHOOK_DISPATCH_INTERVAL_MS`, default 5000ms, new validated env var) calling `dispatchPendingEvents()` — Section 12.1's Worker service scope names "webhook delivery" explicitly. Not a Temporal workflow/activity: a `WebhookDelivery` row already *is* the durable record of what's attempted and what's still due, so a crash between polls loses nothing — the next poll just picks it back up. (Section 12.2's own architecture diagram draws "Outbox dispatcher" as hanging off the API service rather than the Worker service, which reads as mildly in tension with 12.1's prose — noted here rather than silently resolved, same discipline as prior charter-tension notes this session; the prose's explicit "webhook delivery" listing under Worker service is what this slice followed.)
+- `worker.ts` gained a `setInterval`-driven poll loop (`WEBHOOK_DISPATCH_INTERVAL_MS`, default 5000ms, new validated env var) calling `dispatchPendingEvents()` — Section 12.1's Worker service scope names "webhook delivery" explicitly. Not a Temporal workflow/activity: a `WebhookDelivery` row already _is_ the durable record of what's attempted and what's still due, so a crash between polls loses nothing — the next poll just picks it back up. (Section 12.2's own architecture diagram draws "Outbox dispatcher" as hanging off the API service rather than the Worker service, which reads as mildly in tension with 12.1's prose — noted here rather than silently resolved, same discipline as prior charter-tension notes this session; the prose's explicit "webhook delivery" listing under Worker service is what this slice followed.)
 
 ### Affected files
 
@@ -4715,13 +4715,13 @@ Section 20's M4 scope: "webhook subscriptions, delivery retries, history, and re
 - **One `WebhookDelivery` row per (event, endpoint), with an in-place `attempts` array, not a separate parent-delivery + child-attempt-row schema.** A normalized two-table design was considered; given the actual data volumes at this codebase's scale, a jsonb array on the delivery row gives the exact same "signed attempt history" Section 14.1 asks for with one less table and no join required for `GET /v1/webhook-deliveries/{id}` to return the full history in one query.
 - **A `setInterval` poll loop in `worker.ts`, not a new Temporal workflow.** Considered and rejected: Temporal's durable-execution guarantee exists to survive a crash mid-workflow, but a `WebhookDelivery` row already provides that durability for this specific job (its own `status`/`attempts`/`nextAttemptAt` fully describe what's left to do) — wrapping it in a workflow would duplicate state Temporal doesn't need to own, not add real safety.
 - **No `@nestjs/schedule` dependency.** A single `setInterval` matches this codebase's "no premature abstraction" rule for one periodic job; a scheduling library earns its cost once there are multiple jobs needing cron-style expressions, retries-of-the-scheduler-itself, or distributed-lock coordination across multiple worker instances — none of which exist yet (this codebase runs exactly one worker process).
-- **`WebhookDelivery`'s foreign keys are real (`ON DELETE CASCADE`), unlike the M4-001 provider-platform tables' deliberately-loose uuid references.** Different relationship shape: a `ProviderOperationIntent` referencing a `ProviderAuthorizationGrant` is a *citation* (the grant may need to outlive the intent for audit purposes even after a case is purged); a `WebhookDelivery` referencing its `WebhookEndpoint`/`OutboxEvent` is *ownership* — the same shape `tool_attempts -> agent_runs` already has a real FK for. Matching the existing precedent for each relationship's actual shape, not applying one convention uniformly regardless of fit.
+- **`WebhookDelivery`'s foreign keys are real (`ON DELETE CASCADE`), unlike the M4-001 provider-platform tables' deliberately-loose uuid references.** Different relationship shape: a `ProviderOperationIntent` referencing a `ProviderAuthorizationGrant` is a _citation_ (the grant may need to outlive the intent for audit purposes even after a case is purged); a `WebhookDelivery` referencing its `WebhookEndpoint`/`OutboxEvent` is _ownership_ — the same shape `tool_attempts -> agent_runs` already has a real FK for. Matching the existing precedent for each relationship's actual shape, not applying one convention uniformly regardless of fit.
 
 ### Errors and fixes
 
 - **`@IsUrl({ require_tld: false })` alone did not reject the literal string `'not-a-url'` — it validated successfully.** Found by a deliberate negative-case e2e test failing ("expected 400, got 201"), not by accident. Root cause: `require_tld: false` alone (needed to allow `http://127.0.0.1:PORT/...` targets for local/test receivers) also relaxes `validator.js`'s scheme requirement enough to accept a bare word as a "hostname with no TLD." Fixed by adding `require_protocol: true` alongside it — `not-a-url` (no scheme) is correctly rejected, `http://127.0.0.1:54321/hook` (has a scheme, no TLD) still passes. Verified via a standalone script exercising `class-validator` directly against both inputs before and after the fix, then confirmed via the full e2e suite.
 - **`npm install -D openapi-typescript --legacy-peer-deps` (M4-003) already established the `package.json` `overrides` fix this slice's `npm install` relied on** — no repeat of that incident; installing no new packages this slice (`@nestjs/swagger`, `openapi-fetch` already present) meant nothing new to conflict.
-- **The dispatch tests' first run left the scratch database's `webhook_deliveries`/`webhook_endpoints` tables with residual rows, and a second run picked up a stale in-progress retry from the first run mid-suite.** `WebhookDispatchService.dispatchPendingEvents()` sweeps the *whole* table by design (every unpublished event, every due delivery, not scoped to one test) — a persistent scratch database without cleanup between test-suite invocations accumulates cross-run state, which a later run's assertions could pick up. Fixed by tracking every `tenantId` a test creates and deleting exactly those rows in `afterAll`; verified by running the suite twice in direct succession and confirming zero residual rows and identical results both times.
+- **The dispatch tests' first run left the scratch database's `webhook_deliveries`/`webhook_endpoints` tables with residual rows, and a second run picked up a stale in-progress retry from the first run mid-suite.** `WebhookDispatchService.dispatchPendingEvents()` sweeps the _whole_ table by design (every unpublished event, every due delivery, not scoped to one test) — a persistent scratch database without cleanup between test-suite invocations accumulates cross-run state, which a later run's assertions could pick up. Fixed by tracking every `tenantId` a test creates and deleting exactly those rows in `afterAll`; verified by running the suite twice in direct succession and confirming zero residual rows and identical results both times.
 
 ### Verification
 
@@ -4779,7 +4779,7 @@ real standalone Node HTTP receiver script — not a test harness):
 
 - Every delivery attempt is HMAC-signed with a per-endpoint secret and carries a timestamp bound into the signature — a receiver that implements the documented verification contract (`verifyWebhookSignature`, exported for exactly this purpose) can reject both tampered payloads and replayed old requests, not only the former.
 - A webhook secret is returned exactly once, at endpoint creation, and never re-serialized on any other response this codebase has (there is no `GET`/`list` endpoint for `WebhookEndpoint` yet — Known gaps).
-- No new externally-visible *behavior* on the existing six `CasesController` endpoints — this slice is purely additive.
+- No new externally-visible _behavior_ on the existing six `CasesController` endpoints — this slice is purely additive.
 - Real outbound HTTP calls now originate from the worker process (to whatever `targetUrl` a caller registers) — no allowlist, SSRF guard, or egress restriction exists yet (Known gap; the charter names SSRF-through-webhook-configuration explicitly as a threat-model concern for a later milestone).
 - Bounded work per dispatch tick (`EVENT_BATCH_SIZE`/`DELIVERY_BATCH_SIZE` = 50) and a 10s per-attempt timeout — a slow or hanging receiver can't stall the whole dispatch loop indefinitely.
 
@@ -4800,7 +4800,7 @@ Both of M4's genuinely-buildable-today scope items (REST/OpenAPI/client/quicksta
 
 ### Status
 
-Implemented and verified. `AssetService`/`IdentityService` (`src/integrations/asset/`, `src/integrations/identity/`) are two new deterministic simulators, matching the existing Plaid/Credit/Document simulators' shape exactly (opt-in synthetic-failure injection, a distinct deterministic hash-based seed per service, simulated latency). `AssetVerificationAdapter`/`IdentityVerificationAdapter` wrap them and are registered into `ProviderRegistryService` alongside the other three — all five capabilities Section 7.2 names now have a real `SIMULATOR` adapter. Deliberately *not* wired into `case-conditions.workflow.ts`'s evidence-fetch step or `check_case_completeness`'s required-fact-type list (see Decisions) — this slice closes the provider-platform-layer gap, not a workflow-integration gap that doesn't exist yet.
+Implemented and verified. `AssetService`/`IdentityService` (`src/integrations/asset/`, `src/integrations/identity/`) are two new deterministic simulators, matching the existing Plaid/Credit/Document simulators' shape exactly (opt-in synthetic-failure injection, a distinct deterministic hash-based seed per service, simulated latency). `AssetVerificationAdapter`/`IdentityVerificationAdapter` wrap them and are registered into `ProviderRegistryService` alongside the other three — all five capabilities Section 7.2 names now have a real `SIMULATOR` adapter. Deliberately _not_ wired into `case-conditions.workflow.ts`'s evidence-fetch step or `check_case_completeness`'s required-fact-type list (see Decisions) — this slice closes the provider-platform-layer gap, not a workflow-integration gap that doesn't exist yet.
 
 ### Acceptance criterion
 
@@ -4900,7 +4900,7 @@ Section 20's M5 exit evidence: "cross-tenant tests fail closed at API, service, 
 
 - `ApiClient` entity (`src/database/entities/api-client.entity.ts`), `ApiClientStatus` enum (ACTIVE/REVOKED), one migration (`1787065685817-ApiClients.ts`). `hashedSecret` is `{salt}:{scryptDigest}` (`src/auth/api-client-secret.ts` — `generateApiClientSecret`/`hashApiClientSecret`/`verifyApiClientSecret`, Node's built-in `crypto.scrypt`, no new dependency); the raw secret is never persisted anywhere, generated fresh and returned exactly once.
 - `ApiKeyGuard` (`src/auth/api-key.guard.ts`) — a `CanActivate` reading `Authorization: Bearer {clientId}.{secret}`, resolving and verifying the credential, and attaching `{tenantId, apiClientId}` to the request as `AuthContext`. Every failure path (missing header, malformed token, malformed clientId, unknown clientId, wrong secret, revoked client) throws the identical `UnauthorizedException` with the identical message — deliberately generic, the same "don't leak which part failed" reasoning `HealthController.ready()` already applies to database-unreachable responses.
-- `AuthTenantId()` (`src/auth/auth-tenant-id.decorator.ts`) — a param decorator reading `request.authContext.tenantId`, the *only* way a controller method ever learns the caller's tenant. Throws a plain `Error` (a programming-error signal, not a caller-triggerable state) if used on a route that forgot `@UseGuards(ApiKeyGuard)`.
+- `AuthTenantId()` (`src/auth/auth-tenant-id.decorator.ts`) — a param decorator reading `request.authContext.tenantId`, the _only_ way a controller method ever learns the caller's tenant. Throws a plain `Error` (a programming-error signal, not a caller-triggerable state) if used on a route that forgot `@UseGuards(ApiKeyGuard)`.
 - `ApiClientService.create()` + `npm run create-api-client -- <tenantId> <name>` (`src/create-api-client.ts`) — no REST endpoint mints credentials (an endpoint that could would need its own "who's allowed to create API clients" authorization story first, which is exactly the administrative-duties/RBAC work this slice isn't attempting), matching this codebase's existing precedent for tenant creation itself (README: "seed one directly... for local use").
 - `CasesController`/`WebhooksController`s: `@UseGuards(ApiKeyGuard)` + `@ApiBearerAuth()` at the controller level; every method gained an `@AuthTenantId() tenantId: string` first parameter. `CasesService`/`WebhookEndpointService`/`WebhookDeliveryService` methods now take `tenantId` as a real parameter (not sourced from a DTO) and filter every tenant-scoped query on it — `CasesService.getCase()`'s query changed from `findOneBy({ id: caseId })` to `findOneBy({ id: caseId, tenantId })`, the concrete mechanism behind "cross-tenant fails closed at... the service... layer."
 - `CreateCaseDto`/`CreateWebhookEndpointDto` lost their `tenantId` field entirely — not just stopped trusting it, removed the field, so there is nothing left for a caller to get right or wrong (the exit evidence's "fails closed" read literally: failure isn't possible because the unsafe path no longer exists).
@@ -4921,16 +4921,16 @@ Section 20's M5 exit evidence: "cross-tenant tests fail closed at API, service, 
 
 ### Decisions and alternatives
 
-- **Scoped API-client bearer tokens, not OIDC.** Section 20 M5 names both ("OIDC and scoped API-client authentication") as one bullet. Building a compliant OIDC authorization server from scratch, or integrating a real external IdP this codebase has no relationship with, is its own, much larger, separately-scoped effort — the same reasoning already applied to deferring the provider platform's `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` modes (M4-001) until a real second target exists. A scoped bearer credential is a real, complete instance of the *other* half of that same bullet, not a shortcut standing in for the whole thing.
+- **Scoped API-client bearer tokens, not OIDC.** Section 20 M5 names both ("OIDC and scoped API-client authentication") as one bullet. Building a compliant OIDC authorization server from scratch, or integrating a real external IdP this codebase has no relationship with, is its own, much larger, separately-scoped effort — the same reasoning already applied to deferring the provider platform's `AUTHORIZED_SANDBOX`/`PRODUCTION_BYOC` modes (M4-001) until a real second target exists. A scoped bearer credential is a real, complete instance of the _other_ half of that same bullet, not a shortcut standing in for the whole thing.
 - **PostgreSQL RLS (the exit evidence's "database layer") deliberately deferred, not attempted partially.** Doing it correctly requires either a connection-per-request architecture (so a `SET LOCAL app.current_tenant_id` reliably scopes to one request under connection pooling) or careful per-transaction session-variable discipline threaded through every repository call site — a meaningfully separate, larger unit of work. A half-correct RLS implementation would be actively worse than none: it would look like a real defense-in-depth layer while being silently bypassable under real connection-pool reuse, which is a worse outcome than an honestly-documented gap. Named explicitly in Known Gaps below, not silently skipped.
 - **`tenantId` removed from request DTOs entirely, not merely ignored if present.** An earlier design considered requiring the caller to redundantly supply `tenantId` and validating it matches the authenticated credential (403 on mismatch) — rejected because it leaves a whole class of "did the check actually run" bugs available to introduce later. Removing the field is the same "fails closed by construction, not by remembering to check" reasoning `ProviderRegistryService`/`dispatch-provider-request.ts` already apply to routing.
 - **A cross-tenant lookup 404s, never 403s.** A 403 would itself leak that the resource exists (just not yours) — this codebase already applies the identical reasoning to `HealthController.ready()`'s deliberately generic failure response; extended here to every tenant-scoped lookup.
-- **`AuthModule` is `@Global()`, and `ApiClient` is *also* independently registered via `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (see Errors and fixes).** The second part looks redundant next to `@Global()` — it's the actual empirical fix for a real NestJS testing-injector limitation, kept because it's proven to work, not removed for tidiness once the bug stopped reproducing.
+- **`AuthModule` is `@Global()`, and `ApiClient` is _also_ independently registered via `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (see Errors and fixes).** The second part looks redundant next to `@Global()` — it's the actual empirical fix for a real NestJS testing-injector limitation, kept because it's proven to work, not removed for tidiness once the bug stopped reproducing.
 
 ### Errors and fixes
 
-- **`Authorization: Bearer garbage.token` (a syntactically well-formed-enough but non-UUID clientId) crashed with an unhandled 500, not a clean 401.** Found during live manual verification against the real running API (not by a written test first) — Postgres rejected the malformed UUID literal (`22P02 invalid_text_representation`) before `ApiKeyGuard` ever got to say "unknown client." Fixed by validating the clientId against a UUID shape regex *before* any database query — a malformed credential now fails exactly like every other invalid-credential path, with no query ever reaching Postgres. Added a dedicated regression test (`api-key.guard.spec.ts`: "rejects a clientId that is not a well-formed UUID") and re-verified live against a freshly restarted API process with real curl requests (missing header, valid cross-tenant credential, malformed token, well-formed-but-unknown clientId, and the owning tenant's own credential) — all five now return the correct status, confirmed after the fix, not just in the unit test.
-- **`Test.createTestingModule({imports: [AppModule]}).compile()` failed with `Nest can't resolve dependencies of the ApiKeyGuard... "ApiClientRepository" ... available in the WebhooksModule module`, even though the identical production boot (`NestFactory.create`, `npm run start:dev`) started cleanly.** `AuthModule` exporting `ApiKeyGuard` (and being `@Global()`) was not sufficient for Nest's *testing* injector (`TestingInjector`/`TestingInstanceLoader` — a different code path than the production bootstrapper) to resolve the guard's own `@InjectRepository(ApiClient)` dependency when the guard is applied via `@UseGuards(ApiKeyGuard)` (a raw class reference) at the controller level in a *different* feature module. Fixing it for `WebhooksModule` alone caused the identical error to resurface for `CasesModule` next, confirming this is a general testing-injector limitation, not a one-off. Fixed by also registering `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (redundant with `AuthModule`'s own registration, but empirically necessary) — verified by both `npm run test:e2e` (all 3 suites, including the new cross-tenant tests) and a real production boot passing afterward.
+- **`Authorization: Bearer garbage.token` (a syntactically well-formed-enough but non-UUID clientId) crashed with an unhandled 500, not a clean 401.** Found during live manual verification against the real running API (not by a written test first) — Postgres rejected the malformed UUID literal (`22P02 invalid_text_representation`) before `ApiKeyGuard` ever got to say "unknown client." Fixed by validating the clientId against a UUID shape regex _before_ any database query — a malformed credential now fails exactly like every other invalid-credential path, with no query ever reaching Postgres. Added a dedicated regression test (`api-key.guard.spec.ts`: "rejects a clientId that is not a well-formed UUID") and re-verified live against a freshly restarted API process with real curl requests (missing header, valid cross-tenant credential, malformed token, well-formed-but-unknown clientId, and the owning tenant's own credential) — all five now return the correct status, confirmed after the fix, not just in the unit test.
+- **`Test.createTestingModule({imports: [AppModule]}).compile()` failed with `Nest can't resolve dependencies of the ApiKeyGuard... "ApiClientRepository" ... available in the WebhooksModule module`, even though the identical production boot (`NestFactory.create`, `npm run start:dev`) started cleanly.** `AuthModule` exporting `ApiKeyGuard` (and being `@Global()`) was not sufficient for Nest's _testing_ injector (`TestingInjector`/`TestingInstanceLoader` — a different code path than the production bootstrapper) to resolve the guard's own `@InjectRepository(ApiClient)` dependency when the guard is applied via `@UseGuards(ApiKeyGuard)` (a raw class reference) at the controller level in a _different_ feature module. Fixing it for `WebhooksModule` alone caused the identical error to resurface for `CasesModule` next, confirming this is a general testing-injector limitation, not a one-off. Fixed by also registering `TypeOrmModule.forFeature([ApiClient])` directly inside both `CasesModule` and `WebhooksModule` (redundant with `AuthModule`'s own registration, but empirically necessary) — verified by both `npm run test:e2e` (all 3 suites, including the new cross-tenant tests) and a real production boot passing afterward.
 
 ### Verification
 
@@ -4999,7 +4999,7 @@ restarted after the malformed-clientId fix):
 - No OIDC/FAPI 2.0, no RBAC roles (every credential is equally privileged within its own tenant), no consent enforcement, no encrypted field/object boundaries, no tenant-owned self-service configuration — all separately named in Section 20 M5, none attempted this slice.
 - No REST/CLI path lists, revokes, or rotates an existing `ApiClient` — only creation exists.
 - No token expiry, no rate limiting specific to authentication failures.
-- `WebhookDispatchService`'s own outbound delivery loop is intentionally *not* gated by this guard (it isn't an inbound HTTP route) — it already scopes every operation to the tenant of the outbox event/endpoint it's processing, unaffected by this slice.
+- `WebhookDispatchService`'s own outbound delivery loop is intentionally _not_ gated by this guard (it isn't an inbound HTTP route) — it already scopes every operation to the tenant of the outbox event/endpoint it's processing, unaffected by this slice.
 
 ### Next safe step
 
@@ -5023,7 +5023,7 @@ Section 20's M5 exit evidence, database-layer third: a cross-tenant query agains
 - `src/database/migrations/1787069708184-WebhookTenantIsolation.ts` (new) — for each of `webhook_endpoints`/`webhook_deliveries`: `ENABLE ROW LEVEL SECURITY`, `FORCE ROW LEVEL SECURITY` (the part that matters as much as `ENABLE` — without it, the table owner, i.e. the role every migration in this codebase has ever run as, bypasses the policy by Postgres's own default), and one policy: `USING (current_setting('app.bypass_rls', true) = 'true' OR "tenantId" = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)` (the `NULLIF` is a fix for a real bug found mid-slice — see Errors and fixes). `down()` reverses cleanly: drop policy, `NO FORCE`, `DISABLE`.
 - `WebhookEndpointService`/`WebhookDeliveryService` — every method wrapped in `runInTenantContext` with the tenantId the caller already has (from `AuthTenantId()` all the way down from M5-001); `findByIdOrFail` on both now takes `tenantId` as a required first parameter rather than trusting an unscoped id lookup.
 - `WebhookDispatchService` — per-event delivery-row creation and per-delivery status updates use `runInTenantContext` with the tenantId already known from the event/delivery row being processed. `runWithRlsBypass` is used in exactly one place: the "find any tenant's due deliveries" batch scan, which is genuinely cross-tenant by design (a background dispatcher, not a caller-driven request) — the one explicit, auditable exception, not a general escape hatch. `outbox_events` carries no RLS policy this slice, so queries against it are unchanged. The real network `fetch()` in `attemptDelivery()` is deliberately left outside any transaction/tenant-context wrapper — a slow or hanging receiver must not hold a pooled DB connection open for up to its 10s timeout.
-- `src/webhooks/webhook-tenant-isolation.spec.ts` (new) — the actual proof. Creates a dedicated Postgres role (`rls_spec_restricted_role`, `LOGIN ... NOSUPERUSER NOBYPASSRLS`, granted `SELECT/INSERT/UPDATE/DELETE` on just the two tables) via the existing admin connection, then runs every assertion — including fixture creation — through a *second* `DataSource` connected as that role. Seven tests: no-context-no-bypass sees zero rows on both tables despite real rows existing; tenant A's context sees only A; tenant B's context sees only B (including B seeing none of A's deliveries); a direct id lookup across tenants returns null; a cross-tenant `UPDATE` affects zero rows and leaves the real row untouched; a spoofed `INSERT` (row claims tenant A while the session context says tenant B) is rejected by Postgres itself; bypass mode sees every tenant's rows on both tables as the one audited exception.
+- `src/webhooks/webhook-tenant-isolation.spec.ts` (new) — the actual proof. Creates a dedicated Postgres role (`rls_spec_restricted_role`, `LOGIN ... NOSUPERUSER NOBYPASSRLS`, granted `SELECT/INSERT/UPDATE/DELETE` on just the two tables) via the existing admin connection, then runs every assertion — including fixture creation — through a _second_ `DataSource` connected as that role. Seven tests: no-context-no-bypass sees zero rows on both tables despite real rows existing; tenant A's context sees only A; tenant B's context sees only B (including B seeing none of A's deliveries); a direct id lookup across tenants returns null; a cross-tenant `UPDATE` affects zero rows and leaves the real row untouched; a spoofed `INSERT` (row claims tenant A while the session context says tenant B) is rejected by Postgres itself; bypass mode sees every tenant's rows on both tables as the one audited exception.
 - `src/database/migrations/schema-migrations.spec.ts` — new revert test ("reverts the webhook tenant isolation migration without touching other tables") inserted as the first revert test (this migration is now the most recently applied). Unlike every other revert test in this file, this migration adds no table, so the assertion checks `pg_class.relrowsecurity`/`relforcerowsecurity` and `pg_policies` directly, before and after the revert, rather than the `tableNames()` list.
 
 ### Affected files
@@ -5036,15 +5036,15 @@ Section 20's M5 exit evidence, database-layer third: a cross-tenant query agains
 
 ### Decisions and alternatives
 
-- **Scope narrowed to `webhook_endpoints`/`webhook_deliveries` only, `loan_cases` and dependents explicitly deferred — a direct user decision, not a default.** When asked, the user chose the narrower option by name. Reason: `loan_cases` and its dependents are written by both the authenticated REST layer (reachable by a potentially malicious external caller, exactly the trust boundary RLS defends) *and* the Temporal worker's `case-conditions.activities.ts` (driven only by already-validated workflow inputs, never directly attacker-reachable — a fundamentally different trust boundary, and this codebase's most extensively built and verified business logic). Forcing RLS there today, with that worker setting neither session variable anywhere, would break the M2/M3 workflow outright rather than protect it.
-- **A dedicated non-superuser role inside the test file, not a project-wide `DATABASE_URL`/role convention change.** The real fix for "RLS should actually protect production traffic" is provisioning the application's actual runtime connection as a non-superuser role — but that's a materially larger, separately-scoped change (touching `docker-compose.yml`, `.env.example`, README, and re-verifying the entire test suite and every migration under restricted privileges, since several existing migrations/scripts may implicitly rely on superuser-level operations). Creating a role scoped to exactly this test proves the *policy logic* is correct without taking on that larger, unapproved-scope change — and is exactly what let the NULLIF bug below surface, which a superuser-only verification path would have hidden forever.
+- **Scope narrowed to `webhook_endpoints`/`webhook_deliveries` only, `loan_cases` and dependents explicitly deferred — a direct user decision, not a default.** When asked, the user chose the narrower option by name. Reason: `loan_cases` and its dependents are written by both the authenticated REST layer (reachable by a potentially malicious external caller, exactly the trust boundary RLS defends) _and_ the Temporal worker's `case-conditions.activities.ts` (driven only by already-validated workflow inputs, never directly attacker-reachable — a fundamentally different trust boundary, and this codebase's most extensively built and verified business logic). Forcing RLS there today, with that worker setting neither session variable anywhere, would break the M2/M3 workflow outright rather than protect it.
+- **A dedicated non-superuser role inside the test file, not a project-wide `DATABASE_URL`/role convention change.** The real fix for "RLS should actually protect production traffic" is provisioning the application's actual runtime connection as a non-superuser role — but that's a materially larger, separately-scoped change (touching `docker-compose.yml`, `.env.example`, README, and re-verifying the entire test suite and every migration under restricted privileges, since several existing migrations/scripts may implicitly rely on superuser-level operations). Creating a role scoped to exactly this test proves the _policy logic_ is correct without taking on that larger, unapproved-scope change — and is exactly what let the NULLIF bug below surface, which a superuser-only verification path would have hidden forever.
 - **`NULLIF(current_setting(...), '')::uuid`, not a bare cast.** See Errors and fixes — a bare cast throws once any transaction on a reused pooled connection has touched the GUC and ended, which is the normal case for every real request in this codebase, not an edge case.
 - **Fixture creation in the proof spec goes through the restricted role too (via `runInTenantContext`), not the admin superuser connection.** This means the spec also proves `INSERT` is enforced (a policy with no explicit `WITH CHECK` applies its `USING` expression to writes too), not only the `SELECT`-side isolation the majority of the tests exercise.
 
 ### Errors and fixes
 
-- **All 7 proof-spec tests failed on the first run, appearing to show RLS wasn't enforced at all — root cause was that the connecting role (`mortgage`, this project's own `DATABASE_URL` role, created via `POSTGRES_USER=mortgage` on the stock `postgres:16-alpine` image) is a Postgres superuser.** Confirmed via `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'mortgage'` → `mortgage | t | t`, and `SET ROLE mortgage; SELECT current_setting('is_superuser')` → `on`. This is documented, non-overridable PostgreSQL behavior — superusers unconditionally bypass row-level security regardless of `FORCE ROW LEVEL SECURITY` — and is a distinct thing from the `rolbypassrls` attribute, which only has any effect for non-superuser roles. Fixed the *test's* methodology, not the policy: created a dedicated `rls_spec_restricted_role` (`NOSUPERUSER NOBYPASSRLS`) and ran every assertion through a connection authenticated as it. This does not fix the underlying real-world gap — see Known gaps.
-- **Once genuinely running under the restricted role, a second, independent, previously-invisible bug surfaced: `current_setting('app.current_tenant_id', true)::uuid` threw `invalid input syntax for type uuid: ""` instead of matching zero rows.** Root cause: for a custom (non-built-in) Postgres GUC, `current_setting(name, missing_ok=true)` returns `NULL` only if the setting has *never* been touched in that session; once any transaction on that connection has `SET LOCAL`'d it and ended, the placeholder reverts to `''` (empty string), not `NULL`, for the rest of that connection's life. TypeORM's connection pool reuses connections across unrelated `transaction()` calls, so this is the normal steady-state on any real pooled connection after its first tenant-scoped query, not a rare edge case — every one of this codebase's own real requests would eventually hit it. This bug was completely invisible while testing under the superuser role, because the policy expression was never evaluated at all in that configuration — direct evidence for why the superuser-masking issue above had to be fixed first, not worked around. Fixed with `NULLIF(current_setting(...), '')::uuid` (`NULLIF` turns `''` into `NULL` before the cast; `NULL::uuid` never errors). Verified by re-running the full proof spec (7/7 pass) and the cumulative migration spec (fresh-database apply, confirming the fix is in the migration file itself, not just live-patched onto the already-running scratch database it was first found against).
+- **All 7 proof-spec tests failed on the first run, appearing to show RLS wasn't enforced at all — root cause was that the connecting role (`mortgage`, this project's own `DATABASE_URL` role, created via `POSTGRES_USER=mortgage` on the stock `postgres:16-alpine` image) is a Postgres superuser.** Confirmed via `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'mortgage'` → `mortgage | t | t`, and `SET ROLE mortgage; SELECT current_setting('is_superuser')` → `on`. This is documented, non-overridable PostgreSQL behavior — superusers unconditionally bypass row-level security regardless of `FORCE ROW LEVEL SECURITY` — and is a distinct thing from the `rolbypassrls` attribute, which only has any effect for non-superuser roles. Fixed the _test's_ methodology, not the policy: created a dedicated `rls_spec_restricted_role` (`NOSUPERUSER NOBYPASSRLS`) and ran every assertion through a connection authenticated as it. This does not fix the underlying real-world gap — see Known gaps.
+- **Once genuinely running under the restricted role, a second, independent, previously-invisible bug surfaced: `current_setting('app.current_tenant_id', true)::uuid` threw `invalid input syntax for type uuid: ""` instead of matching zero rows.** Root cause: for a custom (non-built-in) Postgres GUC, `current_setting(name, missing_ok=true)` returns `NULL` only if the setting has _never_ been touched in that session; once any transaction on that connection has `SET LOCAL`'d it and ended, the placeholder reverts to `''` (empty string), not `NULL`, for the rest of that connection's life. TypeORM's connection pool reuses connections across unrelated `transaction()` calls, so this is the normal steady-state on any real pooled connection after its first tenant-scoped query, not a rare edge case — every one of this codebase's own real requests would eventually hit it. This bug was completely invisible while testing under the superuser role, because the policy expression was never evaluated at all in that configuration — direct evidence for why the superuser-masking issue above had to be fixed first, not worked around. Fixed with `NULLIF(current_setting(...), '')::uuid` (`NULLIF` turns `''` into `NULL` before the cast; `NULL::uuid` never errors). Verified by re-running the full proof spec (7/7 pass) and the cumulative migration spec (fresh-database apply, confirming the fix is in the migration file itself, not just live-patched onto the already-running scratch database it was first found against).
 - **`TypeORMError: Entity metadata for WebhookDelivery#outboxEvent was not found`** the first time the proof spec's second `DataSource` (the restricted-role one) was split out from the original single admin connection — `WebhookDelivery` has a real `@ManyToOne(() => OutboxEvent)` relation, so TypeORM needs `OutboxEvent` in that `DataSource`'s own `entities` array to resolve the relation target during metadata build, even though the restricted role is never granted any privilege on `outbox_events` and no query through that connection ever touches it. Fixed by adding `OutboxEvent` to the restricted `DataSource`'s entity list.
 - **`role "rls_spec_restricted_role" cannot be dropped because some objects depend on it`** on a re-run after an earlier interrupted attempt (the one that hit the entity-metadata error above) left the role behind still holding its `GRANT`s. A plain `DROP ROLE IF EXISTS` doesn't revoke a role's existing grants first. Fixed by checking `pg_roles` for the role's existence and, if found, `REVOKE ALL ... FROM role` then `DROP OWNED BY role` before `DROP ROLE` — both in the spec's `beforeAll` (defensive cleanup of a prior interrupted run) and its `afterAll` (normal cleanup), and hardened `afterAll` to skip the `outbox_events` cleanup delete if `beforeAll` never got far enough to create the fixture row (the direct cause of a second, cascading `Cannot read properties of undefined (reading 'id')` failure observed alongside the role-drop error).
 
@@ -5125,7 +5125,7 @@ A real, running instance of this application configured for production (`NODE_EN
 
 ### Implementation
 
-- `src/database/migrations/1787082648663-AppRuntimeRole.ts` (new) — provisions `mortgage_app`: `LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, password from `APP_DATABASE_ROLE_PASSWORD` (demo-only default, same reasoning as `OUTBOX_SIGNING_SECRET`'s own default). Grants `CONNECT`/`USAGE`/`SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public`, plus a standing `ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER` grant so every table a *future* migration creates is automatically covered without anyone having to remember a matching grant statement on that migration too.
+- `src/database/migrations/1787082648663-AppRuntimeRole.ts` (new) — provisions `mortgage_app`: `LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, password from `APP_DATABASE_ROLE_PASSWORD` (demo-only default, same reasoning as `OUTBOX_SIGNING_SECRET`'s own default). Grants `CONNECT`/`USAGE`/`SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public`, plus a standing `ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER` grant so every table a _future_ migration creates is automatically covered without anyone having to remember a matching grant statement on that migration too.
 - `src/database/typeorm-options.factory.ts` — `createTypeOrmOptions` now branches on `NODE_ENV`: outside production, completely unchanged (`DATABASE_URL`, `synchronize: true`). In production, prefers `APP_DATABASE_URL`; if unset, falls back to `DATABASE_URL` (still boots — a production deploy shouldn't crash-loop over one missing var) but logs a `Logger.warn` naming exactly what's at stake, matching this codebase's existing convention for consequential fallbacks (`AgentService`'s "RULES PROVIDER ACTIVE" warning).
 - `src/config/env.validation.ts` — `APP_DATABASE_URL` added as an optional, `postgres://`-validated field, same regex as `DATABASE_URL`.
 - `src/webhooks/webhook-tenant-isolation.spec.ts` (M5-002) — refactored to connect as the real, persistent `mortgage_app` role the migration now provisions, instead of the ad hoc `rls_spec_restricted_role` it created and dropped on every run. Removes the CREATE ROLE/DROP ROLE/GRANT/REVOKE dance from the spec entirely — it now proves the actual production role's policy enforcement, not a parallel stand-in.
@@ -5144,13 +5144,13 @@ A real, running instance of this application configured for production (`NODE_EN
 
 - **Production-only scope, not local dev too — a direct user decision between two explicitly offered options.** The larger option (restrict local dev as well) would have required removing `synchronize: true` entirely, since it needs DDL rights a restricted role by design doesn't have — a real, invasive change to this codebase's already-documented "just run it" local onboarding experience that the user declined to take on as part of this slice.
 - **`CREATE ROLE` wrapped in an `IF NOT EXISTS` guard, not a plain statement.** PostgreSQL roles are cluster-global, not scoped to one database, unlike everything else this codebase's migrations create. A plain `CREATE ROLE` fails the instant two databases in the same cluster both run this migration — which isn't a contrived scenario, it's exactly what happens every time `schema-migrations.spec.ts`'s own disposable scratch database shares a cluster with whatever `DATABASE_URL` already points to (see Errors and fixes). Idempotent creation, paired with `GRANT`'s own natural idempotency (re-granting an already-held privilege is a no-op), makes the migration safe under that real, recurring condition rather than merely lucky about run order.
-- **`down()`'s `DROP ROLE` is best-effort, not a hard requirement.** For the identical cluster-wide-role reason above, dropping the role can legitimately fail if a sibling database in the same cluster still holds grants to it — and destroying a role a sibling database is still actively using would be a worse outcome than leaving a harmless, now privilege-less-in-this-database role behind. `down()` unconditionally revokes everything *this* database granted; only the final `DROP ROLE` itself tolerates the one specific, identified Postgres error (`2BP01`/`dependent_objects_still_exist`) that means "something else still needs this," and only via a PL/pgSQL `EXCEPTION` block, not a JS-level `try`/`catch` (see Errors and fixes for why that distinction is load-bearing, not stylistic).
+- **`down()`'s `DROP ROLE` is best-effort, not a hard requirement.** For the identical cluster-wide-role reason above, dropping the role can legitimately fail if a sibling database in the same cluster still holds grants to it — and destroying a role a sibling database is still actively using would be a worse outcome than leaving a harmless, now privilege-less-in-this-database role behind. `down()` unconditionally revokes everything _this_ database granted; only the final `DROP ROLE` itself tolerates the one specific, identified Postgres error (`2BP01`/`dependent_objects_still_exist`) that means "something else still needs this," and only via a PL/pgSQL `EXCEPTION` block, not a JS-level `try`/`catch` (see Errors and fixes for why that distinction is load-bearing, not stylistic).
 - **`current_database()` resolved dynamically via a PL/pgSQL `DO` block for the `GRANT CONNECT ON DATABASE` statement, rather than hardcoding `"mortgage_agent"`.** `GRANT ... ON DATABASE` takes a literal identifier, not an expression, so a literal database name would have been simpler to read — but this migration, like every other one in this codebase, also has to run cleanly against `schema-migrations.spec.ts`'s differently-named scratch database.
 
 ### Errors and fixes
 
-- **`role "mortgage_app" already exists` broke `schema-migrations.spec.ts`'s "applies every migration" test the first time this migration ran alongside an already-migrated primary scratch database in the same Postgres cluster.** Root cause: Postgres roles are cluster-global; a plain `CREATE ROLE` has no database-scoped notion of "already exists is fine here." Because that failure happened *before* the test's own `undoLastMigration()` call, that migration was never actually reverted — which then desynchronized every subsequent revert test's assumption about which migration was "most recently applied," cascading into roughly 19 unrelated-looking failures across the rest of the file from this one root cause. Fixed with the `IF NOT EXISTS` guard described in Decisions; confirmed by reproducing the exact real-world ordering (migrate the primary scratch database first, *then* run the full suite including `schema-migrations.spec.ts`) rather than only testing the accidentally-lucky order of running `schema-migrations.spec.ts` first on a virgin cluster.
-- **After adding a first-pass fix (a plain JS `try { DROP ROLE } catch`, treating Postgres error code `2BP01` as tolerable), the *next* migration revert in the same test file started failing with `current transaction is aborted, commands ignored until end of transaction block` — a different, subtler bug than the one just fixed.** Root cause: PostgreSQL aborts an entire transaction the moment any statement inside it errors, and this is *not* undone by catching the exception in application code — TypeORM runs each migration's `down()` inside one transaction, so the JS `catch` successfully handled the `DROP ROLE` failure at the Node level while the underlying Postgres transaction stayed aborted, and the very next statement in that same transaction (TypeORM's own bookkeeping delete from `typeorm_migrations`) failed too, for a completely different-looking reason. Fixed by moving the tolerance into PostgreSQL itself — a `DO $$ ... EXCEPTION WHEN dependent_objects_still_exist THEN ... END $$` block, which establishes its own implicit savepoint, so the specific, identified error is absorbed without ever aborting the outer transaction. Verified by re-running the full suite under the exact real-world ordering that first exposed both bugs (migrate the primary scratch database, then run everything else) until it passed clean.
+- **`role "mortgage_app" already exists` broke `schema-migrations.spec.ts`'s "applies every migration" test the first time this migration ran alongside an already-migrated primary scratch database in the same Postgres cluster.** Root cause: Postgres roles are cluster-global; a plain `CREATE ROLE` has no database-scoped notion of "already exists is fine here." Because that failure happened _before_ the test's own `undoLastMigration()` call, that migration was never actually reverted — which then desynchronized every subsequent revert test's assumption about which migration was "most recently applied," cascading into roughly 19 unrelated-looking failures across the rest of the file from this one root cause. Fixed with the `IF NOT EXISTS` guard described in Decisions; confirmed by reproducing the exact real-world ordering (migrate the primary scratch database first, _then_ run the full suite including `schema-migrations.spec.ts`) rather than only testing the accidentally-lucky order of running `schema-migrations.spec.ts` first on a virgin cluster.
+- **After adding a first-pass fix (a plain JS `try { DROP ROLE } catch`, treating Postgres error code `2BP01` as tolerable), the _next_ migration revert in the same test file started failing with `current transaction is aborted, commands ignored until end of transaction block` — a different, subtler bug than the one just fixed.** Root cause: PostgreSQL aborts an entire transaction the moment any statement inside it errors, and this is _not_ undone by catching the exception in application code — TypeORM runs each migration's `down()` inside one transaction, so the JS `catch` successfully handled the `DROP ROLE` failure at the Node level while the underlying Postgres transaction stayed aborted, and the very next statement in that same transaction (TypeORM's own bookkeeping delete from `typeorm_migrations`) failed too, for a completely different-looking reason. Fixed by moving the tolerance into PostgreSQL itself — a `DO $$ ... EXCEPTION WHEN dependent_objects_still_exist THEN ... END $$` block, which establishes its own implicit savepoint, so the specific, identified error is absorbed without ever aborting the outer transaction. Verified by re-running the full suite under the exact real-world ordering that first exposed both bugs (migrate the primary scratch database, then run everything else) until it passed clean.
 - **The new "reverts the app runtime role migration" test's own grant-count assertion (`expect(beforeGrants.length).toBe(28 * 4)`) was itself wrong on the first run (`Received: 116`, not `112`), which was actually the proximate trigger for the cascading failure above (the test threw before reaching its own `undoLastMigration()` call).** The migration's `GRANT ... ON ALL TABLES IN SCHEMA public` also covers `typeorm_migrations` itself (a real table in the same schema) — 29 tables, not the 28 every other assertion in this file already excludes it from. Fixed the query to exclude `typeorm_migrations` explicitly, matching `tableNames()`'s own established convention in the same file.
 
 ### Verification
@@ -5243,7 +5243,7 @@ superuser DATABASE_URL role:
 - Still production-only, by direct user choice (see Decisions) — local `docker-compose up`/`npm run start:dev` never exercises the restricted role at all, so a regression in `mortgage_app`'s own grants (e.g., a future migration adding a table outside the `public` schema, which the `ALTER DEFAULT PRIVILEGES` grant doesn't cover) would only surface the first time someone actually runs with `NODE_ENV=production`, not during ordinary local development.
 - `APP_DATABASE_ROLE_PASSWORD`'s demo default is not mechanically prevented from reaching a real deployment — see Security above.
 - The production fallback logs a warning but still boots against `DATABASE_URL`'s role if `APP_DATABASE_URL` is unset — a stricter "refuse to boot" mode was considered and explicitly not built this slice.
-- `loan_cases` and dependents still have no RLS policy at all (M5-002's own deferred scope, unchanged by this slice) — this migration only makes the *existing* `webhook_endpoints`/`webhook_deliveries` policies actually matter; it doesn't add coverage anywhere new.
+- `loan_cases` and dependents still have no RLS policy at all (M5-002's own deferred scope, unchanged by this slice) — this migration only makes the _existing_ `webhook_endpoints`/`webhook_deliveries` policies actually matter; it doesn't add coverage anywhere new.
 - `mortgage_app`'s grants are schema-wide (`ALL TABLES IN SCHEMA public`) rather than table-by-table — simpler and self-maintaining via `ALTER DEFAULT PRIVILEGES`, but means the restricted role has DML access to every table, including ones RLS doesn't protect (identical blast radius to what `DATABASE_URL`'s role already has today, just without the superuser/DDL/BYPASSRLS escalation on top).
 
 ### Next safe step
@@ -5283,14 +5283,14 @@ The same M5-002/M5-003 standard, extended to the case-conditions core: a cross-t
 ### Decisions and alternatives
 
 - **Scope narrowed to exactly the tables reachable through code paths that already thread `tenantId` end to end without a structural refactor — a direct user decision between two offered options.** The wider option (also `loan_conditions` itself, `agent_runs`/`tool_attempts`, `case_policy_bindings`/`case_policy_snapshots`, `provider_operation_intents`/`provider_authorization_grants`) would have required refactoring several `@InjectRepository`-based services (`PolicyEvaluationService`, `EvaluationManifestService`, `ProviderAuthorizationService`, `ProviderOperationIntentService`) to accept an external `EntityManager`, a materially larger and riskier change touching this codebase's most extensively tested business logic. The user chose the narrower option.
-- **`loan_conditions` itself is explicitly excluded, even though `case-conditions.activities.ts`'s `resolveCondition` reads/updates it.** Its *initial* row is created by `create-condition.tool.ts` through a code path this slice does not touch — forcing RLS on `loan_conditions` without also fixing that path would make every real condition-creation call fail with a Postgres RLS violation the moment this migration shipped (an INSERT under no tenant context is rejected the same way M5-002 proved for `webhook_endpoints`). This was caught during the file-by-file audit, before writing the migration, specifically because of that audit — not discovered live.
-- **`outbox_events` *is* in scope this slice, reversing M5-002's own "no RLS policy this slice" decision for that table** — because every write site that touches it already sits inside a transaction this slice was wrapping anyway (the same transaction as a `loan_cases`/`evidence_facts` write), so covering it added only the read-side call sites (`CaseTimelineService`, `WebhookDispatchService`) rather than a whole new audit.
+- **`loan_conditions` itself is explicitly excluded, even though `case-conditions.activities.ts`'s `resolveCondition` reads/updates it.** Its _initial_ row is created by `create-condition.tool.ts` through a code path this slice does not touch — forcing RLS on `loan_conditions` without also fixing that path would make every real condition-creation call fail with a Postgres RLS violation the moment this migration shipped (an INSERT under no tenant context is rejected the same way M5-002 proved for `webhook_endpoints`). This was caught during the file-by-file audit, before writing the migration, specifically because of that audit — not discovered live.
+- **`outbox_events` _is_ in scope this slice, reversing M5-002's own "no RLS policy this slice" decision for that table** — because every write site that touches it already sits inside a transaction this slice was wrapping anyway (the same transaction as a `loan_cases`/`evidence_facts` write), so covering it added only the read-side call sites (`CaseTimelineService`, `WebhookDispatchService`) rather than a whole new audit.
 - **`PolicyChangeImpactService.assessImpact()`'s catalog-wide scan uses `runWithRlsBypass`, matching `WebhookDispatchService`'s existing precedent for "the one query that's genuinely cross-tenant by design."** Section 10.6's own scope ("applicability index finds potentially affected open cases" across the whole catalog on a policy activation/withdrawal) is inherently cross-tenant — the alternative (looping per-tenant) would change real behavior, not just add a database-layer guarantee.
 
 ### Errors and fixes
 
-- **A real, independent production-code concurrency bug, found only because this slice's own proof test happened to exercise it: `Promise.all([manager.getRepository(A).find(), manager.getRepository(B).find()])` — issuing multiple queries against the *same* `EntityManager`/connection without sequencing them — is exactly what node-postgres's own "Calling client.query() when the client is already executing a query is deprecated" warning describes, and in practice returned results that didn't correspond to the queries that requested them.** Symptom: the proof spec's bypass-mode test, comparing four `Promise.all`'d queries' results against known fixture ids, intermittently reported `loan_cases` results containing ids that turned out (traced through direct SQL lookups across every table) to actually belong to `outbox_events`. Found in both this slice's own new proof spec *and* already-existing production code (`lending-operations-agent-runtime.ts`'s `resolveOutcomeNode`, fetching `LoanCase` and `EvidenceFact` concurrently on one manager) — the same risky pattern this migration's own refactor had just introduced varations of. Fixed by making every such call sequential (`await` one query, then the next) instead of `Promise.all` wherever multiple queries share one manager; independent, unrelated queries on independent connections (e.g. `CaseTimelineService`'s mix of a wrapped and two unwrapped repository calls) are unaffected and were left as `Promise.all`, since those genuinely use separate connections.
-- **Separately, the same proof spec's "bypass mode sees every tenant's row" test failed again after the concurrency fix — this time correctly, exposing a real test-design flaw, not a product bug.** `outbox_events` (unlike `loan_cases`, confirmed empty via direct SQL) already held real, pre-existing rows in the shared scratch database from an earlier `npm run test:e2e` run in this same verification session — legitimate data bypass mode is *supposed* to see, since bypass mode ignores tenant scoping by design. The test's exact-equality assertion assumed the whole table started empty, which is not a safe assumption for a table this central in a shared, long-lived scratch database. Fixed by changing the bypass-mode assertions to inclusion checks (`expect.arrayContaining`) — proving bypass mode sees at least this spec's own cross-tenant rows, which is what the test is actually for; the tenant-scoped assertions elsewhere in the same file remain exact-equality, since RLS under a real tenant context correctly filters out any other tenant's rows regardless of how many exist.
+- **A real, independent production-code concurrency bug, found only because this slice's own proof test happened to exercise it: `Promise.all([manager.getRepository(A).find(), manager.getRepository(B).find()])` — issuing multiple queries against the _same_ `EntityManager`/connection without sequencing them — is exactly what node-postgres's own "Calling client.query() when the client is already executing a query is deprecated" warning describes, and in practice returned results that didn't correspond to the queries that requested them.** Symptom: the proof spec's bypass-mode test, comparing four `Promise.all`'d queries' results against known fixture ids, intermittently reported `loan_cases` results containing ids that turned out (traced through direct SQL lookups across every table) to actually belong to `outbox_events`. Found in both this slice's own new proof spec _and_ already-existing production code (`lending-operations-agent-runtime.ts`'s `resolveOutcomeNode`, fetching `LoanCase` and `EvidenceFact` concurrently on one manager) — the same risky pattern this migration's own refactor had just introduced varations of. Fixed by making every such call sequential (`await` one query, then the next) instead of `Promise.all` wherever multiple queries share one manager; independent, unrelated queries on independent connections (e.g. `CaseTimelineService`'s mix of a wrapped and two unwrapped repository calls) are unaffected and were left as `Promise.all`, since those genuinely use separate connections.
+- **Separately, the same proof spec's "bypass mode sees every tenant's row" test failed again after the concurrency fix — this time correctly, exposing a real test-design flaw, not a product bug.** `outbox_events` (unlike `loan_cases`, confirmed empty via direct SQL) already held real, pre-existing rows in the shared scratch database from an earlier `npm run test:e2e` run in this same verification session — legitimate data bypass mode is _supposed_ to see, since bypass mode ignores tenant scoping by design. The test's exact-equality assertion assumed the whole table started empty, which is not a safe assumption for a table this central in a shared, long-lived scratch database. Fixed by changing the bypass-mode assertions to inclusion checks (`expect.arrayContaining`) — proving bypass mode sees at least this spec's own cross-tenant rows, which is what the test is actually for; the tenant-scoped assertions elsewhere in the same file remain exact-equality, since RLS under a real tenant context correctly filters out any other tenant's rows regardless of how many exist.
 
 ### Verification
 
@@ -5385,7 +5385,7 @@ The concurrency bug found this slice (`Promise.all` on a shared connection) is w
 
 Implemented and verified, including a real live workflow run proving a previously-dead code path now genuinely fires: the LangGraph runtime's `verifyConsent` node, built in M3-009 and wired as the graph's literal first step, has been real, tested, but permanently inert in production ever since — its only caller always hardcoded `consentStatus: 'VALID'` because no consent-tracking entity existed. It now reads real data, and a real revoked-consent case, driven through a real Temporal worker, genuinely landed in `MANUAL_REVIEW`.
 
-Chosen autonomously as the next M5 slice (the user delegated the choice) over RBAC roles: consent enforcement was already concretely scoped by the charter's own type definitions and trigger lists (Section 9.3's `ConsentStatus`, Section 9.6's "consent revoked mid-case" as the *first* mandatory review trigger listed), already had a real, tested, dead-code enforcement point waiting for real data (M3-009), and sits at the very top of Section 6.3's authority order — RBAC's own design space (what roles, what granularity) has no equivalent charter-provided scaffolding and isn't a call this session should make unilaterally.
+Chosen autonomously as the next M5 slice (the user delegated the choice) over RBAC roles: consent enforcement was already concretely scoped by the charter's own type definitions and trigger lists (Section 9.3's `ConsentStatus`, Section 9.6's "consent revoked mid-case" as the _first_ mandatory review trigger listed), already had a real, tested, dead-code enforcement point waiting for real data (M3-009), and sits at the very top of Section 6.3's authority order — RBAC's own design space (what roles, what granularity) has no equivalent charter-provided scaffolding and isn't a call this session should make unilaterally.
 
 ### Acceptance criterion
 
@@ -5393,12 +5393,12 @@ A case whose consent has been revoked stops new processing (Section 14.2) — pr
 
 ### Implementation
 
-- `src/database/entities/consent-record.entity.ts` (new) — Section 14.1's `consent_records`, deliberately one record per case (not per purpose — a documented simplification against the charter's fuller per-purpose/policy-version model, matched to the single scalar `consentStatus` field the Agent state actually consumes today). `src/database/migrations/1787126773274-ConsentRecords.ts` (new) — a genuinely new table, so RLS (`FORCE ROW LEVEL SECURITY` + the same `tenant_isolation` policy pattern as M5-002/M5-004) is applied in the *same* migration that creates it, never retrofitted; `AppRuntimeRole`'s (M5-003) `GRANT ... ON ALL TABLES`/`ALTER DEFAULT PRIVILEGES` already covers it automatically.
+- `src/database/entities/consent-record.entity.ts` (new) — Section 14.1's `consent_records`, deliberately one record per case (not per purpose — a documented simplification against the charter's fuller per-purpose/policy-version model, matched to the single scalar `consentStatus` field the Agent state actually consumes today). `src/database/migrations/1787126773274-ConsentRecords.ts` (new) — a genuinely new table, so RLS (`FORCE ROW LEVEL SECURITY` + the same `tenant_isolation` policy pattern as M5-002/M5-004) is applied in the _same_ migration that creates it, never retrofitted; `AppRuntimeRole`'s (M5-003) `GRANT ... ON ALL TABLES`/`ALTER DEFAULT PRIVILEGES` already covers it automatically.
 - `src/consent/consent.service.ts` (new), `consent.module.ts` (new, `@Global()`, same reasoning as `AuthModule`) — `grantForCase()`, `revoke()`, `getStatus()` (computes `VALID`/`MISSING`/`EXPIRED`/`REVOKED` from the case's most recent record), `activeRecordId()`, `isRecordValid()` (bypasses tenant scoping deliberately — the caller, `ProviderAuthorizationService`, has already independently confirmed the grant's own tenant match before this is ever reached).
 - `CasesService.createCase()` now calls `consentService.grantForCase()` right after a case is created — implicit, automatic consent, matching this codebase's existing behavior exactly (every case has always processed successfully with no separate consent step) rather than introducing a new required step that would break case creation for every existing caller. `CasesService.submitConsentAction()` + `POST /v1/loan-cases/{caseId}/consents` (`ConsentActionDto`, `{action: "GRANT" | "REVOKE", reason?}`) is the new real capability — synchronous, not a Temporal signal, since a consent action is a plain database write; returns the resulting `ConsentRecord` directly (`201`, matching `createCase()`'s own precedent for a POST that returns a created/mutated resource without an explicit `@HttpCode` override).
 - `case-conditions.activities.ts`'s `evaluateConditions` now calls `consentService.getStatus(tenantId, caseId)` instead of hardcoding `'VALID'` — the single-line change that makes M3-009's `verifyConsent` node real.
 - `ProviderAuthorizationService.issue()` accepts an optional `consentRecordIds` input (populated by `dispatchProviderRequest` via `consentService.activeRecordId()`); `revalidate()` now also confirms every referenced id is still granted and unrevoked (Section 11.5's own exact language), failing closed alongside its existing tenant/case/provider/capability/expiry/revocation checks.
-- `dispatchProviderRequest` throws a new `ProviderRevalidationError` (not a plain `Error`) on any revalidation failure; `case-conditions.activities.ts`'s `callProviderWithRetryClassification` classifies it `ApplicationFailure.nonRetryable` — a mismatched, expired, revoked, or consent-invalidated grant can never succeed on retry, the identical reasoning already applied to a terminal synthetic provider rejection (found and fixed after a live-verification run showed the *un*-classified version wasting ~3 seconds of pointless Temporal retries before finally failing; the classified version fails in ~90ms).
+- `dispatchProviderRequest` throws a new `ProviderRevalidationError` (not a plain `Error`) on any revalidation failure; `case-conditions.activities.ts`'s `callProviderWithRetryClassification` classifies it `ApplicationFailure.nonRetryable` — a mismatched, expired, revoked, or consent-invalidated grant can never succeed on retry, the identical reasoning already applied to a terminal synthetic provider rejection (found and fixed after a live-verification run showed the _un_-classified version wasting ~3 seconds of pointless Temporal retries before finally failing; the classified version fails in ~90ms).
 - `evaluation/runner.ts`/`runner.spec.ts`/`evaluation-report.ts` updated to grant consent for every fixture case they create directly (bypassing `CasesService`) — matches real behavior, keeps the whole corpus's expected outcomes unchanged.
 - `src/consent/consent-tenant-isolation.spec.ts` (new) — the RLS proof, mirroring M5-002/M5-004's pattern against the real `mortgage_app` role, simpler than the other two (a direct `tenantId` column, no join-based policy, RLS present from the table's first migration).
 
@@ -5426,8 +5426,8 @@ A case whose consent has been revoked stops new processing (Section 14.2) — pr
 ### Errors and fixes
 
 - **First live workflow run revoked a case's consent, started its workflow, and the case correctly landed in `MANUAL_REVIEW` — but took ~3.25 seconds to get there and reported a generic `"ActivityFailure: Activity task failed"` reason instead of anything consent-specific.** Root cause: `dispatchProviderRequest`'s revalidation-failure branch threw a plain `Error`, which `callProviderWithRetryClassification` doesn't recognize, so it propagated unclassified — Temporal applied its own default retry policy (up to 3 attempts with backoff) before finally giving up, wasting real time on a request that could never succeed no matter how many times it was retried. Fixed by introducing `ProviderRevalidationError` and classifying it `ApplicationFailure.nonRetryable` (see Decisions). Re-ran the identical live scenario after the fix: the same case now fails in ~90ms, immediately, with no wasted retries — confirmed by comparing the real `workflow_run.started`→`workflow_run.failed` outbox-event timestamps from both runs directly.
-- **The outbox event's `reason` field still shows the generic `"ActivityFailure: Activity task failed"` string even after the classification fix — not the specific `ProviderRevalidationError` message.** Root cause, confirmed by reading `case-conditions.workflow.ts`: its top-level `catch` blocks (both the evidence-collection one and the `evaluateConditions` one) call `String(error)` on whatever Temporal's own `ActivityFailure` wrapper produces, which doesn't drill into the wrapped cause's specific message — a pre-existing limitation of this workflow's error reporting that affects *every* activity failure reported this way, not something this slice introduced or made worse (if anything, the classification fix above made the failure faster). Left as-is rather than expanding scope to fix generic error-message extraction workflow-wide — tracked honestly in Known gaps instead of silently accepted or silently expanded into.
-- **`case-conditions.activities.spec.ts` failed with `Cannot read properties of undefined (reading 'isRecordValid')` on the first run after wiring `consentService` into `ProviderAuthorizationService`'s constructor.** That spec file's own `beforeAll` still constructed `ProviderAuthorizationService` with only its old single argument (the repository) — `consentService` was added to `createCaseConditionsActivities`'s deps object correctly, but the *separate* `ProviderAuthorizationService` constructor call three lines above it was missed. The exact same class of ordering/completeness bug the M5-002/M5-003/M5-004 slices repeatedly found in their own direct-instantiation spec files — found immediately by running the affected spec, not live.
+- **The outbox event's `reason` field still shows the generic `"ActivityFailure: Activity task failed"` string even after the classification fix — not the specific `ProviderRevalidationError` message.** Root cause, confirmed by reading `case-conditions.workflow.ts`: its top-level `catch` blocks (both the evidence-collection one and the `evaluateConditions` one) call `String(error)` on whatever Temporal's own `ActivityFailure` wrapper produces, which doesn't drill into the wrapped cause's specific message — a pre-existing limitation of this workflow's error reporting that affects _every_ activity failure reported this way, not something this slice introduced or made worse (if anything, the classification fix above made the failure faster). Left as-is rather than expanding scope to fix generic error-message extraction workflow-wide — tracked honestly in Known gaps instead of silently accepted or silently expanded into.
+- **`case-conditions.activities.spec.ts` failed with `Cannot read properties of undefined (reading 'isRecordValid')` on the first run after wiring `consentService` into `ProviderAuthorizationService`'s constructor.** That spec file's own `beforeAll` still constructed `ProviderAuthorizationService` with only its old single argument (the repository) — `consentService` was added to `createCaseConditionsActivities`'s deps object correctly, but the _separate_ `ProviderAuthorizationService` constructor call three lines above it was missed. The exact same class of ordering/completeness bug the M5-002/M5-003/M5-004 slices repeatedly found in their own direct-instantiation spec files — found immediately by running the affected spec, not live.
 - **`evaluation/runner.spec.ts` (a file distinct from `runner.ts` itself, easy to miss in a `grep -l createCaseConditionsActivities` sweep since it doesn't call that function by name in its own `deps()` — it constructs `EvaluationRunnerDeps` inline) failed the same way** — full test suite run surfaced 5 failures there after the `EvaluationRunnerDeps` interface gained a required `consentService` field. Fixed by updating its own `deps()` helper and entity list, same pattern as every other direct-construction spec.
 
 ### Verification
@@ -5503,7 +5503,7 @@ NODE_ENV=production with APP_DATABASE_URL (M5-003's restricted role):
 
 ### Known gaps
 
-- **No data-disposition review for evidence already collected under a since-revoked consent (Section 14.2's third consequence)** — this slice stops *new* processing, which is the literal Section 6.3 requirement, but does not flag, review, or dispose of evidence a case already gathered before its consent was revoked. Real, separately-scoped follow-up, explicitly named in M0-010's own original roadmap note.
+- **No data-disposition review for evidence already collected under a since-revoked consent (Section 14.2's third consequence)** — this slice stops _new_ processing, which is the literal Section 6.3 requirement, but does not flag, review, or dispose of evidence a case already gathered before its consent was revoked. Real, separately-scoped follow-up, explicitly named in M0-010's own original roadmap note.
 - **Consent revocation only takes effect the next time `evaluateConditions` runs, not by interrupting an Agent run already in flight.** Not a practical gap today — this codebase's Agent runs are synchronous and make no model calls, so there is no meaningful "in flight" window — but would become a real one if that ever changes.
 - **The case timeline/outbox event's failure reason is a generic Temporal string, not the specific consent-related message**, for the reason in Errors and fixes above — a pre-existing, workflow-wide limitation this slice's live verification happened to surface clearly for the first time, not something newly introduced.
 - **`purpose`/`scope` are descriptive strings, not a real per-purpose consent boundary** — see Decisions. The charter's fuller Section 14.1 model (also binding a policy version) isn't modeled.
@@ -5529,7 +5529,7 @@ A non-superuser connection (`mortgage_app`, M5-003) with no tenant context, or a
 
 - `src/database/migrations/1787129406858-CaseConditionsAgentTenantIsolation.ts` (new) — same `ENABLE`/`FORCE ROW LEVEL SECURITY` + `tenant_isolation` policy shape as every prior RLS migration for `loan_conditions` and `agent_runs` (direct `tenantId` column). `tool_attempts` has no `tenantId` column of its own (Section 14.1's record is keyed only by `agentRunId`), so its policy resolves ownership through an `EXISTS` join to `agent_runs` — the same join-based pattern `condition_transitions`' M5-004 policy already established against `loan_conditions`.
 - `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts`'s `persistAgentRun` — changed from a bare `dataSource.transaction(...)` to `runInTenantContext(dataSource, result.finalState.tenantId, ...)`; body unchanged. Confirmed via grep this is the only production write site for `agent_runs`/`tool_attempts` other than `case-timeline.service.ts`'s reads.
-- `src/cases/case-timeline.service.ts` — rewritten. Previously injected `AgentRun`/`ToolAttempt`/`LoanCondition` repositories and a bare `DataSource` directly (4 constructor params), issuing one wrapped `outbox_events` query alongside three *bare* queries against the other tables — meaning `GET .../timeline` was reading agent-run/condition data outside any tenant context before this slice, relying entirely on the caller having already checked `tenantId` in its `WHERE` clause with no database-layer backstop. Now takes only `DataSource` and runs all four reads (`outbox_events`, `agent_runs`, `loan_conditions`, `tool_attempts`) sequentially inside one `runInTenantContext` callback — sequential, not `Promise.all`, per the M5-004-established rule that overlapping queries on one connection risk result-set confusion (node-postgres's own deprecation warning is the concrete signal). No spec-file fixes were needed — grep confirmed no direct `new CaseTimelineService(...)` call sites exist anywhere.
+- `src/cases/case-timeline.service.ts` — rewritten. Previously injected `AgentRun`/`ToolAttempt`/`LoanCondition` repositories and a bare `DataSource` directly (4 constructor params), issuing one wrapped `outbox_events` query alongside three _bare_ queries against the other tables — meaning `GET .../timeline` was reading agent-run/condition data outside any tenant context before this slice, relying entirely on the caller having already checked `tenantId` in its `WHERE` clause with no database-layer backstop. Now takes only `DataSource` and runs all four reads (`outbox_events`, `agent_runs`, `loan_conditions`, `tool_attempts`) sequentially inside one `runInTenantContext` callback — sequential, not `Promise.all`, per the M5-004-established rule that overlapping queries on one connection risk result-set confusion (node-postgres's own deprecation warning is the concrete signal). No spec-file fixes were needed — grep confirmed no direct `new CaseTimelineService(...)` call sites exist anywhere.
 - `src/workflows/case-core-tenant-isolation.spec.ts` — extended (not a new file) to cover all 7 case-conditions-core tables in one spec, since they're one coherent unit now. Added `AgentRun`/`ToolAttempt` fixtures and entity registrations to both the admin and restricted `DataSource`s; moved `loan_conditions` fixture creation from the admin (bypass) connection to the restricted connection via `runInTenantContext`, since it now has a real policy to exercise; added a dedicated assertion for `tool_attempts`' join-based policy mirroring the existing `condition_transitions` one.
 - `src/database/migrations/schema-migrations.spec.ts` — new revert test (`'reverts the case conditions agent tenant isolation migration without touching other tables'`), same shape as the M5-004/M5-005 revert tests: checks `pg_class.relrowsecurity`/`relforcerowsecurity` and `pg_policies` before revert, confirms the full table list and RLS state afterward. This migration adds no new table, so the "applies every migration" test's table-count assertion needed no change.
 
@@ -5627,7 +5627,7 @@ Implemented and verified, including a real live workflow run. Extends M5-002/M5-
 
 Chosen autonomously as the next M5 slice (the user again delegated the choice — "繼續"). Before scoping it, ran a fresh, direct audit of every entity for a `tenantId` column (`grep tenantId! src/database/entities/*.entity.ts`), rather than trusting M5-006's own dev-log Known gaps list at face value — that list named exactly two deferred groups (`case_policy_bindings`/`case_policy_snapshots`, `provider_operation_intents`/`provider_authorization_grants`), but the fresh audit found `evaluation_input_manifests`, `communication_messages`, `communication_templates`, and `policy_change_impact_assessments` also have real `tenantId` columns and no RLS — simply missed by M5-004/M5-006's own scoping, not tables anyone deliberately excluded. Of these, `evaluation_input_manifests` was the clear next slice: exactly one write path (`EvaluationManifestService.assemble()`, a single insert-only `save()`), no reads anywhere in production code, and both real call sites already run outside any surrounding `runInTenantContext` block — no nesting concerns, no shared-method-across-different-tenant-contexts complexity like `PolicyChangeImpactService`'s `assessOneCase` has (see Known gaps).
 
-Also corrected a factual error in M5-006's own dev-log entry along the way: `PolicyEvaluationService` does *not* have "no `DataSource`/`EntityManager` at all" — it has three `@InjectRepository`-injected repositories, just never wrapped in `runInTenantContext`, the identical unwrapped-repository pattern `case-timeline.service.ts` had before M5-006 fixed it. Converting it is mechanical (swap the injected repositories for a `DataSource`, wrap `evaluate()`'s body), but is still real, non-trivial work because `PolicyChangeImpactService.assessOneCase()` shares `CasePolicyBinding`/`CasePolicySnapshot` reads across two callers needing different tenant contexts (`assessImpact()`'s cross-tenant bypass scan vs. `assessImpactForCase()`'s single-tenant lookup) — not because no `DataSource` exists at all.
+Also corrected a factual error in M5-006's own dev-log entry along the way: `PolicyEvaluationService` does _not_ have "no `DataSource`/`EntityManager` at all" — it has three `@InjectRepository`-injected repositories, just never wrapped in `runInTenantContext`, the identical unwrapped-repository pattern `case-timeline.service.ts` had before M5-006 fixed it. Converting it is mechanical (swap the injected repositories for a `DataSource`, wrap `evaluate()`'s body), but is still real, non-trivial work because `PolicyChangeImpactService.assessOneCase()` shares `CasePolicyBinding`/`CasePolicySnapshot` reads across two callers needing different tenant contexts (`assessImpact()`'s cross-tenant bypass scan vs. `assessImpactForCase()`'s single-tenant lookup) — not because no `DataSource` exists at all.
 
 ### Acceptance criterion
 
@@ -5711,7 +5711,7 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 
 - **`communication_messages`/`communication_templates` still have no RLS** — newly named by this slice's own fresh audit, not previously tracked anywhere. Service-level shape not yet audited; real follow-up work.
 - **`policy_change_impact_assessments` still has no RLS** — same audit finding. Its owning service (`PolicyChangeImpactService`) already has a `DataSource` injected, but see Decisions for why it's still real work, not a one-line wrap.
-- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — corrected understanding this slice: `PolicyEvaluationService` *does* have injected repositories (M5-006's dev log entry was wrong to say it has none), so converting it to `runInTenantContext` is mechanical: swap three injected repositories for one `DataSource`. The real remaining work is `PolicyChangeImpactService.assessOneCase()`'s shared bare reads across two different-tenant-context callers (see Decisions) — that needs a method-shape change, not just a constructor swap.
+- **`case_policy_bindings`/`case_policy_snapshots` still have no RLS** — corrected understanding this slice: `PolicyEvaluationService` _does_ have injected repositories (M5-006's dev log entry was wrong to say it has none), so converting it to `runInTenantContext` is mechanical: swap three injected repositories for one `DataSource`. The real remaining work is `PolicyChangeImpactService.assessOneCase()`'s shared bare reads across two different-tenant-context callers (see Decisions) — that needs a method-shape change, not just a constructor swap.
 - **`provider_operation_intents`/`provider_authorization_grants` still have no RLS** — unchanged from M5-006's own Known gap; several methods don't have `tenantId` in scope today.
 - **`evaluation/runner.ts`'s own direct fixture inserts still aren't RLS-audited** — unchanged, consistent Known gap repeated since M5-004.
 - **RBAC roles and the Section 14.2 data-disposition workflow remain unstarted** — unchanged from M5-006's own Next safe step.
@@ -5830,7 +5830,7 @@ role (not a superuser connection):
 
 Implemented and verified, including a real live run driving the actual `CommunicationMessageService.draft()` → `CommunicationDeliveryService.deliver()` chain against the real `mortgage_app` role. Extends RLS to Section 9.4's `draft_information_request`/`send_information_request` backing tables.
 
-Chosen as M5-008's own named "next table group needing a service-shape audit," continuing the "继续" delegation. The audit found a three-way split, not one uniform shape: `CommunicationMessageService.draft()` was mechanical (`tenantId` already an explicit parameter, just needed the `@InjectRepository` pair swapped for a `DataSource` and wrapped); `CommunicationDeliveryService.deliver()` had a bare, unwrapped initial read with **no** `tenantId` parameter at all, but its one real caller (`send_information_request`'s tool wrapper) already had a genuine `tenantId` in its `ToolContext` and simply discarded it — a real, fixable gap, not a design question; `CommunicationApprovalService.approve()` also has no `tenantId` parameter, but — unlike `deliver()` — has *no* caller anywhere in production code to define what a threaded-through signature should even look like, so it was left alone and named as a known gap instead of guessed at.
+Chosen as M5-008's own named "next table group needing a service-shape audit," continuing the "继续" delegation. The audit found a three-way split, not one uniform shape: `CommunicationMessageService.draft()` was mechanical (`tenantId` already an explicit parameter, just needed the `@InjectRepository` pair swapped for a `DataSource` and wrapped); `CommunicationDeliveryService.deliver()` had a bare, unwrapped initial read with **no** `tenantId` parameter at all, but its one real caller (`send_information_request`'s tool wrapper) already had a genuine `tenantId` in its `ToolContext` and simply discarded it — a real, fixable gap, not a design question; `CommunicationApprovalService.approve()` also has no `tenantId` parameter, but — unlike `deliver()` — has _no_ caller anywhere in production code to define what a threaded-through signature should even look like, so it was left alone and named as a known gap instead of guessed at.
 
 ### Acceptance criterion
 
@@ -5936,7 +5936,7 @@ connection):
 
 Implemented and verified, including a real live workflow run — this table group's writer (`evaluate_policy`) is, unlike M5-008/M5-009's tools, genuinely registered in `AGENT_ALLOWED_TOOLS` and reachable through the live API, so this slice could use the same real-HTTP-driven live verification M5-005/M5-006/M5-007 used, not a standalone script. Completes RLS for `PolicyEvaluationService`'s own tables, the piece M5-004/M5-006 originally deferred as part of an undifferentiated "expensive" group and M5-007/M5-008 progressively corrected the understanding of.
 
-Chosen as M5-009's own named "best-understood remaining table group," continuing the "继续" delegation. Before writing any code, re-read `PolicyEvaluationService.evaluate()` in full and found something the prior "mechanical conversion" framing had missed: its concurrency-recovery `catch` block (Section 20's exit evidence H) reads back a winning row after a real unique-constraint violation on a partial unique index. Wrapping the *entire* method in one shared transaction — the pattern used for every other service in this series — would abort that transaction the moment the constraint violation fires, and every subsequent statement in the same transaction (including the catch block's own recovery reads) would fail with "current transaction is aborted, commands ignored until end of transaction block" — the identical class of bug M5-002/M5-003 already found and fixed for `DROP ROLE`'s dependent-objects error (a JS `try/catch` cannot rescue an aborted Postgres transaction; only ending that transaction can).
+Chosen as M5-009's own named "best-understood remaining table group," continuing the "继续" delegation. Before writing any code, re-read `PolicyEvaluationService.evaluate()` in full and found something the prior "mechanical conversion" framing had missed: its concurrency-recovery `catch` block (Section 20's exit evidence H) reads back a winning row after a real unique-constraint violation on a partial unique index. Wrapping the _entire_ method in one shared transaction — the pattern used for every other service in this series — would abort that transaction the moment the constraint violation fires, and every subsequent statement in the same transaction (including the catch block's own recovery reads) would fail with "current transaction is aborted, commands ignored until end of transaction block" — the identical class of bug M5-002/M5-003 already found and fixed for `DROP ROLE`'s dependent-objects error (a JS `try/catch` cannot rescue an aborted Postgres transaction; only ending that transaction can).
 
 ### Acceptance criterion
 
@@ -6045,11 +6045,11 @@ Chosen from the user's own follow-up list after a "項目還差什麼沒做" (wh
 
 ### Acceptance criterion
 
-A `targetUrl` that is a literal private/reserved-range IP, or a hostname that resolves (via a real DNS lookup, every returned address checked) to one, is rejected with a clean `400` at registration (`POST /v1/webhook-endpoints`) and never reaches a live delivery attempt; a target whose DNS answer changes to a private address *after* registration is still caught immediately before the next dispatch attempt, not just once at registration time. A real public target is unaffected. Proven with 34 unit tests covering the full IANA special-purpose IPv4 registry and the security-relevant IPv6 ranges, a real-Postgres integration test proving `WebhookEndpointService.create()` persists nothing when blocked, a real-HTTP-receiver test proving `attemptDelivery` records a normal `FAILED` attempt (not a crash) when the guard fires at dispatch time, and a live run against the real running API confirming all of this end-to-end.
+A `targetUrl` that is a literal private/reserved-range IP, or a hostname that resolves (via a real DNS lookup, every returned address checked) to one, is rejected with a clean `400` at registration (`POST /v1/webhook-endpoints`) and never reaches a live delivery attempt; a target whose DNS answer changes to a private address _after_ registration is still caught immediately before the next dispatch attempt, not just once at registration time. A real public target is unaffected. Proven with 34 unit tests covering the full IANA special-purpose IPv4 registry and the security-relevant IPv6 ranges, a real-Postgres integration test proving `WebhookEndpointService.create()` persists nothing when blocked, a real-HTTP-receiver test proving `attemptDelivery` records a normal `FAILED` attempt (not a crash) when the guard fires at dispatch time, and a live run against the real running API confirming all of this end-to-end.
 
 ### Implementation
 
-- `src/webhooks/webhook-url-guard.ts` (new) — `assertPublicWebhookTarget(targetUrl)`: parses the URL, rejects a non-`http`/`https` scheme, resolves the hostname (or accepts a literal IP directly) and checks *every* returned address against the full blocked-range list — a literal IPv4 CIDR-mask check against the IANA special-purpose registry (loopback, RFC1918 private ranges, link-local/cloud-metadata `169.254.0.0/16`, carrier-grade NAT, documentation ranges, multicast, reserved), and an IPv6 check (loopback, unique-local `fc00::/7`, link-local `fe80::/10`, multicast, with IPv4-mapped `::ffff:0:0/96` addresses unwrapped and re-checked against the IPv4 rules). A hostname that fails to resolve at all is rejected with a clean error rather than letting a raw Node `ENOTFOUND` propagate.
+- `src/webhooks/webhook-url-guard.ts` (new) — `assertPublicWebhookTarget(targetUrl)`: parses the URL, rejects a non-`http`/`https` scheme, resolves the hostname (or accepts a literal IP directly) and checks _every_ returned address against the full blocked-range list — a literal IPv4 CIDR-mask check against the IANA special-purpose registry (loopback, RFC1918 private ranges, link-local/cloud-metadata `169.254.0.0/16`, carrier-grade NAT, documentation ranges, multicast, reserved), and an IPv6 check (loopback, unique-local `fc00::/7`, link-local `fe80::/10`, multicast, with IPv4-mapped `::ffff:0:0/96` addresses unwrapped and re-checked against the IPv4 rules). A hostname that fails to resolve at all is rejected with a clean error rather than letting a raw Node `ENOTFOUND` propagate.
 - `src/webhooks/webhook-endpoint.service.ts` — `create()` calls the guard before persisting; a `WebhookTargetBlockedError` becomes a `BadRequestException`.
 - `src/webhooks/webhook-dispatch.service.ts` — `attemptDelivery()` re-calls the guard immediately before every `fetch()`, inside the same `try` block that already records a `FAILED` attempt on any other delivery error — no new failure-handling path needed, the guard's rejection flows through the existing one.
 - `src/webhooks/webhook-endpoints.controller.ts` — added `@ApiBadRequestResponse` documenting the new rejection, matching `cases.controller.ts`'s existing pattern.
@@ -6316,7 +6316,7 @@ development) + real Temporal worker against a separate scratch stack
 
 ### Known gaps
 
-- **Section 8.8/15.5's sandbox *scenario library* (curated demo cases/fixtures) is not built** — a genuinely separate piece of work from webhook inspection, not attempted this slice (see Decisions).
+- **Section 8.8/15.5's sandbox _scenario library_ (curated demo cases/fixtures) is not built** — a genuinely separate piece of work from webhook inspection, not attempted this slice (see Decisions).
 - Every other M5/M5-011/M5-012 Known gap (`communication_approvals`/`provider_operation_intents`/`provider_authorization_grants` RLS, RBAC, data-disposition workflow, redirect-following on the SSRF guard, `send_information_request`/`escalate_to_reviewer`/`check_policy_change_impact` unwired) is unchanged by this slice.
 
 ### Next safe step
@@ -6327,11 +6327,11 @@ The ten entirely-unbuilt Section 9.4 tools and the sandbox scenario library rema
 
 ### Status
 
-Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role. Extends M5-002 through M5-010's row-level-security pattern to Section 11.5's dispatch-path tables — chosen autonomously (per the user's "你決定下一步做什麼") as the highest-value remaining M5 item: unlike most of this series, this was a genuinely *live* gap, not a dormant one — `dispatchProviderRequest` exercises these two tables on every real income/credit/document/asset/identity fetch, and both services used plain `@InjectRepository` with zero tenant scoping until this slice.
+Implemented and verified, including a real live run under `NODE_ENV=production` with the restricted `mortgage_app` role. Extends M5-002 through M5-010's row-level-security pattern to Section 11.5's dispatch-path tables — chosen autonomously (per the user's "你決定下一步做什麼") as the highest-value remaining M5 item: unlike most of this series, this was a genuinely _live_ gap, not a dormant one — `dispatchProviderRequest` exercises these two tables on every real income/credit/document/asset/identity fetch, and both services used plain `@InjectRepository` with zero tenant scoping until this slice.
 
 ### Acceptance criterion
 
-A query against either table with no tenant context and no explicit bypass sees zero rows, even when real rows exist for other tenants. `ProviderAuthorizationService.revoke()` and `ProviderOperationIntentService`'s four `mark*()` methods — previously the only methods in the whole M5 series with *zero* tenant scoping in their SQL, not even an unenforced one — now genuinely cannot affect a different tenant's row even if a future caller passed the wrong id. The real dispatch path (`dispatchProviderRequest`, exercised on every evidence fetch) continues to work correctly end-to-end under the restricted `mortgage_app` role. Proven with 9 new tests (a dedicated `provider-platform-tenant-isolation.spec.ts`, mirroring `consent-tenant-isolation.spec.ts`'s own real-Postgres-as-`mortgage_app` pattern, plus one new `schema-migrations.spec.ts` cumulative-revert step), the full existing test suite passing unchanged elsewhere, and a real quickstart run through a real API + real Temporal worker under `NODE_ENV=production`, followed by direct Postgres queries proving cross-tenant isolation on the real rows it created.
+A query against either table with no tenant context and no explicit bypass sees zero rows, even when real rows exist for other tenants. `ProviderAuthorizationService.revoke()` and `ProviderOperationIntentService`'s four `mark*()` methods — previously the only methods in the whole M5 series with _zero_ tenant scoping in their SQL, not even an unenforced one — now genuinely cannot affect a different tenant's row even if a future caller passed the wrong id. The real dispatch path (`dispatchProviderRequest`, exercised on every evidence fetch) continues to work correctly end-to-end under the restricted `mortgage_app` role. Proven with 9 new tests (a dedicated `provider-platform-tenant-isolation.spec.ts`, mirroring `consent-tenant-isolation.spec.ts`'s own real-Postgres-as-`mortgage_app` pattern, plus one new `schema-migrations.spec.ts` cumulative-revert step), the full existing test suite passing unchanged elsewhere, and a real quickstart run through a real API + real Temporal worker under `NODE_ENV=production`, followed by direct Postgres queries proving cross-tenant isolation on the real rows it created.
 
 ### Implementation
 
@@ -6340,7 +6340,7 @@ A query against either table with no tenant context and no explicit bypass sees 
 - `src/provider-platform/provider-operation-intent.service.ts` — same conversion. `prepare()` now runs in tenant context. `markDispatched`/`markSucceeded`/`markFailedFinal`/`markOutcomeUnknown` — all four previously bare `update({ id }, ...)` calls with no tenant predicate at all — now each require a `tenantId` parameter (a shared private `setState()` helper avoids repeating the `runInTenantContext` wrapping four times).
 - `src/provider-platform/dispatch-provider-request.ts` — its four `mark*()` call sites updated to pass `intent.tenantId` (the returned `ProviderOperationIntent` value already carries it — no new argument threading needed anywhere upstream).
 - `src/provider-platform/provider-platform-tenant-isolation.spec.ts` (new) — 9 tests: no-context-sees-zero, each tenant sees only its own grant/intent, a direct id lookup for another tenant's grant returns nothing, an `UPDATE` against another tenant's grant/intent (the exact query shape `revoke()`/`mark*()` now issue) affects zero rows without erroring, an `INSERT` claiming a different tenant than the session context is rejected by Postgres itself, and bypass mode sees everything.
-- `src/database/migrations/schema-migrations.spec.ts` — the file's own cumulative revert-chain test suite required one new step (inserted first, mirroring the file's own documented maintenance instruction: "grows... whenever a new migration is added"), since `undoLastMigration()` always reverts whichever migration is currently latest — without this addition, every subsequent revert-chain assertion silently checks the *wrong* migration's effects, one position off.
+- `src/database/migrations/schema-migrations.spec.ts` — the file's own cumulative revert-chain test suite required one new step (inserted first, mirroring the file's own documented maintenance instruction: "grows... whenever a new migration is added"), since `undoLastMigration()` always reverts whichever migration is currently latest — without this addition, every subsequent revert-chain assertion silently checks the _wrong_ migration's effects, one position off.
 - Six direct-construction call sites updated for the new `DataSource`-based constructors and the `mark*()`/`revoke()` signature changes: `evaluation-report.ts`, `case-conditions.activities.spec.ts`, `evaluation/runner.spec.ts`, `dispatch-provider-request.spec.ts`, `provider-authorization.service.spec.ts`, `provider-operation-intent.service.spec.ts`.
 
 ### Affected files
@@ -6355,13 +6355,13 @@ A query against either table with no tenant context and no explicit bypass sees 
 ### Decisions and alternatives
 
 - **`communication_approvals` deliberately still out of scope**, for the exact reason M5-009's own migration comment already recorded: no `tenantId` column of its own (would need a join through `communication_messages`, unlike either table this slice touches), and its sole writer (`CommunicationApprovalService.approve()`) still has no real caller anywhere in this codebase to define what a threaded-through signature should look like — confirmed this is still true today (a fresh grep, not trusting the prior slice's note at face value, same methodology M5-007/M5-009 themselves used), not just assumed unchanged. Revisit together with the approval-gated `send_information_request` path.
-- **Multiple short transactions, not one long transaction spanning the external provider call.** `dispatchProviderRequest` interleaves grant/intent writes with a call to `adapter.submit()` — every adapter in this codebase is synthetic/in-process today, but wrapping the *entire* dispatch in one `runInTenantContext` would hold a Postgres transaction open across whatever a real future provider adapter's network call takes, a bad pattern regardless of whether today's synthetic adapters would ever expose it. Followed `ConsentService`'s own already-established shape instead: each service method opens its own short transaction, exactly where a write actually happens.
-- **`revalidate()`'s existing manual `entity.tenantId !== expected.tenantId` check was left in place, not removed as newly-redundant.** Once the read itself is tenant-scoped, that specific branch becomes unreachable *given a correctly-configured non-superuser role* — but this codebase's own `TypeOrmOptions` warning (`APP_DATABASE_URL is not set in production — falling back to DATABASE_URL... if superuser, RLS provides no real protection`) documents a real, not hypothetical, misconfiguration this check still catches. Kept as the same kind of defense-in-depth the codebase already explicitly reasons about elsewhere, not new speculative validation.
+- **Multiple short transactions, not one long transaction spanning the external provider call.** `dispatchProviderRequest` interleaves grant/intent writes with a call to `adapter.submit()` — every adapter in this codebase is synthetic/in-process today, but wrapping the _entire_ dispatch in one `runInTenantContext` would hold a Postgres transaction open across whatever a real future provider adapter's network call takes, a bad pattern regardless of whether today's synthetic adapters would ever expose it. Followed `ConsentService`'s own already-established shape instead: each service method opens its own short transaction, exactly where a write actually happens.
+- **`revalidate()`'s existing manual `entity.tenantId !== expected.tenantId` check was left in place, not removed as newly-redundant.** Once the read itself is tenant-scoped, that specific branch becomes unreachable _given a correctly-configured non-superuser role_ — but this codebase's own `TypeOrmOptions` warning (`APP_DATABASE_URL is not set in production — falling back to DATABASE_URL... if superuser, RLS provides no real protection`) documents a real, not hypothetical, misconfiguration this check still catches. Kept as the same kind of defense-in-depth the codebase already explicitly reasons about elsewhere, not new speculative validation.
 - **`revoke(tenantId, grantId)`'s new `tenantId` parameter has no real caller to thread it from.** Added anyway, matching every other method's own convention, rather than leaving the method's SQL tenant-unscoped until some future caller shows up — the same reasoning `ProviderOperationIntentService`'s own doc comment already applies to its undriven `RECONCILING`/`CANCELLED` states: an honest, documented gap in what calls the method, not a gap in what the method itself enforces once called.
 
 ### Errors and fixes
 
-- **The first full-suite run showed 27 failures, all in `schema-migrations.spec.ts`.** Root cause: that file's own cumulative revert-chain tests call `undoLastMigration()` in strict sequence, one call per test, each test titled after the specific migration it expects to be reverting — adding a new latest migration without adding a matching new first revert test shifts every subsequent test's `undoLastMigration()` call to actually revert the *previous* test's migration instead, one position off, cascading through all 27 remaining revert-chain tests. Exactly the maintenance cost the file's own top-of-file comment already documents ("grows... whenever a new migration is added"), not a real regression — fixed by inserting a new first revert test for this slice's own migration, after which the full chain (29 tests now) passed cleanly.
+- **The first full-suite run showed 27 failures, all in `schema-migrations.spec.ts`.** Root cause: that file's own cumulative revert-chain tests call `undoLastMigration()` in strict sequence, one call per test, each test titled after the specific migration it expects to be reverting — adding a new latest migration without adding a matching new first revert test shifts every subsequent test's `undoLastMigration()` call to actually revert the _previous_ test's migration instead, one position off, cascading through all 27 remaining revert-chain tests. Exactly the maintenance cost the file's own top-of-file comment already documents ("grows... whenever a new migration is added"), not a real regression — fixed by inserting a new first revert test for this slice's own migration, after which the full chain (29 tests now) passed cleanly.
 
 ### Verification
 
@@ -6542,12 +6542,12 @@ Implemented and verified with a real live run. Closes the "scenario catalog"/"de
 
 ### Acceptance criterion
 
-`npm run scenario-catalog` (or `-- <name>` for one scenario) drives six named, reproducible scenarios through the real REST API + Temporal worker, each asserting an *expected* outcome rather than just narrating one — covering every deterministic case/workflow outcome shape this codebase currently produces: straight-through approval, a policy-opened condition resolved by a real reviewer decision, a transient provider failure exhausting Temporal's retry policy, a terminal provider failure short-circuiting it, consent revoked before dispatch failing every evidence fetch closed, and a policy-applicability ambiguity that interrupts the case for review and is later resumed. A deliberately-broken assertion was verified to actually FAIL and exit non-zero (not silently pass) before being reverted, proving the catalog is real regression coverage, not narration. All six scenarios passed against a real API + Temporal worker on the first live run with no code changes needed, and again after the deliberate-failure round-trip.
+`npm run scenario-catalog` (or `-- <name>` for one scenario) drives six named, reproducible scenarios through the real REST API + Temporal worker, each asserting an _expected_ outcome rather than just narrating one — covering every deterministic case/workflow outcome shape this codebase currently produces: straight-through approval, a policy-opened condition resolved by a real reviewer decision, a transient provider failure exhausting Temporal's retry policy, a terminal provider failure short-circuiting it, consent revoked before dispatch failing every evidence fetch closed, and a policy-applicability ambiguity that interrupts the case for review and is later resumed. A deliberately-broken assertion was verified to actually FAIL and exit non-zero (not silently pass) before being reverted, proving the catalog is real regression coverage, not narration. All six scenarios passed against a real API + Temporal worker on the first live run with no code changes needed, and again after the deliberate-failure round-trip.
 
 ### Implementation
 
 - `client/scenario-catalog.ts` (new) — following `quickstart.ts`/`webhook-inspector.ts`'s established skeleton exactly (dotenv, direct-SQL tenant seed, `ApiClientService` directly for the credential, everything else through the real generated client). A `Scenario[]` registry, each with a `name`, a `description` printed before it runs, and a `run()` that throws on any expectation mismatch. `main()` runs every scenario (or one, via `process.argv[2]`) against one shared tenant/credential, prints PASS/FAIL with timing per scenario, and exits non-zero if any failed.
-- Two shared polling helpers: `pollWorkflowToTerminal()` (Temporal's own execution status — `RUNNING` until `COMPLETED`/`FAILED`/etc., with an optional `onTick` callback so a scenario can react to a case-level status change mid-poll, e.g. submitting a review the moment a condition opens) and `pollCaseStatusUntil()` (the *case's* own application-level status — `CONDITIONS_OPEN`, `WAITING_FOR_REVIEW` — independent of workflow terminality, since the workflow stays `RUNNING` in Temporal's own terms while durably paused waiting for a signal).
+- Two shared polling helpers: `pollWorkflowToTerminal()` (Temporal's own execution status — `RUNNING` until `COMPLETED`/`FAILED`/etc., with an optional `onTick` callback so a scenario can react to a case-level status change mid-poll, e.g. submitting a review the moment a condition opens) and `pollCaseStatusUntil()` (the _case's_ own application-level status — `CONDITIONS_OPEN`, `WAITING_FOR_REVIEW` — independent of workflow terminality, since the workflow stays `RUNNING` in Temporal's own terms while durably paused waiting for a signal).
 - The `policy-ambiguity-unresolved-jurisdiction` scenario uses one more direct-SQL escape hatch (inserting a `NOT_COVERED` jurisdiction row, then updating it to `COVERED` after observing the interrupt) — no jurisdiction-management REST endpoint exists at all (confirmed by grepping `src/policy/` for `@Controller`, finding none), the same honest gap `quickstart.ts` already documents for tenant/API-client seeding, not a fabricated endpoint.
 - `package.json` — added the `scenario-catalog` script alongside `quickstart`/`webhook-inspector`.
 
@@ -6657,7 +6657,7 @@ A machine credential (`api_clients`) now carries a real `role` (`PARTNER` defaul
 
 - **Exactly two roles, not a speculative third "admin" tier.** Every role invented needs its own justification; the charter itself only ever distinguishes one authority level anywhere in this API surface (Section 6.3's human reviewer). Consent grant/revoke, webhook registration, and case creation all stayed open to `PARTNER` — reconsidered gating consent `REVOKE` behind a stricter role, but concluded a partner integration's own backend legitimately needs to signal "our user revoked consent" as routine, expected traffic; gating it would misrepresent how a real integration works, not add real security.
 - **Guard-ordering finding, not a fabricated test fix**: adding `RoleGuard` to `/reviews` meant a cross-tenant `PARTNER`-role caller now gets `403` (role check) before ever reaching the tenant-ownership check that used to produce `404`. Investigated whether this leaks resource existence (Section 20 M5's own "never reveal via a differentiated status code" concern) — it does not: the `403` fires identically for every case id, real or fake, existing or not, for a fixed caller role, so no caller can distinguish "exists in another tenant" from "doesn't exist at all." Fixed by giving `cases.e2e-spec.ts`'s cross-tenant test client `REVIEWER` role too, preserving that test's own original intent (pure tenant isolation, unclouded by the new role dimension) — not by weakening the new guard or quietly changing what the test asserts without understanding why.
-- **RBAC scoped to the machine-credential model that already exists, not OIDC.** The charter's own data model (`users`/`tenant_memberships`, Section 14.1) ties real RBAC to OIDC-linked human identity — building that is a genuinely separate, much larger effort (`ApiClient`'s own class comment already said so before this slice). This RBAC is honestly scoped to what `api_clients` can support: which *credential* gets to call which route, not "which human is logged in."
+- **RBAC scoped to the machine-credential model that already exists, not OIDC.** The charter's own data model (`users`/`tenant_memberships`, Section 14.1) ties real RBAC to OIDC-linked human identity — building that is a genuinely separate, much larger effort (`ApiClient`'s own class comment already said so before this slice). This RBAC is honestly scoped to what `api_clients` can support: which _credential_ gets to call which route, not "which human is logged in."
 
 ### Errors and fixes
 
@@ -6720,7 +6720,7 @@ NODE_ENV=production with APP_DATABASE_URL (the mortgage_app role):
 ### Known gaps
 
 - **Not real OIDC/FAPI 2.0** — this RBAC governs machine credentials only; there is still no human-identity system (`users`/`tenant_memberships`) at all, and this slice doesn't attempt to build one. Explicitly, deliberately out of scope per the user's own direction.
-- **No credential-management REST surface** — `create-api-client` remains a script, matching `ApiClientService`'s own pre-existing comment ("who's allowed to create API clients?" is exactly the RBAC question this slice answers for *using* a credential, not for *minting* one).
+- **No credential-management REST surface** — `create-api-client` remains a script, matching `ApiClientService`'s own pre-existing comment ("who's allowed to create API clients?" is exactly the RBAC question this slice answers for _using_ a credential, not for _minting_ one).
 - Every other M5 Known gap (`communication_approvals` RLS, encrypted field/object boundaries, `audit_events`, `legal_holds`, tenant-owned configuration, provider-promotion governance, consolidated negative-authorization suite) is unchanged by this slice — next up per the user's "push through the rest" direction.
 
 ### Next safe step
@@ -6735,7 +6735,7 @@ Implemented and verified, including a real live run under `NODE_ENV=production` 
 
 ### Acceptance criterion
 
-`communication_approvals` is now RLS-protected via a join through `communication_messages` (the same shape `condition_transitions`/`tool_attempts` already established for a table with no `tenantId` column of its own) — a query with no tenant context sees zero rows even when real rows exist, a fabricated other-tenant context sees zero rows, and an `INSERT` referencing a message owned by a *different* tenant than the session context is rejected by Postgres itself, not just a direct-column mismatch. `CommunicationApprovalService.approve()` now takes an explicit `tenantId` parameter — the very first real design of that signature, not a retrofit around an existing caller, since none existed. Proven with a dedicated 7-test tenant-isolation spec (`mortgage_app` role), the two existing specs that exercise `approve()` updated and passing, and a real live run: a real case driven through `quickstart` produced a real `PROTECTED`/`AWAITING_APPROVAL` message via `draft_information_request`, approved directly through the real service under the restricted role, flipping the message to `APPROVED` — then direct Postgres queries proved the real tenant sees its own approval while a fabricated other-tenant session sees zero rows despite the data existing.
+`communication_approvals` is now RLS-protected via a join through `communication_messages` (the same shape `condition_transitions`/`tool_attempts` already established for a table with no `tenantId` column of its own) — a query with no tenant context sees zero rows even when real rows exist, a fabricated other-tenant context sees zero rows, and an `INSERT` referencing a message owned by a _different_ tenant than the session context is rejected by Postgres itself, not just a direct-column mismatch. `CommunicationApprovalService.approve()` now takes an explicit `tenantId` parameter — the very first real design of that signature, not a retrofit around an existing caller, since none existed. Proven with a dedicated 7-test tenant-isolation spec (`mortgage_app` role), the two existing specs that exercise `approve()` updated and passing, and a real live run: a real case driven through `quickstart` produced a real `PROTECTED`/`AWAITING_APPROVAL` message via `draft_information_request`, approved directly through the real service under the restricted role, flipping the message to `APPROVED` — then direct Postgres queries proved the real tenant sees its own approval while a fabricated other-tenant session sees zero rows despite the data existing.
 
 ### Implementation
 
@@ -6829,7 +6829,7 @@ Implemented and verified, including a real live run under `NODE_ENV=production` 
 
 ### Acceptance criterion
 
-A new `audit_events` table (RLS-protected from creation, matching `ConsentRecords`/`DataDispositionTasks`) records real events from five distinct security-relevant call sites: RBAC rejections (`RoleGuard`), review decisions (`submitReview`), consent grant/revoke (`submitConsentAction`), webhook endpoint registration (`createWebhookEndpoint`), and protected-communication approval (`CommunicationApprovalService.approve()`). Every event carries `tenantId`, `actorId`, `action`, `resourceType`/`resourceId`, and — for every call site that has a real HTTP request behind it — a `correlationId` (a fresh id `ApiKeyGuard` mints per authenticated request, the only real per-request trace unit this codebase has). The table is genuinely append-only: a database trigger rejects `UPDATE`/`DELETE` outright, unconditionally, even under `app.bypass_rls`, not just "no service happens to call `.update()`." A failure to *write* an audit event never blocks the action it describes (logged and swallowed, not rethrown). Proven with 11 unit/tenant-isolation tests, a direct `psql` proof that the trigger rejects mutation even as the Postgres superuser, and a real live run: all five real audit sources fired in one pass against a real API + Temporal worker under the restricted role, producing five real rows with the exact expected shape, followed by a direct cross-tenant RLS proof on the real data.
+A new `audit_events` table (RLS-protected from creation, matching `ConsentRecords`/`DataDispositionTasks`) records real events from five distinct security-relevant call sites: RBAC rejections (`RoleGuard`), review decisions (`submitReview`), consent grant/revoke (`submitConsentAction`), webhook endpoint registration (`createWebhookEndpoint`), and protected-communication approval (`CommunicationApprovalService.approve()`). Every event carries `tenantId`, `actorId`, `action`, `resourceType`/`resourceId`, and — for every call site that has a real HTTP request behind it — a `correlationId` (a fresh id `ApiKeyGuard` mints per authenticated request, the only real per-request trace unit this codebase has). The table is genuinely append-only: a database trigger rejects `UPDATE`/`DELETE` outright, unconditionally, even under `app.bypass_rls`, not just "no service happens to call `.update()`." A failure to _write_ an audit event never blocks the action it describes (logged and swallowed, not rethrown). Proven with 11 unit/tenant-isolation tests, a direct `psql` proof that the trigger rejects mutation even as the Postgres superuser, and a real live run: all five real audit sources fired in one pass against a real API + Temporal worker under the restricted role, producing five real rows with the exact expected shape, followed by a direct cross-tenant RLS proof on the real data.
 
 ### Implementation
 
@@ -6867,7 +6867,7 @@ A new `audit_events` table (RLS-protected from creation, matching `ConsentRecord
 
 ### Errors and fixes
 
-- **`src/cases/cases.controller.spec.ts` broke** — a pre-existing unit spec (not an e2e spec) that constructs `CasesController` directly with a mocked `CasesService` and calls `controller.submitReview(TENANT_ID, 'case-1', reviewDto)`, passing a plain tenantId string matching the *old* `@AuthTenantId()` signature. `submitReview`'s first parameter is now `@CurrentAuth() auth: AuthContext` (a full object), so the call broke with `Cannot read properties of undefined (reading 'record')` — the controller tried to call `this.auditEventService.record(...)` on an unconstructed second dependency the spec's own `new CasesController(casesService as never)` never supplied. Fixed by adding a mocked `AuditEventService` to the spec's own constructor call and updating the `submitReview` test to pass a full `AuthContext` fixture, plus a new assertion that the resulting audit event carries the right shape.
+- **`src/cases/cases.controller.spec.ts` broke** — a pre-existing unit spec (not an e2e spec) that constructs `CasesController` directly with a mocked `CasesService` and calls `controller.submitReview(TENANT_ID, 'case-1', reviewDto)`, passing a plain tenantId string matching the _old_ `@AuthTenantId()` signature. `submitReview`'s first parameter is now `@CurrentAuth() auth: AuthContext` (a full object), so the call broke with `Cannot read properties of undefined (reading 'record')` — the controller tried to call `this.auditEventService.record(...)` on an unconstructed second dependency the spec's own `new CasesController(casesService as never)` never supplied. Fixed by adding a mocked `AuditEventService` to the spec's own constructor call and updating the `submitReview` test to pass a full `AuthContext` fixture, plus a new assertion that the resulting audit event carries the right shape.
 - **`schema-migrations.spec.ts`'s cumulative revert chain needed one more new first step**, the same now-routine maintenance cost every migration-adding slice in this series has hit — new-table shape (`DROP TABLE` takes RLS with it), plus one extra check that `reject_audit_event_mutation()` is actually gone after revert (the migration's own `down()` explicitly drops it, not implied by `DROP TABLE` alone).
 
 ### Verification
@@ -6970,7 +6970,7 @@ Implemented and verified, including a real live curl proof under `NODE_ENV=produ
 ### Errors and fixes
 
 - **Inverted ternary bug in this slice's own first draft**: `const describeOrSkip = missingVars.length > 0 ? describe : describe.skip;` — backwards from the established convention (`missingVars.length > 0 ? describe.skip : describe`) used everywhere else in this codebase's real-DB/e2e specs. The whole suite silently reported "1 skipped" with no failing assertions, which could easily have been mistaken for "nothing wrong" rather than "nothing ran" — caught by noticing the suite-level skip in the test summary, not from a failing assertion, a reminder that a skipped suite deserves the same scrutiny as a failing one.
-- **A genuine finding about NestJS's own request lifecycle**, not a code bug: the first attempt at "rejects a review-submission body that tries to smuggle a role/apiClientId override" used a PARTNER-role client and got `403` (RoleGuard) instead of the expected `400` (ValidationPipe) — because NestJS runs guards *before* pipes, so a role-insufficient caller never reaches DTO validation at all. Fixed by minting a REVIEWER-role credential specifically for that test, so the request actually reaches the layer being tested — and documented the ordering fact in the test's own comment rather than silently working around it.
+- **A genuine finding about NestJS's own request lifecycle**, not a code bug: the first attempt at "rejects a review-submission body that tries to smuggle a role/apiClientId override" used a PARTNER-role client and got `403` (RoleGuard) instead of the expected `400` (ValidationPipe) — because NestJS runs guards _before_ pipes, so a role-insufficient caller never reaches DTO validation at all. Fixed by minting a REVIEWER-role credential specifically for that test, so the request actually reaches the layer being tested — and documented the ordering fact in the test's own comment rather than silently working around it.
 
 ### Verification
 
@@ -7026,7 +7026,7 @@ Implemented and verified, including a real live proof under `NODE_ENV=production
 
 ### Acceptance criterion
 
-`Tenant` gains two nullable override columns; null means "use the platform default," so every tenant's Agent runs behave identically to before this migration until an operator explicitly sets one. `case-conditions.activities.ts`'s `evaluateConditions` now resolves the real budget from the tenant's own row on every run, not a fixed constant. Proven with a real unit test setting a tenant's `agentRunStepBudgetOverride` to `1` and confirming a real Agent run — which needs several real tool calls to complete normally — genuinely exhausts budget and routes to `REVIEW_REQUIRED` instead, and a live run: the *same* tenant, the *same* income-discrepancy scenario, completed normally under the platform default and then, after setting the override via the new `npm run set-tenant-agent-budget` script, routed to real `MANUAL_REVIEW` with the exact real reason `[BUDGET_OR_DEADLINE_EXHAUSTED] remainingStepBudget exhausted` in the case's own timeline.
+`Tenant` gains two nullable override columns; null means "use the platform default," so every tenant's Agent runs behave identically to before this migration until an operator explicitly sets one. `case-conditions.activities.ts`'s `evaluateConditions` now resolves the real budget from the tenant's own row on every run, not a fixed constant. Proven with a real unit test setting a tenant's `agentRunStepBudgetOverride` to `1` and confirming a real Agent run — which needs several real tool calls to complete normally — genuinely exhausts budget and routes to `REVIEW_REQUIRED` instead, and a live run: the _same_ tenant, the _same_ income-discrepancy scenario, completed normally under the platform default and then, after setting the override via the new `npm run set-tenant-agent-budget` script, routed to real `MANUAL_REVIEW` with the exact real reason `[BUDGET_OR_DEADLINE_EXHAUSTED] remainingStepBudget exhausted` in the case's own timeline.
 
 ### Implementation
 
@@ -7142,7 +7142,7 @@ A new `CommunicationMessagesController` under `/v1/loan-cases/:caseId/communicat
 
 ### Decisions and alternatives
 
-- **`send` is not REVIEWER-gated, deliberately.** Section 6.4's human-approval requirement is about *approving* protected content, not about who is allowed to trigger delivery of already-ready content — `deliver()`'s own state-based readiness check (`ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED`, otherwise `NOT_READY`) already fails closed for any caller regardless of role. Restricting the role here would add no real authorization boundary beyond what that check already enforces, only ceremony. Proven directly: the live verification script had a `PARTNER`-role credential successfully call `send` on an already-`REVIEWER`-approved message.
+- **`send` is not REVIEWER-gated, deliberately.** Section 6.4's human-approval requirement is about _approving_ protected content, not about who is allowed to trigger delivery of already-ready content — `deliver()`'s own state-based readiness check (`ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED`, otherwise `NOT_READY`) already fails closed for any caller regardless of role. Restricting the role here would add no real authorization boundary beyond what that check already enforces, only ceremony. Proven directly: the live verification script had a `PARTNER`-role credential successfully call `send` on an already-`REVIEWER`-approved message.
 - **`NOT_READY` maps to HTTP 409, not a 200 with an outcome field.** `deliver()`'s own return type is a union (`DELIVERED` | `NOT_READY`) because it's a legitimate non-exceptional outcome at the service layer, but at the REST boundary "you asked to send something not ready to send" is a state conflict — a real HTTP status a caller's own error-handling can branch on, not a field they have to parse out of a 200 body.
 - **Nested under `/v1/loan-cases/:caseId/communication-messages`, matching `CasesController`'s own path convention**, even though Section 15.1's own target REST surface never named this endpoint — the same "an honest extension beyond the charter's minimal named surface" pattern several other M5 additions already established (e.g. `/consents`, M5-005).
 - **Fixed the `findOneByOrFail` → 500 bug in both `approve()` and `deliver()` rather than leaving it**, since this slice is precisely what gives both their first real caller — an unfixed 500-instead-of-404 on a routine not-found case would have shipped as a real regression in this same commit, not a pre-existing issue merely inherited.
@@ -7252,7 +7252,7 @@ Implemented and verified, including a real live proof against a real running API
 
 ### Decisions and alternatives
 
-- **A real REST caller for each, not a forced LangGraph node, and not a Temporal signal/resume mechanism.** Considered a new `communicationApproved`-style Temporal signal that would resume `case-conditions.workflow.ts` to invoke `send_information_request` after a human's REST approval (M5-022) — rejected once tracing the actual workflow control flow showed condition *resolution* (`resolveConditionSignal`, already real) and communication *delivery* are genuinely independent concerns in this codebase: the workflow's own durable wait is on the condition being resolved, never on the drafted message being sent. Coupling them would have been complexity serving no real requirement, not a genuine gap.
+- **A real REST caller for each, not a forced LangGraph node, and not a Temporal signal/resume mechanism.** Considered a new `communicationApproved`-style Temporal signal that would resume `case-conditions.workflow.ts` to invoke `send_information_request` after a human's REST approval (M5-022) — rejected once tracing the actual workflow control flow showed condition _resolution_ (`resolveConditionSignal`, already real) and communication _delivery_ are genuinely independent concerns in this codebase: the workflow's own durable wait is on the condition being resolved, never on the drafted message being sent. Coupling them would have been complexity serving no real requirement, not a genuine gap.
 - **Went through `invokeTool`/`buildToolRegistry`, not the underlying services directly** — unlike M5-022's `approve`/`send` (which called `CommunicationApprovalService`/`CommunicationDeliveryService` directly, reasonable there since the Agent-tool wrappers add zero logic beyond a pass-through). Here, going through the real registry costs nothing extra and gives these two tools their first genuine invocation anywhere in the codebase, matching the "a registered tool is the only path to this side effect" invariant more strictly.
 - **`escalate` is open to any authenticated role, not REVIEWER-gated.** Escalating only ever adds human scrutiny to a case, never removes it — it carries none of the approval-bypass risk `submitReview`'s/communication-`approve`'s REVIEWER gates exist for.
 - **Fixed the tool's own missing status guard while giving it a real caller**, rather than leaving it and discovering the regression later: this slice is precisely what gives `escalate_to_reviewer` its first real invocation, so an unguarded regression bug would have shipped as a genuine new bug in this same commit, not merely an inherited pre-existing one (the same reasoning M5-022 used for its own `findOneByOrFail` fix).
@@ -7349,7 +7349,7 @@ A new `provider_adapter_status` table (no row for a tuple = ACTIVE, the implicit
 
 ### Decisions and alternatives
 
-- **A standalone kill switch, not the full manifest/certification/approval/activation chain.** Considered building `ProviderPromotionManifest` rows for the 5 currently-real `SIMULATOR` adapters too (their `providerId`/`capability`/`mode` identity is genuinely real) — rejected: most of that interface's fields (`credentialRef`, `webhookSecretRef`, `endpointAllowlist`) would be honestly empty for `SIMULATOR` (Section 11.1: "free default," no real credentials), and a `ProviderCertificationRecord`/`ProviderApprovalRecord` pair certifying/dual-approving a `SIMULATOR` adapter against itself has no real stakes to govern — there is no second mode it's being promoted *to*. The kill switch stands entirely on its own in the charter's own text and doesn't need that machinery to have genuine value.
+- **A standalone kill switch, not the full manifest/certification/approval/activation chain.** Considered building `ProviderPromotionManifest` rows for the 5 currently-real `SIMULATOR` adapters too (their `providerId`/`capability`/`mode` identity is genuinely real) — rejected: most of that interface's fields (`credentialRef`, `webhookSecretRef`, `endpointAllowlist`) would be honestly empty for `SIMULATOR` (Section 11.1: "free default," no real credentials), and a `ProviderCertificationRecord`/`ProviderApprovalRecord` pair certifying/dual-approving a `SIMULATOR` adapter against itself has no real stakes to govern — there is no second mode it's being promoted _to_. The kill switch stands entirely on its own in the charter's own text and doesn't need that machinery to have genuine value.
 - **Two states (`ACTIVE`/`DISABLED`), not the charter's three (`ACTIVE`/`SUSPENDED`/`DISABLED`).** This codebase has no real distinction between "suspended" and "disabled" yet — both would mean "don't dispatch," with the same real consequence — so declaring a third value nothing differentiates would be the same kind of unbacked vocabulary this codebase's own conventions avoid.
 - **No RLS on `provider_adapter_status`.** `ProviderRegistryService` registers exactly one adapter per `{capability, mode}` globally, shared identically across every tenant — there is no tenant dimension to scope this to, matching `tenants`/the policy catalog's own precedent (M5-021's investigation) of a real, deliberately-unprotected shared table.
 - **Current-state-only, not an append-only event log.** One row per tuple, upserted — not the fuller attributable history `audit_events` gives tenant-scoped actions. `audit_events` itself structurally cannot represent this action (its `tenantId` column is NOT NULL and RLS-enforced; this action has no tenant), and building a second bespoke event-sourced history table for a single boolean flag would be premature abstraction for what's realistically an infrequent operator action. Recorded as an honest Known gap, not silently accepted.
@@ -7427,7 +7427,7 @@ Implemented and verified, including a real live proof under `NODE_ENV=production
 ### Implementation
 
 - `src/communications/well-known-templates.ts` (new) — `READY_FOR_UNDERWRITING_TEMPLATE_KEY`/`_VERSION` constants, the one place `case-conditions.activities.ts` and the new seed script both need to agree.
-- `src/seed-communication-template.ts` (new script) — `npm run seed-communication-template -- <tenantId> <templateKey> <version> <channel> <locale> <recipientRelationship> <approvedBy> <bodyTemplate>`. Creates the template already `APPROVED` (the script *is* the approval act, matching this codebase's other administrative scripts' single-step trust). `allowedVariables` is derived from `bodyTemplate`'s own `{{variableName}}` placeholders via the same `PLACEHOLDER_PATTERN` regex `communication-render.ts` uses, not a separately supplied list that could drift from the template body. Refuses to overwrite an existing `(tenantId, templateKey, version)` row (templates are immutable once created) rather than silently upserting.
+- `src/seed-communication-template.ts` (new script) — `npm run seed-communication-template -- <tenantId> <templateKey> <version> <channel> <locale> <recipientRelationship> <approvedBy> <bodyTemplate>`. Creates the template already `APPROVED` (the script _is_ the approval act, matching this codebase's other administrative scripts' single-step trust). `allowedVariables` is derived from `bodyTemplate`'s own `{{variableName}}` placeholders via the same `PLACEHOLDER_PATTERN` regex `communication-render.ts` uses, not a separately supplied list that could drift from the template body. Refuses to overwrite an existing `(tenantId, templateKey, version)` row (templates are immutable once created) rather than silently upserting.
 - `src/workflows/case-conditions.activities.ts` — new `CommunicationDeliveryService` dependency; a small local `readyNotificationTools` registry (`draft_information_request` + `send_information_request`); `sendReadyForUnderwritingNotification(tenantId, caseId)` — checks for the approved template first (returns immediately, no draft attempt, if absent), then drafts and sends, logging (never throwing) any failure so a routine notification's own trouble can never block the case's already-committed `READY_FOR_UNDERWRITING` transition. Called from both real call sites of `finalizeReadyForUnderwriting` (the straight-through-ready branch in `evaluateConditions`, and `markReadyForUnderwriting` after a condition resolves).
 - `src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` — updated its own top-comment to note the new, separate (non-graph) real caller, without overstating that `send_information_request` is now wired into the `StateGraph` itself (it isn't, and still can't be — see M5-023's own entry for why the condition-remediation draft stays permanently `PROTECTED`).
 - Threaded `communicationDeliveryService` through every `CaseConditionsActivitiesDeps`/`EvaluationRunnerDeps` construction site: `worker.ts`, `evaluation-report.ts` (raw-constructed: `new CommunicationDeliveryService(dataSource, new CommunicationDeliverySimulator(), new ConfigService({OUTBOX_SIGNING_SECRET: outboxSigningSecret}))`, matching `ProviderAuthorizationService`'s own existing raw-construction precedent in that same script), and both files' own `.spec.ts` fixtures.
@@ -7442,7 +7442,7 @@ Implemented and verified, including a real live proof under `NODE_ENV=production
 
 ### Decisions and alternatives
 
-- **The trigger point is `finalizeReadyForUnderwriting` (the activities layer), not a new node inside `lending-operations-agent-runtime.ts`'s own `StateGraph`.** `finalizeReadyForUnderwriting` is called from *two* real places — the graph's own straight-through "no condition matched" branch, and the workflow's post-condition-resolution path — and only the activities layer sees both. Putting the notification here covers a case that reaches READY either way with one code path; putting it inside the graph's own `resolveOutcomeNode` would have missed the condition-resolution path entirely.
+- **The trigger point is `finalizeReadyForUnderwriting` (the activities layer), not a new node inside `lending-operations-agent-runtime.ts`'s own `StateGraph`.** `finalizeReadyForUnderwriting` is called from _two_ real places — the graph's own straight-through "no condition matched" branch, and the workflow's post-condition-resolution path — and only the activities layer sees both. Putting the notification here covers a case that reaches READY either way with one code path; putting it inside the graph's own `resolveOutcomeNode` would have missed the condition-resolution path entirely.
 - **Still goes through `invokeTool`/`buildToolRegistry`, not the underlying services directly** — the identical reasoning M5-023 already established: costs nothing extra, and gives `send_information_request` its first genuine registered-tool invocation, regardless of which layer the call site lives in.
 - **Opt-in per tenant via an up-front template-existence check, not a fail-closed-after-drafting default.** Considered letting `classifyCommunication`'s own existing "template not found -> PROTECTED" fail-closed path handle an unseeded tenant (simpler code, one fewer query) — rejected once weighing the real cost: every case reaching READY for every tenant, forever, would get a permanent, empty-content, never-approvable `CommunicationMessage` row it never asked for. Checking first avoids that noise entirely for the common case (a tenant that hasn't opted in) at the cost of one extra tenant-scoped read.
 - **A script, not a REST endpoint, for template seeding** — matches `create-api-client.ts`/`set-tenant-agent-budget.ts`/`set-provider-status.ts`'s own established convention exactly: no admin RBAC tier exists for this class of platform-configuration action, and Section 6.4's own approval requirement for this specific content class is a human, out-of-band decision regardless.
@@ -7450,7 +7450,7 @@ Implemented and verified, including a real live proof under `NODE_ENV=production
 ### Errors and fixes
 
 - **A real bug in this slice's own first draft**: `sendReadyForUnderwritingNotification` read `drafted.id` from the `draft_information_request` tool's result — but `DraftInformationRequestResult`'s actual field is `communicationMessageId`, not `id`. The typo passed `undefined` through to `send_information_request`, which silently found and "delivered" a message via a coincidental empty-`WHERE`-clause read (only one message existed for the test tenant) but then failed to actually persist the `SENT` status update the same way — caught by the unit test's own exact status assertion (`DRAFTED` instead of `SENT`), not a live-verification-only bug. Fixed by reading the correct field and typing it against `DraftInformationRequestResult` instead of an inline `{ id: string }` shape that let the typo through unchecked.
-- **Live-verify script found a real environmental gotcha, not a product bug**: the Plaid simulator's income is deterministically hash-derived *per borrowerId string*, not fixed — a hardcoded verify-script borrowerId could coincidentally land outside the seeded rule's 10% discrepancy threshold and open a real condition instead of reaching `READY_FOR_UNDERWRITING` directly. Fixed the verify script (not the product) to detect and resolve an opened condition via the real `POST .../reviews` endpoint before continuing to poll — which, incidentally, ended up exercising *both* real code paths this slice touches (the straight-through path and the post-resolution path) across its two tenant runs.
+- **Live-verify script found a real environmental gotcha, not a product bug**: the Plaid simulator's income is deterministically hash-derived _per borrowerId string_, not fixed — a hardcoded verify-script borrowerId could coincidentally land outside the seeded rule's 10% discrepancy threshold and open a real condition instead of reaching `READY_FOR_UNDERWRITING` directly. Fixed the verify script (not the product) to detect and resolve an opened condition via the real `POST .../reviews` endpoint before continuing to poll — which, incidentally, ended up exercising _both_ real code paths this slice touches (the straight-through path and the post-resolution path) across its two tenant runs.
 - A stale `communication_templates` row from an earlier failed verification attempt (before the fix above) briefly caused a real `FK violation` on cleanup (`communication_messages.templateId` is `RESTRICT`) — fixed the test's own cleanup ordering (delete referencing messages before the template), not a product-code issue.
 
 ### Verification
@@ -7614,13 +7614,13 @@ Implemented and verified, including a real live proof under real Plaid sandbox c
 
 ### Acceptance criterion
 
-`PlaidIncomeSandboxAdapter` (`providerId: 'plaid-sandbox'`, `mode: 'AUTHORIZED_SANDBOX'`) makes real HTTP calls to `sandbox.plaid.com` — `/user/create`, `/sandbox/public_token/create`, `/item/public_token/exchange`, `/credit/bank_income/get` — and maps Plaid's real Bank Income response into this codebase's existing `PlaidIncomeData` shape. `dispatchProviderRequest` refuses to dispatch to it (`ProviderNotActivatedError`) until a manifest for `{plaid-sandbox, INCOME, AUTHORIZED_SANDBOX}` has gone through `propose()` -> a `PASSED`, unexpired `certify()` -> an `APPROVED`, unexpired `approve()` from a *different* actor than the proposer -> `activate()`; `SIMULATOR` mode is never gated (Section 11.1's free default is unchanged). Live-verified end to end: `status` reports `NOT ACTIVATED` before any of this; `activate()` fails closed with neither certification nor approval, then with only one of the two; a same-actor `approve()` is rejected; a real dispatch after full activation returns real Plaid data (`monthlyIncome: 2100.78, employmentStatus: "FULL_TIME", bankAccountAge: 11.93, incomeStability: 100`) through the unmodified production `dispatchProviderRequest` code path.
+`PlaidIncomeSandboxAdapter` (`providerId: 'plaid-sandbox'`, `mode: 'AUTHORIZED_SANDBOX'`) makes real HTTP calls to `sandbox.plaid.com` — `/user/create`, `/sandbox/public_token/create`, `/item/public_token/exchange`, `/credit/bank_income/get` — and maps Plaid's real Bank Income response into this codebase's existing `PlaidIncomeData` shape. `dispatchProviderRequest` refuses to dispatch to it (`ProviderNotActivatedError`) until a manifest for `{plaid-sandbox, INCOME, AUTHORIZED_SANDBOX}` has gone through `propose()` -> a `PASSED`, unexpired `certify()` -> an `APPROVED`, unexpired `approve()` from a _different_ actor than the proposer -> `activate()`; `SIMULATOR` mode is never gated (Section 11.1's free default is unchanged). Live-verified end to end: `status` reports `NOT ACTIVATED` before any of this; `activate()` fails closed with neither certification nor approval, then with only one of the two; a same-actor `approve()` is rejected; a real dispatch after full activation returns real Plaid data (`monthlyIncome: 2100.78, employmentStatus: "FULL_TIME", bankAccountAge: 11.93, incomeStability: 100`) through the unmodified production `dispatchProviderRequest` code path.
 
 ### Implementation
 
 **Part 1 — the real adapter:**
 
-- `src/integrations/plaid/plaid-sandbox.service.ts` (new, +`.spec.ts`) — `PlaidSandboxService`, a real HTTP client against `https://sandbox.plaid.com` using real `PLAID_SANDBOX_CLIENT_ID`/`PLAID_SANDBOX_SECRET`; exported `mapBankIncomeToPlaidIncomeData()` — a pure function mapping Plaid's real `bank_income_sources[]` shape into `PlaidIncomeData`: `monthlyIncome` from the `SALARY` source only (falling back to `GIG_ECONOMY`, classified `SELF_EMPLOYED`; `UNEMPLOYED`/0 if neither exists) divided by real elapsed months; `bankAccountAge` as the earliest `start_date` across every source, in months — an honest *lower bound*, since Plaid's real Accounts product has no account-opening-date field at all (confirmed empirically against all 14 real sandbox accounts); `incomeStability` as a real coefficient-of-variation score over `historical_summary[]`'s monthly buckets (100 for zero variance, lower for volatile income).
+- `src/integrations/plaid/plaid-sandbox.service.ts` (new, +`.spec.ts`) — `PlaidSandboxService`, a real HTTP client against `https://sandbox.plaid.com` using real `PLAID_SANDBOX_CLIENT_ID`/`PLAID_SANDBOX_SECRET`; exported `mapBankIncomeToPlaidIncomeData()` — a pure function mapping Plaid's real `bank_income_sources[]` shape into `PlaidIncomeData`: `monthlyIncome` from the `SALARY` source only (falling back to `GIG_ECONOMY`, classified `SELF_EMPLOYED`; `UNEMPLOYED`/0 if neither exists) divided by real elapsed months; `bankAccountAge` as the earliest `start_date` across every source, in months — an honest _lower bound_, since Plaid's real Accounts product has no account-opening-date field at all (confirmed empirically against all 14 real sandbox accounts); `incomeStability` as a real coefficient-of-variation score over `historical_summary[]`'s monthly buckets (100 for zero variance, lower for volatile income).
 - `src/integrations/plaid/plaid-income-sandbox.adapter.ts` (new, +`.spec.ts`) — `PlaidIncomeSandboxAdapter implements ProviderAdapter<...>`, same shape as the existing `PlaidIncomeAdapter` (`SIMULATOR`); `submit()` calls the real service, `healthCheck()` does a real `HEAD` against `sandbox.plaid.com`.
 - `src/integrations/integrations.module.ts`, `src/integrations/provider-adapter-bootstrap.service.ts` — registers the new adapter alongside the existing five; registration itself is free (no network call, no credential check) — a missing/invalid credential only fails at actual dispatch time, matching this codebase's established "fail at call time, not boot time" convention.
 
@@ -7732,7 +7732,7 @@ Implemented and verified, including a real live proof: a real running API server
 
 ### Acceptance criterion
 
-`TenantAuthGuard` (`src/auth/`) is now what every tenant-scoped controller uses (`@UseGuards(TenantAuthGuard)`, replacing the bare `ApiKeyGuard` reference everywhere it appeared) — it composes `ApiKeyGuard` (unchanged) and a new `OidcGuard` as *alternatives*: a request authenticates if either a machine `{clientId}.{secret}` bearer token or a real OIDC access token (plus an `X-Tenant-Id` header, since one human can hold `tenant_memberships` in more than one tenant) checks out. Both resolve to the identical `AuthContext` shape every existing consumer already reads. `OidcService` does real OpenID Connect Discovery against a configured `OIDC_ISSUER_URL`, then real remote-JWKS signature/issuer/audience/expiry verification via `jose`. Live-verified end to end against a real, freshly-imported Keycloak realm: a real `POST /v1/loan-cases` with a real OIDC bearer token and no `X-Tenant-Id` header got a real `401`; the same request with a real, granted tenant got a real `201` with a real persisted case; the same token against a different, never-granted tenant got a real `401` again.
+`TenantAuthGuard` (`src/auth/`) is now what every tenant-scoped controller uses (`@UseGuards(TenantAuthGuard)`, replacing the bare `ApiKeyGuard` reference everywhere it appeared) — it composes `ApiKeyGuard` (unchanged) and a new `OidcGuard` as _alternatives_: a request authenticates if either a machine `{clientId}.{secret}` bearer token or a real OIDC access token (plus an `X-Tenant-Id` header, since one human can hold `tenant_memberships` in more than one tenant) checks out. Both resolve to the identical `AuthContext` shape every existing consumer already reads. `OidcService` does real OpenID Connect Discovery against a configured `OIDC_ISSUER_URL`, then real remote-JWKS signature/issuer/audience/expiry verification via `jose`. Live-verified end to end against a real, freshly-imported Keycloak realm: a real `POST /v1/loan-cases` with a real OIDC bearer token and no `X-Tenant-Id` header got a real `401`; the same request with a real, granted tenant got a real `201` with a real persisted case; the same token against a different, never-granted tenant got a real `401` again.
 
 ### Implementation
 
@@ -7769,10 +7769,10 @@ Implemented and verified, including a real live proof: a real running API server
 ### Decisions and alternatives
 
 - **`jose@4`, not `jose@6`.** `jose@6` is pure ESM (`"type": "module"`, no CJS entry) — this codebase compiles to CommonJS, so a static `import` of it compiles to a `require()` that fails at real Node runtime, not just under Jest. Found this by actually running the test suite after adding the dependency, not by reading changelogs first. `jose@4` has a real CJS build and the identical `createRemoteJWKSet`/`jwtVerify`/`decodeJwt` API this slice needs — a real compatibility constraint, not a downgrade taken lightly.
-- **`TenantAuthGuard` composes two existing guards rather than merging OIDC detection into `ApiKeyGuard` directly.** Considered extending `ApiKeyGuard` in place (cheaper — zero new call sites to update) — rejected: a class named `ApiKeyGuard` that also verifies OIDC JWTs would be a real, misleading name, and NestJS's own `@UseGuards(...)` has no built-in OR composition, so *something* has to do it explicitly regardless. A small, honestly-named composing class was worth the 4-controller mechanical update.
+- **`TenantAuthGuard` composes two existing guards rather than merging OIDC detection into `ApiKeyGuard` directly.** Considered extending `ApiKeyGuard` in place (cheaper — zero new call sites to update) — rejected: a class named `ApiKeyGuard` that also verifies OIDC JWTs would be a real, misleading name, and NestJS's own `@UseGuards(...)` has no built-in OR composition, so _something_ has to do it explicitly regardless. A small, honestly-named composing class was worth the 4-controller mechanical update.
 - **No RLS on `users`/`tenant_memberships`** — the identical bootstrap reasoning `api_clients` itself already established (no RLS either): `OidcGuard` looks `tenant_memberships` up using a caller-supplied, not-yet-trusted `tenantId` specifically to determine whether the request may act in that tenant at all — tenant context cannot already be established before that lookup runs.
 - **One shared `ApiClientRole` enum for both credential models**, not a second `UserRole`. A `PARTNER`/`REVIEWER` distinction means the same real thing regardless of which credential authenticated the request; a parallel enum would be unbacked duplication, the same reasoning `ProviderActivationState` already applied to avoid an unbacked third value (M4-007).
-- **Membership required by `(tenantId, userId)` lookup, not auto-provisioned on first successful login.** A real, valid OIDC token alone proves *who* someone is, never *what tenant they may act in* — auto-granting tenant access to any authenticated Keycloak user would be a real self-service privilege-escalation path this codebase's existing "no self-service credential minting" convention (`create-api-client.ts`) already avoids for machine credentials. `manage-user.ts`'s `grant-membership` is a deliberate, separate, human-operated step.
+- **Membership required by `(tenantId, userId)` lookup, not auto-provisioned on first successful login.** A real, valid OIDC token alone proves _who_ someone is, never _what tenant they may act in_ — auto-granting tenant access to any authenticated Keycloak user would be a real self-service privilege-escalation path this codebase's existing "no self-service credential minting" convention (`create-api-client.ts`) already avoids for machine credentials. `manage-user.ts`'s `grant-membership` is a deliberate, separate, human-operated step.
 - **Keycloak's own default access token doesn't carry the requesting client in `aud`** (it defaults to `["account"]`; the client id only appears in `azp`) — found this the hard way (an early `jwtVerify(..., { audience })` call failed against a real token before the mapper was added) and fixed it the standard, correct way: a real `oidc-audience-mapper` protocol mapper in the realm config, not a code-side fallback to checking `azp` instead.
 - **Keycloak's realm-export needed `firstName`/`lastName` on the seeded user** — a real, reproducible finding: Keycloak 26's declarative User Profile feature requires those attributes by default, and a user missing them fails the Direct Grant (password) flow with a generic, unhelpful `"Account is not fully set up"` / `resolve_required_actions` error that names no specific missing field. Diagnosed via the real Keycloak server's own event log (`docker logs`), not by guessing.
 
@@ -7822,7 +7822,7 @@ against the same scratch Postgres) plus real curl calls:
 
 - `OidcGuard` fails closed by default: unset `OIDC_ISSUER_URL`/`OIDC_AUDIENCE` means every OIDC request is rejected, with zero effect on the pre-existing machine-credential path — a deployment that never needs human login pays no cost for this slice existing.
 - Real cryptographic verification throughout: no token is ever trusted without a real signature check against the issuer's own live, remotely-fetched JWKS.
-- `X-Tenant-Id` is caller-supplied but never trusted on its own — it only selects *which* `tenant_memberships` row (if any) to check; a request can never act in a tenant it has no real, admin-granted membership in, regardless of what it claims.
+- `X-Tenant-Id` is caller-supplied but never trusted on its own — it only selects _which_ `tenant_memberships` row (if any) to check; a request can never act in a tenant it has no real, admin-granted membership in, regardless of what it claims.
 - No new secrets beyond `OIDC_AUDIENCE` (not secret) and whatever the deployment's own OIDC provider needs — this codebase itself holds no OIDC client secret (the seeded Keycloak client is public, appropriate for a first-party confidential-client-free local setup).
 
 ### Known gaps
@@ -7850,7 +7850,7 @@ Implemented and verified, including a real live proof: a real running API server
 ### Implementation
 
 - **The real, non-obvious blocker found and fixed first**: every existing auth guard/decorator (`ApiKeyGuard`, `OidcGuard`, `RoleGuard`, `AuthTenantId()`, `CurrentAuth()`) read the request via `context.switchToHttp().getRequest()` — which does not populate correctly for a GraphQL resolver's `ExecutionContext`, the identical real distinction `GqlThrottlerGuard`'s own comment already documented for rate limiting (predates this slice). `src/auth/get-request-from-context.ts` (new, +`.spec.ts`) centralizes the fix `GqlThrottlerGuard` already applied ad hoc: check `context.getType()`, extract `req` via `GqlExecutionContext.create(context).getContext()` for `'graphql'`, fall back to `switchToHttp()` otherwise. All five call sites now use it; every existing mock `ExecutionContext` in their spec files needed a `getType: () => 'http'` stub added (a real, if narrow, regression this slice's own first full-suite run caught immediately).
-- `src/database/entities/loan-case.entity.ts`, `evidence-fact.entity.ts`, `loan-condition.entity.ts`, `src/cases/case-timeline.service.ts` (`TimelineEntry`) — `@ObjectType()`/`@Field()` added directly onto these same classes, alongside their pre-existing `@Entity()`/`@Column()`/`@ApiProperty()` decorators (`LoanCase` already did this dual-decoration for two transports; this is a third, real one reusing the same fields rather than a parallel GraphQL DTO). New enum registrations: `CaseStatus` (in `loan-case.entity.ts`, deliberately *not* inside `case-status.enum.ts` itself — that file's own comment already explains why it stays free of anything the Temporal-sandboxed workflow can't load, and `@nestjs/graphql` is exactly that kind of heavy import), `EvidenceType`/`EvidenceSourceKind`/`ConditionStatus`. `LoanType` is already registered by `src/loan/loan.model.ts` — registering it twice throws at startup, so `loan-case.entity.ts` reuses it. `EvidenceFact.value`/`TimelineEntry.detail` (both JSONB/`Record<string, unknown>`) use the `graphql-type-json` scalar (new dependency) rather than a hand-rolled one.
+- `src/database/entities/loan-case.entity.ts`, `evidence-fact.entity.ts`, `loan-condition.entity.ts`, `src/cases/case-timeline.service.ts` (`TimelineEntry`) — `@ObjectType()`/`@Field()` added directly onto these same classes, alongside their pre-existing `@Entity()`/`@Column()`/`@ApiProperty()` decorators (`LoanCase` already did this dual-decoration for two transports; this is a third, real one reusing the same fields rather than a parallel GraphQL DTO). New enum registrations: `CaseStatus` (in `loan-case.entity.ts`, deliberately _not_ inside `case-status.enum.ts` itself — that file's own comment already explains why it stays free of anything the Temporal-sandboxed workflow can't load, and `@nestjs/graphql` is exactly that kind of heavy import), `EvidenceType`/`EvidenceSourceKind`/`ConditionStatus`. `LoanType` is already registered by `src/loan/loan.model.ts` — registering it twice throws at startup, so `loan-case.entity.ts` reuses it. `EvidenceFact.value`/`TimelineEntry.detail` (both JSONB/`Record<string, unknown>`) use the `graphql-type-json` scalar (new dependency) rather than a hand-rolled one.
 - `src/cases/case-query.service.ts` (new, +`.spec.ts`) — `listEvidenceFacts()`/`listConditions()`, real tenant-scoped reads via `runInTenantContext`, the first real query surface of any kind for either table (no REST route lists either). Kept separate from `CasesService` (REST-facing orchestration, per that class's own comment), the same "small, focused read service" shape `CaseTimelineService` already is.
 - `src/cases/cases.resolver.ts` (new, +`.spec.ts`) — `@Resolver(() => LoanCase)`, `@UseGuards(TenantAuthGuard)`; the `case` query plus three `@ResolveField()`s (`evidenceFacts`, `conditions`, `timeline`, the last delegating to the already-existing `CasesService.getTimeline()`/`CaseTimelineService`).
 - `src/cases/cases.module.ts` — registers `CaseQueryService`/`CasesResolver`, adds `EvidenceFact` to `TypeOrmModule.forFeature()`.
@@ -7912,7 +7912,7 @@ Manual live verification — a real API server (NODE_ENV=development):
 
 ### Security, privacy, cost, and compatibility
 
-- No new authentication mechanism — reuses `TenantAuthGuard`/`ApiKeyGuard`/`OidcGuard` exactly as REST already does; the only real change was making the *existing* guards correctly read a GraphQL resolver's request, not a new trust boundary.
+- No new authentication mechanism — reuses `TenantAuthGuard`/`ApiKeyGuard`/`OidcGuard` exactly as REST already does; the only real change was making the _existing_ guards correctly read a GraphQL resolver's request, not a new trust boundary.
 - No new secrets, no new external dependency beyond `graphql-type-json` (a tiny, single-purpose, widely-used scalar package — chosen over hand-rolling JSON parse/serialize edge cases).
 - `tenantId` is deliberately not exposed as a `@Field()` on `EvidenceFact`/`LoanCondition` (only `LoanCase` already exposed it via REST) — reduces redundant exposure since it's already implied by the parent case a client had to authenticate into.
 
@@ -7939,7 +7939,7 @@ Implemented and verified. Closes a real, previously-untested Section 16.4 threat
 
 ### Implementation
 
-- **First, real investigation before writing anything**, to avoid the exact anti-pattern this codebase's own conventions warn against: read `LendingOperationsAgentState`'s existing budget fields (`remainingTokenBudget`/`remainingProviderCallBudget`/`remainingCostBudgetMinorUnits`) and confirmed they are correctly, honestly hardcoded to `0` with real justifying comments (`case-conditions.activities.ts`: "this graph makes no model calls," "its tools make no outbound provider calls... evidence was already fetched by earlier workflow activities," "all providers are synthetic; no real cost is ever incurred") — confirmed by reading `lending-operations-agent-runtime.ts` end to end (zero model/Ollama calls anywhere in the graph) and the graph's own topology (`StateGraph`: `verifyConsent -> checkCompleteness -> evaluatePolicy -> resolveOutcome`, a strictly linear chain, no `Send()`/parallel fan-out — no real race condition on `remainingStepBudget` exists for a ledger to guard against either). **Conclusion: M0-009's own "budget ledger" gap (token/cost/provider-call dimensions, currency normalization, unknown-cost reserve, ledger-conflict test) has no real subject matter to enforce in this codebase as built — every dimension it names is either honestly, permanently `0`, or a race that cannot occur given the graph's own linear topology.** Building a ledger for values that are always `0` would itself be the fabricated-coverage anti-pattern this codebase's own standing conventions exist to prevent — so this slice does not attempt one, and instead closes the one M0-009-adjacent gap that *does* have real substance: the structural capability denylist.
+- **First, real investigation before writing anything**, to avoid the exact anti-pattern this codebase's own conventions warn against: read `LendingOperationsAgentState`'s existing budget fields (`remainingTokenBudget`/`remainingProviderCallBudget`/`remainingCostBudgetMinorUnits`) and confirmed they are correctly, honestly hardcoded to `0` with real justifying comments (`case-conditions.activities.ts`: "this graph makes no model calls," "its tools make no outbound provider calls... evidence was already fetched by earlier workflow activities," "all providers are synthetic; no real cost is ever incurred") — confirmed by reading `lending-operations-agent-runtime.ts` end to end (zero model/Ollama calls anywhere in the graph) and the graph's own topology (`StateGraph`: `verifyConsent -> checkCompleteness -> evaluatePolicy -> resolveOutcome`, a strictly linear chain, no `Send()`/parallel fan-out — no real race condition on `remainingStepBudget` exists for a ledger to guard against either). **Conclusion: M0-009's own "budget ledger" gap (token/cost/provider-call dimensions, currency normalization, unknown-cost reserve, ledger-conflict test) has no real subject matter to enforce in this codebase as built — every dimension it names is either honestly, permanently `0`, or a race that cannot occur given the graph's own linear topology.** Building a ledger for values that are always `0` would itself be the fabricated-coverage anti-pattern this codebase's own standing conventions exist to prevent — so this slice does not attempt one, and instead closes the one M0-009-adjacent gap that _does_ have real substance: the structural capability denylist.
 - `src/common/structural-exclusions.ts` (new, +`.spec.ts`) — `STRUCTURALLY_EXCLUDED_COMMAND_CLASSES` (Section 7.5's own nine named classes, verbatim) and `assertNotStructurallyExcluded()`.
 - `AgentTool<TArgs, TResult>` (`agent-runtime/agent-tool.types.ts`) gains an optional `structurallyExcludedCommandClass` field; `buildToolRegistry()` calls the assertion for every tool.
 - `ProviderAdapter<TRequest, TReceipt, TFinding>` (`provider-platform/types.ts`) gains the identical optional field; `ProviderRegistryService.register()` calls the same assertion.
@@ -8024,7 +8024,7 @@ Two real fixes, not one: (1) `dispatch-provider-request.ts`'s own catch block pr
 
 ### Decisions and alternatives
 
-- **No `poll()`-calling branch in `ProviderReconciliationService`.** Section 11.5's fuller design assumes an adapter can be asked "what actually happened" — but no adapter in this codebase implements `poll()` (every one is synchronous; see `types.ts`'s own comment), *and* no receipt from `submit()` is ever persisted anywhere for a later poll to use even if one did. A branch calling a method nothing implements, against data nothing stores, would be untested dead code creating a false impression of automatic reconciliation — the exact fabricated-coverage pattern this codebase's conventions exist to prevent. The honest scope is exactly what got built: detect, flag, let a human resolve.
+- **No `poll()`-calling branch in `ProviderReconciliationService`.** Section 11.5's fuller design assumes an adapter can be asked "what actually happened" — but no adapter in this codebase implements `poll()` (every one is synchronous; see `types.ts`'s own comment), _and_ no receipt from `submit()` is ever persisted anywhere for a later poll to use even if one did. A branch calling a method nothing implements, against data nothing stores, would be untested dead code creating a false impression of automatic reconciliation — the exact fabricated-coverage pattern this codebase's conventions exist to prevent. The honest scope is exactly what got built: detect, flag, let a human resolve.
 - **`RECONCILING` as a real, distinct state a human must act on, not an automatic retry.** Matches Section 11.5's own state machine (`OUTCOME_UNKNOWN -> RECONCILING`) and the "don't guess at what an unclassified real provider error means" reasoning `callProviderWithRetryClassification`'s own comment already established for the Temporal-activity layer.
 - **The real-error classification fix (dispatch-provider-request.ts) matters independently of the reconciliation worker** — even without `ProviderReconciliationService` existing at all, leaving a real error's intent silently stuck at `DISPATCHED` (the pre-slice behavior) is strictly worse than `OUTCOME_UNKNOWN`, since the latter at least signals genuine ambiguity a human or a future mechanism could act on.
 
@@ -8080,7 +8080,7 @@ Implemented and verified. Closes the `permittedFields` gap named at M0-010 and r
 
 ### Acceptance criterion
 
-`ProviderAuthorizationService.issue({ ..., permittedFields: ['monthlyIncome'] })` persists real field names on the grant (previously hardcoded to `null` regardless of input — the field existed in the database column and the TypeScript interface but nothing ever set it to anything else). `dispatchProviderRequest()` filters the adapter's normalized finding down to exactly those top-level keys, checked against the *freshly revalidated* grant (not the original request) — the same "trust revalidated state, not the original ask" discipline `revalidate()` itself already embodies. Unset `permittedFields` (every real caller today) means completely unfiltered, byte-identical behavior to before this slice. Proven end to end with a real asset-verification dispatch: requesting `permittedFields: ['liquidAssets']` against a real adapter returning `{liquidAssets, investmentAssets, accountCount, reserveMonths}` returns exactly `{liquidAssets: <number>}`.
+`ProviderAuthorizationService.issue({ ..., permittedFields: ['monthlyIncome'] })` persists real field names on the grant (previously hardcoded to `null` regardless of input — the field existed in the database column and the TypeScript interface but nothing ever set it to anything else). `dispatchProviderRequest()` filters the adapter's normalized finding down to exactly those top-level keys, checked against the _freshly revalidated_ grant (not the original request) — the same "trust revalidated state, not the original ask" discipline `revalidate()` itself already embodies. Unset `permittedFields` (every real caller today) means completely unfiltered, byte-identical behavior to before this slice. Proven end to end with a real asset-verification dispatch: requesting `permittedFields: ['liquidAssets']` against a real adapter returning `{liquidAssets, investmentAssets, accountCount, reserveMonths}` returns exactly `{liquidAssets: <number>}`.
 
 ### Implementation
 
@@ -8146,9 +8146,9 @@ Investigated both M4-006/M4-007 Known Gaps items named as still open. One was al
 
 ### Acceptance criterion
 
-**Dual-approval re-enable — CLOSED, proven, not built new.** `ProviderPromotionService.activate()` has no "quick re-enable" path: calling it again for a `{providerId, capability, mode}` tuple that was previously `deactivate()`d requires a *current*, valid `PASSED` certification and `APPROVED` approval exactly as the original activation did — there is no code path that skips this. A new test proves the realistic sequence directly: activate a manifest, `deactivate()` it (the kill switch's own single-actor emergency stop), propose a *second*, corrected manifest, and show `activate()` on it fails closed with no certification, fails closed with certification but no approval, then succeeds only once both exist fresh. Section 11.4's own "governed re-enable" requirement was already satisfied by M4-007's design — this slice's real contribution is the proof, not new code.
+**Dual-approval re-enable — CLOSED, proven, not built new.** `ProviderPromotionService.activate()` has no "quick re-enable" path: calling it again for a `{providerId, capability, mode}` tuple that was previously `deactivate()`d requires a _current_, valid `PASSED` certification and `APPROVED` approval exactly as the original activation did — there is no code path that skips this. A new test proves the realistic sequence directly: activate a manifest, `deactivate()` it (the kill switch's own single-actor emergency stop), propose a _second_, corrected manifest, and show `activate()` on it fails closed with no certification, fails closed with certification but no approval, then succeeds only once both exist fresh. Section 11.4's own "governed re-enable" requirement was already satisfied by M4-007's design — this slice's real contribution is the proof, not new code.
 
-**Approval-role RBAC — investigated, left open.** Closing this for real needs a REST/GraphQL surface for provider-promotion actions (none exists — it's script-only, `manage-provider-promotion.ts`, the same honest administrative-action gap `create-api-client.ts` already has) *and* an admin RBAC tier this codebase's two-role (`PARTNER`/`REVIEWER`) model has no room for. Both are genuinely new, unrequested user-facing infrastructure, not a gap closable by extending something that already exists the way M5-026 (denylist)/M5-027 (reconciliation)/M5-028 (field authorization) each were. Recorded as a deliberate non-attempt, not silently dropped.
+**Approval-role RBAC — investigated, left open.** Closing this for real needs a REST/GraphQL surface for provider-promotion actions (none exists — it's script-only, `manage-provider-promotion.ts`, the same honest administrative-action gap `create-api-client.ts` already has) _and_ an admin RBAC tier this codebase's two-role (`PARTNER`/`REVIEWER`) model has no room for. Both are genuinely new, unrequested user-facing infrastructure, not a gap closable by extending something that already exists the way M5-026 (denylist)/M5-027 (reconciliation)/M5-028 (field authorization) each were. Recorded as a deliberate non-attempt, not silently dropped.
 
 ### Implementation
 
@@ -8270,7 +8270,7 @@ Implemented and verified. Closes the closable part of M5-030's own "consents-lis
 ### Decisions and alternatives
 
 - **`documents` and approval-role RBAC stay explicitly out of scope**, reaffirming M5-029/M5-030's own reasoning rather than re-litigating it: `documents` has no backing table or subsystem at all in this codebase (Section 14.1's own `documents` entity was never built — `DocumentService` only ever verifies a caller-declared package shape, it doesn't store or list real document records), and building one now would be the same "large net-new subsystem" category as document OCR/inspection, not a read-surface gap on something that already exists. Approval-role RBAC still needs new admin infrastructure this codebase's two-role model has no room for (M5-029's own finding, unchanged).
-- **`listAuditEvents()` filters by `resourceId`, not a dedicated case-audit join table.** `AuditEvent` is Section 14.1's generic, cross-resource append-only log (`resourceType`/`resourceId` free-text pair) — the same shape used for provider-promotion, webhook, and consent events alike. Filtering by `resourceId: caseId` is honest about what the table actually guarantees: it returns exactly the events recorded *against this case specifically*, not every event that happens to reference the case indirectly (e.g. a `resourceType: 'provider_authorization_grant'` row for a grant this case's dispatch used). No broader join was built, since no code in this codebase currently records audit events with any indirect linkage back to a caseId that would make one meaningful.
+- **`listAuditEvents()` filters by `resourceId`, not a dedicated case-audit join table.** `AuditEvent` is Section 14.1's generic, cross-resource append-only log (`resourceType`/`resourceId` free-text pair) — the same shape used for provider-promotion, webhook, and consent events alike. Filtering by `resourceId: caseId` is honest about what the table actually guarantees: it returns exactly the events recorded _against this case specifically_, not every event that happens to reference the case indirectly (e.g. a `resourceType: 'provider_authorization_grant'` row for a grant this case's dispatch used). No broader join was built, since no code in this codebase currently records audit events with any indirect linkage back to a caseId that would make one meaningful.
 - **`CasePolicySnapshot` gets GraphQL exposure with no REST precedent to dual-decorate against** — the first entity this session added `@ObjectType()` to without an existing REST route already returning it. Followed the same field-selection discipline anyway (`tenantId` omitted, matching every other entity).
 - **A separate `CasePolicyBindingResolver` class for the nested `policySnapshot` field**, not a method on `CasesResolver` — `@ResolveField()` binds to the class's own `@Resolver(() => X)` parent type, and the parent here is `CasePolicyBinding`, not `LoanCase`. This mirrors the existing lazy-resolution discipline: a client reading `case { policyBinding { boundAt } }` never triggers a `policySnapshot` read unless it's actually asked for.
 
@@ -8746,7 +8746,7 @@ Scoped to Triage Queue only, not the other three mocked-up concepts (Ops Dashboa
 - **`worker.module.ts` couldn't boot** — see M6-006; discovered only because this slice needed a real worker process running locally (not docker-compose) to verify mutations against genuine Temporal state transitions.
 - **Root backend build silently polluted `console/` with stray compiled output.** With no `exclude` in the root `tsconfig.json`/`tsconfig.build.json`, TypeScript's default project scope is everything under the root, so `npm run build` tried to compile `console/`'s `.tsx` files too. It failed on `TS17004` (no `--jsx` flag at the root), but `noEmitOnError` defaults to `false`, so tsc still emitted `.js`/`.d.ts`/`.js.map` next to every individually-valid source file in `console/src`. This left stale compiled `.js` files that Vite's dev server preferred over the real `.tsx` sources, breaking the dev server with a `loader is currently set to "js"` error. Fixed by adding `console` to both root tsconfigs' `exclude`, deleting the stray generated files, and re-confirming both the root build and the console's own `tsc --noEmit`/`vite build` were clean afterward.
 - **Real UI bug: evidence values overflowed the page horizontally.** `JSON.stringify(fact.value)` rendered inline with no wrapping in both the Overview evidence-summary card and the Evidence tab's table, confirmed visually via a real headless-Chrome screenshot showing content spilling past the right edge. Fixed with a `summarizeEvidenceValue()` formatter (human-readable per fact type on Overview) plus `wordBreak: 'break-word'`/`maxWidth` on the Evidence tab's raw JSON cell, and `overflow-x` containment on `DataTable` and `CaseDetail`'s scroll region as defense in depth. Re-verified clean via a follow-up screenshot.
-- **Real eventual-consistency bug in the resolve-condition flow.** Clicking "Mark satisfied" correctly fired `submitReview` (a new `condition.satisfied` timeline entry appeared), but the case's own status pill and list entry kept showing the pre-resolution status — because `submitReview` only confirms a Temporal *signal* was delivered, not that the workflow has processed it and advanced the case's `status` (the same asynchrony an earlier direct-curl test against this same mutation needed an explicit delay to observe). An immediate Apollo refetch genuinely lands in that transitional window; this is a real property of the system, not a UI logic bug, but the console gave no indication anything was still in flight. Fixed by having `useCaseMutations`'s `resolveCondition` schedule a second `refetchQueries` call ~2s after the first, keeping the action buttons disabled through the settle window. Re-verified with a fresh case: after the fix, the full transition to "Ready" (with `workflow_run.completed` appearing in Recent Activity) shows correctly once the window elapses. `escalateCase` needed no such handling — it's a real synchronous compare-and-swap.
+- **Real eventual-consistency bug in the resolve-condition flow.** Clicking "Mark satisfied" correctly fired `submitReview` (a new `condition.satisfied` timeline entry appeared), but the case's own status pill and list entry kept showing the pre-resolution status — because `submitReview` only confirms a Temporal _signal_ was delivered, not that the workflow has processed it and advanced the case's `status` (the same asynchrony an earlier direct-curl test against this same mutation needed an explicit delay to observe). An immediate Apollo refetch genuinely lands in that transitional window; this is a real property of the system, not a UI logic bug, but the console gave no indication anything was still in flight. Fixed by having `useCaseMutations`'s `resolveCondition` schedule a second `refetchQueries` call ~2s after the first, keeping the action buttons disabled through the settle window. Re-verified with a fresh case: after the fix, the full transition to "Ready" (with `workflow_run.completed` appearing in Recent Activity) shows correctly once the window elapses. `escalateCase` needed no such handling — it's a real synchronous compare-and-swap.
 
 ### Verification
 
@@ -8893,7 +8893,7 @@ The console has a real automated test suite (`npm test` inside `console/`) cover
 ### Decisions and alternatives
 
 - **Vitest over Jest for the console**: the console is a Vite project; Vitest shares its config and transform pipeline directly, where Jest would need a separate ts-jest/babel setup duplicating what Vite already does. The root backend's own Jest suite is untouched and unaffected — two different test runners for two genuinely different projects sharing one repo, not a migration.
-- **Real timers for the settle-window test, not fake timers**: fake timers would prove a `setTimeout` call exists but not that the app really waits out the duration against Apollo's own real internal scheduling; a slightly slower test (~2.3s) buys a materially stronger guarantee for the one test where the actual fix being tested *is* a timing behavior.
+- **Real timers for the settle-window test, not fake timers**: fake timers would prove a `setTimeout` call exists but not that the app really waits out the duration against Apollo's own real internal scheduling; a slightly slower test (~2.3s) buys a materially stronger guarantee for the one test where the actual fix being tested _is_ a timing behavior.
 - **Ops Dashboard over Case Dossier or Live Stream as the second view**: M6-008 had just built its real backing data; building the view immediately after is the natural continuation, not a fresh design decision.
 - **`barColor` alongside the existing pill colors, not a separate chart palette**: `StatusPill`'s wash colors are for pill backgrounds, not solid chart fills, but the same 8-status semantic mapping (gray/blue/amber/red/green) applies unchanged — one source of truth per status, not two color systems that could drift apart.
 
@@ -9134,7 +9134,7 @@ A real, single-case, read-oriented document view — deliberately not the tabbed
 
 ### Implementation
 
-`console/src/components/CaseDossier.tsx` — a full-screen overlay (`position: fixed`, above the app shell) reusing the same `CASE_QUERY` `CaseDetail` already fetches (no new backend query needed; a dossier is a different *presentation* of the same case data, not different data). Every section renders unconditionally stacked rather than behind a tab click. A `Print` button calls the browser's real `window.print()`; `console/src/styles/global.css` gained an `@media print` block that hides everything except `.dossier-page`'s own content — no app chrome, no toolbar, in the printed output.
+`console/src/components/CaseDossier.tsx` — a full-screen overlay (`position: fixed`, above the app shell) reusing the same `CASE_QUERY` `CaseDetail` already fetches (no new backend query needed; a dossier is a different _presentation_ of the same case data, not different data). Every section renders unconditionally stacked rather than behind a tab click. A `Print` button calls the browser's real `window.print()`; `console/src/styles/global.css` gained an `@media print` block that hides everything except `.dossier-page`'s own content — no app chrome, no toolbar, in the printed output.
 
 `CaseDetail.tsx` gained a "View dossier" header button (`onOpenDossier` prop); `App.tsx` holds `dossierCaseId` state and renders `CaseDossier` full-screen when set, alongside the existing view-switching state for Dashboard/Queue/Stream.
 
@@ -9211,11 +9211,11 @@ Wired into `NavRail`'s previously-decorative Chart icon (`ConsoleView` gained a 
 
 ### Decisions and alternatives
 
-**Real polling, not a simulated/fabricated live feed**: considered (and rejected) client-side techniques that would *look* more real-time without being backed by anything — e.g., a shorter poll interval dressed up as "instant," or animating in rows on a timer unrelated to actual new data. 8 seconds is a genuine trade-off (fast enough to feel responsive in a demo, not so fast it hammers the tenant-scoped query pointlessly) and every "new" row really is new data from a real poll, not a client-side illusion.
+**Real polling, not a simulated/fabricated live feed**: considered (and rejected) client-side techniques that would _look_ more real-time without being backed by anything — e.g., a shorter poll interval dressed up as "instant," or animating in rows on a timer unrelated to actual new data. 8 seconds is a genuine trade-off (fast enough to feel responsive in a demo, not so fast it hammers the tenant-scoped query pointlessly) and every "new" row really is new data from a real poll, not a client-side illusion.
 
 ### Errors and fixes
 
-**A real first-load highlight bug, caught by live verification, not by the unit tests.** The first implementation compared against `previousIdsRef.current` using plain truthiness (`previousIdsRef.current ? compare : nothingIsNew`) — but Apollo's own loading→loaded transition is *itself* a second render with real `data`, and by the time that second render happened, an earlier effect had already set `previousIdsRef.current` to an **empty-but-non-null** `Set` (truthy!) from the first, data-less render. Result: every event on true first load was flagged "new" and rendered highlighted — confirmed via a live headless-Chrome screenshot showing the single real row already accent-tinted on a fresh page open, which shouldn't happen. Fixed by tracking an explicit `hasLoadedOnceRef` boolean instead of relying on the ref's own truthiness, and only setting it once `data` has genuinely arrived. Re-verified live: fresh load renders with no highlight; triggering a real new event (a `submitConsentAction` call) and waiting past one 8s poll interval showed exactly the new row highlighted and the pre-existing row not — confirmed via two before/after screenshots, not just the unit tests (which don't exercise the polling-driven highlight timing at all, a disclosed known gap below).
+**A real first-load highlight bug, caught by live verification, not by the unit tests.** The first implementation compared against `previousIdsRef.current` using plain truthiness (`previousIdsRef.current ? compare : nothingIsNew`) — but Apollo's own loading→loaded transition is _itself_ a second render with real `data`, and by the time that second render happened, an earlier effect had already set `previousIdsRef.current` to an **empty-but-non-null** `Set` (truthy!) from the first, data-less render. Result: every event on true first load was flagged "new" and rendered highlighted — confirmed via a live headless-Chrome screenshot showing the single real row already accent-tinted on a fresh page open, which shouldn't happen. Fixed by tracking an explicit `hasLoadedOnceRef` boolean instead of relying on the ref's own truthiness, and only setting it once `data` has genuinely arrived. Re-verified live: fresh load renders with no highlight; triggering a real new event (a `submitConsentAction` call) and waiting past one 8s poll interval showed exactly the new row highlighted and the pre-existing row not — confirmed via two before/after screenshots, not just the unit tests (which don't exercise the polling-driven highlight timing at all, a disclosed known gap below).
 
 ### Verification
 
@@ -10745,7 +10745,7 @@ Its own, deliberately separate world — not a nav-rail tab inside the tenant sh
 
 ### A real NestJS DI bug this slice found and fixed along the way
 
-First attempt registered `PlatformAdmin`/`PlatformAdminService`/`PlatformAdminGuard` in the existing `@Global() AuthModule`, mirroring `ApiClient`/`ApiKeyGuard` exactly. Booting the real `AppModule` (not a hand-wired test module) failed with `UnknownDependenciesException: Nest can't resolve dependencies of the PlatformAdminGuard... available in the ProviderPlatformModule module` — even with `ProviderPlatformModule` explicitly importing `AuthModule`. `TenantAuthGuard`/`RoleGuard`, referenced the exact same way (`@UseGuards(ClassRef)`) from the same consuming module, resolve fine via the same `@Global()` mechanism, so this wasn't a general limitation — something about resolving a *fresh* `@UseGuards()`-referenced class's *own* constructor dependencies across an unrelated module boundary specifically didn't work the way passing an already-satisfied dependency through a chain of provider constructors does.
+First attempt registered `PlatformAdmin`/`PlatformAdminService`/`PlatformAdminGuard` in the existing `@Global() AuthModule`, mirroring `ApiClient`/`ApiKeyGuard` exactly. Booting the real `AppModule` (not a hand-wired test module) failed with `UnknownDependenciesException: Nest can't resolve dependencies of the PlatformAdminGuard... available in the ProviderPlatformModule module` — even with `ProviderPlatformModule` explicitly importing `AuthModule`. `TenantAuthGuard`/`RoleGuard`, referenced the exact same way (`@UseGuards(ClassRef)`) from the same consuming module, resolve fine via the same `@Global()` mechanism, so this wasn't a general limitation — something about resolving a _fresh_ `@UseGuards()`-referenced class's _own_ constructor dependencies across an unrelated module boundary specifically didn't work the way passing an already-satisfied dependency through a chain of provider constructors does.
 
 Rather than fight the framework further, moved `PlatformAdmin`'s `TypeOrmModule.forFeature` registration and `PlatformAdminGuard`'s own provider registration directly into `ProviderPlatformModule` — its only real consumer anyway. This is arguably the more correct design regardless of the DI mystery: `PlatformAdminGuard` has exactly one consumer, so it never needed to live in the shared, `@Global()`, tenant-oriented `AuthModule` in the first place. `PlatformAdminService` (only ever constructed directly by the CLI script, never DI-injected) moved with it.
 
@@ -10763,9 +10763,9 @@ Rather than fight the framework further, moved `PlatformAdmin`'s `TypeOrmModule.
 
 ### Errors and fixes
 
-Pushed once, then had to push a fix: `schema-migrations.spec.ts` (a cumulative test that applies every migration, then walks backward one `undoLastMigration()` per `it()` block) broke, because the new `PlatformAdmins` migration is timestamped *last* — every subsequent "undo the most recent migration" call in that file was silently reverting the wrong migration once it ran, one step off from what each test actually meant to check.
+Pushed once, then had to push a fix: `schema-migrations.spec.ts` (a cumulative test that applies every migration, then walks backward one `undoLastMigration()` per `it()` block) broke, because the new `PlatformAdmins` migration is timestamped _last_ — every subsequent "undo the most recent migration" call in that file was silently reverting the wrong migration once it ran, one step off from what each test actually meant to check.
 
-The real miss was in how this got verified locally before pushing: the full local `npx jest` run was already showing this exact failure, but it was checked against the known pre-existing-failure *count* (18 failed suites, matching the already-documented `mortgage_app`-role local-environment gap) rather than the actual *set* of failing suite names — the count happened to match by coincidence (one pre-existing failure had been separately fixed via `npm run generate:openapi`'s `synchronize` side effect earlier in this same session, and this new one took its place), so a shortcut check said "looks the same as before" when it wasn't. Fixed the real test-ordering bug (above), and re-verified properly the second time: named the specific 17 failing suites and confirmed every one of them was `mortgage_app`-role-related, not just counted them.
+The real miss was in how this got verified locally before pushing: the full local `npx jest` run was already showing this exact failure, but it was checked against the known pre-existing-failure _count_ (18 failed suites, matching the already-documented `mortgage_app`-role local-environment gap) rather than the actual _set_ of failing suite names — the count happened to match by coincidence (one pre-existing failure had been separately fixed via `npm run generate:openapi`'s `synchronize` side effect earlier in this same session, and this new one took its place), so a shortcut check said "looks the same as before" when it wasn't. Fixed the real test-ordering bug (above), and re-verified properly the second time: named the specific 17 failing suites and confirmed every one of them was `mortgage_app`-role-related, not just counted them.
 
 Also: `node dist/main.js` (or `nest start --watch`) would not boot at all in this environment for live verification — the process started, opened zero sockets, used 0% CPU, and produced no output indefinitely, both backgrounded and in the foreground. `npx ts-node -r tsconfig-paths/register src/main.ts` booted normally and was used instead for the live curl/browser verification below. Root cause not identified — noted here in case it recurs.
 
@@ -10877,7 +10877,7 @@ Section 29 item 1's other still-open half: "secret scanning and SAST — do not 
 
 Two new CI jobs, both real gates (a finding fails the job, not just a passive dashboard entry):
 
-- **`secret-scanning`**: `gitleaks` against this repository's *entire* commit history (`--log-opts=--all`, full `fetch-depth: 0` checkout) — a secret that was removed in a later commit but is still readable from an earlier one is a real leak, not something a shallow scan gets to call clean.
+- **`secret-scanning`**: `gitleaks` against this repository's _entire_ commit history (`--log-opts=--all`, full `fetch-depth: 0` checkout) — a secret that was removed in a later commit but is still readable from an earlier one is a real leak, not something a shallow scan gets to call clean.
 - **`sast`**: `semgrep`, the free `p/ci` ruleset — curated for low false positives in exactly this kind of blocking-CI use, not the noisier full community rule set. No build step needed for JS/TS; it parses source directly, and only scans files tracked by git (so `node_modules`/`dist`/generated codegen output are already excluded with no hand-maintained ignore list to keep in sync with reality).
 
 ### A scanner that lies is worse than no scanner
@@ -10939,7 +10939,7 @@ Section 29 item 2's other still-open half: "the same coverage running by default
 
 ### The real blocker, and how it was actually solved
 
-The test asserts on a specific tenant id (`20000000-0000-4000-8000-000000000002`) appearing in a real GraphQL request header, which means a real `User` row (matched by the OIDC `sub` claim) and a real `TenantMembership` granting it REVIEWER on that tenant have to exist in Postgres *before* the browser ever logs in. `npm run manage-user -- create-user <subject> <email>` already existed for exactly this, but `<subject>` has to be the real Keycloak-assigned `sub` — and `keycloak/realm-export.json`'s reviewer user had no `id` field, so Keycloak assigned it a fresh random UUID on every import. That's fine for a person running this by hand once (they log in, read the `sub` off a token, then seed against it) but makes the whole thing impossible to script for an environment that imports a brand-new realm on every single run.
+The test asserts on a specific tenant id (`20000000-0000-4000-8000-000000000002`) appearing in a real GraphQL request header, which means a real `User` row (matched by the OIDC `sub` claim) and a real `TenantMembership` granting it REVIEWER on that tenant have to exist in Postgres _before_ the browser ever logs in. `npm run manage-user -- create-user <subject> <email>` already existed for exactly this, but `<subject>` has to be the real Keycloak-assigned `sub` — and `keycloak/realm-export.json`'s reviewer user had no `id` field, so Keycloak assigned it a fresh random UUID on every import. That's fine for a person running this by hand once (they log in, read the `sub` off a token, then seed against it) but makes the whole thing impossible to script for an environment that imports a brand-new realm on every single run.
 
 Fixed by adding `"id": "40000000-0000-4000-8000-000000000004"` to the reviewer user's entry in `keycloak/realm-export.json` — Keycloak honors a client-specified `id` on realm import instead of generating one, so this exact value is now assigned every time, anywhere, deterministically. Verified directly before trusting it: booted a real Keycloak container from the updated realm export, did a real password-grant login, and decoded the real returned ID token — `sub` was exactly `40000000-0000-4000-8000-000000000004`, not assumed from documentation.
 
@@ -11018,7 +11018,7 @@ Section 29 item 5's other still-open half: "downloadable evaluation/release evid
 - `evaluation_report_records` (new table, no tenant dimension, no RLS): same "this isn't any one tenant's data" reasoning `provider_promotion_manifests`/`platform_admins` already established — an evaluation run isn't owned by a tenant, it uses a disposable synthetic one of its own. `EvaluationReportRecordService.record()` saves the exact same `EvaluationReport` object `evaluation-report.ts` already writes to `evaluation/reports/*.json`, plus a few duplicated summary columns so listing doesn't need to parse the full JSON blob just to show totals.
 - `src/evaluation-report.ts`: one addition — call `EvaluationReportRecordService.record(report)` right after writing the local JSON file, so every real run is saved both ways.
 - `v1/platform-admin/evaluation-reports` (list / get / `:id/download`), guarded by `PlatformAdminGuard` — the same platform-wide, non-tenant credential M7-020 built, for the same reason: no single tenant's reviewer should be the audience for every other tenant's release evidence either. `download` sets a real `Content-Disposition: attachment` header; the console fetches the bytes with the admin's own credential (a plain `<a href>` can't carry an Authorization header) and hands the browser a local blob URL to save.
-- `EvaluationReportsModule` registers `PlatformAdmin`/`PlatformAdminGuard` locally rather than relying on the shared `AuthModule` — same proven pattern `ProviderPlatformModule` uses (M7-020's own dev log entry has the full story of why). Verified this still boots the real `AppModule` cleanly with *two* independent local registrations of the same guard, not just one.
+- `EvaluationReportsModule` registers `PlatformAdmin`/`PlatformAdminGuard` locally rather than relying on the shared `AuthModule` — same proven pattern `ProviderPlatformModule` uses (M7-020's own dev log entry has the full story of why). Verified this still boots the real `AppModule` cleanly with _two_ independent local registrations of the same guard, not just one.
 - Console: a new "Evaluation reports" section on the Platform Admin screen — a table of real runs (generated time, commit, totals, recall/precision) with a real Download button per row.
 
 ### Errors and fixes
@@ -11081,7 +11081,7 @@ No new attack surface beyond what M7-020 already established for `PlatformAdminG
 
 - No pagination on the list endpoint beyond the existing 100-row bound — fine at today's real scale (one row per manual `npm run evaluate` run).
 - No way to delete an old report — an append-only table, matching this codebase's general "immutable evidence" preference, but genuinely means the table only grows.
-- The corpus itself still shows real `INTERRUPTED` outcomes for most non-provider-failure cases in this local environment, because this machine's synthetic seed data has no real `policy_sources` row for jurisdiction `US` (a pre-existing, already-documented gap — see the M7-018 dev log entry's own note on `scenario-catalog`'s synthetic seeds) — not something this slice attempted to fix, and not something that makes the *saved report* dishonest: it correctly and completely records whatever the real run actually did.
+- The corpus itself still shows real `INTERRUPTED` outcomes for most non-provider-failure cases in this local environment, because this machine's synthetic seed data has no real `policy_sources` row for jurisdiction `US` (a pre-existing, already-documented gap — see the M7-018 dev log entry's own note on `scenario-catalog`'s synthetic seeds) — not something this slice attempted to fix, and not something that makes the _saved report_ dishonest: it correctly and completely records whatever the real run actually did.
 
 ### Next safe step
 
@@ -11115,7 +11115,7 @@ Surfaced this before writing any Terraform, not after: Phase 1's real scope is A
 - **Credentials**: GitHub Actions OIDC federation to an IAM role (`terraform/bootstrap/oidc.tf`) — no long-lived AWS access key exists anywhere in this repository or its CI, ever. The bootstrap module (a second, separate Terraform root) is meant to be applied by the user themselves, on their own machine, with their own AWS credentials — never through an agent. Its own README says this explicitly.
 - **Networking**: a dedicated VPC, two public subnets across two AZs, one Internet Gateway, **no NAT Gateway** (roughly $32/month alone for an always-on environment this size that gets nothing from it) — Fargate tasks get public IPs directly for outbound access; RDS sits in the same public-routed subnets but `publicly_accessible = false` and is reachable only from the app security group.
 - **Compute**: ECS Fargate, smallest task size (0.25 vCPU / 0.5 GB) for each of three services — `api` (behind the ALB), `worker`, and a self-hosted `temporal` (official `temporalio/auto-setup:1.29.7` image, unmodified) — reachable from `api`/`worker` via AWS Cloud Map private DNS (`temporal.mortgage-agent-staging.local:7233`), not a hardcoded/ephemeral task IP.
-- **Data**: RDS PostgreSQL `db.t4g.micro`. Three real secrets (RDS master password, the `mortgage_app` restricted-role password `AppRuntimeRole`'s own migration expects via `APP_DATABASE_ROLE_PASSWORD`, and `OUTBOX_SIGNING_SECRET`) generated by Terraform and stored in Secrets Manager — injected into ECS task definitions via the `secrets` field, never as plaintext `environment` entries. Caught and fixed one real mistake before it shipped: an early draft embedded the master/app-role passwords directly inside `DATABASE_URL`/`APP_DATABASE_URL` connection-string values in plain `environment` entries — ECS task definitions are visible to anyone with `ecs:DescribeTaskDefinition`, a much wider audience than Secrets Manager's own access boundary, so that would have leaked both passwords in plaintext to that audience. Fixed by storing the *complete connection strings* themselves as their own Secrets Manager secrets and injecting them via `secrets`, not `environment` — ECS has no way to splice a bare secret into the middle of a larger string, so the whole string has to be the secret.
+- **Data**: RDS PostgreSQL `db.t4g.micro`. Three real secrets (RDS master password, the `mortgage_app` restricted-role password `AppRuntimeRole`'s own migration expects via `APP_DATABASE_ROLE_PASSWORD`, and `OUTBOX_SIGNING_SECRET`) generated by Terraform and stored in Secrets Manager — injected into ECS task definitions via the `secrets` field, never as plaintext `environment` entries. Caught and fixed one real mistake before it shipped: an early draft embedded the master/app-role passwords directly inside `DATABASE_URL`/`APP_DATABASE_URL` connection-string values in plain `environment` entries — ECS task definitions are visible to anyone with `ecs:DescribeTaskDefinition`, a much wider audience than Secrets Manager's own access boundary, so that would have leaked both passwords in plaintext to that audience. Fixed by storing the _complete connection strings_ themselves as their own Secrets Manager secrets and injecting them via `secrets`, not `environment` — ECS has no way to splice a bare secret into the middle of a larger string, so the whole string has to be the secret.
 - **Release/deploy**: `.github/workflows/deploy-staging.yml`, `workflow_dispatch` only — never on every push, since this workflow touches real, real-money AWS resources. Builds and pushes the image to ECR tagged with the exact commit SHA (never `latest` — the same immutable-artifact reasoning M7-021 already established for pinned GitHub Actions), then `terraform apply`. A `null_resource.migrate` inside the Terraform graph itself (not a separate, easy-to-reorder GitHub Actions step) runs the one-off migration ECS task and blocks on its real exit code before `api`/`worker`'s own `depends_on` lets Terraform touch them — real schema-before-code ordering enforced by the dependency graph, not by hoping a script runs steps in the right sequence. The workflow's last step is a real `curl` loop against the deployed ALB's `/health/ready` — a clean `terraform apply` proves the infrastructure exists, not that it is actually serving traffic; only a real 200 from a real request proves that.
 
 ### Live deployment: every real bug found getting there
@@ -11128,18 +11128,18 @@ The first real `deploy-staging.yml` run failed. So did the next thirteen. Each f
 4. **`logs:DescribeLogGroups` needs `Resource: "*"`.** This action lists across the whole account/region with no log-group name in the request, so CloudWatch Logs doesn't support scoping it the way the rest of that policy statement is scoped — split into its own unscoped statement, the same pattern already used for a couple of EC2/ECS actions with no resource-level permission support at all.
 5. **`secretsmanager:GetResourcePolicy` missing.** The provider checks for a resource-based policy on a secret right after creating it.
 6. **`servicediscovery:*` entirely absent.** Not a guess — the config unconditionally creates a Cloud Map private DNS namespace and service for Temporal's service discovery, so this was certain to fail on the very next apply regardless of what else worked.
-7. **`route53:CreateHostedZone` (and friends) missing.** A Cloud Map *private DNS* namespace is backed by an actual Route 53 private hosted zone under the hood — not documented anywhere obvious, found only from the real `AccessDeniedException` naming the Route 53 action.
+7. **`route53:CreateHostedZone` (and friends) missing.** A Cloud Map _private DNS_ namespace is backed by an actual Route 53 private hosted zone under the hood — not documented anywhere obvious, found only from the real `AccessDeniedException` naming the Route 53 action.
 8. **RDS `backup_retention_period = 3` exceeded this account's free-tier limit.** A real `FreeTierRestrictionError`, an account-level guardrail rather than a permission gap — lowered to 1 day.
-9. **Secrets stuck in delete purgatory — the real root cause of several confusing retries.** Every one of the five application secrets got marked "tainted" by Terraform after the `GetResourcePolicy` gap (finding 5) caused their post-create read to fail. The *next* apply's plan correctly wanted to replace each tainted secret (destroy then create), but Secrets Manager's default delete is a *soft* delete with a 30-day recovery window — the destroy half succeeded, and the create half then failed outright because a secret name can't be reused while the old one is still pending deletion. This is why the failure count went from 1 secret to all 5 across successive runs rather than resolving on its own. Fixed the account-side stuck state with `aws secretsmanager restore-secret` (run once, by the user, for all five), and fixed it structurally with `recovery_window_in_days = 0` on all five secrets so a future replace can never land in the same trap.
+9. **Secrets stuck in delete purgatory — the real root cause of several confusing retries.** Every one of the five application secrets got marked "tainted" by Terraform after the `GetResourcePolicy` gap (finding 5) caused their post-create read to fail. The _next_ apply's plan correctly wanted to replace each tainted secret (destroy then create), but Secrets Manager's default delete is a _soft_ delete with a 30-day recovery window — the destroy half succeeded, and the create half then failed outright because a secret name can't be reused while the old one is still pending deletion. This is why the failure count went from 1 secret to all 5 across successive runs rather than resolving on its own. Fixed the account-side stuck state with `aws secretsmanager restore-secret` (run once, by the user, for all five), and fixed it structurally with `recovery_window_in_days = 0` on all five secrets so a future replace can never land in the same trap.
 10. **`rds:DescribeDBInstances` needs `Resource: "*"` too.** The provider's own "wait until available" polling calls it without a specific instance identifier (filtering client-side instead) — same no-identifier-in-the-request situation as finding 4. Notably, the RDS instance itself was still provisioning successfully in AWS the whole time this polling call was being denied — AWS-side provisioning doesn't stop just because Terraform's own observation of it fails.
 11. **State drift from the repeated failures — the real remediation was a plain read-only `terraform plan`, not more guessing.** Several resources that genuinely existed in AWS (the RDS instance, two CloudWatch log groups, all five secrets) were no longer correctly tracked in Terraform's state after the failed runs above. Diagnosed with a real, read-only `terraform plan` (never applied blind) run locally by the user; fixed with eight `terraform import` commands — a state-only operation, never a resource creation or deletion.
-12. **A live RDS instance nearly got destroyed and recreated for no reason.** After the imports, a `terraform plan` showed `aws_db_instance.this is tainted, so must be replaced` — a leftover taint flag from finding 10's failed polling, not a real problem with the instance (its own refreshed attributes showed `status = "available"` and a real endpoint). Caught this in the plan *before* applying it — running the apply as planned would have destroyed and recreated a database that had just finished a real ~10-minute provisioning wait, for nothing. Fixed with `terraform untaint`, confirmed clean on a fresh `plan` before touching CI again.
+12. **A live RDS instance nearly got destroyed and recreated for no reason.** After the imports, a `terraform plan` showed `aws_db_instance.this is tainted, so must be replaced` — a leftover taint flag from finding 10's failed polling, not a real problem with the instance (its own refreshed attributes showed `status = "available"` and a real endpoint). Caught this in the plan _before_ applying it — running the apply as planned would have destroyed and recreated a database that had just finished a real ~10-minute provisioning wait, for nothing. Fixed with `terraform untaint`, confirmed clean on a fresh `plan` before touching CI again.
 13. **`tag invalid: ... cannot be overwritten because the tag is immutable`.** The ECR repository has `image_tag_mutability = "IMMUTABLE"` on purpose (real supply-chain protection). Retriggering the same commit's build while iterating on unrelated Terraform/IAM fixes — routine during this exact process — correctly got refused. Fixed by checking `ecr:DescribeImages` first and skipping the build/push if that commit's tag already exists.
-14. **`npm run migration:run` cannot run inside the production image.** The first real *application-level* failure, and real progress — every failure before this one was infrastructure, and the migration ECS task actually ran to completion (a genuine milestone). That script hardcodes `-d src/database/data-source.ts` through `ts-node`, but the Docker image's runtime stage (`COPY --from=builder /app/dist ./dist`, `npm ci --omit=dev`) has neither the raw `src/` tree nor `ts-node` (a dev dependency, deliberately excluded). `data-source.ts`'s own comment already anticipated this exact case — its entity/migration globs match compiled `.js` as well as `.ts`. Fixed by pointing `node` directly at `typeorm`'s own CLI script (a real production dependency) against the compiled `dist/database/data-source.js`; verified locally first by running that exact command against a deliberately unreachable database and confirming it reached a real `ECONNREFUSED` rather than the previous "Cannot find module".
+14. **`npm run migration:run` cannot run inside the production image.** The first real _application-level_ failure, and real progress — every failure before this one was infrastructure, and the migration ECS task actually ran to completion (a genuine milestone). That script hardcodes `-d src/database/data-source.ts` through `ts-node`, but the Docker image's runtime stage (`COPY --from=builder /app/dist ./dist`, `npm ci --omit=dev`) has neither the raw `src/` tree nor `ts-node` (a dev dependency, deliberately excluded). `data-source.ts`'s own comment already anticipated this exact case — its entity/migration globs match compiled `.js` as well as `.ts`. Fixed by pointing `node` directly at `typeorm`'s own CLI script (a real production dependency) against the compiled `dist/database/data-source.js`; verified locally first by running that exact command against a deliberately unreachable database and confirming it reached a real `ECONNREFUSED` rather than the previous "Cannot find module".
 15. **A real Terraform dependency-graph `Cycle` error**, involving `aws_ecs_task_definition.migrate`, `null_resource.migrate`, and the two ECS services that `depends_on` it. First suspected (wrongly) to be caused by mixing a targeted apply with a full apply in the same run — removing the `-target` step (finding 1's real fix, see the workflow's own commit history) did not clear it, proving that theory wrong before it was written down as fact. The real cause: the default destroy-then-create replacement order for a task definition revision and the null_resource that triggers off its ARN, combined with two other resources' `depends_on` on that null_resource, produced a genuine ordering contradiction. Fixed with `create_before_destroy = true` on all four ECS task definitions and the migrate null_resource — also the more correct semantics regardless (task definition revisions can coexist; there's no real reason the old one needs deregistering before the new one exists).
 16. **`no pg_hba.conf entry ... no encryption`.** The migration task reached the real database for the first time and was refused outright — RDS's default parameter group enforces `rds.force_ssl`. First fix tried, `sslmode=require`, only got partially there.
 17. **`self-signed certificate in certificate chain`.** `pg-connection-string`'s own emitted `SECURITY WARNING` (visible in the migration task's real CloudWatch logs) explained this directly: a recent, deliberate hardening in that library treats `require`/`prefer`/`verify-ca` as aliases for `verify-full`, so the previous fix was silently doing full certificate-chain verification against RDS's own AWS-issued certificate, which Node's default trust store doesn't recognize. Fixed with the library's own distinct `sslmode=no-verify` mode; confirmed locally first (`parse(...).ssl` produces `{rejectUnauthorized: false}` with no warning) before spending another real deploy cycle on it.
-18. **`secretsmanager:UpdateSecretVersionStage` missing.** The very last gap. Every secret before this point had always been freshly created; this was the first time an *existing* secret's value actually changed (the sslmode fixes above), and moving the `AWSCURRENT` stage label from the old version to the new one needs this separate action from `PutSecretValue` itself.
+18. **`secretsmanager:UpdateSecretVersionStage` missing.** The very last gap. Every secret before this point had always been freshly created; this was the first time an _existing_ secret's value actually changed (the sslmode fixes above), and moving the `AWSCURRENT` stage label from the old version to the new one needs this separate action from `PutSecretValue` itself.
 
 After fixing all eighteen, the fifteenth `deploy-staging.yml` run completed clean end to end — real `terraform apply`, real one-off migration task exiting 0, real ECS services reaching steady state, real ALB responding `200`.
 
@@ -11180,7 +11180,7 @@ Real, live results (not structural proxies for them):
 
 ### Security, privacy, cost, and compatibility
 
-No AWS credential of any kind is held by this repository, its CI, or this session at any point — OIDC federation is the entire credential story. Estimated always-on cost: RDS `db.t4g.micro` (~$12–15/month, possibly free under a new account's 12-month free tier), three Fargate tasks (~$28–30/month combined), one ALB (~$16/month plus modest LCU usage), Secrets Manager (~$1.2/month for three secrets) — roughly **$55–75/month total**, disclosed to the user before any `apply` was attempted, not after. No domain means no TLS termination; this environment carries only synthetic corpus/scenario data, never real borrower data, so that gap is scoped-acceptable for what it verifies, not something to paper over.
+No AWS credential of any kind is held by this repository, its CI, or this session at any point — OIDC federation is the entire credential story. Estimated always-on cost: RDS `db.t4g.micro` (~~$12–15/month, possibly free under a new account's 12-month free tier), three Fargate tasks (~$28–30/month combined), one ALB (~~$16/month plus modest LCU usage), Secrets Manager (~$1.2/month for three secrets) — roughly **$55–75/month total**, disclosed to the user before any `apply` was attempted, not after. No domain means no TLS termination; this environment carries only synthetic corpus/scenario data, never real borrower data, so that gap is scoped-acceptable for what it verifies, not something to paper over.
 
 ### Known gaps
 
@@ -11220,7 +11220,7 @@ The user was asked to choose the next Section 29 item 6 sub-task after M7-024 we
 
 - New `.github/workflows/staging-drill.yml`, `workflow_dispatch` with a `drill` choice input (`load` / `backup-restore` / `failure-recovery`) — one drill per run, not bundled, since they take very different amounts of time and each is a deliberate human choice (the backup/restore drill creates a real second RDS instance for the run's duration; the failure-recovery drill causes a real, short availability gap on the one running API task).
 - **Load**: `load-testing/staging-health.js`, a k6 script (single checksum-verified binary, the same pattern M7-021 already established for gitleaks — not an npm devDependency). Two scenarios back to back: pure `/health/live` throughput (no DB touch, a ceiling to compare against), then `/health/ready` under the same concurrency (one real `SELECT 1` per request). k6's own `thresholds` (error rate < 1%, `/health/ready` p95 < 500ms) make a genuinely unhealthy result fail the CI job, not just produce a report nobody reads.
-- **Backup/restore**: real `aws rds create-db-snapshot` → `restore-db-instance-from-db-snapshot` into a separate, temporary instance (`mortgage-agent-staging-restore-drill`) using the same subnet group and the *same* `rds` security group as the live instance (so the restored instance keeps the identical "only the app security group can reach it" boundary — no new network path opened). Verified with a real query, not just a successful `apply`: the migrate task definition's own image (it already ships the `pg` driver as a real production dependency) is reused via `aws ecs run-task` with an overridden `command` and `DATABASE_URL` pointing at the restored instance — the same one-off-task idiom `ecs.tf`'s `null_resource.migrate` already uses — running `SELECT COUNT(*) FROM typeorm_migrations` and exiting non-zero if it's empty. Every step after that runs under `if: always()`, including a final explicit check that the temporary instance is really gone, so a failed drill can never quietly leave a second RDS instance billing.
+- **Backup/restore**: real `aws rds create-db-snapshot` → `restore-db-instance-from-db-snapshot` into a separate, temporary instance (`mortgage-agent-staging-restore-drill`) using the same subnet group and the _same_ `rds` security group as the live instance (so the restored instance keeps the identical "only the app security group can reach it" boundary — no new network path opened). Verified with a real query, not just a successful `apply`: the migrate task definition's own image (it already ships the `pg` driver as a real production dependency) is reused via `aws ecs run-task` with an overridden `command` and `DATABASE_URL` pointing at the restored instance — the same one-off-task idiom `ecs.tf`'s `null_resource.migrate` already uses — running `SELECT COUNT(*) FROM typeorm_migrations` and exiting non-zero if it's empty. Every step after that runs under `if: always()`, including a final explicit check that the temporary instance is really gone, so a failed drill can never quietly leave a second RDS instance billing.
 - **Failure-recovery**: `aws ecs stop-task` against the one running `api` task (a real, short availability gap — `desired_count=1`, not a simulation), then polls the real ALB. Measures the real outage window, not time-since-stop-task: the first non-200 response marks when the outage actually started (there can be a brief grace period before the ALB stops routing to the killed task), and recovery time is measured from there to the next real 200 — a script that just measured "time since I ran the kill command" would overstate how bad the gap looks by counting a window where the service might still have been fine.
 
 ### IAM
@@ -11270,6 +11270,7 @@ Real, live results (2026-08-29), not structural proxies:
 ### What this closes
 
 Every image `deploy-staging.yml` builds and pushes now gets two real, Sigstore-backed attestations recorded in GitHub's own attestation store, tied to the exact image digest (not the mutable commit-SHA tag):
+
 - A SLSA build-provenance statement (`https://slsa.dev/provenance/v1`) — which workflow, which commit, which repo built this exact image.
 - A real SPDX SBOM (`https://spdx.dev/Document/v2.3`), generated from the actual image contents by Syft (via `anchore/sbom-action`), not a source-tree scan.
 
@@ -11396,14 +11397,14 @@ Both real, live-verified locally on 2026-08-30 (real Postgres, not mocks). Not n
 
 The user asked for "a real, line-by-line audit of M3/M4/M5 against the charter" — not a status summary from memory, an independent re-check of the charter's own Scope + Exit-evidence bullets against actual file:line code and passing tests. Three read-only agents ran in parallel, one per milestone, each explicitly told a comment or a TODO doesn't count as done and to look for real, previously-undisclosed gaps rather than assume charter language implies completion. All three found the core mechanisms genuinely real (the policy resolver, the LangGraph runtime, the budget ledger, provider promotion, consent/RLS), but each also surfaced gaps this project's own dev log hadn't named before. Asked to fix two of them:
 
-1. **M3's finding**: Section 10.4 says policy activation "emits invalidation events." `PolicyActivationService.activate()`/`withdraw()` genuinely bump `PolicyCatalogGeneration` — the fast-path guard really does key off that counter — but nothing ever recorded that an activation *happened*: no outbox event, no audit event, nothing. The bump itself is silent.
+1. **M3's finding**: Section 10.4 says policy activation "emits invalidation events." `PolicyActivationService.activate()`/`withdraw()` genuinely bump `PolicyCatalogGeneration` — the fast-path guard really does key off that counter — but nothing ever recorded that an activation _happened_: no outbox event, no audit event, nothing. The bump itself is silent.
 2. **M5's finding**: three separate, previously-undisclosed provenance inconsistencies, found by comparing code paths directly rather than trusting the dev log's own self-assessment: `ProviderPromotionController` never called `AuditEventService` at all (provenance lived only in `proposedBy`/`certifiedBy`/etc. columns); `LegalHoldService.place()`/`release()` had zero audit calls and no REST controller, only the `manage-legal-hold` operator script; and `resolve-data-disposition-task.ts` called `DataDispositionService.resolve()` directly, bypassing `DataDispositionController`'s own audit-event write — so a script-driven resolution and a REST-driven one left different provenance behind for the identical mutation.
 
 ### Why provider promotion and policy activation never got this before — and why they can now
 
-M7-020's own "Known gaps" section named this exact problem and explained why it was left alone: *"`AuditEventService.record()` is tenant-scoped (`runInTenantContext`) and these actions have no tenant, so it was not reused (that would have meant inventing a fake tenantId, which is exactly the kind of fabrication this session's standing discipline rules out)."* That reasoning was correct at the time — a real tenant's id would misattribute a platform-wide action to whichever tenant happened to be looked up first.
+M7-020's own "Known gaps" section named this exact problem and explained why it was left alone: _"`AuditEventService.record()` is tenant-scoped (`runInTenantContext`) and these actions have no tenant, so it was not reused (that would have meant inventing a fake tenantId, which is exactly the kind of fabrication this session's standing discipline rules out)."_ That reasoning was correct at the time — a real tenant's id would misattribute a platform-wide action to whichever tenant happened to be looked up first.
 
-The actual fix: `src/audit/platform-audit-tenant.ts` — a new, explicit `PLATFORM_AUDIT_TENANT_ID` constant (the nil UUID, `00000000-...-000000000000`), documented plainly as *not* a real `Tenant` row (`audit_events` has no foreign key to `tenants`, only its RLS check against `app.current_tenant_id`, so writing under a fixed, well-known, never-reused id is safe and queryable). This isn't a workaround for the fabrication concern — it's a genuinely different id space than "a real tenant," used only for the two mutation surfaces that are structurally shared across every tenant: provider promotion (`ProviderActivation`'s own entity comment already says "NOT tenant-scoped") and the policy catalog (deliberately global, per `Jurisdiction`'s own note).
+The actual fix: `src/audit/platform-audit-tenant.ts` — a new, explicit `PLATFORM_AUDIT_TENANT_ID` constant (the nil UUID, `00000000-...-000000000000`), documented plainly as _not_ a real `Tenant` row (`audit_events` has no foreign key to `tenants`, only its RLS check against `app.current_tenant_id`, so writing under a fixed, well-known, never-reused id is safe and queryable). This isn't a workaround for the fabrication concern — it's a genuinely different id space than "a real tenant," used only for the two mutation surfaces that are structurally shared across every tenant: provider promotion (`ProviderActivation`'s own entity comment already says "NOT tenant-scoped") and the policy catalog (deliberately global, per `Jurisdiction`'s own note).
 
 ### What changed
 
@@ -11419,7 +11420,7 @@ The actual fix: `src/audit/platform-audit-tenant.ts` — a new, explicit `PLATFO
 
 ### A local-environment repair, honestly recorded (not a code fix)
 
-Running `src/workflows/case-conditions.activities.spec.ts` and `src/evaluation/runner.spec.ts` locally failed with `[POLICY_AMBIGUITY] jurisdiction "US" has no registered policy source` — the same category of gap M7-023/M7-027 already found and repaired: this machine's dev Postgres has the `FederalPolicySourceCoverage1787178500000` migration's *schema* (via `synchronize: true` at some point) but never actually ran its `up()`, so the seeded federal `PolicySource`/`PolicySourceRevision` rows were missing. Confirmed this was pre-existing and unrelated to this session's own code changes via `git stash` A/B first (identical 8 failed/16 passed with this session's changes stashed out — the DB gap, not the code, was the cause); then repaired the local database with the exact same `INSERT` the migration itself runs (not a code or migration change) and reran with this session's changes back in place: 24/24 passed.
+Running `src/workflows/case-conditions.activities.spec.ts` and `src/evaluation/runner.spec.ts` locally failed with `[POLICY_AMBIGUITY] jurisdiction "US" has no registered policy source` — the same category of gap M7-023/M7-027 already found and repaired: this machine's dev Postgres has the `FederalPolicySourceCoverage1787178500000` migration's _schema_ (via `synchronize: true` at some point) but never actually ran its `up()`, so the seeded federal `PolicySource`/`PolicySourceRevision` rows were missing. Confirmed this was pre-existing and unrelated to this session's own code changes via `git stash` A/B first (identical 8 failed/16 passed with this session's changes stashed out — the DB gap, not the code, was the cause); then repaired the local database with the exact same `INSERT` the migration itself runs (not a code or migration change) and reran with this session's changes back in place: 24/24 passed.
 
 Separately, the broader `src/audit src/policy src/data-disposition src/provider-platform src/consent src/workflows src/evaluation` sweep has 57 pre-existing failures, all in `*-tenant-isolation.spec.ts` files, all with the identical `role "mortgage_app" does not exist` — a Postgres role this local database was never bootstrapped with (unrelated to migrations; a `CREATE ROLE` this environment's setup never ran). Confirmed pre-existing and unrelated the same way: `git stash` A/B produced the identical 9 failed suites / 57 failed tests with none of this session's changes present.
 
@@ -11460,13 +11461,13 @@ Real, live-verified locally on 2026-08-30 (real Postgres, not mocks). Closes the
 
 ### What was actually missing, and why the existing code's own reasoning wasn't wrong, just incomplete
 
-`structural-exclusions.ts`'s own header comment already argued the two existing checks (`ProviderRegistryService.register()`, `buildToolRegistry`) were sufficient by construction: neither `ProviderRegistryService.resolve()` nor a `ProviderPromotionManifest` can reference an adapter that didn't already pass the registration gate, since adapters are re-registered fresh on every process boot, never persisted. That's a real, correct argument about *today's* code paths — but the M4 audit's own framing was exactly right: it's an assumption about the two layers it doesn't check, not a proof enforced at them. A future bug in registry state (a raw `Map` mutated some other way, a test double standing in for the registry, a hot-reload path) would only be caught by a second, independent check — which is precisely what Section 7.5's own "even when... an adapter is technically certified" language is asking for.
+`structural-exclusions.ts`'s own header comment already argued the two existing checks (`ProviderRegistryService.register()`, `buildToolRegistry`) were sufficient by construction: neither `ProviderRegistryService.resolve()` nor a `ProviderPromotionManifest` can reference an adapter that didn't already pass the registration gate, since adapters are re-registered fresh on every process boot, never persisted. That's a real, correct argument about _today's_ code paths — but the M4 audit's own framing was exactly right: it's an assumption about the two layers it doesn't check, not a proof enforced at them. A future bug in registry state (a raw `Map` mutated some other way, a test double standing in for the registry, a hot-reload path) would only be caught by a second, independent check — which is precisely what Section 7.5's own "even when... an adapter is technically certified" language is asking for.
 
 ### The two closed checkpoints
 
 **Production router (`dispatchProviderRequest()`)**: `assertNotStructurallyExcluded()` now runs immediately after `deps.registry.resolve()`, checking the resolved adapter's own `structurallyExcludedCommandClass` again — the same data the registry already checked once, re-checked at the actual dispatch point, independent of whatever path got the adapter into `deps.registry`. No schema change needed; the data was already there.
 
-**Promotion-manifest validator (`ProviderPromotionService.propose()`)**: this one needed real new data, not just a new call site. `ProviderPromotionManifest` had no declared-command-class field of its own — only `capability` (INCOME/ASSET/CREDIT/IDENTITY/DOCUMENT, a verification *domain*), which can never collide with the excluded-class vocabulary (FUNDS_MOVEMENT, RATE_LOCK, etc.) — checking `capability` against the denylist would have been a real call to a real function that could never actually catch anything, exactly the "ceremony around a mistake that hasn't happened" `structural-exclusions.ts`'s own header explicitly says this mechanism is not supposed to be. Considered deriving it from the live registry instead (look up the registered adapter for the manifest's `{providerId, capability, mode}` tuple) and rejected that too: `ProviderPromotionService`'s own CLI-script callers (`manage-provider-promotion.ts`) run standalone against Postgres with no adapters registered anywhere, and governance data can legitimately be proposed ahead of the adapter it describes ever being deployed — coupling `propose()` to a live in-process registry would break that. The real fix: a new nullable `declaredCommandClass` column on `provider_promotion_manifests` (migration `1787178900000`), the same optional, human-attested field `AgentTool`/`ProviderAdapter` already declare in code — nullable because nothing today declares one, matching those two fields' own honest default. `propose()` checks it before the manifest is ever saved.
+**Promotion-manifest validator (`ProviderPromotionService.propose()`)**: this one needed real new data, not just a new call site. `ProviderPromotionManifest` had no declared-command-class field of its own — only `capability` (INCOME/ASSET/CREDIT/IDENTITY/DOCUMENT, a verification _domain_), which can never collide with the excluded-class vocabulary (FUNDS_MOVEMENT, RATE_LOCK, etc.) — checking `capability` against the denylist would have been a real call to a real function that could never actually catch anything, exactly the "ceremony around a mistake that hasn't happened" `structural-exclusions.ts`'s own header explicitly says this mechanism is not supposed to be. Considered deriving it from the live registry instead (look up the registered adapter for the manifest's `{providerId, capability, mode}` tuple) and rejected that too: `ProviderPromotionService`'s own CLI-script callers (`manage-provider-promotion.ts`) run standalone against Postgres with no adapters registered anywhere, and governance data can legitimately be proposed ahead of the adapter it describes ever being deployed — coupling `propose()` to a live in-process registry would break that. The real fix: a new nullable `declaredCommandClass` column on `provider_promotion_manifests` (migration `1787178900000`), the same optional, human-attested field `AgentTool`/`ProviderAdapter` already declare in code — nullable because nothing today declares one, matching those two fields' own honest default. `propose()` checks it before the manifest is ever saved.
 
 `assertNotStructurallyExcluded()`'s `kind` union gained a third member, `'provider_promotion_manifest'`, so an error naming this checkpoint reads clearly instead of being misattributed to `'provider_adapter'`.
 
@@ -11503,3 +11504,1096 @@ Real, against a live local Postgres (2026-08-30):
 ### Next safe step
 
 Same remaining list as M7-028's own "Next safe step" — FAPI 2.0, field/object encryption, the backup subsystem, real US jurisdiction coverage, a reusable adapter contract suite, and the untested failure-mode fixtures — each still a real, separate scope decision, not a quick follow-on. Not assumed without asking first.
+
+## M7-030: repository-wide typecheck and current-state documentation repair
+
+### Status
+
+Implemented and locally verified. This slice closes the six pre-existing TypeScript errors repeatedly disclosed by M7-028/M7-029 and removes current-state statements that became false after later milestones landed.
+
+### Implementation
+
+- Added the required immutable `applicationReceivedAt` fixture input to the two `evaluate_policy` tool tests instead of weakening the production type.
+- Replaced the ES2022-only `Object.hasOwn()` test helper with the ES2021-compatible `Object.prototype.hasOwnProperty.call()` form, preserving the repository's declared TypeScript target.
+- Replaced three string literals in `loan.service.spec.ts` with the shared `LoanDecisionStatus` enum, so the tests exercise the same vocabulary as production.
+- Updated `ProviderCapability`/`ProviderMode` comments to reflect five registered simulator adapters plus the real Plaid authorized-sandbox adapter.
+- Repaired the charter baseline: the live Keycloak CI journey, policy connector mechanism, and kill-switch exercise are no longer described as open. Version advanced from 2.12 to 2.13.
+- Corrected the README's LangGraph description from three tools and missing budget ledgers to the actual four live tools and PostgreSQL-authoritative budget enforcement, while retaining the honest no-model-call boundary.
+
+### Verification
+
+```text
+npx tsc --noEmit
+  passed (the previous six errors are gone)
+npm run lint:check
+  passed
+npm run build
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+This is a repository-truth and quality-gate repair only. It does not claim that the provider, privacy, Agent-model, evaluation, console-recovery, or external production-approval gaps in the following slices are complete.
+
+## M7-031: replay-safe provider effects and guarded intent state transitions
+
+### Status
+
+Implemented and verified against real local PostgreSQL, including the full clean-database migration chain.
+
+### Problem
+
+`ProviderOperationIntentService.prepare()` previously created a new row and random idempotency key on every activity retry. State writes were unconditional, so a late result could regress a terminal state. `dispatchProviderRequest()` also marked an intent `SUCCEEDED` before normalizing the provider payload, then classified a normalization failure as `OUTCOME_UNKNOWN`. Those behaviors were safe enough for synchronous read-only simulators but did not satisfy the production adapter contract.
+
+### Implementation
+
+- Added a caller-stable `logicalOperationKey`, unique per tenant/provider/capability, plus canonical JSON request hashing. Reuse with an identical payload returns the same row and idempotency key; reuse with a changed case, payload, or effect class fails closed.
+- Persisted `providerReceipt` and `normalizedFinding`. A retry of a completed operation returns the stored normalized result without a second provider submission.
+- Replaced unconditional state writes with compare-and-swap transitions: `PREPARED -> DISPATCHED -> terminal`, `OUTCOME_UNKNOWN -> RECONCILING`, and manual reconciliation from only the two reconcilable states.
+- Moved `SUCCEEDED` after normalization and field filtering. If the provider returned but normalization failed, the receipt is retained and the intent becomes terminal instead of being called an ambiguous provider outcome.
+- Added non-retryable Temporal classification for logical-key conflicts and replay-blocked unresolved effects.
+- Added migration `1787179000000-ProviderIntentReplaySafety`, including safe backfill of pre-existing rows with their own ids so historical effects are never incorrectly coalesced.
+
+### Tests and evidence
+
+```text
+Full scratch-database migration chain plus provider suites:
+  4 suites passed
+  75 tests passed
+
+Coverage added for:
+- identical logical replay returns the persisted result and one intent row;
+- changed-payload reuse is rejected;
+- a late terminal-state regression is rejected;
+- new columns/index apply and revert cleanly.
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+```
+
+### Local database note
+
+The long-lived local database had been created through TypeORM synchronization and had no migration-history rows, so a normal `migration:run` tried to replay the initial migration and correctly failed on an existing enum. The new migration's exact SQL was applied once to that local schema (432 existing intent rows received unique historical keys). The disposable scratch database then proved the complete 49-migration sequence from empty state and the new migration's down path.
+
+### Remaining boundary
+
+Receipts/results are still plain JSONB until the field/object-encryption slice. Current adapters remain synchronous; automatic polling, callbacks, cancellation, and cross-provider fallback are separate contract-suite work.
+
+## M7-032: reusable adapter contract and canonical finding rejection
+
+### Status
+
+Implemented and verified for every adapter that currently exists. This closes the reusable-suite and synchronous canonical-payload portion of Section 11.7 without claiming coverage for async capabilities no adapter implements.
+
+### Implementation
+
+- Added `describeProviderAdapterContract()`, one shared Jest specification imported for the five simulator adapters and the authorized Plaid sandbox adapter. It verifies declared identity/capability/mode, operation semantics, timestamped health, submit/normalize behavior, the canonical output contract, and deterministic transient/terminal failure mapping where the adapter supports those fixtures.
+- Kept the reusable Jest contract helper in TypeScript's repository-wide typecheck while explicitly excluding that one test-support file from Nest's production build; otherwise its Jest DSL globals would be compiled as application source even though every executable suite already lives in `.spec.ts` files.
+- Added a required `observedAt` field to every completed provider receipt and a shared `completeProviderReceipt()` constructor, so freshness is part of the adapter boundary rather than guessed from dispatch time.
+- Added strict Zod contracts for income, credit, document, asset, and identity findings. The gate rejects missing and unknown fields, invalid ranges, stale/future timestamps, and contradictions between document/identity summary flags and their component evidence.
+- Wired the same validation into `dispatchProviderRequest()` after provider-specific normalization and before field filtering or success persistence. A completed but invalid provider response is retained on the intent and classified `FAILED_FINAL`; it is never treated as an ambiguous timeout or retried as a fresh effect.
+- Added direct dispatch integration fixtures proving partial, stale, and contradictory receipts cross the real authorization/intent path, fail at the canonical boundary, and remain inspectable.
+
+### Verification
+
+```text
+Reusable contract, schema, and adapter suites:
+  7 suites passed
+  57 tests passed
+
+Real PostgreSQL dispatch integration:
+  1 suite passed
+  19 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+All current adapters complete synchronously and declare neither polling nor cancellation. Duplicate/out-of-order callbacks, delayed completion, cancellation races, rate-limit behavior, authentication expiry, redaction, and effect-class fallback therefore remain tuple-specific production-certification requirements. Adding fake callback behavior to synchronous adapters would not prove those properties.
+
+## M7-033: purpose-bound consent and consumer-report permissible purpose
+
+### Status
+
+Implemented and verified through the real provider dispatch and Temporal activity paths. The public simulator remains free and synthetic; this change does not create legal authority for a real credit-report pull.
+
+### Implementation
+
+- Replaced descriptive-only consent scope with machine-enforced `permittedPurposes` and `permittedDataClasses`. Normal case creation grants only `UNDERWRITING_EVIDENCE` across the five canonical evidence classes.
+- Dispatch now fails before grant issuance unless the most recent active consent covers the exact requested purpose and every requested data class. Grant revalidation repeats tenant, case, purpose, and class checks and rejects empty consent references.
+- Added the RLS-protected `permissible_purpose_decisions` table. A decision is bound to one tenant, case, borrower subject, capability, purpose, data-class set, mode, status, and expiry.
+- Credit simulator dispatch mints a short-lived `SYNTHETIC_MORTGAGE_APPLICATION` decision. The `syntheticOnly` gate prevents reuse in authorized-sandbox or production mode; live modes require an externally authorized decision id.
+- Revalidates the decision at the last boundary immediately before adapter submission. Missing, mismatched, expired, revoked, denied, or synthetic/live-crossed authority is non-retryable.
+- Added migration `1787179100000-PurposeBoundProviderAuthority`, including safe backfill defaults for historical synthetic case consents and a down path that preserves consent history.
+
+### Verification
+
+```text
+Focused consent/provider/workflow integration:
+  4 suites passed
+  54 tests passed
+
+Permissible-purpose, dispatch, and full scratch migration chain:
+  3 suites passed
+  73 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+```
+
+### Remaining boundary
+
+The repository cannot manufacture a real FCRA or provider-approved permissible-purpose determination. Non-simulator credit remains fail-closed until an authorized party creates and supplies a matching live decision; provider credentials and external approvals remain separate production gates. Provider/evidence field encryption and complete deletion lineage are the next trust-boundary slice.
+
+## M7-034: encrypted borrower-derived fields and race-safe deletion lineage
+
+### Status
+
+Implemented and verified against real local PostgreSQL, including the full scratch-database migration chain. This closes field encryption for every borrower-derived JSON payload the repository currently persists: evidence values, provider receipts, and canonical normalized findings. It does not claim lineage for stores that do not exist yet.
+
+### Implementation
+
+- Added versioned AES-256-GCM JSON envelopes with a fresh 96-bit IV, authenticated tag, key id, and caller-supplied AAD. Provider payload AAD binds tenant, intent, and receipt/finding purpose; evidence AAD binds the protected column purpose. Ciphertext tampering, wrong AAD, and unknown keys fail closed.
+- `PROVIDER_DATA_ENCRYPTION_KEYS` is an ordered key ring: the first key writes and all keys read during rotation. Development has a deterministic synthetic-only fallback; staging/production require an explicit key ring and reject legacy plaintext reads.
+- Provider receipts/findings encrypt before persistence and decrypt only through the tenant-scoped service. `EvidenceFact.value` uses a TypeORM transformer so workflow, policy, GraphQL, and evaluation callers retain the typed application contract while raw PostgreSQL stores only the envelope.
+- Added `rotate-sensitive-data-encryption`, which backfills/re-encrypts provider and evidence rows and reports counts only. The staging migration ECS task injects the Secrets Manager key ring and runs rotation after DDL but before API/worker deployment, preventing production-like processes from encountering legacy plaintext.
+- Consent-revocation disposition now snapshots provider intent ids as well as evidence ids. DELETE/ANONYMIZE clears both stores; RETAIN still requires a live legal hold.
+- Closed a deletion/write race: disposition takes pessimistic row locks over snapshotted provider intents, cancels `PREPARED` work before dispatch, and rejects while any intent is `DISPATCHED`, `OUTCOME_UNKNOWN`, or `RECONCILING`. The operator must reconcile the provider outcome before deleting, so a late result cannot recreate removed content.
+- DELETE/ANONYMIZE now ends at `COMPLETED` with `backupExpiryDueAt`. A separate REVIEWER queue and verification route advance it to `VERIFIED` only after the configured window, with a non-sensitive authoritative backup evidence reference and no active legal hold. Elapsed time is a minimum guard, not fake proof that an external backup provider deleted data.
+- Added migration `1787179200000-EncryptedProviderLineage`, updated checked OpenAPI/client artifacts, Terraform secret injection, environment validation, runbook, README, and charter version 2.16.
+
+### Defect found during contract generation
+
+`permissible_purpose_decisions.capability` intentionally reused the provider-grant PostgreSQL enum in its migration, but the entity omitted the matching `enumName`. OpenAPI generation initializes the real application module and TypeORM tried to rename that still-referenced enum; PostgreSQL rejected the drop and rolled the transaction back. The entity now declares the shared enum name and its decision check constraint explicitly. Regeneration then completed successfully.
+
+### Verification
+
+```text
+Focused field-encryption, provider, disposition, environment, and full migration-chain suites:
+  8 suites passed
+  141 tests passed
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+npm run generate:openapi
+  passed
+npm run generate:client
+  passed
+terraform validate (terraform/staging)
+  passed
+git diff --check
+  passed
+```
+
+### Remaining boundary
+
+The repository has no persisted document binaries, object store, cache, search index, prompt archive, or separate evaluation-artifact content store. Any future implementation of one must join the disposition lineage before it is eligible for real data. Backup verification remains an operator attestation backed by the real provider/control-plane record; the application cannot infer external deletion from wall-clock time. No AWS apply or real-data deployment was performed in this slice.
+
+## M7-035: governed local-model routing in the authoritative LangGraph runtime
+
+### Status
+
+Implemented and verified through the real worker composition, LangGraph runtime, PostgreSQL budget ledger, immutable evaluation manifest, and a live local Ollama smoke call. Deterministic `rules` remains the free default. The model is a bounded routing assistant, not a policy evaluator, credit decision-maker, tool executor, or communication approver.
+
+### Implementation
+
+- Added `AgentPlannerPort` and `OllamaAgentPlanner`. The request contains only server-owned `consentValid`, `evidenceComplete`, and the two available route enums—no borrower identity, amount, income, score, evidence value, document text, tenant input, or free-form case content.
+- The planner can return only `EVALUATE_POLICY` or `REQUEST_HUMAN_REVIEW`. Ollama receives a strict JSON schema with `temperature: 0`, capped output, and `think: false`; application-side Zod validation rejects extra fields, invented actions, mismatched reason codes, invalid confidence, and non-JSON content.
+- Added a runtime provenance guard independent of the Ollama adapter. Model version, prompt version, token accounting, action/reason pairing, confidence bounds, and SHA-256 digest shape must exactly match the tuple and capacity reserved by the runtime. Adapter-level metadata cannot expand authority or under-report its reservation.
+- Added a configurable confidence floor (`AGENT_PLANNER_MIN_CONFIDENCE_BPS`, default 8000). A syntactically valid evaluate route below that floor interrupts for `MODEL_UNCERTAINTY`; it is never silently treated as sufficient confidence.
+- The planner reserves one step and its full conservative token allowance in the PostgreSQL-authoritative budget ledger before inference. A malformed/unavailable call releases the reservation and routes safely; a valid result commits the reservation. The stable reservation and invocation keys make a completed call replay-safe.
+- Added RLS-protected `agent_model_invocations`, which persists only tenant/case/workflow references, model and prompt versions, the bounded action/reason, confidence basis points, accounted token units, and request/response SHA-256 digests. Prompt and response bodies, hidden reasoning, and borrower data are never stored. Database checks enforce the action/reason pair as well as value and range constraints.
+- Linked `AgentRun` and `EvaluationInputManifest` to the real invocation id. The case timeline exposes model/prompt provenance without exposing content. Deterministic runs preserve null provenance.
+- Wired `DECISION_PROVIDER=ollama` into the Temporal worker, not only the legacy API compatibility path. Docker Compose now passes Ollama and planner budget/confidence variables to the worker; staging remains deliberately pinned to `rules` because no governed hosted Ollama/vLLM deployment exists there.
+- Added mandatory-review categories for malformed model output and model uncertainty, plus operator guidance for model unavailability, replay, and content-free diagnostics.
+- Extended the restricted-role integration proof to `agent_model_invocations`: no context sees zero rows, each tenant sees only its own invocation, and only the explicit audited bypass sees both.
+
+### Defects found during full verification
+
+- `evaluation-report.ts` and the evaluation runner used explicit TypeORM entity lists that had not acquired `PermissiblePurposeDecision` or the new `AgentModelInvocation`. This caused real evaluation setup to fail with missing metadata; both lists and cleanup paths now include their complete relation graph.
+- Two older provider-intent test fixtures had not acquired M7-031's required `logicalOperationKey`/receipt/finding fields, so the first full clean-migration test exposed a NOT NULL failure. The fixtures now match the production entity.
+- The evaluate-policy tool test still expected `applicationReceivedAt` to cross the service boundary as a string even though the implementation correctly converts it to an immutable `Date` and adds evaluation `asOf`. Its assertion now verifies the real typed contract.
+- The API container already received `DECISION_PROVIDER`; the worker did not. Without the worker wiring, the authoritative workflow would have remained deterministic even when Compose advertised Ollama mode. The worker environment is now explicit.
+
+### Verification
+
+```text
+Fresh PostgreSQL 16 container:
+  51 migrations applied from zero
+  newest governed-planner migration included
+
+Full backend Jest run with real PostgreSQL:
+  109 suites passed
+  868 tests passed
+  4 conditional suites / 28 tests skipped by their declared external-runtime gates
+
+Focused planner, runtime, migration, RLS, and contract run:
+  4 suites passed
+  79 tests passed
+
+Evaluation corpus:
+  12 / 12 passed
+  condition recall 1.0
+  condition precision 1.0
+
+npx tsc --noEmit
+  passed
+npm run lint:check
+  passed
+npm run build
+  passed
+git diff --check
+  passed
+
+Live local Ollama smoke (content-free control state only):
+  installed model tested: qwen3:8b
+  route: EVALUATE_POLICY
+  reason: POLICY_EVALUATION_REQUIRED
+  confidence: 1.0
+  prompt: lending-operations-planner-v1
+  accounted token units: 1024
+```
+
+### Decisions and remaining boundary
+
+- The configured target remains `qwen3.5:9b`, but that tag is not installed on this machine and was not downloaded automatically because it is a multi-gigabyte operator choice. The only live claim is for the already-installed `qwen3:8b`; Qwen3.5 behavior remains schema/unit-tested through mocked HTTP until its exact artifact is installed and exercised.
+- `think` stays disabled. This is a two-edge, schema-constrained control decision; hidden reasoning would consume capacity that is not independently observable or useful to the policy boundary. A future task that genuinely needs reasoning must define an accountable budget and evaluation gate first.
+- The content-free invocation is audit/control metadata. It intentionally remains after borrower data disposition because it stores no borrower value or prompt body; introducing prompts, retrieved text, embeddings, caches, or model-response archives would create a new lineage store and must join consent, encryption, retention, and deletion controls before use.
+- The model cannot choose a tool name. Every policy decision and effect remains in deterministic, allowlisted code behind consent, budget, policy, provider, review, and structural-exclusion gates. This boundary is permanent for this implementation, not a prompt instruction that a model can override.
+
+## M7-036: reviewer-governed workflow cancellation and duplicate-safe recovery
+
+### Status
+
+Implemented and verified at the API/service, workflow, console, lint, and build layers. The complete workflow suite was subsequently run against a real local Temporal server and a clean 51-migration PostgreSQL 16 database; the recovery-reuse path executed in that real workflow runtime.
+
+### Problem
+
+Temporal already provided durable wait and process-restart behavior, but no reviewer could operate a running execution through the product. Restarting a cancelled run without inspecting durable case state could create a second condition for the same unresolved policy finding. Treating an orchestration cancellation as proof of provider cancellation would also be a materially unsafe external-effect claim.
+
+### Implementation
+
+- Added REVIEWER-only REST operations for the bounded tenant workflow queue, exact-run cancellation, and terminal-run recovery. Queue status is read live from Temporal for the tenant's own 100 most recently changed cases; PostgreSQL does not become a stale second authority for workflow status.
+- Cancellation only accepts an exact `RUNNING` run and carries an authenticated actor plus a required reason into the audit trail. The workflow catches Temporal cancellation, uses a non-cancellable cleanup scope, moves the case to manual review, and emits `workflow_run.cancelled` with `providerCancellationAsserted: false`.
+- Recovery only accepts `CANCELLED`, `FAILED`, `TIMED_OUT`, or `TERMINATED` runs and starts a distinct execution under Temporal's atomic `ALLOW_DUPLICATE_FAILED_ONLY` policy. Completed underwriting-ready cases cannot be replayed.
+- A recovery preparation activity finds tenant-scoped active conditions transactionally: one is reused and waited on; none permits collection/evaluation to restart; more than one produces manual review rather than arbitrary selection. A `workflow_run.recovery_started` outbox event preserves the replaced run id and active-condition count.
+- Added an explicit **Workflow operations** console section with empty, authorization-error, reason-required, cancellation, and recovery states. Its text tells reviewers cancellation never proves an in-flight provider call stopped.
+- Added bounded `cancel` and `recover` workflow telemetry operation labels, controller/service coverage, console interaction coverage, workflow recovery control-flow coverage, and operator runbook guidance.
+
+### Verification
+
+- `npm test -- --runInBand cases/cases.service.spec.ts cases/cases.controller.spec.ts workflows/case-conditions.activities.spec.ts`: 2 suites/39 tests passed; 1 conditional PostgreSQL suite skipped by its declared `DATABASE_URL` gate.
+- `npm --prefix console test -- --run src/components/AdminQueues.test.tsx`: 1 suite/5 tests passed.
+- `npm --prefix console run build`, `npm run lint:check`, `npm run build`, and `git diff --check`: passed.
+- CI-like service verification with `TEMPORAL_ADDRESS=localhost:7233` and the clean PostgreSQL 16 verification database: full backend Jest run passed, including the real Temporal recovery workflow; `npm run test:e2e -- --runInBand`: 4 suites/40 tests passed.
+
+### Remaining boundary
+
+Current provider adapters are synchronous and declare no provider-side cancellation protocol. Any future asynchronous/cancellable adapter must add tuple-specific cancellation, polling/callback ordering, and reconciliation tests before it can claim a provider cancellation outcome.
+
+## M7-037: immutable evaluation-run inspection dashboard
+
+### Status
+
+Implemented and verified in the Platform Admin console. This is an inspection surface over the existing persisted report detail; it does not alter the corpus, calculate a second result, or widen evaluation access beyond the platform-admin credential.
+
+### Implementation
+
+- Added a typed client for the existing `GET /v1/platform-admin/evaluation-reports/{id}` endpoint and an `Inspect` action next to the existing authenticated download.
+- The selected immutable run now displays saved pass rate, condition recall, condition precision, failures, category totals/pass rates, and every failing fixture's expected/actual result and recorded detail.
+- Empty failed-case results, loading state, failure state, and close/reselection behavior are explicit. The UI never treats a dashboard metric as a production approval and never recomputes metrics client-side.
+
+### Verification
+
+- `npm --prefix console test -- --run src/components/PlatformAdminConsole.test.tsx`: 1 suite/9 tests passed, including category and failed-fixture inspection.
+- `npm --prefix console run build` and `git diff --check`: passed.
+
+### Remaining boundary
+
+The dashboard reflects only saved synthetic corpus evidence. Broader adversarial/model, provider callback, and real-provider certification corpora remain separate, provider- and capability-specific release evidence requirements.
+
+## M7-039: safe webhook subscription lifecycle
+
+### Status
+
+Implemented and contract-generated. This closes the endpoint-management half of the webhook operations gap without weakening signing-secret or delivery-history controls.
+
+### Implementation
+
+- Added tenant-scoped `GET /v1/webhook-endpoints`, `PATCH /v1/webhook-endpoints/{endpointId}`, and `DELETE /v1/webhook-endpoints/{endpointId}` operations.
+- Read and post-creation mutation responses use a dedicated safe DTO. The HMAC secret remains an enrollment credential returned only by `POST`.
+- `PATCH` runs the same DNS/private-address SSRF guard as registration before accepting a destination change.
+- `DELETE` means disable/revoke, rather than a database cascade: historical signed deliveries remain attributable while no new events fan out to the endpoint.
+- Created, updated, and revoked endpoint actions record tenant audit events.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed.
+- The focused service suite contains lifecycle and unsafe-update coverage, but skipped in this shell because its declared `DATABASE_URL` gate is unset. It must run against the clean PostgreSQL verification stack before this slice can claim a real-DB proof.
+
+### Remaining boundary
+
+Endpoint lifecycle is now present. Per-endpoint outbound rate limiting remains a separate dispatch-control slice; real receiver load/SLO evidence still requires an authorized external receiver.
+
+## M7-040: governed policy-catalog browse
+
+### Status
+
+Implemented and verified at build, generated-contract, and console component levels. This is a read-only operational discovery surface, not policy authoring or a claim that synthetic policy content received legal review.
+
+### Implementation
+
+- Added `GET /v1/platform-admin/policy-versions`, guarded by the isolated platform-admin credential because policy catalog data is shared platform governance rather than any tenant's resource.
+- Search is bounded to 100 rows and matches rule id, source name, or jurisdiction. Each result carries immutable version metadata plus source provenance; it does not make a release editable.
+- Added the corresponding Platform Admin console search/table with explicit loading, empty, and error states.
+- Updated generated OpenAPI and TypeScript client contracts and removed the now-closed policy-browse gap from README/console documentation.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, `npm --prefix console run build`, `npm --prefix console test -- --run src/components/PlatformAdminConsole.test.tsx` (9 passed), and `git diff --check`: passed.
+
+### Remaining boundary
+
+Browsing source provenance cannot turn a demo or externally ingested policy candidate into an approved jurisdiction pack. Publishing still needs the governed policy lifecycle and real legal review.
+
+## M7-041: reviewer-scoped audit evidence export
+
+### Status
+
+Implemented and contract-generated. This closes the dedicated audit-export REST gap without introducing a mutable audit administration API.
+
+### Implementation
+
+- Added REVIEWER-only `GET /v1/audit-events` and `GET /v1/audit-events/export` endpoints.
+- Both reads are tenant-scoped under the same RLS transaction helper as writes and capped at 1,000 events. The export returns a JSON attachment with its generation timestamp and tenant id.
+- The immutable audit-event database trigger remains the authority preventing update/delete; the new API can only read evidence.
+
+### Verification
+
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed.
+
+### Remaining boundary
+
+The project still has no document binary/object-storage API. Adding one requires a prior storage design that joins encryption, consent lineage, retention, deletion, legal holds, and backup-expiry verification rather than treating uploads as ordinary JSON.
+
+## M7-042: reconcile the staging rollback runbook
+
+### Status
+
+Implemented as a documentation correctness fix.
+
+### Implementation
+
+- Corrected `docs/OPERATIONS.md` to distinguish the completed manual OIDC staging deployment from the still-unimplemented automated rollback workflow.
+- The runbook now specifies a controlled known-good image-digest redeploy with change authorization and incident evidence, rather than making the false statement that staging deployment does not exist.
+
+### Verification
+
+- Documentation cross-checked against the charter's M7-024 deployment record and `deploy-staging.yml`; no runtime behavior changed.
+
+### Remaining boundary
+
+Automated rollback remains intentionally unimplemented. A future implementation must select only an independently verified immutable artifact and preserve approval/audit evidence.
+
+## M7-043: repair stale RLS proof fixtures
+
+### Status
+
+Implemented and verified against the clean PostgreSQL 16 verification database.
+
+### Problem
+
+The full real-DB suite found two older isolation fixtures had fallen behind non-null lineage/authorization columns added by later migrations. They failed before their RLS assertions ran, obscuring the behavior they were intended to prove.
+
+### Implementation
+
+- Added explicit permitted-purpose/data-class values to `ConsentRecord` fixtures.
+- Added an explicit empty provider-intent lineage array to `DataDispositionTask` fixtures.
+- Both changes preserve the tests' intent: they exercise tenant isolation under current production schema rather than an obsolete insert shape.
+
+### Verification
+
+- `DATABASE_URL=...:55432 npm test -- consent/consent-tenant-isolation.spec.ts data-disposition/data-disposition-tenant-isolation.spec.ts --runInBand --no-cache --silent`: 2 suites / 14 tests passed.
+
+### Remaining boundary
+
+The earlier full-suite run also exposed a stale default local PostgreSQL container whose bootstrap user was not `mortgage`; it is an environment mismatch, not a code result. The clean verification database on port 55432 uses the CI role/schema contract.
+
+## M7-044: durable outbound webhook rate limits
+
+### Status
+
+Implemented and verified against the clean PostgreSQL verification database. This is a receiver-protection control for the existing webhook subsystem, not evidence that an external receiver has passed a production traffic or SLO test.
+
+### Implementation
+
+- Added a migration-backed `WebhookEndpoint.outboundRateLimitPerMinute` control with an explicit database constraint of 1 through 600 attempts per minute (default 60), plus persisted UTC-window start and attempt-count fields.
+- Allowed a tenant to change its endpoint's future rate ceiling via the existing validated `PATCH /v1/webhook-endpoints/{endpointId}` lifecycle operation. The safe endpoint response and generated API contract expose the configured limit but never expose the signing secret.
+- Added `WebhookEndpointService.reserveOutboundAttempt()`: one conditional `UPDATE ... RETURNING` atomically increments or resets the per-endpoint UTC-minute window only when capacity remains. This makes the database, rather than a process-local counter, the coordinator across worker replicas.
+- Updated `WebhookDispatchService` to reserve capacity before preparing or sending an HTTP request. When an endpoint is at its ceiling, it leaves the delivery `PENDING` and moves `nextAttemptAt` to the next UTC-minute boundary; it neither records a failed HTTP attempt nor hot-loops.
+- Added a real-PostgreSQL service proof that verifies first reservation, same-window rejection, and next-window reset for a limit of one.
+
+### Verification
+
+- `DATABASE_URL=postgres://mortgage:mortgage_demo@localhost:55432/mortgage_agent npm run migration:run`: applied `WebhookEndpointOutboundRateLimit1787179400000` successfully.
+- The focused real-PostgreSQL proofs passed: `schema-migrations.spec.ts` (53 tests, including the new narrow rollback sequence) and `webhook-endpoint.service.spec.ts` (9 tests).
+- The full backend regression suite passed against PostgreSQL and Temporal: 110 suites passed, 3 skipped; 889 tests passed, 18 skipped; 907 total.
+- The full E2E suite passed: 4 suites / 40 tests. Its existing `DataSource.synchronize()` setup emits pg@9 deprecation warnings from TypeORM's schema introspection (`PostgresQueryRunner.getTables()`), not from request dispatch; production uses migrations rather than synchronize. The warning is retained as an upstream/test-harness upgrade item rather than suppressed or misreported as a clean provider proof.
+- Console regression and production build passed: 12 Vitest files / 60 tests; `tsc -b && vite build` completed. Both root and console production dependency audits reported zero high-severity vulnerabilities.
+- `npm run build`, `npm run lint:check`, `npm run generate:openapi`, `npm run generate:client`, and `git diff --check`: passed after the migration-backed implementation.
+
+### Remaining boundary
+
+The fixed window is a deliberate, inspectable baseline rather than a claim of receiver-specific traffic protection. An authorized launch still needs receiver capacity agreements, load tests, alert thresholds, retry/backoff evidence, and an operational owner for any destination-specific exception.
+
+## M7-045: controlled machine-credential rotation and revocation
+
+### Status
+
+Implemented as an out-of-band operational control. It does not create a tenant self-service administration surface or claim a production secret-management integration.
+
+### Implementation
+
+- Added `ApiClientService.rotate()` to atomically replace an active machine client's scrypt secret hash and return a new bearer token exactly once. The client id, tenant scope, and role remain stable; the old token fails on its next verification.
+- Added idempotent `ApiClientService.revoke()`: the credential's historical row remains for attributable audit references, while `ApiKeyGuard` rejects every bearer token for the revoked client.
+- Added `npm run manage-api-client -- <rotate|revoke> <apiClientId>`. It deliberately stays a local, operator-invoked command like credential creation rather than exposing a REST endpoint without an administrative authorization model.
+- Documented the no-overlap rotation contract. Integrations requiring a handoff window must create a second client, switch their configuration, then revoke the old one; this avoids inventing an unimplemented multi-secret key-ring model.
+- Added real database guard proofs for new-token-only rotation and idempotent revocation.
+
+### Verification
+
+- `DATABASE_URL=postgres://mortgage:mortgage_demo@localhost:55432/mortgage_agent npm test -- api-key.guard.spec.ts --runInBand --no-cache --silent`: 1 suite / 12 tests passed.
+- `npm run build`, `npm run lint:check`, `npx prettier --write` on changed source/docs, and `git diff --check`: passed.
+
+### Remaining boundary
+
+The command depends on the operator's database access and prints a secret once. A production rollout still needs approved privileged access, secrets-manager storage, rotation scheduling, and a documented incident owner; those are deployment controls, not claims this local command can satisfy.
+
+## M7-046: encrypted Document Evidence Vault foundation
+
+### Status
+
+Started and verified as the first object-storage boundary. This is not yet an upload API or a claim that object metadata and disposition lineage are complete.
+
+### Implementation
+
+- Added `DocumentContentCipher`, an AES-256-GCM binary envelope with tenant/case/document-bound additional authenticated data and ordered key-ring decryption for rotation.
+- Added an S3-compatible ciphertext-only storage port using AWS SDK v3 bare-bones commands. It accepts only an opaque object key, encrypted bytes, and media type; borrower data and filenames cannot become object metadata.
+- Added rotation and AAD-mismatch proofs. The adapter is compatible with local MinIO and a future managed S3 bucket, but is not wired to a public upload route until metadata, malware scanning, and disposition operations are atomic enough to protect real content.
+
+### Remaining boundary
+
+The next slice must add document metadata/RLS plus create, read, hold-aware delete, and backup-verification operations. A public multipart upload before those controls exist would widen the data boundary without satisfying its deletion and lineage obligations.
+
+## M7-047: OIDC session encryption key-ring rotation
+
+### Status
+
+Implemented with backward-compatible single-key configuration.
+
+### Implementation
+
+- New sessions use a versioned key identifier and the first `OIDC_SESSION_ENCRYPTION_KEYS` entry; retained entries decrypt prior sessions during an operator-controlled rotation window.
+- Existing single-key deployments emit `v2.legacy` sessions and remain readable. Configuration rejects malformed key rings and permits either the legacy key or ring in staging/production.
+- This closes session-wide forced logout during a planned key rotation. It does not create bearer-token overlap for machine or platform-admin credentials.
+
+## M7-048: Document Vault metadata and tenant isolation
+
+### Status
+
+Implemented as the persisted lineage layer for the encrypted object boundary.
+
+### Implementation
+
+- Added `document_records`: opaque storage key, plaintext SHA-256 checksum, media type, byte size, tenant/case lineage, and creation time; no filename, binary content, or extracted facts are stored in metadata.
+- The creation migration includes a foreign key, size check, unique storage key, index, and enabled/forced PostgreSQL RLS policy in the same transaction.
+- Added cumulative migration proof for narrow metadata rollback before earlier Vault-control reversals.
+
+### Verification
+
+- In a clean non-synced worktree, `npm ci`, `DATABASE_URL=... npm test -- schema-migrations.spec.ts --runInBand --no-cache --silent` (54 tests), `npm run build`, `npm run lint:check`, and `git diff --check` passed.
+
+### Remaining boundary
+
+No upload/read route is exposed yet. The next slice must atomically coordinate object writes with metadata creation, malware scanning, consent checks, and hold-aware disposition before accepting files.
+
+## M7-049: restore TLS connectivity for the staging Temporal service
+
+### Status
+
+Implemented as a staging-runtime repair after live service inspection found
+Temporal repeatedly restarting while the API health check alone stayed green.
+
+### Problem
+
+The RDS instance requires encrypted PostgreSQL connections. The Temporal
+`auto-setup` container was configured with its database endpoint and password,
+but neither its schema-bootstrap client nor the running Temporal server had
+TLS enabled. The result was a repeated `no pg_hba.conf entry ... no
+encryption` failure, leaving the Temporal service at zero running tasks.
+
+### Implementation
+
+- Enabled the documented `POSTGRES_TLS_*` settings used by Temporal schema
+  bootstrap and the separate `SQL_TLS_*` settings used by the running server.
+- Disabled only certificate-host verification for this synthetic RDS setup,
+  because the task does not yet mount the RDS CA bundle. The database session
+  remains encrypted; this is not a substitute for CA validation in a
+  production deployment.
+- Updated the staging README to state precisely that API bearer guards do not
+  make the current public HTTP listener a browser-authenticated or
+  TLS-protected demo.
+
+### Verification
+
+- Live ECS events and CloudWatch logs identified the failure before the
+  configuration change. Terraform formatting/validation and a CI deployment
+  remain required before this repair can be called live-verified.
+
+### Remaining boundary
+
+The existing Phase 1 stack can demonstrate authenticated API routes only once
+a synthetic machine credential is provisioned. It cannot satisfy a
+continuously accessible browser-login requirement without a domain-backed
+HTTPS listener and an OIDC provider.
+
+## M7-050: AWS-only HTTPS console edge and Cognito OIDC design
+
+### Status
+
+Implemented in infrastructure and application configuration, pending the
+first live edge deployment and browser walkthrough.
+
+### Implementation
+
+- Added a private S3 console origin, CloudFront's AWS-managed HTTPS hostname,
+  and non-caching CloudFront behaviours for `/v1/*`, `/graphql`, and health.
+  Browser traffic stays same-origin, so the existing BFF session cookie is
+  first-party rather than a cross-site token transport.
+- Added an HTTP API proxy between CloudFront and ECS. The ALB now returns 403
+  by default and forwards application traffic only when API Gateway injects a
+  deployment-generated edge-origin header; `/health/*` remains the sole
+  unauthenticated ALB rule for deployment checks.
+- Added a Cognito user pool, confidential OAuth Authorization Code client,
+  hosted login domain, and a single Terraform-managed synthetic reviewer.
+  The app receives client/session secrets from Secrets Manager and continues
+  to decide tenant membership from PostgreSQL rather than trusting an IdP
+  group claim.
+- Extended OIDC token verification to accept the standard `aud` client id and
+  Cognito access tokens' documented `client_id` representation. Both remain
+  signature-, issuer-, expiry-, and configured-client-bound; Cognito ID tokens
+  cannot be substituted for access tokens.
+- Added an idempotent staging-only ECS bootstrap task that maps the synthetic
+  Cognito reviewer to a REVIEWER membership. It fails outside explicitly
+  marked staging and prints no credential.
+
+### Verification
+
+- Terraform formatting and static validation passed for the expanded staging
+  module and the bootstrap module. The bootstrap IAM plan changed one existing
+  GitHub OIDC role in place, with no resource create or destroy; the change
+  was applied under Akira's verified AWS identity to permit CloudFront OAC and
+  Cognito user reconciliation.
+- In an isolated Node 24 container, backend lint and production build passed;
+  the targeted OIDC suite passed with the new `aud`/Cognito `client_id`
+  acceptance and mismatch rejections. Console production build and all 60
+  Vitest tests passed. A local Node 22.11 run remains unsuitable evidence
+  because the repository requires Node 24 and its Vite/Rolldown optional
+  native binding was unavailable there.
+- The first protected deployment reached Terraform planning and exposed one
+  least-privilege omission: Terraform's managed CloudFront cache-policy data
+  sources require `cloudfront:ListCachePolicies`. Its next run reached the
+  provider's selected policy read and surfaced the companion
+  `cloudfront:GetCachePolicy` action. The third run passed both reads, ran the
+  real migration task to exit 0, and then exposed the remaining exact provider
+  operations (S3 tag inspection, API Gateway v2 tag application, CloudFront
+  origin-request-policy creation, and Cognito MFA configuration reads). The
+  deploy role is amended narrowly. A subsequent state refresh surfaced one
+  further S3 provider reads (`s3:GetBucketAcl`, then `s3:GetBucketCORS`). The
+  role therefore receives `s3:Get*` only on the one fixed private console
+  bucket, covering its optional-attribute reconciliation without opening any
+  other bucket or expanding write access. The same workflow will be re-run;
+  no failed apply is treated as live proof.
+
+### Remaining boundary
+
+The synthetic reviewer credential must remain in AWS Secrets Manager and be
+used only for a human walkthrough. The project still needs a live browser
+flow recording with synthetic case data before this edge can be described as
+demo-verified.
+
+## M7-051: recover the interrupted edge apply without replacing its console bucket
+
+### Status
+
+Implemented; the next protected deployment is required for live verification.
+
+### Implementation
+
+- Added the CloudWatch Logs delivery-control-plane actions required when API
+  Gateway creates the HTTP API access-log subscription. Those calls cannot be
+  constrained to a log-group ARN by the service, so the role is scoped to the
+  five delivery actions only; creating and configuring the staging log group
+  remains ARN-scoped.
+- During the previous apply, AWS created the fixed private console bucket and
+  a later denied provider read tainted its Terraform state record. The deploy
+  workflow now clears only that taint immediately before the full apply. It
+  does not import, delete, rename, or recreate the bucket, and lets the
+  subsequent full graph reconcile every bucket setting normally.
+
+### Verification
+
+- Terraform formatting and staging validation passed. Under Akira's verified
+  AWS identity, the bootstrap plan and apply changed exactly one existing
+  GitHub OIDC role policy in place (0 add, 1 change, 0 destroy) to add the
+  five log-delivery actions. The next protected workflow confirmed that the
+  taint recovery reconciled the existing console bucket in place, and both the
+  migration and staging-only synthetic-reviewer bootstrap exited 0.
+- That apply exposed two AWS service-contract requirements rather than a
+  bucket-state failure: first-time HTTP API log delivery also needs the Logs
+  resource-policy actions, and CloudFront only accepts one of its three exact
+  allowed-method sets. The IAM policy now adds only the two resource-policy
+  actions; the CloudFront behaviours use the documented method-set ordering.
+  GraphQL must use the full mutating set because CloudFront has no four-method
+  GET/HEAD/OPTIONS/POST option. Application routing and authenticated API
+  controls still reject unsupported operations.
+- The recovery command was then removed from the persistent workflow after its
+  single successful execution. Terraform correctly rejects an `untaint` call
+  for a healthy state entry, so retaining it would turn the next ordinary
+  deployment into a false failure instead of adding safety.
+- Independent edge checks then confirmed a TLS-verified 200 for the console,
+  a 403 for a direct ALB application route, and a 200 for direct ALB readiness.
+  The CloudFront readiness request was 404 because HTTP API had no health
+  route, not because the edge or application was unhealthy. The edge now
+  explicitly proxies `/health/{proxy+}` for the same public deployment check;
+  those health responses contain no tenant or borrower data.
+- API Gateway route inspection confirmed the health route was deployed, while
+  its HTTP proxy returned the application's `Cannot GET /` response. Named
+  HTTP API routes require an explicit request-path mapping when the integration
+  URI ends at the ALB root. The integration now uses API Gateway's
+  `overwrite:path = $request.path` mapping, preserving `/v1/*`, `/graphql`,
+  and `/health/*` end-to-end without injecting the public host header.
+- ECS task-definition inspection and API logs exposed a final authentication
+  blocker: Cognito's Terraform `endpoint` is a hostname, while the app's
+  production-like environment validation correctly requires an HTTPS issuer
+  URL. The API task now receives `https://` plus the Cognito endpoint. A
+  former readiness 200 came from the prior healthy task and is not treated as
+  proof of the new OIDC configuration; the redeploy must prove login itself.
+- The replacement task then reached the application validator and exposed a
+  code-level regression: the schema accepted the rotatable
+  `OIDC_SESSION_ENCRYPTION_KEYS` ring but the production-like guard checked
+  only the legacy single-key field. The guard now accepts either configured
+  form, and the environment test proves a ring-only production configuration
+  passes. Secrets were inspected only for presence, length, and format; no
+  secret value was printed.
+- The edge deploy workflow originally verified readiness immediately after
+  Terraform requested an ECS revision. ECS may still be draining the old task
+  and starting the replacement at that point, so a stale task could return a
+  health 200 while the new task later exits. All three staging services now
+  set Terraform's `wait_for_steady_state`, making task rollout stability a
+  prerequisite for a successful apply and the following HTTP checks.
+- That new gate correctly held the next apply while the worker failed its
+  replacement revision: a shared secret list had supplied API-only OIDC client
+  and session secrets to the worker, causing its fail-closed configuration
+  rule to see incomplete human-login settings. Shared runtime secrets and the
+  API-only OIDC secrets are now separate. The worker retains no unnecessary
+  OIDC client or session material, and its environment no longer activates
+  the API's login-validation path.
+- The recovery workflow then failed before Terraform while pulling its own
+  immutable ECR image for SBOM/provenance verification. The deploy role already
+  had image metadata reads but lacked ECR's per-layer download action. The role
+  now adds only `ecr:GetDownloadUrlForLayer`, scoped to the existing
+  `mortgage-agent*` repositories; no registry-wide read is granted.
+
+## M7-052: live AWS-only authenticated staging edge
+
+### Status
+
+Infrastructure deployment and machine-verifiable edge checks completed. A
+human-browser recording remains pending, and must use only the synthetic
+reviewer account with no real borrower data.
+
+### Live verification
+
+- GitHub Actions run `33492019400` completed successfully for commit
+  `f3a3446`. It built and pulled the immutable image, generated and verified
+  SBOM/provenance attestations, completed Terraform apply, and published the
+  private S3 console through CloudFront.
+- The AWS-managed CloudFront hostname is `d136v61al3mroo.cloudfront.net` and
+  its distribution status is `Deployed`. The console and `/health/ready` each
+  returned a TLS-verified HTTP 200 through that hostname.
+- The same edge returned 401 for `/v1/auth/me/tenants` without a session and
+  a 302 from `/v1/auth/session/login` to the configured Cognito hosted domain.
+  Direct ALB business access returned 403 while direct ALB readiness returned
+  200, proving the intended edge-origin boundary without concealing deploy
+  health.
+- Temporal, API, and Worker each reached desired count 1 with rollout state
+  `COMPLETED`. The API startup log confirmed its full route registration; the
+  worker started its Temporal workflow bundle without receiving API-only OIDC
+  client/session secrets.
+
+### Remaining boundary
+
+The local browser-control service was unavailable during this verification, so
+no UI recording has been created and no synthetic password was entered or
+printed. The next walkthrough should use the Cognito redirect above, retrieve
+the existing synthetic-reviewer password directly from AWS Secrets Manager
+under the operator's identity, and capture only synthetic case data.
+
+## M7-053: public self-service staging registration with tenant isolation
+
+### Status
+
+Implemented for the persistent synthetic staging console. Final CI/deployment
+verification is required before treating the changed Cognito configuration as
+live.
+
+### Problem
+
+The prior Cognito user pool deliberately allowed only administrator-created
+accounts. That protected the first walkthrough credential, but it also meant a
+person opening the hosted login page could not create their own demo account.
+Merely enabling Cognito self-registration would be incomplete: the API's
+separate authorization model requires a `users` row and a tenant membership,
+so a newly registered person would otherwise finish OAuth successfully and
+then fail closed at the application boundary.
+
+### Implementation
+
+- Enabled Cognito hosted-UI registration and required email verification in
+  staging. Registration remains identity-provider-only; the API does not
+  become an authorization server and does not mint machine credentials.
+- Added the explicit, default-off `SELF_SERVICE_SIGNUP_ENABLED` environment
+  gate. Staging alone sets it true; every other deployment retains the
+  previous operator-provisioned behavior unless it deliberately opts in.
+- Added `SelfServiceProvisioningService`. A successful Authorization Code
+  callback still verifies the access token for session authority, then verifies
+  the returned ID token independently before trusting its scoped email claim.
+  The two subjects must match.
+- For a first verified identity, one transaction creates an empty tenant, a
+  global OIDC-linked user, and exactly one `PARTNER` membership. The tenant
+  name carries no email or other identity attribute. Existing users keep their
+  current memberships unchanged, and a PostgreSQL unique-subject race rolls
+  back the losing transaction and resumes the already-committed identity.
+- Registration cannot attach a user to the synthetic reviewer tenant, infer a
+  tenant id from the browser, issue a machine credential, or grant
+  `REVIEWER` authority. Reviewer-only protected communications and decisions
+  remain separately gated.
+
+### Verification
+
+- Terraform staging formatting and static configuration validation passed.
+- Targeted unit coverage was added for disabled registration, unchanged
+  operator-provisioned users, verified-email provisioning with the `PARTNER`
+  role, and mismatched access/ID-token subjects.
+- GitHub Actions CI run `33519562463` passed for commit `3674e52`: backend
+  lint/build/migrations, the full forced-exit Jest suite, backend e2e,
+  console lint/unit/build/Playwright, live Keycloak OIDC browser regression,
+  container build, Semgrep, secret scanning, production dependency audit, and
+  generated-contract drift checks all completed successfully.
+- GitHub Actions staging deployment `33519988652` completed successfully for
+  commit `7456e07`. Terraform updated the Cognito configuration and waited
+  for API, Worker, and Temporal to return to `desired=1`, `running=1`, and
+  `COMPLETED`. Live read-back confirmed public registration and Cognito email
+  verification are enabled. The deployed CloudFront console returned 200 for
+  `/health/ready`, 401 for an unauthenticated membership request, and 302 to
+  Cognito from the BFF login route; following the hosted signup route reached
+  a terminal 200 without creating an account. Direct ALB business access
+  remained 403.
+
+### Remaining boundary
+
+This remains a synthetic demonstration environment. Each public account must
+use its own reachable email address to complete Cognito verification, and it
+must not be used for borrower information, real underwriting, lender approval,
+or movement of funds.
+
+## M7-054: one-click isolated guest sandbox
+
+### Status
+
+Implemented, CI-verified, and deployed to the synthetic AWS staging edge.
+
+### Implementation
+
+- Made **Try live sandbox** the primary console entry point. It creates a
+  separate synthetic tenant, one pre-seeded conventional case, a deliberately
+  visible income discrepancy, and the matching `UNDERWRITING_EVIDENCE`
+  consent scope required by the real workflow. The sample is therefore able
+  to exercise policy checks, agent orchestration, reviewer actions, and audit
+  history without using a shared account or real borrower information.
+- Added `guest_sandbox_sessions`, which stores only SHA-256 hashes of opaque
+  session and CSRF tokens. The tenant id and UUID reviewer actor are generated
+  on the server and never accepted from the browser. Tenant, seeded rows, and
+  session are committed as one transaction so a failed seed cannot leave a
+  reachable partial workspace.
+- Extended the existing tenant-authentication OR boundary with a guest-cookie
+  path. It grants `REVIEWER` authority only for that new synthetic tenant;
+  ordinary API-client and OIDC paths remain unchanged. Browser mutations and
+  logout require a matching double-submit CSRF token. The durable public
+  creation endpoint is limited to five requests per minute, while the
+  workspace itself expires after a configurable one-hour default (bounded to
+  five minutes through four hours).
+- The browser persists only a non-authoritative display/resume hint. The
+  actual session remains an HttpOnly cookie; reload restores it by asking the
+  server, and disconnect deletes the server-side session when possible.
+
+### Verification
+
+- Added targeted unit coverage for opaque-token storage, generated tenant and
+  actor authority, workflow-compatible consent scope, CSRF-protected mutation
+  and logout, and bounded sandbox TTL configuration.
+- Formatted the changed TypeScript/TSX sources, checked the working diff for
+  whitespace errors, and transpiled all changed backend and console sources.
+- The first protected CI run caught an incomplete cumulative-migration test
+  update, not a failed migration: its ordered rollback sequence must remove
+  the newest migration before asserting the preceding document-vault schema.
+  The suite now asserts the new table and foreign key in the fully migrated
+  shape, then explicitly rolls the guest-session migration back before the
+  existing reverse-order assertions continue.
+- The next protected run completed migration, build, unit, integration, and
+  browser checks, then correctly stopped at the generated-contract drift gate:
+  the new REST session endpoint added three OpenAPI operations. The checked-in
+  OpenAPI artifact and generated TypeScript client now include those exact
+  `POST`/`GET`/`DELETE` operations before the final CI run.
+- GitHub Actions CI run `33523969485` passed for commit `e5878f1`: backend
+  lint/build/migrations, full Jest and e2e suites, console lint/unit/build/
+  Playwright, live Keycloak OIDC browser regression, container build, Semgrep,
+  secret scanning, production dependency audit, and generated-contract drift
+  checks all completed successfully.
+- GitHub Actions staging deployment `33524379968` then completed successfully
+  for the same commit. It built the immutable image and supply-chain evidence,
+  applied Terraform, ran the migration task, and waited for the ECS services
+  to reach steady state before publishing the updated console through the
+  existing CloudFront distribution.
+- A direct CloudFront-only synthetic verification returned `200` for
+  readiness and `201` for each of two new guest workspaces. Their server
+  generated tenant, actor, and case ids differed; resuming the first cookie
+  returned that same tenant and actor. A POST GraphQL query without CSRF was
+  rejected as `UNAUTHENTICATED`; a CSRF-bearing query returned only its own
+  seeded case; and a request for the second sandbox's case returned a
+  tenant-scoped rejection with no cross-tenant data. Finally, a fresh
+  synthetic sandbox started its real Temporal case-conditions workflow and
+  received a workflow id and run id. No real borrower or institution data was
+  read, written, or transmitted.
+- The edge harness briefly received an unauthenticated response after writing
+  a no-Set-Cookie session-status response back into the same curl cookie-jar
+  output path, which emptied the test jar. Repeating with the jar read-only
+  restored the expected session and workflow behavior; this was a harness
+  state-management error, not a server-side session or CSRF bypass.
+
+## M7-055: guided synthetic-case walkthrough
+
+### Status
+
+Implemented; protected CI and staging verification are pending this change.
+
+### Implementation
+
+- Turned the guest sandbox from an access-only entry point into a guided
+  product path. Creating or resuming a workspace now focuses its one seeded
+  synthetic case instead of leaving a visitor at an empty case-detail state.
+  The browser preserves the returned case id only as a tenant-matched display
+  hint; the HttpOnly session cookie remains the sole authority source.
+- Added a four-stage case guide that derives its next action from durable
+  case status and open-condition data: inspect the synthetic evidence, start
+  the case workflow, resolve a reviewer condition, then inspect the audit
+  trail. It uses plain-language boundary disclosure so the flow cannot be
+  mistaken for a borrower portal, lender decision, provider integration, or
+  money movement product.
+- Connected the primary guide action to the existing idempotent
+  `startWorkflowRun` mutation. It launches the same Temporal workflow that
+  the API supports, refetches afterward, and polls only the visitor's single
+  sandbox case while transitions are occurring. Normal bearer-token and OIDC
+  operations remain non-polling and retain their existing screens.
+- Added focused component coverage for the draft-to-workflow action and the
+  condition-review transition. Generated GraphQL artifacts include the new
+  typed workflow-start operation.
+
+### Verification
+
+- Checked the working diff for whitespace errors and formatted the authored
+  TypeScript/TSX files. The local console test and code-generation commands
+  again did not return within their normal window in this synchronized
+  workspace, including from a temporary copy; their child processes were
+  stopped before continuing. The protected GitHub CI workflow is therefore
+  the authoritative build, generated-contract, unit, browser, and security
+  verification for this change.
+
+## M7-056: guided sandbox CI type correction
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Corrected the strict-null-safe restore path for the non-authoritative
+  sandbox display hint. A missing or malformed local value now remains an
+  ordinary no-case-id resume state instead of relying on optional-chain
+  narrowing that TypeScript cannot prove.
+- Moved pure guide-state derivation into its own module. The visual guide now
+  exports only a React component, preserving fast-refresh boundaries while
+  keeping the workflow-state mapping directly unit-testable.
+
+### Verification
+
+- GitHub Actions CI run `33580984891` completed the console unit suite but
+  failed the console TypeScript build on the strict-null issue above. The
+  failure was fixed before any staging deployment, and a new CI run is the
+  required verification gate.
+
+## M7-057: generated-artifact byte-format correction
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Restored the code generator's no-final-newline convention for its two
+  checked-in GraphQL artifacts. The generated operation content was already
+  correct; this change removes only the trailing newline bytes introduced
+  while applying the generated artifact update.
+
+### Verification
+
+- GitHub Actions CI run `33581103597` passed backend build, migration,
+  backend Jest/e2e, live OIDC regression, console lint/unit/build/Playwright,
+  container build, Semgrep, secret scanning, dependency audit, and
+  observability validation. Its only failure was the generated-contract gate,
+  which reported exactly the two final-newline differences corrected here.
+
+## M7-058: deterministic interrupted-workflow resume
+
+### Status
+
+Implemented; replacement protected CI is pending.
+
+### Implementation
+
+- Corrected the interrupted-evaluation loop so the prior cycle's signal is
+  cleared before the review-state activity begins. A reviewer resumption that
+  reaches Temporal while that activity is completing is now retained for the
+  durable wait instead of being cleared afterward.
+- Replaced the multi-interrupt workflow test's two fixed 500ms sleeps with a
+  bounded wait for the mocked review-state activity. The test now synchronizes
+  with the actual workflow boundary and remains meaningful on slower CI
+  runners.
+
+### Verification
+
+- GitHub Actions CI run `33581434178` passed lint, build, migrations, console
+  lint/unit/build/Playwright, container build, Semgrep, secret scanning,
+  dependency audit, and observability validation, but failed one existing
+  Temporal workflow test. The failure was a 20-second timeout in the second
+  interrupt cycle, consistent with a race between its fixed sleep and the
+  durable wait. No staging deployment was performed from that failed run.
+- Local lint did not return within its normal window in this synchronized
+  workspace and was stopped without changing files. The next protected CI run
+  is the authoritative validation gate for this workflow and test correction.
+
+## M7-059: guided guest sandbox release evidence
+
+### Status
+
+Released to the persistent AWS staging environment.
+
+### Implementation
+
+- Published the guided synthetic-case experience behind the existing AWS
+  CloudFront HTTPS edge. Visitors can select the sandbox entry point, receive
+  an isolated synthetic tenant and case, follow the evidence/policy/condition/
+  audit guide, and invoke the existing idempotent Temporal workflow action.
+- The walkthrough remains intentionally bounded: it uses synthetic records and
+  deterministic adapters only, and it neither makes a lending decision nor
+  moves funds or calls an external lender or verification provider.
+
+### Verification
+
+- Protected CI run `33581871324` passed all jobs, including backend lint,
+  build, migrations, Jest, API e2e, Temporal workflow coverage, live OIDC
+  console e2e, generated-contract drift checks, console lint/unit/build/
+  Playwright, container build, Semgrep, secret scanning, production dependency
+  audit, and observability configuration validation.
+- AWS deploy run `33582137668` completed successfully. It built and pushed an
+  immutable image, created and cryptographically verified build-provenance and
+  SBOM attestations, applied Terraform, published the private-S3/CloudFront
+  console, and received real 200 health responses through both the deployed
+  API and public HTTPS edge.
+- A fresh public-edge smoke test returned 201 for sandbox creation, 200 for
+  cookie-backed session recovery, and 200 for a CSRF-protected GraphQL
+  `startWorkflowRun` request with a valid workflow identifier. Response
+  contents and cookie values were not retained or logged.
+
+## M7-055: six real gaps from a fresh M7-030–054 audit — orphaned sandbox data, RLS blind spot, cancellation test coverage, audit export truncation, key-rotation proof
+
+### Status
+
+Implemented and verified against real local PostgreSQL. Closes six specific, real, previously-undisclosed gaps a fresh line-by-line audit of M7-030 through M7-054 found — the same audit discipline this project has applied to itself since M7-028, this time turned on the 44 commits landed since this session last touched the repository directly.
+
+### Background
+
+The user asked what stood between this project and production readiness for its own existing (synthetic) scope. Four parallel audit agents, mirroring the M7-028/M7-029 audit's own methodology, each independently re-verified a slice of M7-030–054 against real code and real tests rather than trusting the dev log's own self-reporting. Asked to close the concrete findings.
+
+### What changed
+
+1. **A real `tsc --noEmit` regression on the branch head** (`src/auth/oidc-session.service.spec.ts`): a mock object's declared type was missing `verifyIdToken`, even though the mock literal itself already had it — the object literal's excess-property check was failing at the type level. Fixed the type, not the literal.
+
+2. **Guest sandbox orphaned data (the highest-severity finding)**: `GuestSandboxService.create()`'s own expired-session sweep only ever deleted the session row itself — the real tenant/case/evidence/consent rows a guided-tour session created were never deleted, and this is a public, unauthenticated endpoint. `src/database/purge-tenant-data.ts` (new) is a single, shared, foreign-key-safe "delete everything a synthetic tenant could have created" function — `deleteIfKnown()` skips a table when the caller's own `DataSource` never registered that entity, so the same function stays callable from a narrowly-scoped spec's `DataSource` and the full app's. `evaluation/runner.ts`'s own `cleanupEvaluationRun()` (which had the exact same "never deletes the tenant row itself" gap, worked around for years by every one of its own tests doing a redundant manual `Tenant.delete()` afterward) now delegates to it too, closing that gap as a side effect rather than leaving two divergent copies of the same fragile logic. `GuestSandboxService.purgeExpiredSessions()` is called both opportunistically inside `create()` and on a real interval from `worker.ts` (`GUEST_SANDBOX_CLEANUP_INTERVAL_MS`, default 5 minutes) — the same "plain interval, not a Temporal workflow" pattern `WebhookDispatchService`/`ProviderReconciliationService` already established, so cleanup no longer depends on traffic volume to keep up with a public endpoint.
+
+3. **Row-level security silently disabled on most tenant-scoped tables in a `synchronize`-built database**: a real, structural check (`src/database/check-tenant-isolation-rls.ts`) queries `pg_class`/`information_schema.columns` directly for every table with a `tenantId` column and flags any that lack RLS — derived dynamically, not a hardcoded table list, so it stays correct as the schema grows. Three tables (`api_clients`, `tenant_memberships`, `guest_sandbox_sessions`) are a real, reviewed, documented exception: each is queried specifically to _resolve_ which tenant a caller belongs to, before any tenant context exists to enforce RLS against — RLS-protecting the table that establishes tenant identity is a bootstrapping contradiction, not a stricter guarantee. Wired into both `main.ts` and `worker.ts` at boot: staging/production refuse to start with a real gap present; development logs a loud, specific warning and continues, since hard-failing there would break this codebase's own documented local-dev workflow.
+
+4. **`case-conditions.activities.ts`'s two real database-backed recovery/cancellation activities had zero direct test coverage**: `prepareWorkflowRecovery` (the query that decides whether to reuse one open condition, restart collection, or route to review) and `markWorkflowCancelled` (the race-guarded status write) were only ever exercised through `case-conditions.workflow.spec.ts`'s fully-mocked-activities suite, which proves Temporal's own signal/replay mechanics, not this SQL. Added real, Postgres-backed tests for all three `prepareWorkflowRecovery` outcomes (`RESTART_COLLECTION`, `REUSE_OPEN_CONDITION` via a real condition opened through the real `evaluateConditions` path, and `REVIEW_REQUIRED` with two real active conditions) and both `markWorkflowCancelled` branches (regresses an in-progress case to `MANUAL_REVIEW`; does _not_ regress an already-`READY_FOR_UNDERWRITING` or already-`CLOSED` case — the exact race the activity's own comment names).
+
+5. **Audit export silently capped at 1,000 events with no indication anything was missing**: `AuditEventService.listAll()` (new) walks a tenant's complete real history with real keyset pagination on `(createdAt, id)`, and only reports `truncated: true` after a real existence check past its own (50,000-event) safety cap actually finds more rows — never a guess. `GET /v1/audit-events/export` now uses it and includes `truncated` in the downloaded JSON; the checked-in OpenAPI description's stale "audit-export is not yet built" line is corrected. `GET /v1/audit-events` (the console's bounded recent-activity view) is unchanged.
+
+6. **`OIDC_SESSION_ENCRYPTION_KEYS` key-ring rotation had no dedicated test and no operator documentation** — the one encryption mechanism in this codebase without either, unlike its sibling `PROVIDER_DATA_ENCRYPTION_KEYS`. Added real tests proving a session created before rotation still decrypts under a retired-but-retained key, gets re-encrypted under the new current key on its next refresh, and is genuinely unreadable by a service that never learned the new key or that dropped an old one from its ring entirely. `docs/OPERATIONS.md` now documents the real mechanism: no backfill script exists, deliberately — every real read path re-encrypts under the current key, so a session-length wait (`OIDC_SESSION_MAX_AGE_SECONDS`) after rotation finishes the migration on its own before a retired key is safe to drop.
+
+7. **Two stale documentation claims corrected**: `README.md`'s and `PROJECT_CHARTER.md`'s Section 29 staging paragraphs still said Keycloak/console deployment was declined for lack of a custom domain — true when written, but M7-050/M7-052 subsequently achieved browser-trusted HTTPS with zero custom domain via CloudFront's own default certificate plus a real Cognito user pool, live-verified. Both now say so.
+
+### A real orphaned-data cleanup, done by hand, along the way
+
+Two real orphaned rows (and, in one case, dozens of dependent rows) turned up in this machine's own long-lived dev database from earlier failed attempts at this same fix — `purgeTenantData()` throwing partway through before the `hasMetadata()` guards were correct left a `loan_cases` row referencing a jurisdiction that a later test's own cleanup then couldn't delete (`FK` violation), the exact category of problem this slice's own fix (item 2) exists to prevent for the guest sandbox. Cleaned up directly via `psql`, confirmed via a real re-run afterward — not itself a code defect, but reported plainly since it happened during this work.
+
+### Verification
+
+```text
+Real, against a live local Postgres (2026-09-02):
+- purge-tenant-data.spec.ts, check-tenant-isolation-rls.spec.ts,
+  runner.spec.ts, guest-sandbox.service.spec.ts,
+  oidc-session.service.spec.ts, case-conditions.activities.spec.ts:
+  all passed
+- npm run build: clean
+- npm run lint:check: clean (after one auto-fix pass)
+- npx tsc --noEmit: 0 errors (the real oidc-session.service.spec.ts
+  regression this slice found and fixed)
+- audit-event.service.spec.ts's two append-only-trigger tests remain
+  failing on this machine's specific long-lived local database — a
+  pre-existing, already-documented local-environment gap (no migration
+  ever ran the real trigger-creating SQL there), unrelated to this slice
+  and confirmed by direct psql inspection (no trigger present), not
+  re-litigated here
+```
+
+### Next safe step
+
+Not attempted here, named honestly: a real Temporal-server test that actually calls `.cancel()` on a live workflow handle and observes the `catch(isCancellation) -> CancellationScope.nonCancellable(markWorkflowCancelled)` path fire end to end. `case-conditions.workflow.spec.ts`'s own real-Temporal suite already proves the surrounding recovery/duplicate-signal mechanics against a live server; adding a live cancellation test to it is a real, separate, closable gap, not attempted in this slice given the time this session had already spent recovering from real environment resource contention. The remaining M7-030–054 audit findings not acted on here (M7-032's adapter-spec duplication left in place, M7-044's dispatch-service-level rate-limit test, M7-036's console Cancel-branch UI coverage) are each smaller and lower-severity than the six closed above — not assumed as the next task without asking first.

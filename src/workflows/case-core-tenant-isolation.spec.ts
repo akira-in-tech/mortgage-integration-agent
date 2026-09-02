@@ -21,6 +21,7 @@ import {
 } from '../database/entities/loan-condition.entity';
 import { ConditionTransition } from '../database/entities/condition-transition.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
+import { AgentModelInvocation } from '../database/entities/agent-model-invocation.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import {
   AgentRunRouteStatus,
@@ -44,7 +45,8 @@ import {
 //
 // Covers the entire case-conditions core: `loan_cases`, `evidence_facts`,
 // `outbox_events`, `condition_transitions` (M5-004), plus
-// `loan_conditions`, `agent_runs`, `tool_attempts` (M5-006). Deliberately
+// `loan_conditions`, `agent_runs`, `tool_attempts` (M5-006), and the
+// content-free `agent_model_invocations` audit record (M7-035). Deliberately
 // still out of scope: `case_policy_bindings`/`case_policy_snapshots`
 // (`PolicyEvaluationService` has no `DataSource`/`EntityManager` at all
 // today) and `provider_operation_intents`/`provider_authorization_grants`
@@ -65,7 +67,7 @@ function withCredentials(url: string, user: string, password: string): string {
 }
 
 describeOrSkip(
-  'loan_cases/evidence_facts/outbox_events/condition_transitions/loan_conditions/agent_runs/tool_attempts row-level security',
+  'case workflow and Agent audit tables enforce row-level security',
   () => {
     let adminDataSource: DataSource;
     let restrictedDataSource: DataSource;
@@ -80,6 +82,8 @@ describeOrSkip(
     let loanConditionB: LoanCondition;
     let conditionTransitionA: ConditionTransition;
     let conditionTransitionB: ConditionTransition;
+    let modelInvocationA: AgentModelInvocation;
+    let modelInvocationB: AgentModelInvocation;
     let agentRunA: AgentRun;
     let agentRunB: AgentRun;
     let toolAttemptA: ToolAttempt;
@@ -98,6 +102,7 @@ describeOrSkip(
           LoanCondition,
           ConditionTransition,
           AgentRun,
+          AgentModelInvocation,
           ToolAttempt,
         ],
       });
@@ -143,6 +148,7 @@ describeOrSkip(
           ConditionTransition,
           LoanCondition,
           AgentRun,
+          AgentModelInvocation,
           ToolAttempt,
           Tenant,
           Jurisdiction,
@@ -273,16 +279,57 @@ describeOrSkip(
         },
       );
 
+      function makeModelInvocation(tenantId: string, caseId: string) {
+        const repo = restrictedDataSource.getRepository(AgentModelInvocation);
+        return repo.create({
+          tenantId,
+          caseId,
+          caseVersion: 1,
+          workflowRunId: `rls-spec-run-${tenantId}`,
+          modelVersion: 'rls-spec-model',
+          promptVersion: 'rls-spec-prompt-v1',
+          nextAction: 'EVALUATE_POLICY',
+          reasonCode: 'POLICY_EVALUATION_REQUIRED',
+          confidenceBasisPoints: 10_000,
+          accountedTokenUnits: 128,
+          requestDigest: 'a'.repeat(64),
+          responseDigest: 'b'.repeat(64),
+        });
+      }
+      modelInvocationA = await runInTenantContext(
+        restrictedDataSource,
+        tenantA,
+        (manager) =>
+          manager
+            .getRepository(AgentModelInvocation)
+            .save(makeModelInvocation(tenantA, caseA.id)),
+      );
+      modelInvocationB = await runInTenantContext(
+        restrictedDataSource,
+        tenantB,
+        (manager) =>
+          manager
+            .getRepository(AgentModelInvocation)
+            .save(makeModelInvocation(tenantB, caseB.id)),
+      );
+
       // agent_runs/tool_attempts (M5-006) — tool_attempts has no
       // tenantId column of its own, same join-based-policy situation as
       // condition_transitions.
-      function makeAgentRun(tenantId: string, caseId: string) {
+      function makeAgentRun(
+        tenantId: string,
+        caseId: string,
+        modelInvocationId: string,
+      ) {
         const repo = restrictedDataSource.getRepository(AgentRun);
         return repo.create({
           tenantId,
           caseId,
           workflowRunId: `rls-spec-run-${tenantId}`,
           route: AgentRunRouteStatus.PROPOSED_ACTION,
+          modelInvocationId,
+          modelVersion: 'rls-spec-model',
+          promptVersion: 'rls-spec-prompt-v1',
           startedAt: new Date(),
         });
       }
@@ -290,13 +337,17 @@ describeOrSkip(
         restrictedDataSource,
         tenantA,
         (manager) =>
-          manager.getRepository(AgentRun).save(makeAgentRun(tenantA, caseA.id)),
+          manager
+            .getRepository(AgentRun)
+            .save(makeAgentRun(tenantA, caseA.id, modelInvocationA.id)),
       );
       agentRunB = await runInTenantContext(
         restrictedDataSource,
         tenantB,
         (manager) =>
-          manager.getRepository(AgentRun).save(makeAgentRun(tenantB, caseB.id)),
+          manager
+            .getRepository(AgentRun)
+            .save(makeAgentRun(tenantB, caseB.id, modelInvocationB.id)),
       );
 
       toolAttemptA = await runInTenantContext(
@@ -341,6 +392,9 @@ describeOrSkip(
             .getRepository(AgentRun)
             .delete([agentRunA.id, agentRunB.id]);
           await manager
+            .getRepository(AgentModelInvocation)
+            .delete([modelInvocationA.id, modelInvocationB.id]);
+          await manager
             .getRepository(ConditionTransition)
             .delete([conditionTransitionA.id, conditionTransitionB.id]);
           await manager
@@ -382,6 +436,9 @@ describeOrSkip(
       const agentRuns = await restrictedDataSource
         .getRepository(AgentRun)
         .find();
+      const modelInvocations = await restrictedDataSource
+        .getRepository(AgentModelInvocation)
+        .find();
       const toolAttempts = await restrictedDataSource
         .getRepository(ToolAttempt)
         .find();
@@ -392,6 +449,7 @@ describeOrSkip(
       expect(transitions).toHaveLength(0);
       expect(conditions).toHaveLength(0);
       expect(agentRuns).toHaveLength(0);
+      expect(modelInvocations).toHaveLength(0);
       expect(toolAttempts).toHaveLength(0);
     });
 
@@ -409,6 +467,9 @@ describeOrSkip(
           outbox: await manager.getRepository(OutboxEvent).find(),
           conditions: await manager.getRepository(LoanCondition).find(),
           agentRuns: await manager.getRepository(AgentRun).find(),
+          modelInvocations: await manager
+            .getRepository(AgentModelInvocation)
+            .find(),
         }),
       );
 
@@ -417,6 +478,9 @@ describeOrSkip(
       expect(result.outbox.map((e) => e.id)).toEqual([outboxEventA.id]);
       expect(result.conditions.map((c) => c.id)).toEqual([loanConditionA.id]);
       expect(result.agentRuns.map((r) => r.id)).toEqual([agentRunA.id]);
+      expect(result.modelInvocations.map((i) => i.id)).toEqual([
+        modelInvocationA.id,
+      ]);
     });
 
     it("tenant B's context sees only tenant B's rows, never tenant A's", async () => {
@@ -429,6 +493,9 @@ describeOrSkip(
           outbox: await manager.getRepository(OutboxEvent).find(),
           conditions: await manager.getRepository(LoanCondition).find(),
           agentRuns: await manager.getRepository(AgentRun).find(),
+          modelInvocations: await manager
+            .getRepository(AgentModelInvocation)
+            .find(),
         }),
       );
 
@@ -437,6 +504,9 @@ describeOrSkip(
       expect(result.outbox).toHaveLength(0);
       expect(result.conditions.map((c) => c.id)).toEqual([loanConditionB.id]);
       expect(result.agentRuns.map((r) => r.id)).toEqual([agentRunB.id]);
+      expect(result.modelInvocations.map((i) => i.id)).toEqual([
+        modelInvocationB.id,
+      ]);
     });
 
     it("a direct lookup by id for a different tenant's case or condition returns nothing, even though the row exists", async () => {
@@ -542,6 +612,9 @@ describeOrSkip(
           transitions: await manager.getRepository(ConditionTransition).find(),
           conditions: await manager.getRepository(LoanCondition).find(),
           agentRuns: await manager.getRepository(AgentRun).find(),
+          modelInvocations: await manager
+            .getRepository(AgentModelInvocation)
+            .find(),
           toolAttempts: await manager.getRepository(ToolAttempt).find(),
         }),
       );
@@ -575,6 +648,9 @@ describeOrSkip(
       );
       expect(result.agentRuns.map((r) => r.id)).toEqual(
         expect.arrayContaining([agentRunA.id, agentRunB.id]),
+      );
+      expect(result.modelInvocations.map((i) => i.id)).toEqual(
+        expect.arrayContaining([modelInvocationA.id, modelInvocationB.id]),
       );
       expect(result.toolAttempts.map((t) => t.id)).toEqual(
         expect.arrayContaining([toolAttemptA.id, toolAttemptB.id]),

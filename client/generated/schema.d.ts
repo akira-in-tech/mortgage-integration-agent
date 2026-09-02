@@ -275,6 +275,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/demo-sandbox/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getGuestSandboxSession"];
+        put?: never;
+        post: operations["createGuestSandboxSession"];
+        delete: operations["deleteGuestSandboxSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent tenant audit events. */
+        get: operations["listAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/audit-events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download the tenant's complete audit evidence as JSON. */
+        get: operations["exportAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/data-disposition-tasks/open": {
         parameters: {
             query?: never;
@@ -284,6 +334,23 @@ export interface paths {
         };
         /** List data-disposition tasks still waiting on a decision */
         get: operations["listOpenDataDispositionTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data-disposition-tasks/backup-expiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tasks waiting for managed-backup retention expiry */
+        get: operations["listDataDispositionTasksAwaitingBackupExpiry"];
         put?: never;
         post?: never;
         delete?: never;
@@ -303,6 +370,23 @@ export interface paths {
         put?: never;
         /** Delete, anonymize, or retain the evidence a task covers */
         post: operations["resolveDataDispositionTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/data-disposition-tasks/{taskId}/verify-backup-expiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify backup expiry after the retention window closes */
+        post: operations["verifyDataDispositionBackupExpiry"];
         delete?: never;
         options?: never;
         head?: never;
@@ -377,6 +461,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/loan-cases/workflow-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List running or recoverable workflow operations for this tenant */
+        get: operations["listWorkflowOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}": {
         parameters: {
             query?: never;
@@ -439,6 +540,40 @@ export interface paths {
         get: operations["getWorkflowRun"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request cancellation of one running workflow execution */
+        post: operations["cancelWorkflowRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a recovery execution from a terminally interrupted run */
+        post: operations["recoverWorkflowRun"];
         delete?: never;
         options?: never;
         head?: never;
@@ -514,6 +649,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform-admin/policy-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse immutable policy-version metadata and source provenance. */
+        get: operations["listPolicyVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/loan-cases/{caseId}/communication-messages": {
         parameters: {
             query?: never;
@@ -572,7 +724,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List this tenant's webhook subscriptions without exposing signing secrets. */
+        get: operations["listWebhookEndpoints"];
         put?: never;
         /** Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later. */
         post: operations["createWebhookEndpoint"];
@@ -580,6 +733,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/v1/webhook-endpoints/{endpointId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a webhook subscription while preserving its signed delivery history. */
+        delete: operations["deleteWebhookEndpoint"];
+        options?: never;
+        head?: never;
+        /** Update a webhook destination or event subscriptions for future deliveries. */
+        patch: operations["updateWebhookEndpoint"];
         trace?: never;
     };
     "/v1/webhook-deliveries/{deliveryId}": {
@@ -799,6 +970,7 @@ export interface components {
         OidcLogoutResultDto: {
             logoutUrl?: Record<string, never>;
         };
+        AuditEvent: Record<string, never>;
         DataDispositionTaskQueueItemDto: {
             /** Format: uuid */
             id: string;
@@ -810,10 +982,17 @@ export interface components {
             reason: string;
             /** Format: date-time */
             createdAt: string;
+            /** Format: date-time */
+            backupExpiryDueAt?: string;
+            affectedProviderIntentCount: number;
         };
         ResolveDataDispositionTaskDto: {
             /** @enum {string} */
             action: "DELETE" | "ANONYMIZE" | "RETAIN";
+        };
+        VerifyBackupExpiryDto: {
+            /** @description Non-sensitive operator or provider evidence reference proving backup expiry. */
+            verificationReference: string;
         };
         AgentBudgetAggregateUsageDto: {
             /** Format: date */
@@ -913,6 +1092,15 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        WorkflowOperationQueueItem: {
+            workflowId: string;
+            runId: string;
+            status: string;
+            caseId: string;
+            caseStatus: string;
+            /** Format: date-time */
+            caseUpdatedAt: string;
+        };
         TimelineEntry: {
             timestamp: string;
             /** @enum {string} */
@@ -930,6 +1118,9 @@ export interface components {
             workflowId: string;
             runId: string;
             status: string;
+        };
+        WorkflowOperationReasonDto: {
+            reason: string;
         };
         ReviewDto: {
             /** @enum {string} */
@@ -957,6 +1148,8 @@ export interface components {
             caseId: string;
             purpose: string;
             scope: string;
+            permittedPurposes: string[];
+            permittedDataClasses: string[];
             /** Format: date-time */
             grantedAt: string;
             expiresAt?: Record<string, never>;
@@ -973,6 +1166,23 @@ export interface components {
             /** Format: uuid */
             policyVersionId: string;
         };
+        PolicyVersionSummaryDto: {
+            /** Format: uuid */
+            id: string;
+            ruleId: string;
+            version: string;
+            /** @enum {string} */
+            releaseStatus: "DRAFT" | "PROPOSED" | "RELEASED" | "SUPERSEDED" | "WITHDRAWN" | "CORRECTED";
+            /** Format: date-time */
+            effectiveFrom: string;
+            effectiveTo: Record<string, never> | null;
+            /** Format: date-time */
+            recordedAt: string;
+            sourceName: string;
+            jurisdictionCode: string;
+            /** Format: date-time */
+            sourcePublishedAt: string;
+        };
         CommunicationMessage: Record<string, never>;
         ApproveCommunicationMessageDto: {
             actorId: string;
@@ -985,21 +1195,44 @@ export interface components {
              * @example https://partner.example.com/webhooks/mortgage-agent
              */
             targetUrl: string;
-            eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
+            eventTypes: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
         };
-        WebhookEndpoint: {
+        CreatedWebhookEndpointResponseDto: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             tenantId: string;
             targetUrl: string;
-            /** @description The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it. */
-            secret: string;
             eventTypes: string[];
             /** @enum {string} */
             status: "ACTIVE" | "DISABLED";
+            outboundRateLimitPerMinute: number;
             /** Format: date-time */
             createdAt: string;
+            /** @description HMAC signing secret. Store it now: future reads and mutations never return it. */
+            secret: string;
+        };
+        WebhookEndpointResponseDto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            targetUrl: string;
+            eventTypes: string[];
+            /** @enum {string} */
+            status: "ACTIVE" | "DISABLED";
+            outboundRateLimitPerMinute: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        UpdateWebhookEndpointDto: {
+            /**
+             * @description Replacement HTTPS destination for future signed deliveries.
+             * @example https://partner.example.com/webhooks/mortgage-agent-v2
+             */
+            targetUrl?: string;
+            eventTypes?: ("loan_case.created" | "workflow_run.started" | "workflow_run.waiting_for_review" | "workflow_run.completed" | "workflow_run.failed" | "workflow_run.cancelled" | "workflow_run.recovery_started" | "evidence.updated" | "condition.opened" | "condition.satisfied" | "condition.waived" | "evaluation.interrupted" | "case.escalated" | "communication.delivered")[];
+            outboundRateLimitPerMinute?: number;
         };
         WebhookDeliveryAttempt: {
             attemptNumber: number;
@@ -1505,6 +1738,95 @@ export interface operations {
             };
         };
     };
+    getGuestSandboxSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createGuestSandboxSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteGuestSandboxSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listAuditEvents: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEvent"][];
+                };
+            };
+        };
+    };
+    exportAuditEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listOpenDataDispositionTasks: {
         parameters: {
             query?: {
@@ -1534,6 +1856,25 @@ export interface operations {
             };
             /** @description REVIEWER role required. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listDataDispositionTasksAwaitingBackupExpiry: {
+        parameters: {
+            query: {
+                limit: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1574,6 +1915,29 @@ export interface operations {
             };
             /** @description REVIEWER role required. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verifyDataDispositionBackupExpiry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyBackupExpiryDto"];
+            };
+        };
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1731,6 +2095,32 @@ export interface operations {
             };
         };
     };
+    listWorkflowOperations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowOperationQueueItem"][];
+                };
+            };
+            /** @description REVIEWER role required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getCase: {
         parameters: {
             query?: never;
@@ -1865,6 +2255,71 @@ export interface operations {
             };
             /** @description No case with this id owned by the authenticated tenant, or no such workflow run. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelWorkflowRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowOperationReasonDto"];
+            };
+        };
+        responses: {
+            /** @description Cancellation requested for orchestration only; in-flight provider outcomes still require reconciliation. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Workflow run is not running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    recoverWorkflowRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                caseId: string;
+                runId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowOperationReasonDto"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartWorkflowRunResult"];
+                };
+            };
+            /** @description Workflow run is not recoverable. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2074,6 +2529,29 @@ export interface operations {
             };
         };
     };
+    listPolicyVersions: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Rule, source, or jurisdiction substring. */
+                query?: unknown;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyVersionSummaryDto"][];
+                };
+            };
+        };
+    };
     listCommunicationMessages: {
         parameters: {
             query?: never;
@@ -2198,6 +2676,25 @@ export interface operations {
             };
         };
     };
+    listWebhookEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointResponseDto"][];
+                };
+            };
+        };
+    };
     createWebhookEndpoint: {
         parameters: {
             query?: never;
@@ -2216,7 +2713,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WebhookEndpoint"];
+                    "application/json": components["schemas"]["CreatedWebhookEndpointResponseDto"];
                 };
             };
             /** @description targetUrl is malformed, uses a non-http(s) scheme, or resolves to a private/reserved address (SSRF guard, Section 16.4). */
@@ -2232,6 +2729,51 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    deleteWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The endpoint is disabled; past delivery history remains available. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateWebhookEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateWebhookEndpointDto"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookEndpointResponseDto"];
+                };
             };
         };
     };

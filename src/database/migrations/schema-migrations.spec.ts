@@ -89,6 +89,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     expect(await tableNames()).toEqual([
       'agent_budget_ledgers',
       'agent_budget_reservations',
+      'agent_model_invocations',
       'agent_runs',
       'api_clients',
       'audit_events',
@@ -100,9 +101,11 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'condition_transitions',
       'consent_records',
       'data_disposition_tasks',
+      'document_records',
       'evaluation_input_manifests',
       'evaluation_report_records',
       'evidence_facts',
+      'guest_sandbox_sessions',
       'jurisdictions',
       'legal_holds',
       'loan_applications',
@@ -110,6 +113,7 @@ describeOrSkip('Schema migrations (cumulative)', () => {
       'loan_conditions',
       'oidc_sessions',
       'outbox_events',
+      'permissible_purpose_decisions',
       'platform_admins',
       'policy_applicability',
       'policy_catalog_generation',
@@ -182,7 +186,9 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     // webhook_deliveries -> outbox_events, OIDC sessions -> users, agent
     // budget reservations -> the tenant-matching authoritative budget ledger,
     // aggregate usage -> tenants, reservations -> their aggregate month
-    expect(foreignKeys).toHaveLength(21);
+    // agent_runs -> its optional bounded model invocation, guest sandbox
+    // sessions -> their disposable tenant
+    expect(foreignKeys).toHaveLength(24);
 
     // SeedIncomeDiscrepancyPolicy's data, not schema: the charter's own
     // Section 10.7 example rule, reproducible and revertible the same way
@@ -204,6 +210,167 @@ describeOrSkip('Schema migrations (cumulative)', () => {
         `SELECT id, generation FROM policy_catalog_generation`,
       );
     expect(generationRows).toEqual([{ id: 1, generation: 0 }]);
+
+    const endpointRateColumns: Array<{
+      column_name: string;
+      column_default: string | null;
+    }> = await scratchDataSource.query(
+      `SELECT column_name, column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'webhook_endpoints'
+         AND column_name IN (
+           'outboundRateLimitPerMinute',
+           'rateWindowStartedAt',
+           'rateWindowAttempts'
+         )
+       ORDER BY column_name`,
+    );
+    expect(endpointRateColumns).toEqual([
+      { column_name: 'outboundRateLimitPerMinute', column_default: '60' },
+      { column_name: 'rateWindowAttempts', column_default: '0' },
+      { column_name: 'rateWindowStartedAt', column_default: null },
+    ]);
+  });
+
+  it('reverts guest-sandbox session metadata without removing its synthetic case prerequisites', async () => {
+    expect(await tableNames()).toContain('guest_sandbox_sessions');
+    await scratchDataSource.undoLastMigration();
+    expect(await tableNames()).not.toContain('guest_sandbox_sessions');
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['consent_records', 'loan_cases', 'tenants']),
+    );
+  });
+
+  it('reverts document-vault metadata without removing the case aggregate', async () => {
+    expect(await tableNames()).toContain('document_records');
+    await scratchDataSource.undoLastMigration();
+    expect(await tableNames()).not.toContain('document_records');
+    expect(await tableNames()).toContain('loan_cases');
+  });
+
+  it('reverts outbound webhook rate limiting without removing endpoint history', async () => {
+    await scratchDataSource.undoLastMigration();
+
+    const endpointRateColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'webhook_endpoints'
+           AND column_name IN (
+             'outboundRateLimitPerMinute',
+             'rateWindowStartedAt',
+             'rateWindowAttempts'
+           )`,
+      );
+    expect(endpointRateColumns).toEqual([]);
+    // A control rollback is deliberately narrow: endpoints and durable
+    // delivery history remain available for the prior migration's reversal.
+    expect(await tableNames()).toEqual(
+      expect.arrayContaining(['webhook_endpoints', 'webhook_deliveries']),
+    );
+  });
+
+  it('reverts governed Agent planner evidence without removing agent run history', async () => {
+    expect(await tableNames()).toContain('agent_model_invocations');
+    const runColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'agent_runs'
+           AND column_name IN ('modelInvocationId', 'modelVersion', 'promptVersion')
+         ORDER BY column_name`,
+      );
+    expect(runColumns).toEqual([
+      { column_name: 'modelInvocationId' },
+      { column_name: 'modelVersion' },
+      { column_name: 'promptVersion' },
+    ]);
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('agent_model_invocations');
+    const runColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'agent_runs'
+         AND column_name IN ('modelInvocationId', 'modelVersion', 'promptVersion')`,
+    );
+    expect(runColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('agent_runs');
+  });
+
+  it('reverts encrypted-provider deletion lineage without removing disposition tasks', async () => {
+    const lineageColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+           AND column_name IN ('affectedProviderIntentIds', 'backupExpiryDueAt', 'backupExpiryVerifiedAt', 'backupVerificationReference')
+         ORDER BY column_name`,
+      );
+    expect(lineageColumns).toHaveLength(4);
+
+    await scratchDataSource.undoLastMigration();
+
+    const lineageColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'data_disposition_tasks'
+         AND column_name IN ('affectedProviderIntentIds', 'backupExpiryDueAt', 'backupExpiryVerifiedAt', 'backupVerificationReference')`,
+    );
+    expect(lineageColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('data_disposition_tasks');
+  });
+
+  it('reverts purpose-bound provider authority without removing the consent history table', async () => {
+    const consentScopeColumns: Array<{ column_name: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'consent_records'
+           AND column_name IN ('permittedPurposes', 'permittedDataClasses')
+         ORDER BY column_name`,
+      );
+    expect(consentScopeColumns).toEqual([
+      { column_name: 'permittedDataClasses' },
+      { column_name: 'permittedPurposes' },
+    ]);
+    expect(await tableNames()).toContain('permissible_purpose_decisions');
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(await tableNames()).not.toContain('permissible_purpose_decisions');
+    const consentScopeColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'consent_records'
+         AND column_name IN ('permittedPurposes', 'permittedDataClasses')`,
+    );
+    expect(consentScopeColumnsAfter).toEqual([]);
+    expect(await tableNames()).toContain('consent_records');
+  });
+
+  it('reverts provider intent replay safety without removing prior intent state', async () => {
+    const replayColumns: Array<{ column_name: string; is_nullable: string }> =
+      await scratchDataSource.query(
+        `SELECT column_name, is_nullable FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+           AND column_name IN ('logicalOperationKey', 'providerReceipt', 'normalizedFinding')
+         ORDER BY column_name`,
+      );
+    expect(replayColumns).toEqual([
+      { column_name: 'logicalOperationKey', is_nullable: 'NO' },
+      { column_name: 'normalizedFinding', is_nullable: 'YES' },
+      { column_name: 'providerReceipt', is_nullable: 'YES' },
+    ]);
+    const replayIndexes: Array<{ indexname: string }> =
+      await scratchDataSource.query(
+        `SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = 'UQ_provider_operation_intents_logical_effect'`,
+      );
+    expect(replayIndexes).toHaveLength(1);
+
+    await scratchDataSource.undoLastMigration();
+
+    const replayColumnsAfter = await scratchDataSource.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'provider_operation_intents'
+         AND column_name IN ('logicalOperationKey', 'providerReceipt', 'normalizedFinding')`,
+    );
+    expect(replayColumnsAfter).toEqual([]);
   });
 
   it('reverts the provider promotion manifest declaredCommandClass column, dropping only that column', async () => {

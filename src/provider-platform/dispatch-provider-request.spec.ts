@@ -22,18 +22,26 @@ import { ConsentService } from '../consent/consent.service';
 import { DataDispositionService } from '../data-disposition/data-disposition.service';
 import { LegalHoldService } from '../data-disposition/legal-hold.service';
 import {
-  dispatchProviderRequest,
+  dispatchProviderRequest as dispatchProviderRequestRaw,
   filterToPermittedFields,
   ProviderDisabledError,
   ProviderNotActivatedError,
+  ProviderConsentScopeError,
 } from './dispatch-provider-request';
-import { AnyProviderAdapter, ProviderCapability } from './types';
+import {
+  AnyProviderAdapter,
+  completeProviderReceipt,
+  ProviderCapability,
+} from './types';
 import { AssetService } from '../integrations/asset/asset.service';
 import { AssetVerificationAdapter } from '../integrations/asset/asset-verification.adapter';
 import { IdentityService } from '../integrations/identity/identity.service';
 import { IdentityVerificationAdapter } from '../integrations/identity/identity-verification.adapter';
 import { AuditEvent } from '../database/entities/audit-event.entity';
 import { AuditEventService } from '../audit/audit-event.service';
+import { ProviderFindingContractError } from './provider-finding-contract';
+import { PermissiblePurposeDecision } from '../database/entities/permissible-purpose-decision.entity';
+import { PermissiblePurposeService } from './permissible-purpose.service';
 
 // Requires a reachable Postgres (same convention as the other real-DB
 // specs): skip instead of failing when no DATABASE_URL is configured.
@@ -82,6 +90,7 @@ describeOrSkip('dispatchProviderRequest', () => {
   let killSwitchService: ProviderKillSwitchService;
   let promotionService: ProviderPromotionService;
   let consentService: ConsentService;
+  let permissiblePurposeService: PermissiblePurposeService;
   // Every test uses a fresh randomUUID() tenantId and tracks it here so
   // afterAll can remove exactly what this file created — findOneByOrFail
   // on a shared/persistent scratch database has no defined row when more
@@ -104,6 +113,7 @@ describeOrSkip('dispatchProviderRequest', () => {
         ProviderActivation,
         ConsentRecord,
         AuditEvent,
+        PermissiblePurposeDecision,
       ],
     });
     await dataSource.initialize();
@@ -124,6 +134,7 @@ describeOrSkip('dispatchProviderRequest', () => {
       consentService,
     );
     intentService = new ProviderOperationIntentService(dataSource);
+    permissiblePurposeService = new PermissiblePurposeService(dataSource);
     killSwitchService = new ProviderKillSwitchService(dataSource);
     promotionService = new ProviderPromotionService(
       dataSource.getRepository(ProviderPromotionManifest),
@@ -145,6 +156,12 @@ describeOrSkip('dispatchProviderRequest', () => {
           .execute();
         await dataSource
           .getRepository(ProviderAuthorizationGrant)
+          .createQueryBuilder()
+          .delete()
+          .where('"tenantId" IN (:...ids)', { ids: testTenantIds })
+          .execute();
+        await dataSource
+          .getRepository(PermissiblePurposeDecision)
           .createQueryBuilder()
           .delete()
           .where('"tenantId" IN (:...ids)', { ids: testTenantIds })
@@ -188,7 +205,32 @@ describeOrSkip('dispatchProviderRequest', () => {
     killSwitchService,
     promotionService,
     consentService,
+    permissiblePurposeService,
   });
+
+  // These integration tests construct provider requests directly rather than
+  // through CasesService, whose normal create path grants consent. Seed the
+  // exact scope here so every dispatch still exercises the production gate.
+  async function dispatchProviderRequest<TFinding>(
+    dependencies: Parameters<typeof dispatchProviderRequestRaw>[0],
+    params: Parameters<typeof dispatchProviderRequestRaw>[1],
+  ): Promise<TFinding> {
+    const consent = await consentService.activeRecordForPurpose(
+      params.tenantId,
+      params.caseId,
+      params.purposeCode,
+      params.permittedDataClasses,
+    );
+    if (!consent) {
+      await consentService.grantForCase(
+        params.tenantId,
+        params.caseId,
+        params.purposeCode,
+        params.permittedDataClasses.join(','),
+      );
+    }
+    return dispatchProviderRequestRaw<TFinding>(dependencies, params);
+  }
 
   function newTenantId(): string {
     const id = randomUUID();
@@ -197,9 +239,10 @@ describeOrSkip('dispatchProviderRequest', () => {
   }
 
   async function intentFor(tenantId: string) {
-    return dataSource
+    const entity = await dataSource
       .getRepository(ProviderOperationIntent)
       .findOneByOrFail({ tenantId });
+    return (await intentService.get(tenantId, entity.id))!;
   }
 
   it('dispatches a real asset-verification request: issues a grant, persists a SUCCEEDED intent, and returns the normalized finding', async () => {
@@ -262,6 +305,68 @@ describeOrSkip('dispatchProviderRequest', () => {
     expect(grants[0].permittedFields).toEqual(['liquidAssets']);
   });
 
+  it('replays a completed logical operation from its persisted normalized finding without a second provider submission', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    const params = {
+      tenantId,
+      caseId,
+      borrowerSubjectId: 'dispatch-spec-replay-borrower',
+      capability: ProviderCapability.ASSET,
+      request: { borrowerId: 'dispatch-spec-replay-borrower' },
+      purposeCode: 'UNDERWRITING_EVIDENCE',
+      permittedDataClasses: ['ASSET'],
+      logicalOperationKey: 'dispatch-spec-stable-logical-effect',
+    };
+
+    const first = await dispatchProviderRequest(deps(), params);
+    const replay = await dispatchProviderRequest(deps(), params);
+
+    expect(replay).toEqual(first);
+    const intents = await dataSource
+      .getRepository(ProviderOperationIntent)
+      .find({ where: { tenantId } });
+    expect(intents).toHaveLength(1);
+    expect(intents[0].providerReceipt).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      ciphertext: expect.any(String),
+    });
+    expect(intents[0].normalizedFinding).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      ciphertext: expect.any(String),
+    });
+    expect(
+      (await intentService.get(tenantId, intents[0].id))?.normalizedFinding,
+    ).toEqual(first);
+  });
+
+  it('rejects changed payload reuse under the same logical operation key', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    const base = {
+      tenantId,
+      caseId,
+      borrowerSubjectId: 'dispatch-spec-conflict-borrower',
+      capability: ProviderCapability.ASSET,
+      purposeCode: 'UNDERWRITING_EVIDENCE',
+      permittedDataClasses: ['ASSET'],
+      logicalOperationKey: 'dispatch-spec-conflicting-logical-effect',
+    };
+    await dispatchProviderRequest(deps(), {
+      ...base,
+      request: { borrowerId: 'dispatch-spec-conflict-borrower' },
+    });
+
+    await expect(
+      dispatchProviderRequest(deps(), {
+        ...base,
+        request: { borrowerId: 'changed-borrower' },
+      }),
+    ).rejects.toThrow(/reused with a changed/);
+  });
+
   it('dispatches a real identity-verification request the same way', async () => {
     const tenantId = newTenantId();
     const caseId = randomUUID();
@@ -284,6 +389,35 @@ describeOrSkip('dispatchProviderRequest', () => {
     const intent = await intentFor(tenantId);
     expect(intent.state).toBe('SUCCEEDED');
     expect(intent.providerId).toBe('identity-verification-simulator');
+  });
+
+  it('fails before grant issuance when consent does not cover the exact purpose and data class', async () => {
+    const tenantId = newTenantId();
+    const caseId = randomUUID();
+    await consentService.grantForCase(
+      tenantId,
+      caseId,
+      'ANALYTICS_ONLY',
+      'INCOME',
+    );
+
+    await expect(
+      dispatchProviderRequestRaw(deps(), {
+        tenantId,
+        caseId,
+        borrowerSubjectId: 'wrong-scope-borrower',
+        capability: ProviderCapability.ASSET,
+        request: { borrowerId: 'wrong-scope-borrower' },
+        purposeCode: 'UNDERWRITING_EVIDENCE',
+        permittedDataClasses: ['ASSET'],
+      }),
+    ).rejects.toBeInstanceOf(ProviderConsentScopeError);
+
+    expect(
+      await dataSource
+        .getRepository(ProviderAuthorizationGrant)
+        .find({ where: { tenantId, caseId } }),
+    ).toHaveLength(0);
   });
 
   it('classifies a synthetic transient failure as a rejected promise and marks the intent OUTCOME_UNKNOWN', async () => {
@@ -328,6 +462,98 @@ describeOrSkip('dispatchProviderRequest', () => {
     expect(intent.state).toBe('FAILED_FINAL');
   });
 
+  describe('canonical finding boundary', () => {
+    const invalidReceipts: Array<{
+      name: string;
+      capability: ProviderCapability;
+      payload: Record<string, unknown>;
+      observedAt?: Date;
+    }> = [
+      {
+        name: 'partial asset payload',
+        capability: ProviderCapability.ASSET,
+        payload: { liquidAssets: 5000 },
+      },
+      {
+        name: 'stale asset payload',
+        capability: ProviderCapability.ASSET,
+        payload: {
+          liquidAssets: 5000,
+          investmentAssets: 1000,
+          accountCount: 2,
+          reserveMonths: 4,
+        },
+        observedAt: new Date('2020-01-01T00:00:00.000Z'),
+      },
+      {
+        name: 'contradictory identity payload',
+        capability: ProviderCapability.IDENTITY,
+        payload: {
+          nameMatch: false,
+          dateOfBirthMatch: true,
+          ssnValid: true,
+          addressMatch: true,
+          fraudAlertPresent: false,
+          identityVerified: true,
+        },
+      },
+    ];
+
+    it.each(invalidReceipts)(
+      'fails closed for a $name and retains the rejected receipt',
+      async ({ capability, payload, observedAt }) => {
+        const tenantId = newTenantId();
+        const invalidAdapter: AnyProviderAdapter = {
+          providerId: `invalid-finding-${capability.toLowerCase()}-spec`,
+          capability,
+          mode: 'SIMULATOR',
+          operation: {
+            effectClass: 'REUSABLE_LOOKUP',
+            supportsStatusLookup: false,
+            supportsCancellation: false,
+            fallbackPolicy: 'PROHIBITED',
+          },
+          submit: async () =>
+            completeProviderReceipt(payload, observedAt ?? new Date()),
+          normalize: (providerPayload) => providerPayload,
+          healthCheck: async () => ({
+            healthy: true,
+            checkedAt: new Date().toISOString(),
+          }),
+        };
+        // Bypass normal registration only to avoid capability collisions with
+        // the real adapters already under test. The production dispatch path,
+        // authorization, persistence, and contract gate remain unchanged.
+        const fakeRegistry = {
+          resolve: () => invalidAdapter,
+        } as unknown as ProviderRegistryService;
+
+        await expect(
+          dispatchProviderRequest(
+            { ...deps(), registry: fakeRegistry },
+            {
+              tenantId,
+              caseId: randomUUID(),
+              borrowerSubjectId: 'invalid-finding-borrower',
+              capability,
+              request: { borrowerId: 'invalid-finding-borrower' },
+              purposeCode: 'UNDERWRITING_EVIDENCE',
+              permittedDataClasses: [capability],
+            },
+          ),
+        ).rejects.toBeInstanceOf(ProviderFindingContractError);
+
+        const intent = await intentFor(tenantId);
+        expect(intent.state).toBe('FAILED_FINAL');
+        expect(intent.providerReceipt).toMatchObject({
+          status: 'COMPLETE',
+          payload,
+        });
+        expect(intent.normalizedFinding).toBeUndefined();
+      },
+    );
+  });
+
   it('throws with no registered adapter for a capability/mode, without issuing a grant', async () => {
     const registryWithNoAdapters = new ProviderRegistryService();
     const tenantId = newTenantId();
@@ -341,6 +567,7 @@ describeOrSkip('dispatchProviderRequest', () => {
           killSwitchService,
           promotionService,
           consentService,
+          permissiblePurposeService,
         },
         {
           tenantId,
@@ -489,7 +716,13 @@ describeOrSkip('dispatchProviderRequest', () => {
         supportsCancellation: false,
         fallbackPolicy: 'PROHIBITED',
       },
-      submit: async () => ({ status: 'COMPLETE', payload: { ok: true } }),
+      submit: async () =>
+        completeProviderReceipt({
+          liquidAssets: 1,
+          investmentAssets: 1,
+          accountCount: 1,
+          reserveMonths: 1,
+        }),
       normalize: (payload) => payload,
       healthCheck: async () => ({
         healthy: true,
@@ -571,7 +804,12 @@ describeOrSkip('dispatchProviderRequest', () => {
         purposeCode: 'UNDERWRITING_EVIDENCE',
         permittedDataClasses: ['ASSET'],
       });
-      expect(finding).toEqual({ ok: true });
+      expect(finding).toEqual({
+        liquidAssets: 1,
+        investmentAssets: 1,
+        accountCount: 1,
+        reserveMonths: 1,
+      });
 
       // The kill-switch exercise (Section 29 item 6): this specific
       // round trip — active, dispatch really succeeds, deactivate, the

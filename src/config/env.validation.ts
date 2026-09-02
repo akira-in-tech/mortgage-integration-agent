@@ -119,6 +119,26 @@ export class EnvironmentVariables {
   @Min(1)
   OLLAMA_TIMEOUT_MS: number = 60_000;
 
+  // Conservative token charge for the bounded LangGraph routing call. The
+  // ledger reserves this whole amount before Ollama is contacted.
+  @IsOptional()
+  @IsInt()
+  @Min(256)
+  @Max(8192)
+  AGENT_PLANNER_TOKEN_BUDGET: number = 1024;
+
+  @IsOptional()
+  @IsInt()
+  @Min(16)
+  @Max(1024)
+  AGENT_PLANNER_MAX_OUTPUT_TOKENS: number = 128;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  AGENT_PLANNER_MIN_CONFIDENCE_BPS: number = 8000;
+
   // ── Temporal (src/workflows, src/worker.ts) ─────────────────────────────
   @IsOptional()
   @IsString()
@@ -163,6 +183,25 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1000)
   PROVIDER_RECONCILIATION_STALE_AFTER_MS: number = 300_000;
+
+  // Ordered AES-256-GCM key ring for provider receipts/findings and evidence
+  // values. The first key encrypts new values; remaining keys decrypt during
+  // rotation. The legacy variable name is retained for deployment stability.
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64}(,[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64})*$/,
+    {
+      message: 'PROVIDER_DATA_ENCRYPTION_KEYS must be kid:64hex[,kid:64hex...]',
+    },
+  )
+  PROVIDER_DATA_ENCRYPTION_KEYS?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(8760)
+  BACKUP_RETENTION_HOURS: number = 24;
 
   // ── OIDC (src/auth/oidc.*, M5-024) ───────────────────────────────────────
   // Section 16.1: "OIDC/OAuth 2.0 for people" — a real OIDC issuer (this
@@ -241,6 +280,48 @@ export class EnvironmentVariables {
       'OIDC_SESSION_ENCRYPTION_KEY must be exactly 64 hexadecimal characters',
   })
   OIDC_SESSION_ENCRYPTION_KEY?: string;
+
+  // Ordered key ring: the first key encrypts new sessions and retained keys
+  // decrypt sessions issued before rotation. The single-key variable remains
+  // accepted for backwards-compatible deployments.
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64}(,[A-Za-z0-9._-]{1,64}:[0-9a-fA-F]{64})*$/,
+    {
+      message: 'OIDC_SESSION_ENCRYPTION_KEYS must be kid:64hex[,kid:64hex...]',
+    },
+  )
+  OIDC_SESSION_ENCRYPTION_KEYS?: string;
+
+  // Self-service registration remains opt-in. When enabled, the OIDC session
+  // completion flow creates an isolated empty tenant with the routine
+  // PARTNER role; it never grants access to another tenant's cases.
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    if (value.toLowerCase() === 'true') return true;
+    if (value.toLowerCase() === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  SELF_SERVICE_SIGNUP_ENABLED: boolean = false;
+
+  // A portfolio visitor gets an isolated, short-lived synthetic workspace.
+  // This must stay bounded so an abandoned browser cannot retain access.
+  @IsOptional()
+  @IsInt()
+  @Min(300)
+  @Max(14_400)
+  GUEST_SANDBOX_TTL_SECONDS: number = 3600;
+
+  // How often the Worker service sweeps expired guest-sandbox sessions and
+  // purges the real tenant/case/evidence/consent rows they created (M7-055)
+  // — this is the actual data-cleanup interval, not the session TTL above.
+  @IsOptional()
+  @IsInt()
+  @Min(10_000)
+  GUEST_SANDBOX_CLEANUP_INTERVAL_MS: number = 300_000;
 
   @IsOptional()
   @IsInt()
@@ -334,6 +415,19 @@ export function validateEnvironment(
       'Invalid environment configuration:\n  - APP_DATABASE_URL must use a separate restricted runtime credential',
     );
   }
+  if (productionLike && !validatedConfig.PROVIDER_DATA_ENCRYPTION_KEYS) {
+    throw new Error(
+      'Invalid environment configuration:\n  - PROVIDER_DATA_ENCRYPTION_KEYS is required in staging and production',
+    );
+  }
+  if (
+    validatedConfig.AGENT_PLANNER_MAX_OUTPUT_TOKENS >
+    validatedConfig.AGENT_PLANNER_TOKEN_BUDGET
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - AGENT_PLANNER_MAX_OUTPUT_TOKENS cannot exceed AGENT_PLANNER_TOKEN_BUDGET',
+    );
+  }
 
   const issuerConfigured = Boolean(validatedConfig.OIDC_ISSUER_URL);
   const audienceConfigured = Boolean(validatedConfig.OIDC_AUDIENCE);
@@ -342,7 +436,9 @@ export function validateEnvironment(
     validatedConfig.OIDC_CLIENT_SECRET ||
     validatedConfig.OIDC_CALLBACK_URL ||
     validatedConfig.CONSOLE_ORIGIN ||
-    validatedConfig.OIDC_SESSION_ENCRYPTION_KEY,
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEY ||
+    validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS ||
+    validatedConfig.SELF_SERVICE_SIGNUP_ENABLED,
   );
   if (
     issuerConfigured !== audienceConfigured ||
@@ -354,9 +450,15 @@ export function validateEnvironment(
   }
   if (productionLike && issuerConfigured) {
     const productionErrors: string[] = [];
-    if (!validatedConfig.OIDC_SESSION_ENCRYPTION_KEY) {
+    // Deployments may use either the legacy single key or the rotatable key
+    // ring. Requiring only the legacy variable here would reject the safer
+    // key-ring configuration after schema validation has already accepted it.
+    if (
+      !validatedConfig.OIDC_SESSION_ENCRYPTION_KEY &&
+      !validatedConfig.OIDC_SESSION_ENCRYPTION_KEYS
+    ) {
       productionErrors.push(
-        'OIDC_SESSION_ENCRYPTION_KEY is required when OIDC is enabled in staging or production',
+        'OIDC_SESSION_ENCRYPTION_KEY or OIDC_SESSION_ENCRYPTION_KEYS is required when OIDC is enabled in staging or production',
       );
     }
     if (!validatedConfig.OIDC_CALLBACK_URL) {

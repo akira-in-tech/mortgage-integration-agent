@@ -11,6 +11,7 @@ import {
 import { ObjectType, Field, ID, Int, registerEnumType } from '@nestjs/graphql';
 import GraphQLJSON from 'graphql-type-json';
 import { LoanCase } from './loan-case.entity';
+import { encryptedJsonTransformer } from '../encrypted-json.transformer';
 
 export enum EvidenceType {
   INCOME = 'INCOME',
@@ -31,12 +32,12 @@ registerEnumType(EvidenceSourceKind, { name: 'EvidenceSourceKind' });
 
 /**
  * Typed evidence with source, confidence-bearing value, and validity
- * (Section 14.1/14.2). `value` stays a normalized JSONB payload rather than
- * per-fact-type columns until a second real fact type proves the shape
- * that's actually shared. `@ObjectType()`/`@Field()` (M6) reuse this same
- * entity for GraphQL rather than a parallel DTO — this is also this
- * table's first real query surface of any kind (no REST route lists
- * evidence facts either).
+ * (Section 14.1/14.2). `value` stays a normalized JSON payload rather than
+ * per-fact-type columns, but its JSONB representation is an AES-GCM envelope;
+ * TypeORM decrypts it only at the application boundary. `@ObjectType()`/
+ * `@Field()` (M6) reuse this same entity for GraphQL rather than a parallel
+ * DTO — this is also this table's first real query surface of any kind (no
+ * REST route lists evidence facts either).
  */
 @Entity('evidence_facts')
 @ObjectType()
@@ -71,7 +72,10 @@ export class EvidenceFact {
   sourceIdentifier!: string;
 
   @Field(() => GraphQLJSON)
-  @Column({ type: 'jsonb' })
+  @Column({
+    type: 'jsonb',
+    transformer: encryptedJsonTransformer('evidence-facts:value'),
+  })
   value!: Record<string, unknown>;
 
   @Field()

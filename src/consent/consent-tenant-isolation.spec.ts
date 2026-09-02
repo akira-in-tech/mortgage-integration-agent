@@ -56,6 +56,11 @@ describeOrSkip('consent_records row-level security', () => {
         caseId: randomUUID(),
         purpose: 'CASE_PROCESSING',
         scope: 'CASE_PROCESSING',
+        // These fields are the provider-dispatch authorization boundary,
+        // so RLS fixtures must satisfy the same non-null schema contract as
+        // production consent rows rather than relying on an obsolete shape.
+        permittedPurposes: ['CASE_PROCESSING'],
+        permittedDataClasses: ['BORROWER_PROFILE'],
         grantedAt: new Date(),
         expiresAt: null,
         revokedAt: null,
@@ -154,6 +159,8 @@ describeOrSkip('consent_records row-level security', () => {
             caseId: randomUUID(),
             purpose: 'CASE_PROCESSING',
             scope: 'CASE_PROCESSING',
+            permittedPurposes: ['CASE_PROCESSING'],
+            permittedDataClasses: ['BORROWER_PROFILE'],
             grantedAt: new Date(),
             expiresAt: null,
             revokedAt: null,

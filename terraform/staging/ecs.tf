@@ -80,6 +80,9 @@ data "aws_iam_policy_document" "execution_secrets" {
       aws_secretsmanager_secret.outbox_signing_secret.arn,
       aws_secretsmanager_secret.database_url.arn,
       aws_secretsmanager_secret.app_database_url.arn,
+      aws_secretsmanager_secret.provider_data_encryption_keys.arn,
+      aws_secretsmanager_secret.oidc_client_secret.arn,
+      aws_secretsmanager_secret.oidc_session_encryption_keys.arn,
     ]
   }
 }
@@ -100,10 +103,20 @@ locals {
   # so the admin URL is still injected here (from Secrets Manager, never
   # plaintext) purely to satisfy that startup check, not because the app
   # connects with it.
+  # All application processes require the database, signing, and provider-data
+  # secrets. Only the browser-facing API is an OIDC relying party, so its
+  # client/session secrets stay separate instead of making worker startup
+  # depend on human-login configuration it never uses.
   app_secret_env = [
     { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
     { name = "APP_DATABASE_URL", valueFrom = aws_secretsmanager_secret.app_database_url.arn },
     { name = "OUTBOX_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.outbox_signing_secret.arn },
+    { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
+  ]
+
+  api_oidc_secret_env = [
+    { name = "OIDC_CLIENT_SECRET", valueFrom = aws_secretsmanager_secret.oidc_client_secret.arn },
+    { name = "OIDC_SESSION_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.oidc_session_encryption_keys.arn },
   ]
 }
 
@@ -126,6 +139,15 @@ resource "aws_ecs_task_definition" "temporal" {
       { name = "DB_PORT", value = "5432" },
       { name = "POSTGRES_USER", value = "mortgage" },
       { name = "POSTGRES_SEEDS", value = aws_db_instance.this.address },
+      # RDS rejects plaintext PostgreSQL sessions. Temporal's auto-setup
+      # utility and the running server use different TLS variable families,
+      # so both are set explicitly. Host verification remains disabled only
+      # because this synthetic stack does not mount the RDS CA bundle; the
+      # connection is still encrypted in transit.
+      { name = "POSTGRES_TLS_ENABLED", value = "true" },
+      { name = "POSTGRES_TLS_DISABLE_HOST_VERIFICATION", value = "true" },
+      { name = "SQL_TLS_ENABLED", value = "true" },
+      { name = "SQL_HOST_VERIFICATION", value = "false" },
     ]
     secrets = [
       { name = "POSTGRES_PWD", valueFrom = aws_secretsmanager_secret.rds_master_password.arn },
@@ -156,6 +178,9 @@ resource "aws_ecs_service" "temporal" {
   task_definition = aws_ecs_task_definition.temporal.arn
   desired_count   = 1
   launch_type     = "FARGATE"
+  # A successful apply must mean the replacement task is actually stable,
+  # not merely that ECS accepted its desired task-definition revision.
+  wait_for_steady_state = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -186,9 +211,23 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PORT", value = "3000" },
       { name = "DECISION_PROVIDER", value = "rules" },
       { name = "TEMPORAL_ADDRESS", value = "${local.temporal_dns}:7233" },
+      # Cognito exposes its issuer hostname without a URI scheme. The
+      # application validates OIDC issuers as HTTPS URLs before startup, so
+      # construct the standards-compliant issuer instead of passing the bare
+      # provider hostname into the task environment.
+      { name = "OIDC_ISSUER_URL", value = "https://${aws_cognito_user_pool.console.endpoint}" },
+      { name = "OIDC_AUDIENCE", value = aws_cognito_user_pool_client.console.id },
+      { name = "OIDC_CLIENT_ID", value = aws_cognito_user_pool_client.console.id },
+      { name = "OIDC_CALLBACK_URL", value = "https://${aws_cloudfront_distribution.console.domain_name}/v1/auth/session/callback" },
+      { name = "CONSOLE_ORIGIN", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
+      { name = "CORS_ALLOWED_ORIGINS", value = "https://${aws_cloudfront_distribution.console.domain_name}" },
+      # Public Cognito registration is safe only with application-side tenant
+      # isolation. The API creates a new empty workspace, never a membership
+      # in the shared walkthrough tenant, for a newly verified identity.
+      { name = "SELF_SERVICE_SIGNUP_ENABLED", value = "true" },
     ]
     secrets = [
-      for e in local.app_secret_env : { name = e.name, valueFrom = e.valueFrom }
+      for e in concat(local.app_secret_env, local.api_oidc_secret_env) : { name = e.name, valueFrom = e.valueFrom }
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -206,12 +245,17 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
-  name            = "${local.name}-api"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  depends_on      = [aws_ecs_service.temporal, null_resource.migrate]
+  name                  = "${local.name}-api"
+  cluster               = aws_ecs_cluster.this.id
+  task_definition       = aws_ecs_task_definition.api.arn
+  desired_count         = 1
+  launch_type           = "FARGATE"
+  wait_for_steady_state = true
+  depends_on = [
+    aws_ecs_service.temporal,
+    null_resource.migrate,
+    null_resource.synthetic_demo_bootstrap,
+  ]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -263,12 +307,17 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 resource "aws_ecs_service" "worker" {
-  name            = "${local.name}-worker"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.worker.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  depends_on      = [aws_ecs_service.temporal, null_resource.migrate]
+  name                  = "${local.name}-worker"
+  cluster               = aws_ecs_cluster.this.id
+  task_definition       = aws_ecs_task_definition.worker.arn
+  desired_count         = 1
+  launch_type           = "FARGATE"
+  wait_for_steady_state = true
+  depends_on = [
+    aws_ecs_service.temporal,
+    null_resource.migrate,
+    null_resource.synthetic_demo_bootstrap,
+  ]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -298,13 +347,17 @@ resource "aws_ecs_task_definition" "migrate" {
     # (a dev dependency, excluded by `npm ci --omit=dev` in the
     # Dockerfile). data-source.ts's own entity/migration globs already
     # match compiled `.js` for exactly this case - just point the plain
-    # typeorm CLI (a real production dependency) at the compiled file.
-    command = ["node", "node_modules/typeorm/cli.js", "migration:run", "-d", "dist/database/data-source.js"]
+    # typeorm CLI (a real production dependency) at the compiled file. The
+    # rotation runs in the same blocking task after DDL and before API/worker
+    # rollout, so legacy plaintext JSONB cannot reach the production-like
+    # processes that deliberately reject it.
+    command = ["sh", "-c", "node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js && node dist/rotate-sensitive-data-encryption.js"]
     # Real DDL rights — migrations run as the admin role, never the
     # restricted mortgage_app role AppRuntimeRole itself creates.
     secrets = [
       { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
       { name = "APP_DATABASE_ROLE_PASSWORD", valueFrom = aws_secretsmanager_secret.app_role_password.arn },
+      { name = "PROVIDER_DATA_ENCRYPTION_KEYS", valueFrom = aws_secretsmanager_secret.provider_data_encryption_keys.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -319,6 +372,43 @@ resource "aws_ecs_task_definition" "migrate" {
   lifecycle {
     create_before_destroy = true # see aws_ecs_task_definition.temporal above
   }
+}
+
+# A one-off, idempotent staging-only task establishes the Cognito reviewer's
+# application-side User/TenantMembership mapping. Cognito proves identity;
+# this database membership remains the independent tenant authorization gate.
+resource "aws_ecs_task_definition" "synthetic_demo_bootstrap" {
+  family                   = "${local.name}-synthetic-demo-bootstrap"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.fargate_cpu
+  memory                   = var.fargate_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+
+  container_definitions = jsonencode([{
+    name    = "synthetic-demo-bootstrap"
+    image   = local.ecr_image
+    command = ["node", "dist/bootstrap-synthetic-demo.js"]
+    environment = [
+      { name = "NODE_ENV", value = "staging" },
+      { name = "SYNTHETIC_DEMO_BOOTSTRAP", value = "true" },
+      { name = "DEMO_OIDC_SUBJECT", value = aws_cognito_user.synthetic_reviewer.sub },
+      { name = "DEMO_OIDC_EMAIL", value = "synthetic-reviewer@example.invalid" },
+    ]
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.migrate.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "synthetic-demo-bootstrap"
+      }
+    }
+  }])
+
+  lifecycle { create_before_destroy = true }
 }
 
 # Actually runs the migration task and blocks the rest of this apply
@@ -358,5 +448,29 @@ resource "null_resource" "migrate" {
 
   lifecycle {
     create_before_destroy = true # see aws_ecs_task_definition.temporal above
+  }
+}
+
+resource "null_resource" "synthetic_demo_bootstrap" {
+  triggers = {
+    task_definition = aws_ecs_task_definition.synthetic_demo_bootstrap.arn
+    reviewer_sub    = aws_cognito_user.synthetic_reviewer.sub
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      task_arn=$(aws ecs run-task \
+        --cluster "${aws_ecs_cluster.this.name}" \
+        --task-definition "${aws_ecs_task_definition.synthetic_demo_bootstrap.arn}" \
+        --launch-type FARGATE \
+        --network-configuration "awsvpcConfiguration={subnets=[${join(",", aws_subnet.public[*].id)}],securityGroups=[${aws_security_group.app.id}],assignPublicIp=ENABLED}" \
+        --region "${var.aws_region}" \
+        --query 'tasks[0].taskArn' --output text)
+      aws ecs wait tasks-stopped --cluster "${aws_ecs_cluster.this.name}" --tasks "$task_arn" --region "${var.aws_region}"
+      exit_code=$(aws ecs describe-tasks --cluster "${aws_ecs_cluster.this.name}" --tasks "$task_arn" --region "${var.aws_region}" --query 'tasks[0].containers[0].exitCode' --output text)
+      test "$exit_code" = "0"
+    EOT
   }
 }

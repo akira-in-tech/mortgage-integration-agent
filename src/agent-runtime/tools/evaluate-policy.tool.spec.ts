@@ -13,6 +13,7 @@ describe('evaluatePolicyTool', () => {
     jurisdictionCode: 'US-CA',
     productCode: 'CONVENTIONAL_MORTGAGE',
     lifecycleEvent: 'UNDERWRITING_REVIEW',
+    applicationReceivedAt: '2026-01-15T00:00:00.000Z',
   };
 
   it('declares the Section 9.4 registered-tool metadata', () => {
@@ -51,7 +52,13 @@ describe('evaluatePolicyTool', () => {
     expect(evaluate).toHaveBeenCalledWith(
       'tenant-1',
       'case-1',
-      expect.objectContaining(args),
+      expect.objectContaining({
+        jurisdictionCode: args.jurisdictionCode,
+        productCode: args.productCode,
+        lifecycleEvent: args.lifecycleEvent,
+        applicationReceivedAt: new Date(args.applicationReceivedAt),
+        asOf: expect.any(Date),
+      }),
     );
     expect(result).toEqual({
       outcome: 'REFRESHED',

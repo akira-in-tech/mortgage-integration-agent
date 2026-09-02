@@ -82,6 +82,13 @@ services:
     environment:
       DATABASE_URL: postgres://mortgage:mortgage_demo@postgres:5432/mortgage_agent
       TEMPORAL_ADDRESS: temporal:7233
+      DECISION_PROVIDER: ${DECISION_PROVIDER:-rules}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-60000}
+      AGENT_PLANNER_TOKEN_BUDGET: ${AGENT_PLANNER_TOKEN_BUDGET:-1024}
+      AGENT_PLANNER_MAX_OUTPUT_TOKENS: ${AGENT_PLANNER_MAX_OUTPUT_TOKENS:-128}
+      AGENT_PLANNER_MIN_CONFIDENCE_BPS: ${AGENT_PLANNER_MIN_CONFIDENCE_BPS:-8000}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
       OTEL_SERVICE_NAME: mortgage-integration-agent-worker
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

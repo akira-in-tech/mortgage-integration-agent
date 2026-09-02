@@ -620,6 +620,108 @@
         ]
       }
     },
+    "/v1/demo-sandbox/session": {
+      "post": {
+        "operationId": "createGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      },
+      "get": {
+        "operationId": "getGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      },
+      "delete": {
+        "operationId": "deleteGuestSandboxSession",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      }
+    },
+    "/v1/audit-events": {
+      "get": {
+        "operationId": "listAuditEvents",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1000,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditEvent"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List recent tenant audit events.",
+        "tags": [
+          "audit-events"
+        ]
+      }
+    },
+    "/v1/audit-events/export": {
+      "get": {
+        "operationId": "exportAuditEvents",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Download the tenant's complete audit evidence as JSON.",
+        "tags": [
+          "audit-events"
+        ]
+      }
+    },
     "/v1/data-disposition-tasks/open": {
       "get": {
         "operationId": "listOpenDataDispositionTasks",
@@ -662,6 +764,35 @@
           }
         ],
         "summary": "List data-disposition tasks still waiting on a decision",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/backup-expiry": {
+      "get": {
+        "operationId": "listDataDispositionTasksAwaitingBackupExpiry",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List tasks waiting for managed-backup retention expiry",
         "tags": [
           "data-disposition"
         ]
@@ -715,6 +846,45 @@
           }
         ],
         "summary": "Delete, anonymize, or retain the evidence a task covers",
+        "tags": [
+          "data-disposition"
+        ]
+      }
+    },
+    "/v1/data-disposition-tasks/{taskId}/verify-backup-expiry": {
+      "post": {
+        "operationId": "verifyDataDispositionBackupExpiry",
+        "parameters": [
+          {
+            "name": "taskId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBackupExpiryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Verify backup expiry after the retention window closes",
         "tags": [
           "data-disposition"
         ]
@@ -906,6 +1076,39 @@
         ]
       }
     },
+    "/v1/loan-cases/workflow-operations": {
+      "get": {
+        "operationId": "listWorkflowOperations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkflowOperationQueueItem"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "REVIEWER role required."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List running or recoverable workflow operations for this tenant",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}": {
       "get": {
         "operationId": "getCase",
@@ -1084,6 +1287,115 @@
           }
         ],
         "summary": "Get the status of one workflow run",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowOperationReasonDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Cancellation requested for orchestration only; in-flight provider outcomes still require reconciliation."
+          },
+          "409": {
+            "description": "Workflow run is not running."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Request cancellation of one running workflow execution",
+        "tags": [
+          "loan-cases"
+        ]
+      }
+    },
+    "/v1/loan-cases/{caseId}/workflow-runs/{runId}/recover": {
+      "post": {
+        "operationId": "recoverWorkflowRun",
+        "parameters": [
+          {
+            "name": "caseId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowOperationReasonDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartWorkflowRunResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Workflow run is not recoverable."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start a recovery execution from a terminally interrupted run",
         "tags": [
           "loan-cases"
         ]
@@ -1330,6 +1642,54 @@
         ]
       }
     },
+    "/v1/platform-admin/policy-versions": {
+      "get": {
+        "operationId": "listPolicyVersions",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          },
+          {
+            "name": "query",
+            "required": false,
+            "in": "query",
+            "description": "Rule, source, or jurisdiction substring.",
+            "schema": {}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyVersionSummaryDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Browse immutable policy-version metadata and source provenance.",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}/communication-messages": {
       "get": {
         "operationId": "listCommunicationMessages",
@@ -1507,7 +1867,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WebhookEndpoint"
+                  "$ref": "#/components/schemas/CreatedWebhookEndpointResponseDto"
                 }
               }
             }
@@ -1525,6 +1885,107 @@
           }
         ],
         "summary": "Register a webhook endpoint. The returned secret is shown only here — no endpoint re-exposes it later.",
+        "tags": [
+          "webhooks"
+        ]
+      },
+      "get": {
+        "operationId": "listWebhookEndpoints",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookEndpointResponseDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List this tenant's webhook subscriptions without exposing signing secrets.",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/webhook-endpoints/{endpointId}": {
+      "patch": {
+        "operationId": "updateWebhookEndpoint",
+        "parameters": [
+          {
+            "name": "endpointId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookEndpointDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointResponseDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update a webhook destination or event subscriptions for future deliveries.",
+        "tags": [
+          "webhooks"
+        ]
+      },
+      "delete": {
+        "operationId": "deleteWebhookEndpoint",
+        "parameters": [
+          {
+            "name": "endpointId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The endpoint is disabled; past delivery history remains available."
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Revoke a webhook subscription while preserving its signed delivery history.",
         "tags": [
           "webhooks"
         ]
@@ -1693,7 +2154,7 @@
   },
   "info": {
     "title": "Mortgage Integration Agent — Partner API",
-    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions; webhook endpoint registration and delivery lookup) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations, audit-export) is not yet built and is not represented here.",
+    "description": "Section 15.1 partner REST API. This artifact documents only the endpoints this codebase actually implements today (case creation, lookup, timeline, workflow-run start/status, and reviewer decisions; webhook endpoint registration and delivery lookup; tenant audit-event listing and a complete, self-describing-truncation export) — the full Section 15.1 surface (consents, documents, conditions, evidence, policy-snapshots, provider-operations) is not yet built and is not represented here.",
     "version": "1.0.0",
     "contact": {}
   },
@@ -2242,6 +2703,10 @@
           }
         }
       },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {}
+      },
       "DataDispositionTaskQueueItemDto": {
         "type": "object",
         "properties": {
@@ -2266,6 +2731,13 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "backupExpiryDueAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "affectedProviderIntentCount": {
+            "type": "number"
           }
         },
         "required": [
@@ -2274,7 +2746,8 @@
           "taskType",
           "status",
           "reason",
-          "createdAt"
+          "createdAt",
+          "affectedProviderIntentCount"
         ]
       },
       "ResolveDataDispositionTaskDto": {
@@ -2291,6 +2764,18 @@
         },
         "required": [
           "action"
+        ]
+      },
+      "VerifyBackupExpiryDto": {
+        "type": "object",
+        "properties": {
+          "verificationReference": {
+            "type": "string",
+            "description": "Non-sensitive operator or provider evidence reference proving backup expiry."
+          }
+        },
+        "required": [
+          "verificationReference"
         ]
       },
       "AgentBudgetAggregateUsageDto": {
@@ -2651,6 +3136,38 @@
           "updatedAt"
         ]
       },
+      "WorkflowOperationQueueItem": {
+        "type": "object",
+        "properties": {
+          "workflowId": {
+            "type": "string"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "caseId": {
+            "type": "string"
+          },
+          "caseStatus": {
+            "type": "string"
+          },
+          "caseUpdatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflowId",
+          "runId",
+          "status",
+          "caseId",
+          "caseStatus",
+          "caseUpdatedAt"
+        ]
+      },
       "TimelineEntry": {
         "type": "object",
         "properties": {
@@ -2711,6 +3228,19 @@
           "workflowId",
           "runId",
           "status"
+        ]
+      },
+      "WorkflowOperationReasonDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "reason"
         ]
       },
       "ReviewDto": {
@@ -2789,6 +3319,18 @@
           "scope": {
             "type": "string"
           },
+          "permittedPurposes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permittedDataClasses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "grantedAt": {
             "format": "date-time",
             "type": "string"
@@ -2813,6 +3355,8 @@
           "caseId",
           "purpose",
           "scope",
+          "permittedPurposes",
+          "permittedDataClasses",
           "grantedAt",
           "createdAt"
         ]
@@ -2846,6 +3390,66 @@
         },
         "required": [
           "policyVersionId"
+        ]
+      },
+      "PolicyVersionSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ruleId": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "releaseStatus": {
+            "type": "string",
+            "enum": [
+              "DRAFT",
+              "PROPOSED",
+              "RELEASED",
+              "SUPERSEDED",
+              "WITHDRAWN",
+              "CORRECTED"
+            ]
+          },
+          "effectiveFrom": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "effectiveTo": {
+            "type": "object",
+            "nullable": true
+          },
+          "recordedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "jurisdictionCode": {
+            "type": "string"
+          },
+          "sourcePublishedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ruleId",
+          "version",
+          "releaseStatus",
+          "effectiveFrom",
+          "effectiveTo",
+          "recordedAt",
+          "sourceName",
+          "jurisdictionCode",
+          "sourcePublishedAt"
         ]
       },
       "CommunicationMessage": {
@@ -2892,6 +3496,8 @@
                 "workflow_run.waiting_for_review",
                 "workflow_run.completed",
                 "workflow_run.failed",
+                "workflow_run.cancelled",
+                "workflow_run.recovery_started",
                 "evidence.updated",
                 "condition.opened",
                 "condition.satisfied",
@@ -2908,7 +3514,7 @@
           "eventTypes"
         ]
       },
-      "WebhookEndpoint": {
+      "CreatedWebhookEndpointResponseDto": {
         "type": "object",
         "properties": {
           "id": {
@@ -2921,10 +3527,6 @@
           },
           "targetUrl": {
             "type": "string"
-          },
-          "secret": {
-            "type": "string",
-            "description": "The HMAC signing secret for this endpoint. Only ever returned here, at creation — a later read of this row (there is none yet) must not re-expose it."
           },
           "eventTypes": {
             "type": "array",
@@ -2939,6 +3541,63 @@
               "DISABLED"
             ]
           },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "HMAC signing secret. Store it now: future reads and mutations never return it."
+          }
+        },
+        "required": [
+          "id",
+          "tenantId",
+          "targetUrl",
+          "eventTypes",
+          "status",
+          "outboundRateLimitPerMinute",
+          "createdAt",
+          "secret"
+        ]
+      },
+      "WebhookEndpointResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetUrl": {
+            "type": "string"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DISABLED"
+            ]
+          },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
@@ -2948,11 +3607,48 @@
           "id",
           "tenantId",
           "targetUrl",
-          "secret",
           "eventTypes",
           "status",
+          "outboundRateLimitPerMinute",
           "createdAt"
         ]
+      },
+      "UpdateWebhookEndpointDto": {
+        "type": "object",
+        "properties": {
+          "targetUrl": {
+            "type": "string",
+            "description": "Replacement HTTPS destination for future signed deliveries.",
+            "example": "https://partner.example.com/webhooks/mortgage-agent-v2"
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "loan_case.created",
+                "workflow_run.started",
+                "workflow_run.waiting_for_review",
+                "workflow_run.completed",
+                "workflow_run.failed",
+                "workflow_run.cancelled",
+                "workflow_run.recovery_started",
+                "evidence.updated",
+                "condition.opened",
+                "condition.satisfied",
+                "condition.waived",
+                "evaluation.interrupted",
+                "case.escalated",
+                "communication.delivered"
+              ]
+            }
+          },
+          "outboundRateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 600
+          }
+        }
       },
       "WebhookDeliveryAttempt": {
         "type": "object",

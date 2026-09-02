@@ -68,6 +68,12 @@ import {
   MandatoryReviewTrigger,
 } from '../mandatory-review-triggers';
 import { operationalTelemetry } from '../../observability/operational-telemetry';
+import {
+  AgentPlannerError,
+  AgentPlannerPort,
+  AgentPlannerResult,
+} from '../agent-planner';
+import { AgentModelInvocation } from '../../database/entities/agent-model-invocation.entity';
 
 export interface LendingOperationsAgentRuntimeDeps {
   dataSource: DataSource;
@@ -77,6 +83,8 @@ export interface LendingOperationsAgentRuntimeDeps {
   outboxSigningSecret: string;
   /** Injectable seam keeps runtime tests deterministic while production uses PostgreSQL. */
   budgetLedgerService?: AgentBudgetLedgerService;
+  /** Omitted for deterministic runs; Ollama is enabled explicitly by worker configuration. */
+  agentPlanner?: AgentPlannerPort;
 }
 
 /**
@@ -115,6 +123,9 @@ async function persistAgentRun(
           reviewCategory:
             (result.finalState.reviewState
               ?.category as unknown as ReviewCategoryStatus) ?? null,
+          modelInvocationId: result.finalState.modelAndPromptManifestId ?? null,
+          modelVersion: result.finalState.modelVersion ?? null,
+          promptVersion: result.finalState.promptVersion ?? null,
           startedAt,
         }),
       );
@@ -217,8 +228,8 @@ function applyBudgetSnapshot(
  * provider adapter (see docs/DEVELOPMENT_LOG.md's Known gaps for what else Section 9.6 lists
  * that has no real backing signal yet: contradictory evidence, evidence
  * confidence thresholds, communication classification, provider-contract
- * conformance, and prompt-injection signals, since this graph makes no
- * model calls at all today).
+ * conformance, and prompt-injection inspection. The optional planner's own
+ * schema and confidence checks are enforced separately below.
  */
 function consentInvalid(
   agentState: LendingOperationsAgentState,
@@ -553,6 +564,226 @@ export function createLendingOperationsAgentRuntime(
           return { agentState: nextState };
         }
 
+        function plannerResultFromRecord(
+          record: AgentModelInvocation,
+        ): AgentPlannerResult {
+          return {
+            nextAction: record.nextAction,
+            reasonCode: record.reasonCode,
+            confidence: record.confidenceBasisPoints / 10_000,
+            modelVersion: record.modelVersion,
+            promptVersion:
+              record.promptVersion as AgentPlannerResult['promptVersion'],
+            requestDigest: record.requestDigest,
+            responseDigest: record.responseDigest,
+            accountedTokenUnits: record.accountedTokenUnits,
+          };
+        }
+
+        function assertPlannerResultMatchesReservation(
+          planner: AgentPlannerPort,
+          result: AgentPlannerResult,
+        ): void {
+          const expectedReason =
+            result.nextAction === 'EVALUATE_POLICY'
+              ? 'POLICY_EVALUATION_REQUIRED'
+              : 'HUMAN_REVIEW_REQUIRED';
+          if (
+            result.modelVersion !== planner.modelVersion ||
+            result.promptVersion !== planner.promptVersion ||
+            result.accountedTokenUnits !== planner.tokenBudgetUnits ||
+            result.reasonCode !== expectedReason ||
+            !Number.isFinite(result.confidence) ||
+            result.confidence < 0 ||
+            result.confidence > 1 ||
+            !/^[0-9a-f]{64}$/.test(result.requestDigest) ||
+            !/^[0-9a-f]{64}$/.test(result.responseDigest)
+          ) {
+            throw new AgentPlannerError(
+              'MALFORMED_OUTPUT',
+              'local Agent planner returned inconsistent provenance or accounting',
+            );
+          }
+        }
+
+        async function findPlannerInvocation(): Promise<AgentModelInvocation | null> {
+          if (!deps.agentPlanner) return null;
+          return runInTenantContext(
+            deps.dataSource,
+            toolContext.tenantId,
+            (manager) =>
+              manager.getRepository(AgentModelInvocation).findOneBy({
+                tenantId: toolContext.tenantId,
+                workflowRunId: input.initialState.workflowRunId,
+                caseVersion: input.initialState.caseVersion,
+                modelVersion: deps.agentPlanner!.modelVersion,
+                promptVersion: deps.agentPlanner!.promptVersion,
+              }),
+          );
+        }
+
+        async function persistPlannerInvocation(
+          result: AgentPlannerResult,
+        ): Promise<AgentModelInvocation> {
+          try {
+            return await runInTenantContext(
+              deps.dataSource,
+              toolContext.tenantId,
+              (manager) => {
+                const repo = manager.getRepository(AgentModelInvocation);
+                return repo.save(
+                  repo.create({
+                    tenantId: toolContext.tenantId,
+                    caseId: toolContext.caseId,
+                    caseVersion: input.initialState.caseVersion,
+                    workflowRunId: input.initialState.workflowRunId,
+                    modelVersion: result.modelVersion,
+                    promptVersion: result.promptVersion,
+                    nextAction: result.nextAction,
+                    reasonCode: result.reasonCode,
+                    confidenceBasisPoints: Math.round(
+                      result.confidence * 10_000,
+                    ),
+                    accountedTokenUnits: result.accountedTokenUnits,
+                    requestDigest: result.requestDigest,
+                    responseDigest: result.responseDigest,
+                  }),
+                );
+              },
+            );
+          } catch (error) {
+            if ((error as { code?: string }).code !== '23505') throw error;
+            const winner = await findPlannerInvocation();
+            if (!winner) throw error;
+            return winner;
+          }
+        }
+
+        /**
+         * Optional model step. Its only authority is selecting one of two
+         * graph edges. A durable token reservation is claimed first, and an
+         * immutable content-free manifest makes retries reuse the recorded
+         * result rather than asking the model again.
+         */
+        async function planNextActionNode(
+          state: RuntimeState,
+        ): Promise<Partial<RuntimeState>> {
+          const planner = deps.agentPlanner;
+          if (!planner) return {};
+
+          let reservation;
+          try {
+            reservation = await budgetLedgerService.reserve({
+              tenantId: state.agentState.tenantId,
+              ledgerId: state.agentState.budgetLedgerId!,
+              idempotencyKey: [
+                state.agentState.workflowRunId,
+                state.agentState.caseVersion,
+                'agent-planner',
+                planner.modelVersion,
+                planner.promptVersion,
+              ].join(':'),
+              expectedVersion: state.agentState.budgetLedgerVersion,
+              units: {
+                stepUnits: 1,
+                tokenUnits: planner.tokenBudgetUnits,
+                providerCallUnits: 0,
+                costMinorUnits: 0,
+              },
+            });
+          } catch (error) {
+            if (!(error instanceof AgentBudgetError)) throw error;
+            return routeMandatoryReview(
+              state.agentState,
+              classifyMandatoryReviewTrigger(
+                MandatoryReviewCategory.BUDGET_OR_DEADLINE_EXHAUSTED,
+                `${error.code}: ${error.message}`,
+              ),
+            );
+          }
+
+          let result: AgentPlannerResult;
+          let record = await findPlannerInvocation();
+          try {
+            if (record) {
+              result = plannerResultFromRecord(record);
+            } else {
+              result = await planner.plan({
+                consentValid: true,
+                evidenceComplete: true,
+                availableActions: ['EVALUATE_POLICY', 'REQUEST_HUMAN_REVIEW'],
+              });
+              assertPlannerResultMatchesReservation(planner, result);
+              record = await persistPlannerInvocation(result);
+              result = plannerResultFromRecord(record);
+            }
+            const committed =
+              reservation.status === AgentBudgetReservationStatus.Committed
+                ? reservation
+                : await budgetLedgerService.commit({
+                    tenantId: state.agentState.tenantId,
+                    reservationId: reservation.reservationId,
+                  });
+            const plannedState = recordAttempt(
+              applyBudgetSnapshot(state.agentState, committed.ledger),
+              'agent_planner',
+              'SUCCESS',
+              `${result.nextAction}:${result.reasonCode}`,
+            );
+            const withManifest: LendingOperationsAgentState = {
+              ...plannedState,
+              modelVersion: result.modelVersion,
+              promptVersion: result.promptVersion,
+              modelAndPromptManifestId: record.id,
+            };
+            const confidenceBasisPoints = Math.round(
+              result.confidence * 10_000,
+            );
+            if (
+              result.nextAction === 'REQUEST_HUMAN_REVIEW' ||
+              confidenceBasisPoints < planner.minimumConfidenceBasisPoints
+            ) {
+              return routeMandatoryReview(
+                withManifest,
+                classifyMandatoryReviewTrigger(
+                  MandatoryReviewCategory.MODEL_UNCERTAINTY,
+                  result.nextAction === 'REQUEST_HUMAN_REVIEW'
+                    ? `bounded planner requested review (${result.reasonCode})`
+                    : `bounded planner confidence ${confidenceBasisPoints}bp is below ${planner.minimumConfidenceBasisPoints}bp`,
+                ),
+              );
+            }
+            return { agentState: withManifest };
+          } catch (error) {
+            if (reservation.status === AgentBudgetReservationStatus.Reserved) {
+              await budgetLedgerService.release(
+                state.agentState.tenantId,
+                reservation.reservationId,
+              );
+            }
+            const code =
+              error instanceof AgentPlannerError
+                ? error.code
+                : 'PLANNER_RUNTIME_FAILURE';
+            const failedState = recordAttempt(
+              state.agentState,
+              'agent_planner',
+              'FAILURE',
+              code,
+            );
+            return routeMandatoryReview(
+              failedState,
+              classifyMandatoryReviewTrigger(
+                error instanceof AgentPlannerError &&
+                  error.code === 'MALFORMED_OUTPUT'
+                  ? MandatoryReviewCategory.MODEL_OUTPUT_INVALID
+                  : MandatoryReviewCategory.TOOL_EXECUTION_FAILURE,
+                `bounded planner failed (${code})`,
+              ),
+            );
+          }
+        }
+
         async function evaluatePolicyNode(
           state: RuntimeState,
         ): Promise<Partial<RuntimeState>> {
@@ -656,6 +887,8 @@ export function createLendingOperationsAgentRuntime(
                 evaluation.observedPolicyDependencyDigest!,
               evaluatorVersion: RESOLVER_VERSION,
               evidence: [],
+              modelAndPromptManifestId:
+                state.agentState.modelAndPromptManifestId,
             });
             return { agentState: stepped, route: 'PROPOSED_ACTION' };
           }
@@ -723,6 +956,7 @@ export function createLendingOperationsAgentRuntime(
               evaluation.observedPolicyDependencyDigest!,
             evaluatorVersion: RESOLVER_VERSION,
             evidence: latestIncomeFact ? [latestIncomeFact] : [],
+            modelAndPromptManifestId: state.agentState.modelAndPromptManifestId,
           });
 
           if (!match) {
@@ -842,6 +1076,7 @@ export function createLendingOperationsAgentRuntime(
         const graph = new StateGraph(RuntimeAnnotation)
           .addNode('verifyConsent', verifyConsentNode)
           .addNode('checkCompleteness', checkCompletenessNode)
+          .addNode('planNextAction', planNextActionNode)
           .addNode('evaluatePolicy', evaluatePolicyNode)
           .addNode('resolveOutcome', resolveOutcomeNode)
           .addEdge(START, 'verifyConsent')
@@ -849,6 +1084,9 @@ export function createLendingOperationsAgentRuntime(
             state.route ? END : 'checkCompleteness',
           )
           .addConditionalEdges('checkCompleteness', (state) =>
+            state.route ? END : 'planNextAction',
+          )
+          .addConditionalEdges('planNextAction', (state) =>
             state.route ? END : 'evaluatePolicy',
           )
           .addConditionalEdges('evaluatePolicy', (state) =>

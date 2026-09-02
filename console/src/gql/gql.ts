@@ -16,6 +16,7 @@ import { TypedDocumentNode as DocumentNode } from '@graphql-typed-document-node/
 type Documents = {
     "\n  mutation SubmitReview($caseId: ID!, $input: ReviewDto!) {\n    submitReview(caseId: $caseId, input: $input)\n  }\n": typeof types.SubmitReviewDocument,
     "\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n": typeof types.EscalateCaseDocument,
+    "\n  mutation StartWorkflowRun($caseId: ID!) {\n    startWorkflowRun(caseId: $caseId) {\n      workflowId\n      runId\n    }\n  }\n": typeof types.StartWorkflowRunDocument,
     "\n  mutation ApproveCommunicationMessage(\n    $messageId: ID!\n    $input: ApproveCommunicationMessageDto!\n  ) {\n    approveCommunicationMessage(messageId: $messageId, input: $input) {\n      id\n      approvedAt\n    }\n  }\n": typeof types.ApproveCommunicationMessageDocument,
     "\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n": typeof types.SendCommunicationMessageDocument,
     "\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n": typeof types.CheckPolicyChangeImpactDocument,
@@ -27,6 +28,7 @@ type Documents = {
 const documents: Documents = {
     "\n  mutation SubmitReview($caseId: ID!, $input: ReviewDto!) {\n    submitReview(caseId: $caseId, input: $input)\n  }\n": types.SubmitReviewDocument,
     "\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n": types.EscalateCaseDocument,
+    "\n  mutation StartWorkflowRun($caseId: ID!) {\n    startWorkflowRun(caseId: $caseId) {\n      workflowId\n      runId\n    }\n  }\n": types.StartWorkflowRunDocument,
     "\n  mutation ApproveCommunicationMessage(\n    $messageId: ID!\n    $input: ApproveCommunicationMessageDto!\n  ) {\n    approveCommunicationMessage(messageId: $messageId, input: $input) {\n      id\n      approvedAt\n    }\n  }\n": types.ApproveCommunicationMessageDocument,
     "\n  mutation SendCommunicationMessage($messageId: ID!) {\n    sendCommunicationMessage(messageId: $messageId) {\n      outcome\n      deliveryReference\n      sentAt\n    }\n  }\n": types.SendCommunicationMessageDocument,
     "\n  mutation CheckPolicyChangeImpact(\n    $caseId: ID!\n    $input: CheckPolicyChangeImpactDto!\n  ) {\n    checkPolicyChangeImpact(caseId: $caseId, input: $input) {\n      assessed\n      assessmentId\n      impact\n      reason\n      details\n    }\n  }\n": types.CheckPolicyChangeImpactDocument,
@@ -58,6 +60,10 @@ export function graphql(source: "\n  mutation SubmitReview($caseId: ID!, $input:
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */
 export function graphql(source: "\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n"): (typeof documents)["\n  mutation EscalateCase($caseId: ID!, $input: EscalateDto!) {\n    escalateCase(caseId: $caseId, input: $input) {\n      id\n      status\n      version\n    }\n  }\n"];
+/**
+ * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
+ */
+export function graphql(source: "\n  mutation StartWorkflowRun($caseId: ID!) {\n    startWorkflowRun(caseId: $caseId) {\n      workflowId\n      runId\n    }\n  }\n"): (typeof documents)["\n  mutation StartWorkflowRun($caseId: ID!) {\n    startWorkflowRun(caseId: $caseId) {\n      workflowId\n      runId\n    }\n  }\n"];
 /**
  * The graphql function is used to parse GraphQL queries into a document that can be used by GraphQL clients.
  */

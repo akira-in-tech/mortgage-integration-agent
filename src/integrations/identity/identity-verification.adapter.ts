@@ -5,6 +5,7 @@ import {
   ProviderHealth,
   ProviderOperationDescriptor,
   SynchronousProviderReceipt,
+  completeProviderReceipt,
 } from '../../provider-platform/types';
 import { IdentityService } from './identity.service';
 import { IdentityVerificationResult } from './identity.types';
@@ -46,7 +47,7 @@ export class IdentityVerificationAdapter implements ProviderAdapter<
     const payload = await this.identityService.verifyIdentity(
       request.borrowerId,
     );
-    return { status: 'COMPLETE', payload };
+    return completeProviderReceipt(payload);
   }
 
   normalize(payload: unknown): IdentityVerificationResult {

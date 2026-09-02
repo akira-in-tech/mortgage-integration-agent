@@ -21,6 +21,11 @@ import { DataDispositionService } from './data-disposition.service';
 import { LegalHoldService } from './legal-hold.service';
 import { AuditEventService } from '../audit/audit-event.service';
 import { runInTenantContext } from '../database/tenant-context';
+import { ProviderOperationIntent } from '../database/entities/provider-operation-intent.entity';
+import {
+  ProviderCapabilityStatus,
+  ProviderOperationIntentStatus,
+} from '../database/enums/provider-platform.enum';
 
 // Requires a reachable Postgres (same convention as this codebase's other
 // real-DB specs): skip instead of failing when no DATABASE_URL is
@@ -48,6 +53,7 @@ describeOrSkip('DataDispositionService', () => {
         DataDispositionTask,
         LegalHold,
         AuditEvent,
+        ProviderOperationIntent,
       ],
     });
     await dataSource.initialize();
@@ -94,6 +100,9 @@ describeOrSkip('DataDispositionService', () => {
     if (dataSource?.isInitialized) {
       await dataSource.getRepository(LegalHold).delete({ tenantId });
       await dataSource.getRepository(DataDispositionTask).delete({ tenantId });
+      await dataSource
+        .getRepository(ProviderOperationIntent)
+        .delete({ tenantId });
       await dataSource.getRepository(EvidenceFact).delete({ tenantId });
       await dataSource.getRepository(LoanCase).delete({ tenantId });
       await dataSource
@@ -134,6 +143,20 @@ describeOrSkip('DataDispositionService', () => {
       }),
     );
     const consentRecordId = randomUUID();
+
+    const [storedIncome] = (await dataSource.query(
+      `SELECT "value" FROM "evidence_facts" WHERE "id" = $1`,
+      [income.id],
+    )) as Array<{ value: Record<string, unknown> }>;
+    expect(JSON.stringify(storedIncome.value)).not.toContain('9000');
+    expect(storedIncome.value).toMatchObject({
+      v: 1,
+      alg: 'A256GCM',
+      kid: 'local-v1',
+    });
+    expect(
+      (await evidenceRepo.findOneByOrFail({ id: income.id })).value,
+    ).toEqual({ monthlyIncome: 9000 });
 
     const task = await runInTenantContext(dataSource, tenantId, (manager) =>
       service.openRetentionReviewForRevokedConsent(manager, {
@@ -190,10 +213,13 @@ describeOrSkip('DataDispositionService', () => {
   });
 
   describe('resolve() — deletion verification (M5-025, Section 14.2)', () => {
-    async function makeCaseWithTask(): Promise<{
+    async function makeCaseWithTask(
+      providerState = ProviderOperationIntentStatus.SUCCEEDED,
+    ): Promise<{
       resolveCaseId: string;
       taskId: string;
       evidenceIds: string[];
+      providerIntentId: string;
     }> {
       // EvidenceFact.case is a real FK (onDelete: CASCADE) — a genuine
       // LoanCase row is required, not just a random id, unlike the
@@ -232,15 +258,50 @@ describeOrSkip('DataDispositionService', () => {
           consentRecordId: randomUUID(),
         }),
       );
+      const providerIntent = await dataSource
+        .getRepository(ProviderOperationIntent)
+        .save({
+          tenantId,
+          caseId: resolveCaseId,
+          providerId: 'lineage-spec-provider',
+          capability: ProviderCapabilityStatus.INCOME,
+          effectClass: 'REUSABLE_LOOKUP',
+          requestFingerprint: 'a'.repeat(64),
+          idempotencyKey: randomUUID(),
+          logicalOperationKey: randomUUID(),
+          authorizationGrantId: randomUUID(),
+          providerReceipt: { sensitive: 'receipt' },
+          normalizedFinding: { sensitive: 'finding' },
+          state: providerState,
+          resolvedBy: null,
+          resolutionNote: null,
+        });
+      // Re-open after the provider result exists so the task snapshots the
+      // complete derived lineage rather than only the evidence row.
+      await dataSource
+        .getRepository(DataDispositionTask)
+        .delete({ id: task.id });
+      const completeTask = await runInTenantContext(
+        dataSource,
+        tenantId,
+        (manager) =>
+          service.openRetentionReviewForRevokedConsent(manager, {
+            tenantId,
+            caseId: resolveCaseId,
+            consentRecordId: randomUUID(),
+          }),
+      );
       return {
         resolveCaseId,
-        taskId: task.id,
+        taskId: completeTask.id,
         evidenceIds: [income.id],
+        providerIntentId: providerIntent.id,
       };
     }
 
     it('DELETE really removes the referenced evidence_facts rows and marks the task VERIFIED/DELETED', async () => {
-      const { taskId, evidenceIds } = await makeCaseWithTask();
+      const { taskId, evidenceIds, providerIntentId } =
+        await makeCaseWithTask();
 
       const resolved = await service.resolve(
         tenantId,
@@ -249,16 +310,49 @@ describeOrSkip('DataDispositionService', () => {
         'disposition-spec-operator',
       );
       expect(resolved).toMatchObject({
-        status: 'VERIFIED',
+        status: 'COMPLETED',
         resolutionOutcome: 'DELETED',
         resolvedBy: 'disposition-spec-operator',
       });
       expect(resolved.resolvedAt).not.toBeNull();
+      expect(resolved.backupExpiryDueAt).not.toBeNull();
 
       const remaining = await dataSource
         .getRepository(EvidenceFact)
         .find({ where: { id: evidenceIds[0] } });
       expect(remaining).toHaveLength(0);
+      const scrubbedIntent = await dataSource
+        .getRepository(ProviderOperationIntent)
+        .findOneByOrFail({ id: providerIntentId });
+      expect(scrubbedIntent.providerReceipt).toBeNull();
+      expect(scrubbedIntent.normalizedFinding).toBeNull();
+
+      await expect(
+        service.verifyBackupExpiry(
+          tenantId,
+          taskId,
+          'disposition-spec-operator',
+          'backup-evidence://too-early',
+        ),
+      ).rejects.toThrow(/has not expired/);
+      await dataSource
+        .getRepository(DataDispositionTask)
+        .update(
+          { id: taskId },
+          { backupExpiryDueAt: new Date(Date.now() - 1000) },
+        );
+      const verified = await service.verifyBackupExpiry(
+        tenantId,
+        taskId,
+        'disposition-spec-operator',
+        'backup-evidence://retention-window-expired',
+      );
+      expect(verified).toMatchObject({
+        status: 'VERIFIED',
+        backupVerificationReference:
+          'backup-evidence://retention-window-expired',
+      });
+      expect(verified.backupExpiryVerifiedAt).not.toBeNull();
     });
 
     it('ANONYMIZE keeps the evidence_facts row but blanks its value, and marks the task VERIFIED/ANONYMIZED', async () => {
@@ -271,7 +365,7 @@ describeOrSkip('DataDispositionService', () => {
         'disposition-spec-operator',
       );
       expect(resolved).toMatchObject({
-        status: 'VERIFIED',
+        status: 'COMPLETED',
         resolutionOutcome: 'ANONYMIZED',
       });
 
@@ -280,6 +374,63 @@ describeOrSkip('DataDispositionService', () => {
         .findOneByOrFail({ id: evidenceIds[0] });
       expect(fact.value).toEqual({});
     });
+
+    it('cancels PREPARED provider work before deletion so a later dispatch cannot restore deleted data', async () => {
+      const { taskId, providerIntentId } = await makeCaseWithTask(
+        ProviderOperationIntentStatus.PREPARED,
+      );
+
+      await service.resolve(
+        tenantId,
+        taskId,
+        'DELETE',
+        'disposition-spec-operator',
+      );
+
+      const intent = await dataSource
+        .getRepository(ProviderOperationIntent)
+        .findOneByOrFail({ id: providerIntentId });
+      expect(intent).toMatchObject({
+        state: ProviderOperationIntentStatus.CANCELLED,
+        resolvedBy: 'disposition-spec-operator',
+        providerReceipt: null,
+        normalizedFinding: null,
+      });
+    });
+
+    it.each([
+      ProviderOperationIntentStatus.DISPATCHED,
+      ProviderOperationIntentStatus.OUTCOME_UNKNOWN,
+      ProviderOperationIntentStatus.RECONCILING,
+    ])(
+      'blocks deletion while provider state %s can still produce or hide an outcome',
+      async (providerState) => {
+        const { taskId, evidenceIds, providerIntentId } =
+          await makeCaseWithTask(providerState);
+
+        await expect(
+          service.resolve(
+            tenantId,
+            taskId,
+            'DELETE',
+            'disposition-spec-operator',
+          ),
+        ).rejects.toThrow(/require outcome reconciliation/);
+
+        expect(
+          await dataSource
+            .getRepository(EvidenceFact)
+            .findOneBy({ id: evidenceIds[0] }),
+        ).not.toBeNull();
+        expect(
+          (
+            await dataSource
+              .getRepository(ProviderOperationIntent)
+              .findOneByOrFail({ id: providerIntentId })
+          ).providerReceipt,
+        ).not.toBeNull();
+      },
+    );
 
     it('RETAIN is rejected with no active legal hold on the case', async () => {
       const { taskId } = await makeCaseWithTask();
@@ -360,7 +511,7 @@ describeOrSkip('DataDispositionService', () => {
       }
     });
 
-    it('rejects resolving a task that is already VERIFIED', async () => {
+    it('rejects resolving a task that is already awaiting backup expiry', async () => {
       const { taskId } = await makeCaseWithTask();
       await service.resolve(
         tenantId,
@@ -376,7 +527,7 @@ describeOrSkip('DataDispositionService', () => {
           'DELETE',
           'disposition-spec-operator',
         ),
-      ).rejects.toThrow(/already VERIFIED/);
+      ).rejects.toThrow(/already COMPLETED/);
     });
 
     it('listOpen() finds a real PENDING task but not one already resolved', async () => {

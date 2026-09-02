@@ -1,4 +1,4 @@
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 import { ApplicationFailure } from '@temporalio/activity';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
@@ -27,6 +27,7 @@ import { EvaluationManifestService } from '../policy/evaluation-manifest.service
 import { createLendingOperationsAgentRuntime } from '../agent-runtime/langgraph/lending-operations-agent-runtime';
 import { LendingOperationsAgentState } from '../agent-runtime/agent-state.types';
 import { StaleCaseVersionError } from '../agent-runtime/tools/create-condition.tool';
+import { AgentPlannerPort } from '../agent-runtime/agent-planner';
 import { ProviderRegistryService } from '../provider-platform/provider-registry.service';
 import { ProviderAuthorizationService } from '../provider-platform/provider-authorization.service';
 import { ProviderOperationIntentService } from '../provider-platform/provider-operation-intent.service';
@@ -34,12 +35,17 @@ import { ProviderKillSwitchService } from '../provider-platform/provider-kill-sw
 import { ProviderPromotionService } from '../provider-platform/provider-promotion.service';
 import {
   dispatchProviderRequest,
+  ProviderIntentConflictError,
+  ProviderIntentReplayBlockedError,
   ProviderRevalidationError,
   ProviderDisabledError,
+  ProviderConsentScopeError,
+  PermissiblePurposeError,
 } from '../provider-platform/dispatch-provider-request';
 import { ProviderCapability } from '../provider-platform/types';
 import { runInTenantContext } from '../database/tenant-context';
 import { ConsentService } from '../consent/consent.service';
+import { PermissiblePurposeService } from '../provider-platform/permissible-purpose.service';
 import { CommunicationMessageService } from '../communications/communication-message.service';
 import { CommunicationDeliveryService } from '../communications/communication-delivery.service';
 import { CommunicationTemplate } from '../database/entities/communication-template.entity';
@@ -71,10 +77,13 @@ export interface CaseConditionsActivitiesDeps {
   providerKillSwitchService: ProviderKillSwitchService;
   providerPromotionService: ProviderPromotionService;
   consentService: ConsentService;
+  permissiblePurposeService?: PermissiblePurposeService;
   messageService: CommunicationMessageService;
   communicationDeliveryService: CommunicationDeliveryService;
   /** HMAC secret for outbox event signing (Section 15.3). */
   outboxSigningSecret: string;
+  /** Optional local model router; omitted keeps the deterministic graph. */
+  agentPlanner?: AgentPlannerPort;
 }
 
 interface CaseRef {
@@ -139,6 +148,16 @@ interface ResolveConditionInput extends CaseRef {
   reason?: string;
 }
 
+interface PrepareWorkflowRecoveryInput extends CaseRef {
+  recoveryOfRunId: string;
+}
+
+interface PrepareWorkflowRecoveryResult {
+  outcome: 'REUSE_OPEN_CONDITION' | 'RESTART_COLLECTION' | 'REVIEW_REQUIRED';
+  conditionId?: string;
+  reviewReason?: string;
+}
+
 /**
  * Retry-classification boundary (M2 scope: "retry classification"): calls
  * a provider simulator and reinterprets whatever it throws as an
@@ -171,7 +190,11 @@ async function callProviderWithRetryClassification<T>(
         providerName,
       );
     }
-    if (error instanceof ProviderRevalidationError) {
+    if (
+      error instanceof ProviderRevalidationError ||
+      error instanceof ProviderConsentScopeError ||
+      error instanceof PermissiblePurposeError
+    ) {
       // A mismatched, expired, revoked, or (M5-005) consent-invalidated
       // grant — retrying the identical request can never fix any of
       // these, so this is unconditionally non-retryable, the same
@@ -179,6 +202,16 @@ async function callProviderWithRetryClassification<T>(
       throw ApplicationFailure.nonRetryable(
         error.message,
         'ProviderAuthorizationRevalidationFailed',
+        providerName,
+      );
+    }
+    if (
+      error instanceof ProviderIntentConflictError ||
+      error instanceof ProviderIntentReplayBlockedError
+    ) {
+      throw ApplicationFailure.nonRetryable(
+        error.message,
+        error.name,
         providerName,
       );
     }
@@ -233,9 +266,11 @@ export function createCaseConditionsActivities(
     providerKillSwitchService,
     providerPromotionService,
     consentService,
+    permissiblePurposeService,
     messageService,
     communicationDeliveryService,
     outboxSigningSecret,
+    agentPlanner,
   } = deps;
   const providerDispatchDeps = {
     registry: providerRegistry,
@@ -244,6 +279,8 @@ export function createCaseConditionsActivities(
     killSwitchService: providerKillSwitchService,
     promotionService: providerPromotionService,
     consentService,
+    permissiblePurposeService:
+      permissiblePurposeService ?? new PermissiblePurposeService(dataSource),
   };
 
   // M3-024: the real, registered-tool-invoking (not a bypass) path
@@ -339,6 +376,7 @@ export function createCaseConditionsActivities(
     evaluationManifestService,
     messageService,
     outboxSigningSecret,
+    agentPlanner,
   });
 
   async function finalizeReadyForUnderwriting(
@@ -418,6 +456,63 @@ export function createCaseConditionsActivities(
           eventType: OutboxEventType.WorkflowRunStarted,
           payload: { caseId },
         });
+      });
+    },
+
+    /**
+     * Recovery never guesses which open condition a reviewer intended to
+     * resume. Reusing one durable condition preserves the original policy
+     * snapshot and prevents a cancelled workflow from creating a duplicate;
+     * multiple active conditions require a human decision instead.
+     */
+    async prepareWorkflowRecovery({
+      tenantId,
+      caseId,
+      recoveryOfRunId,
+    }: PrepareWorkflowRecoveryInput): Promise<PrepareWorkflowRecoveryResult> {
+      return runInTenantContext(dataSource, tenantId, async (manager) => {
+        const conditions = await manager.getRepository(LoanCondition).find({
+          where: {
+            tenantId,
+            caseId,
+            status: In([
+              ConditionStatus.OPEN,
+              ConditionStatus.IN_PROGRESS,
+              ConditionStatus.WAITING_FOR_EVIDENCE,
+            ]),
+          },
+          order: { createdAt: 'ASC' },
+        });
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunRecoveryStarted,
+          payload: {
+            caseId,
+            recoveryOfRunId,
+            activeConditionCount: conditions.length,
+          },
+        });
+        if (conditions.length === 1) {
+          await manager
+            .getRepository(LoanCase)
+            .update(
+              { id: caseId, tenantId },
+              { status: CaseStatus.CONDITIONS_OPEN },
+            );
+          return {
+            outcome: 'REUSE_OPEN_CONDITION',
+            conditionId: conditions[0].id,
+          };
+        }
+        if (conditions.length > 1) {
+          return {
+            outcome: 'REVIEW_REQUIRED',
+            reviewReason:
+              'recovery found multiple active conditions; reviewer selection is required',
+          };
+        }
+        return { outcome: 'RESTART_COLLECTION' };
       });
     },
 
@@ -574,7 +669,7 @@ export function createCaseConditionsActivities(
         attemptedTools: [],
         remainingStepBudget: stepBudget,
         remainingDurationBudgetMs: durationBudgetMs,
-        remainingTokenBudget: 0, // this graph makes no model calls
+        remainingTokenBudget: agentPlanner?.tokenBudgetUnits ?? 0,
         remainingProviderCallBudget: 0, // its tools make no outbound provider calls; evidence was already fetched by earlier workflow activities
         budgetCurrency: 'USD',
         remainingCostBudgetMinorUnits: 0, // all providers are synthetic; no real cost is ever incurred
@@ -589,7 +684,7 @@ export function createCaseConditionsActivities(
         budget: {
           stepBudget,
           durationBudgetMs,
-          tokenBudget: 0,
+          tokenBudget: agentPlanner?.tokenBudgetUnits ?? 0,
           providerCallBudget: 0,
           costBudgetMinorUnits: 0,
           currency: 'USD',
@@ -749,6 +844,47 @@ export function createCaseConditionsActivities(
           caseId,
           eventType: OutboxEventType.WorkflowRunFailed,
           payload: { caseId, reason },
+        });
+      });
+    },
+
+    /**
+     * Temporal cancellation is an orchestration outcome only. Provider
+     * adapters are synchronous in this release, so this activity makes no
+     * claim that an in-flight external request was cancelled; its durable
+     * record tells operators to reconcile any ambiguous provider outcome.
+     */
+    async markWorkflowCancelled({ tenantId, caseId }: CaseRef): Promise<void> {
+      await runInTenantContext(dataSource, tenantId, async (manager) => {
+        const caseRepo = manager.getRepository(LoanCase);
+        const loanCase = await caseRepo.findOneByOrFail({
+          id: caseId,
+          tenantId,
+        });
+        // Cancellation can race the tiny interval after a terminal case
+        // transition commits but before the workflow reports completion. A
+        // late cancel request must not regress a legitimately ready/closed
+        // case back to manual review merely because orchestration lost that
+        // response race.
+        if (
+          loanCase.status !== CaseStatus.READY_FOR_UNDERWRITING &&
+          loanCase.status !== CaseStatus.CLOSED
+        ) {
+          await caseRepo.update(
+            { id: caseId, tenantId },
+            { status: CaseStatus.MANUAL_REVIEW },
+          );
+        }
+        await writeOutboxEvent(manager, outboxSigningSecret, {
+          tenantId,
+          caseId,
+          eventType: OutboxEventType.WorkflowRunCancelled,
+          payload: {
+            caseId,
+            scope: 'ORCHESTRATION_ONLY',
+            providerCancellationAsserted: false,
+            caseStatusAtCancellation: loanCase.status,
+          },
         });
       });
     },

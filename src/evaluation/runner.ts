@@ -7,22 +7,12 @@ import {
   EvidenceSourceKind,
 } from '../database/entities/evidence-fact.entity';
 import { LoanCondition } from '../database/entities/loan-condition.entity';
-import { ConditionTransition } from '../database/entities/condition-transition.entity';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
-import { OutboxEvent } from '../database/entities/outbox-event.entity';
-import { CasePolicyBinding } from '../database/entities/case-policy-binding.entity';
-import { CasePolicySnapshot } from '../database/entities/case-policy-snapshot.entity';
-import { AgentRun } from '../database/entities/agent-run.entity';
-import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
-import { ToolAttempt } from '../database/entities/tool-attempt.entity';
-import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
-import { ConsentRecord } from '../database/entities/consent-record.entity';
-import { DataDispositionTask } from '../database/entities/data-disposition-task.entity';
-import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import {
   JurisdictionLevel,
   JurisdictionCoverageStatus,
 } from '../database/enums/jurisdiction.enum';
+import { purgeTenantData } from '../database/purge-tenant-data';
 import { createCaseConditionsActivities } from '../workflows/case-conditions.activities';
 import { PolicyEvaluationService } from '../policy/policy-evaluation.service';
 import { EvaluationManifestService } from '../policy/evaluation-manifest.service';
@@ -309,45 +299,23 @@ async function runProviderFailureCase(
  * tenant — same discipline as this session's manual verification
  * cleanups, so repeated `npm run evaluate` invocations never accumulate
  * synthetic data.
+ *
+ * A thin wrapper over `purgeTenantData()` (M7-055) — that function is now
+ * the one place this fragile, foreign-key-ordered delete list lives, so
+ * this and `GuestSandboxService`'s own cleanup can't drift apart the way
+ * they already had (this function used to delete every row *except* the
+ * `tenants` row itself, silently leaving one orphaned tenant behind per
+ * corpus run — this spec file's own tests compensated for that with a
+ * second manual `Tenant.delete()` call afterward; `purgeTenantData()`
+ * closes that gap too, and that now-redundant follow-up delete is
+ * harmless — TypeORM's `.delete()` on an already-gone row just reports
+ * `affected: 0`, it doesn't throw).
  */
 export async function cleanupEvaluationRun(
   dataSource: DataSource,
   tenantId: string,
 ): Promise<void> {
-  // Reservations cascade with their ledger. This must run before cases are
-  // deleted and makes a named corpus repeatable without replaying old budget.
-  await dataSource.getRepository(AgentBudgetLedger).delete({ tenantId });
-  const agentRuns = await dataSource
-    .getRepository(AgentRun)
-    .find({ where: { tenantId } });
-  if (agentRuns.length) {
-    await dataSource
-      .getRepository(ToolAttempt)
-      .delete(agentRuns.map((r) => ({ agentRunId: r.id })));
-  }
-  await dataSource.getRepository(AgentRun).delete({ tenantId });
-  await dataSource.getRepository(EvaluationInputManifest).delete({ tenantId });
-  await dataSource.getRepository(OutboxEvent).delete({ tenantId });
-  await dataSource.getRepository(EvidenceFact).delete({ tenantId });
-  await dataSource.getRepository(CasePolicyBinding).delete({ tenantId });
-  await dataSource.getRepository(CasePolicySnapshot).delete({ tenantId });
-
-  const conditions = await dataSource
-    .getRepository(LoanCondition)
-    .find({ where: { tenantId } });
-  if (conditions.length) {
-    await dataSource
-      .getRepository(ConditionTransition)
-      .delete(conditions.map((c) => ({ conditionId: c.id })));
-    await dataSource
-      .getRepository(LoanCondition)
-      .delete(conditions.map((c) => ({ id: c.id })));
-  }
-
-  await dataSource.getRepository(DataDispositionTask).delete({ tenantId });
-  await dataSource.getRepository(ConsentRecord).delete({ tenantId });
-  await dataSource.getRepository(CommunicationMessage).delete({ tenantId });
-  await dataSource.getRepository(LoanCase).delete({ tenantId });
+  await purgeTenantData(dataSource, tenantId);
 }
 
 export async function runCorpus(

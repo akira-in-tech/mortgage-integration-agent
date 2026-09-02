@@ -27,6 +27,13 @@ import { WebhookDispatchService } from './webhooks/webhook-dispatch.service';
 import { ConsentService } from './consent/consent.service';
 import { CommunicationMessageService } from './communications/communication-message.service';
 import { CommunicationDeliveryService } from './communications/communication-delivery.service';
+import { DecisionProvider, NodeEnvironment } from './config/env.validation';
+import { OllamaAgentPlanner } from './agent-runtime/agent-planner';
+import { GuestSandboxService } from './auth/guest-sandbox.service';
+import {
+  describeTenantIsolationRlsGaps,
+  findTenantIsolationRlsGaps,
+} from './database/check-tenant-isolation-rls';
 
 async function bootstrap(): Promise<void> {
   // A plain Nest application context, not createApplicationContext + an
@@ -34,6 +41,57 @@ async function bootstrap(): Promise<void> {
   // the same DI-managed services activities need (Section 12.1).
   const appContext = await NestFactory.createApplicationContext(WorkerModule);
   const configService = appContext.get(ConfigService);
+  const nodeEnv = configService.get<NodeEnvironment>(
+    'NODE_ENV',
+    NodeEnvironment.Development,
+  );
+
+  // M7-055: same check main.ts runs before the API accepts traffic — see
+  // that call site's own comment for the real gap this closes. The worker
+  // writes to the same tenant-scoped tables (webhook dispatch, provider
+  // reconciliation, guest-sandbox cleanup), so it needs the same guard.
+  const rlsGaps = await findTenantIsolationRlsGaps(appContext.get(DataSource));
+  if (rlsGaps.length > 0) {
+    const lines = describeTenantIsolationRlsGaps(rlsGaps);
+    if (
+      nodeEnv === NodeEnvironment.Staging ||
+      nodeEnv === NodeEnvironment.Production
+    ) {
+      throw new Error(
+        `Refusing to start in ${nodeEnv}: tenant isolation (row-level security) is missing on ${rlsGaps.length} table(s): ${lines.join('; ')}. Run the real migration chain (npm run migration:run) against this database, not a synchronize-built schema.`,
+      );
+    }
+    console.warn(
+      `WARNING: row-level security is missing on ${rlsGaps.length} tenant-scoped table(s) — tenant isolation fails open on this database: ${lines.join('; ')}. This is a known local-dev quirk when the schema was built via synchronize instead of "npm run migration:run" — fine for casual local development, but never trust cross-tenant test results against this database until it's fixed.`,
+    );
+  }
+
+  const agentPlanner =
+    configService.get<DecisionProvider>(
+      'DECISION_PROVIDER',
+      DecisionProvider.Rules,
+    ) === DecisionProvider.Ollama
+      ? new OllamaAgentPlanner({
+          baseUrl: configService.get<string>(
+            'OLLAMA_BASE_URL',
+            'http://127.0.0.1:11434',
+          ),
+          model: configService.get<string>('OLLAMA_MODEL', 'qwen3.5:9b'),
+          timeoutMs: configService.get<number>('OLLAMA_TIMEOUT_MS', 60_000),
+          maxOutputTokens: configService.get<number>(
+            'AGENT_PLANNER_MAX_OUTPUT_TOKENS',
+            128,
+          ),
+          tokenBudgetUnits: configService.get<number>(
+            'AGENT_PLANNER_TOKEN_BUDGET',
+            1024,
+          ),
+          minimumConfidenceBasisPoints: configService.get<number>(
+            'AGENT_PLANNER_MIN_CONFIDENCE_BPS',
+            8000,
+          ),
+        })
+      : undefined;
 
   const activities = createCaseConditionsActivities({
     dataSource: appContext.get(DataSource),
@@ -49,6 +107,7 @@ async function bootstrap(): Promise<void> {
     consentService: appContext.get(ConsentService),
     messageService: appContext.get(CommunicationMessageService),
     communicationDeliveryService: appContext.get(CommunicationDeliveryService),
+    agentPlanner,
     outboxSigningSecret: configService.get<string>(
       'OUTBOX_SIGNING_SECRET',
       'dev-outbox-signing-secret-change-me',
@@ -127,6 +186,24 @@ async function bootstrap(): Promise<void> {
     );
   }
 
+  // M7-055: the guest sandbox's own session-expiry sweep used to run only
+  // opportunistically, inside create() itself, so cleanup couldn't outpace
+  // creation under sustained traffic to that public, unauthenticated
+  // endpoint - real orphaned tenants/cases/consent rows accumulated in real
+  // staging RDS forever. Same "plain interval, not a Temporal workflow"
+  // reasoning as the timers above; create() keeps its own opportunistic
+  // call too, as a fallback for any environment not running this process.
+  const guestSandboxService = appContext.get(GuestSandboxService);
+  const guestSandboxCleanupIntervalMs = configService.get<number>(
+    'GUEST_SANDBOX_CLEANUP_INTERVAL_MS',
+    300_000,
+  );
+  const guestSandboxCleanupTimer = setInterval(() => {
+    guestSandboxService.purgeExpiredSessions().catch((error) => {
+      console.error('Guest sandbox cleanup tick failed:', error);
+    });
+  }, guestSandboxCleanupIntervalMs);
+
   const connection = await NativeConnection.connect({
     address: configService.get<string>('TEMPORAL_ADDRESS', 'localhost:7233'),
   });
@@ -162,6 +239,7 @@ async function bootstrap(): Promise<void> {
   } finally {
     clearInterval(webhookDispatchTimer);
     clearInterval(providerReconciliationTimer);
+    clearInterval(guestSandboxCleanupTimer);
     if (policySourceMonitorTimer) {
       clearInterval(policySourceMonitorTimer);
     }

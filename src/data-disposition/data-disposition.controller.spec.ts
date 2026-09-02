@@ -19,17 +19,44 @@ describe('DataDispositionController', () => {
     status: 'VERIFIED',
     reason: 'Consent was revoked.',
     createdAt: new Date('2026-01-01T00:00:00Z'),
+    backupExpiryDueAt: null,
+    affectedProviderIntentIds: [],
   };
-  let dispositionService: { listOpen: jest.Mock; resolve: jest.Mock };
+  let dispositionService: {
+    listOpen: jest.Mock;
+    listAwaitingBackupExpiry: jest.Mock;
+    resolve: jest.Mock;
+    verifyBackupExpiry: jest.Mock;
+  };
   let controller: DataDispositionController;
 
   beforeEach(() => {
     dispositionService = {
       listOpen: jest.fn().mockResolvedValue([]),
+      listAwaitingBackupExpiry: jest.fn().mockResolvedValue([]),
       resolve: jest.fn().mockResolvedValue(resolvedTask),
+      verifyBackupExpiry: jest.fn().mockResolvedValue(resolvedTask),
     };
     controller = new DataDispositionController(
       dispositionService as unknown as DataDispositionService,
+    );
+  });
+
+  it('lists and verifies backup expiry within the authenticated tenant', async () => {
+    await controller.listAwaitingBackupExpiry(AUTH, 10);
+    expect(dispositionService.listAwaitingBackupExpiry).toHaveBeenCalledWith(
+      AUTH.tenantId,
+      10,
+    );
+
+    await controller.verifyBackupExpiry(AUTH, TASK_ID, {
+      verificationReference: 'backup-evidence://expired',
+    });
+    expect(dispositionService.verifyBackupExpiry).toHaveBeenCalledWith(
+      AUTH.tenantId,
+      TASK_ID,
+      AUTH.actorId,
+      'backup-evidence://expired',
     );
   });
 

@@ -28,6 +28,7 @@ import { CasePolicyBinding } from '../database/entities/case-policy-binding.enti
 import { PolicyCatalogGeneration } from '../database/entities/policy-catalog-generation.entity';
 import { EvaluationInputManifest } from '../database/entities/evaluation-input-manifest.entity';
 import { AgentRun } from '../database/entities/agent-run.entity';
+import { AgentModelInvocation } from '../database/entities/agent-model-invocation.entity';
 import { ToolAttempt } from '../database/entities/tool-attempt.entity';
 import { AgentBudgetLedger } from '../database/entities/agent-budget-ledger.entity';
 import { AgentBudgetReservation } from '../database/entities/agent-budget-reservation.entity';
@@ -39,6 +40,7 @@ import { ProviderCertificationRecord } from '../database/entities/provider-certi
 import { ProviderApprovalRecord } from '../database/entities/provider-approval-record.entity';
 import { ProviderActivation } from '../database/entities/provider-activation.entity';
 import { ConsentRecord } from '../database/entities/consent-record.entity';
+import { PermissiblePurposeDecision } from '../database/entities/permissible-purpose-decision.entity';
 import { CommunicationMessage } from '../database/entities/communication-message.entity';
 import { CommunicationTemplateStatus } from '../database/enums/communication.enum';
 import {
@@ -164,6 +166,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         PolicyCatalogGeneration,
         EvaluationInputManifest,
         AgentRun,
+        AgentModelInvocation,
         ToolAttempt,
         AgentBudgetLedger,
         AgentBudgetReservation,
@@ -175,6 +178,7 @@ describeOrSkip('createCaseConditionsActivities', () => {
         ProviderApprovalRecord,
         ProviderActivation,
         ConsentRecord,
+        PermissiblePurposeDecision,
         CommunicationMessage,
         CommunicationTemplate,
         DataDispositionTask,
@@ -799,6 +803,181 @@ describeOrSkip('createCaseConditionsActivities', () => {
     expect(events[0].payload).toMatchObject({
       caseId,
       reason: 'synthetic failure for markManualReview test',
+    });
+  });
+
+  // M7-055: an M7-036 audit found these two activities — the actual
+  // database-backed logic behind "reviewer-governed workflow cancellation
+  // and duplicate-safe recovery" — had zero direct test coverage anywhere
+  // in the repository. case-conditions.workflow.spec.ts's own real-Temporal
+  // suite proves Temporal's own signal/replay/worker-restart mechanics
+  // work, using mocked activities; it never proves this real SQL logic is
+  // correct. These tests close that gap directly, against a real database,
+  // the same way every other activity in this file is proven.
+  describe('prepareWorkflowRecovery (Section 9.5 recovery, M7-036)', () => {
+    it('returns RESTART_COLLECTION and writes workflow_run.recovery_started when the case has no active condition at all', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+
+      const result = await activities.prepareWorkflowRecovery({
+        tenantId,
+        caseId,
+        recoveryOfRunId: 'activities-spec-recovery-run-none',
+      });
+
+      expect(result).toEqual({ outcome: 'RESTART_COLLECTION' });
+      const events = await outboxEventsFor(caseId);
+      expect(events).toHaveLength(1);
+      expect(events[0].eventType).toBe(
+        OutboxEventType.WorkflowRunRecoveryStarted,
+      );
+      expect(events[0].payload).toMatchObject({
+        caseId,
+        recoveryOfRunId: 'activities-spec-recovery-run-none',
+        activeConditionCount: 0,
+      });
+    });
+
+    it('reuses the single real open condition, moving the case back to CONDITIONS_OPEN', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
+      await seedEvidence(caseId, 9000);
+      const opened = await activities.evaluateConditions({
+        tenantId,
+        caseId,
+        workflowRunId: 'activities-spec-run-for-recovery',
+      });
+      expect(opened.outcome).toBe('CONDITION_OPENED');
+
+      const result = await activities.prepareWorkflowRecovery({
+        tenantId,
+        caseId,
+        recoveryOfRunId: 'activities-spec-recovery-run-one',
+      });
+
+      expect(result).toEqual({
+        outcome: 'REUSE_OPEN_CONDITION',
+        conditionId: opened.conditionId,
+      });
+      const updated = await dataSource
+        .getRepository(LoanCase)
+        .findOneByOrFail({ id: caseId });
+      expect(updated.status).toBe(CaseStatus.CONDITIONS_OPEN);
+
+      const events = await outboxEventsFor(caseId);
+      const recoveryEvent = events.find(
+        (e) => e.eventType === OutboxEventType.WorkflowRunRecoveryStarted,
+      );
+      expect(recoveryEvent?.payload).toMatchObject({
+        recoveryOfRunId: 'activities-spec-recovery-run-one',
+        activeConditionCount: 1,
+      });
+    });
+
+    it('routes to REVIEW_REQUIRED instead of guessing when the case has more than one active condition', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 12_000 });
+      await seedEvidence(caseId, 9000);
+      const opened = await activities.evaluateConditions({
+        tenantId,
+        caseId,
+        workflowRunId: 'activities-spec-run-for-multi-recovery',
+      });
+      expect(opened.outcome).toBe('CONDITION_OPENED');
+      // A second, independently-opened active condition on the same case —
+      // real recovery must never guess which one a reviewer intended.
+      const conditionRepo = dataSource.getRepository(LoanCondition);
+      await conditionRepo.save(
+        conditionRepo.create({
+          tenantId,
+          caseId,
+          code: 'SECOND_SYNTHETIC_CONDITION',
+          description: 'A second real open condition for this test.',
+          status: ConditionStatus.WAITING_FOR_EVIDENCE,
+          policySnapshotId: null,
+          evaluationManifestId: null,
+        }),
+      );
+
+      const result = await activities.prepareWorkflowRecovery({
+        tenantId,
+        caseId,
+        recoveryOfRunId: 'activities-spec-recovery-run-multi',
+      });
+
+      expect(result).toEqual({
+        outcome: 'REVIEW_REQUIRED',
+        reviewReason: expect.stringContaining('multiple active conditions'),
+      });
+      const events = await outboxEventsFor(caseId);
+      const recoveryEvent = events.find(
+        (e) => e.eventType === OutboxEventType.WorkflowRunRecoveryStarted,
+      );
+      expect(recoveryEvent?.payload).toMatchObject({ activeConditionCount: 2 });
+    });
+  });
+
+  describe('markWorkflowCancelled (Section 9.5 cancellation, M7-036)', () => {
+    it('moves a still-in-progress case to MANUAL_REVIEW and writes a real workflow_run.cancelled event', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await activities.markCollectingEvidence({ tenantId, caseId });
+
+      await activities.markWorkflowCancelled({ tenantId, caseId });
+
+      const updated = await dataSource
+        .getRepository(LoanCase)
+        .findOneByOrFail({ id: caseId });
+      expect(updated.status).toBe(CaseStatus.MANUAL_REVIEW);
+
+      const events = await outboxEventsFor(caseId);
+      const cancelEvent = events.find(
+        (e) => e.eventType === OutboxEventType.WorkflowRunCancelled,
+      );
+      expect(cancelEvent?.payload).toMatchObject({
+        caseId,
+        scope: 'ORCHESTRATION_ONLY',
+        providerCancellationAsserted: false,
+        caseStatusAtCancellation: CaseStatus.COLLECTING_EVIDENCE,
+      });
+    });
+
+    it('does not regress an already-READY_FOR_UNDERWRITING case back to MANUAL_REVIEW — a late cancel losing the race to a real terminal transition', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await activities.markReadyForUnderwriting({ tenantId, caseId });
+
+      await activities.markWorkflowCancelled({ tenantId, caseId });
+
+      const updated = await dataSource
+        .getRepository(LoanCase)
+        .findOneByOrFail({ id: caseId });
+      expect(updated.status).toBe(CaseStatus.READY_FOR_UNDERWRITING);
+
+      const events = await outboxEventsFor(caseId);
+      const cancelEvent = events.find(
+        (e) => e.eventType === OutboxEventType.WorkflowRunCancelled,
+      );
+      expect(cancelEvent?.payload).toMatchObject({
+        caseStatusAtCancellation: CaseStatus.READY_FOR_UNDERWRITING,
+      });
+    });
+
+    it('does not regress an already-CLOSED case back to MANUAL_REVIEW either', async () => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      await dataSource
+        .getRepository(LoanCase)
+        .update({ id: caseId }, { status: CaseStatus.CLOSED });
+
+      await activities.markWorkflowCancelled({ tenantId, caseId });
+
+      const updated = await dataSource
+        .getRepository(LoanCase)
+        .findOneByOrFail({ id: caseId });
+      expect(updated.status).toBe(CaseStatus.CLOSED);
+
+      const events = await outboxEventsFor(caseId);
+      const cancelEvent = events.find(
+        (e) => e.eventType === OutboxEventType.WorkflowRunCancelled,
+      );
+      expect(cancelEvent?.payload).toMatchObject({
+        caseStatusAtCancellation: CaseStatus.CLOSED,
+      });
     });
   });
 
