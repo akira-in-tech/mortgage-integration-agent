@@ -198,15 +198,27 @@ export class TemporalClientService implements OnModuleDestroy {
    * the same underlying `getSystemInfo` RPC directly, every time, with its
    * own short deadline so a truly dead connection fails the health check
    * fast rather than hanging the response.
+   *
+   * The deadline wraps `getConnection()` too, not just the RPC -- a real
+   * deploy of this exact method found that gap the hard way: on a brand
+   * new task, `getConnection()`'s own first-ever `Connection.connect()`
+   * call (which does its own connectivity handshake) can outlast the
+   * ALB target group's real 5s health-check timeout
+   * (`terraform/staging/alb.tf`) on its own, before the RPC below even
+   * starts -- ECS then kills the task as unhealthy before Temporal ever
+   * gets a real chance to finish connecting, forever. 2.5s here leaves
+   * real headroom under that 5s budget for the parallel database check
+   * and response overhead in `HealthController.ready()`.
    */
   async checkConnectivity(): Promise<void> {
-    const connection = await this.getConnection();
     await Promise.race([
-      connection.workflowService.getSystemInfo({}),
+      this.getConnection().then((connection) =>
+        connection.workflowService.getSystemInfo({}),
+      ),
       new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Temporal connectivity check timed out')),
-          3_000,
+          2_500,
         ),
       ),
     ]);

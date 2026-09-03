@@ -13144,3 +13144,18 @@ Real, against the live deployed staging environment (2026-09-03):
 ### Next safe step
 
 Not attempted here: finding exactly which past `terraform apply` (or manual change) caused the security-group rule to drift from Terraform's own already-correct config in the first place -- the fix restores correct state and adds detection for the user-facing symptom, but doesn't explain the drift's origin. Worth a `terraform plan` review against the real state the next time this environment is touched, to catch whether any other resource has similarly drifted.
+
+### Follow-up: the fix's own real deploy failed, for a real reason
+
+Deploying M7-073's `checkConnectivity()` change surfaced a second, real bug in the same slice: the API's ECS service reported 3 real `failedTasks` and never stabilized (`aws ecs describe-services`), eventually running the deploy's GitHub Actions job past its own 30-minute `timeout-minutes` and cancelling it -- not a false alarm, a real deployment failure. Root cause: `checkConnectivity()`'s deadline only wrapped the `getSystemInfo` RPC, not `getConnection()` itself; on a brand-new task, `getConnection()`'s first-ever `Connection.connect()` call (which performs its own real connectivity handshake) could outlast the ALB target group's real 5-second health-check timeout (`terraform/staging/alb.tf`) on its own, before the wrapped RPC even started -- so ECS killed every new task as unhealthy before Temporal ever got a real chance to finish connecting. Fixed by moving the deadline to wrap the whole operation (`getConnection()` and the RPC together), at 2.5s -- comfortable headroom under the real 5s ALB budget alongside the parallel database check. The service's `deploymentCircuitBreaker` is disabled (confirmed via `aws ecs describe-services`), so this never endangered the live site: the prior, already-healthy task revision kept serving every real request throughout, at `minimumHealthyPercent: 100`.
+
+### Verification (follow-up)
+
+```text
+- npx tsc --noEmit / npm run lint / npm run build: clean
+- health.controller.spec.ts: 5/5 passed
+- Confirmed via aws ecs describe-services before this fix: the prior
+  revision (25) stayed ACTIVE/COMPLETED with 1 real running task the
+  entire time the broken revision (26) accumulated 3 failedTasks --
+  the live site was never actually down
+```
