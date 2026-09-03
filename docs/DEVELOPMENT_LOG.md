@@ -12839,3 +12839,43 @@ npm test -- --ci --runInBand --forceExit
 ```
 
 The full protected CI run must also complete the live database, Temporal, Keycloak/OIDC, console, generated-contract, container, security, and configuration gates.
+
+## M7-066: Product README and live guided-workflow evidence
+
+### Status
+
+Implemented with a freshly captured public synthetic-workflow image. Protected CI and a branch merge are required before this presentation slice is published on `main`.
+
+### Problem
+
+The README had a sound technical opening, but then became a long internal implementation reference. A portfolio visitor could not see the product state, understand the guided workflow quickly, or distinguish the bounded Agent and simulated environment from a real lending claim.
+
+### Implementation
+
+- Captured `docs/assets/meridian-guided-review.png` from a new isolated public guest sandbox after the real staging workflow collected simulated evidence and opened the intentionally triggered income-verification condition.
+- Rebuilt the README around a product outcome, a live demo call to action, the screenshot, a three-minute walkthrough, operations-team outcomes, product principles, a concise architecture, delivery confidence, and a compact developer quickstart.
+- Retained explicit boundaries beside the product narrative: generated data only, no real provider call, lending decision, funds movement, legal conclusion, certification, or automated-underwriting equivalence.
+- Linked implementation depth to the existing charter, engineering log, operations runbook, generated OpenAPI contract, and TypeScript client instead of making the landing page an exhaustive implementation manual.
+
+### Verification plan
+
+```text
+Live guest sandbox:
+  created an isolated synthetic case
+  ran the Temporal evaluation
+  observed evidence collection and an open reviewer condition
+  captured a 1440x900 PNG containing synthetic values only
+
+git diff --check
+README link and image-path validation
+npm run lint:check
+npm run build
+npm --prefix console run lint
+npm --prefix console run test
+npm --prefix console run build
+```
+
+### Boundaries
+
+- The screenshot is a live synthetic state, not a mocked or manually edited UI, and contains no real borrower identity, account, or provider data.
+- README language remains narrower than a production lending claim. The persistent AWS environment is presented as staging demonstration evidence, not lender authorization.
