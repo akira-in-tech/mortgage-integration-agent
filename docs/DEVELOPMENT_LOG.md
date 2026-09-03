@@ -13092,3 +13092,55 @@ Deployed to staging and verified live; README updated with real evidence.
 - Both new screenshots reviewed by hand before use
 - git diff --check: passed
 ```
+
+## M7-073: real production incident — a live security-group drift silently blocked every new evaluation, and `/health/ready` couldn't see it
+
+### Status
+
+Root-caused, fixed, and verified against the real live staging environment. This was a real, user-reported production incident, not a hypothetical.
+
+### Background
+
+The user reported a live error on the deployed demo: clicking **Run simulated evaluation** on a real case failed with a visible `Failed to connect before the deadline` message. Not assumed to be transient — reproduced it myself against the real deployed edge, three times in a row, 3/3 failures, including after forcing a brand-new API task via `aws ecs update-service --force-new-deployment` (ruling out "just a stale connection on one task").
+
+### Root cause
+
+Direct evidence, not inference:
+
+- `aws logs tail` on the real API container: a real `@grpc/grpc-js` stack trace (`checkState` / `internal-channel.js`) -- the API's Temporal *client* gRPC channel could not connect.
+- Temporal's own container logs (2 real hours checked): clean, no errors, no warnings, CPU 5-7% the whole window -- the Temporal server itself was healthy and not the problem.
+- AWS Cloud Map's registered instance IP for Temporal exactly matched the real running task's real ENI IP -- DNS/service discovery was not the problem.
+- `aws ec2 describe-security-groups` on the *real, live* security group both the API and Temporal tasks are actually attached to (confirmed identical group ID for both, not inferred from Terraform) showed only one ingress rule: port 3000 from the ALB. **The self-referencing "allow all app-internal traffic" rule this project's own `terraform/staging/security-groups.tf` (`aws_security_group_rule.app_internal`, ports 0-65535, `self = true`) declares was simply not present on the real deployed resource** -- a real drift between Terraform's own already-correct config and the actual AWS state, cause not fully determined (not a recent `terraform apply` from this session; the security group's own creation timestamp predates this session's changes). Port 7233 (Temporal's gRPC port) was never reachable for a *new* connection. The worker process kept working throughout because its own already-established, continuously-active gRPC connection to Temporal was never torn down by the security-group change -- security groups govern new connection establishment, not already-open, actively-used connections. Every fresh connection attempt -- including a brand-new API task's very first one -- failed identically.
+
+### The second, compounding gap: `/health/ready` never checked Temporal at all
+
+`GET /health/ready` -- the exact endpoint ECS's own health check polls, and the exact endpoint this session's own verification curl'd as "200 = healthy" after every deploy throughout this project -- only ever ran `SELECT 1` against Postgres. It had no way to detect that the API's Temporal connectivity was completely broken. ECS never restarted the unhealthy task (there was nothing for it to detect), and every prior "health check: 200" in this session's own verification work gave real but incomplete confidence.
+
+### Fix
+
+1. **Immediate, real remediation**: reconciled the drift by re-running the real, already-established `deploy-staging.yml` pipeline (GitHub Actions OIDC, not local AWS credentials) -- its `terraform apply` restored the missing rule against the already-correct config. Verified directly afterward: `aws ec2 describe-security-groups` now shows the real 0-65535 self-referencing rule present, and a real live `startWorkflowRun` call against the deployed edge returned a real `workflowId`/`runId` -- the exact action that was failing now succeeds.
+2. **The durable code fix**: `TemporalClientService.checkConnectivity()` (new) calls the real `getSystemInfo` RPC directly against the same connection object every other Temporal call uses -- deliberately *not* `Connection.ensureConnected()`, whose result the SDK itself memoizes after the first success, which would have kept reporting healthy forever after this exact kind of later failure. Bounded to a 3s internal deadline so a genuinely dead connection fails the health check fast. `HealthController.ready()` now checks the database and Temporal in parallel (`Promise.allSettled`) and fails closed (503, naming which dependency failed, no internal error detail leaked) if either is unreachable -- so the next time this exact class of incident happens, ECS's own health check will actually see it and cycle the task automatically instead of an unhealthy task quietly serving broken responses for hours.
+
+### Verification
+
+```text
+Real, against the live deployed staging environment (2026-09-03):
+- Reproduced the real user-reported failure directly: 3/3 curl attempts
+  against the live edge, including after a forced fresh API task,
+  all failed identically with "Failed to connect before the deadline"
+- Root cause confirmed via real AWS API calls (CloudWatch Logs, Cloud Map,
+  EC2 security groups), not assumed
+- Re-ran deploy-staging.yml (run 33801155720): success
+- Post-deploy: aws ec2 describe-security-groups shows the real
+  0-65535 self-referencing rule restored
+- Post-deploy: a real POST /v1/demo-sandbox/session followed by a real
+  startWorkflowRun GraphQL mutation against the live edge succeeded,
+  returning a real workflowId/runId -- confirmed fixed, not assumed
+- health.controller.spec.ts: 5/5 passed (default-healthy, DB-down,
+  Temporal-down, and both-down cases)
+- npx tsc --noEmit / npm run lint / npm run build: clean
+```
+
+### Next safe step
+
+Not attempted here: finding exactly which past `terraform apply` (or manual change) caused the security-group rule to drift from Terraform's own already-correct config in the first place -- the fix restores correct state and adds detection for the user-facing symptom, but doesn't explain the drift's origin. Worth a `terraform plan` review against the real state the next time this environment is touched, to catch whether any other resource has similarly drifted.

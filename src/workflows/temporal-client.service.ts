@@ -186,6 +186,32 @@ export class TemporalClientService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Real-time Temporal reachability check for `/health/ready` (M7-073).
+   * Deliberately does NOT use `Connection.ensureConnected()` -- that
+   * result is memoized by the SDK itself, so a connection that was healthy
+   * once and later silently died (the real failure this method exists to
+   * catch: a long-lived gRPC channel going stale behind ECS networking
+   * during a quiet period, discovered live on staging as a real
+   * "Failed to connect before the deadline" error on the next actual
+   * workflow-start call) would keep reporting healthy forever. This calls
+   * the same underlying `getSystemInfo` RPC directly, every time, with its
+   * own short deadline so a truly dead connection fails the health check
+   * fast rather than hanging the response.
+   */
+  async checkConnectivity(): Promise<void> {
+    const connection = await this.getConnection();
+    await Promise.race([
+      connection.workflowService.getSystemInfo({}),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Temporal connectivity check timed out')),
+          3_000,
+        ),
+      ),
+    ]);
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.connectionPromise) {
       const connection = await this.connectionPromise;
