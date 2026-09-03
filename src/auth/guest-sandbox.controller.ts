@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -15,6 +16,7 @@ import {
   GuestSandboxService,
   GuestSandboxSummary,
 } from './guest-sandbox.service';
+import { CreateGuestSandboxSessionDto } from './dto/create-guest-sandbox-session.dto';
 
 /** Public entry point for an isolated synthetic portfolio workspace. */
 @ApiTags('portfolio-demo')
@@ -29,8 +31,9 @@ export class GuestSandboxController {
   @ApiOperation({ operationId: 'createGuestSandboxSession' })
   create(
     @Res({ passthrough: true }) response: Response,
+    @Body() scenario: CreateGuestSandboxSessionDto,
   ): Promise<GuestSandboxSummary> {
-    return this.sandboxService.create(response);
+    return this.sandboxService.create(response, scenario);
   }
 
   @Get('session')

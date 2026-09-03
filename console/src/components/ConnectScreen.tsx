@@ -20,12 +20,33 @@ export function ConnectScreen({
   const [redirecting, setRedirecting] = useState(false);
   const [startingSandbox, setStartingSandbox] = useState(false);
   const [sandboxError, setSandboxError] = useState<string | null>(null);
+  const [customizing, setCustomizing] = useState(false);
+  const [requestedAmount, setRequestedAmount] = useState('');
+  const [statedMonthlyIncome, setStatedMonthlyIncome] = useState('');
 
   async function startSandbox() {
     setStartingSandbox(true);
     setSandboxError(null);
     try {
-      const sandbox = await createDemoSandbox();
+      // Blank fields omit that key entirely rather than sending an empty
+      // string or NaN — the server's own default (the original,
+      // deliberate-mismatch guided scenario) applies exactly as it did
+      // before this customization existed.
+      const parsedAmount = Number(requestedAmount);
+      const parsedIncome = Number(statedMonthlyIncome);
+      const scenario = {
+        ...(requestedAmount.trim() &&
+        Number.isFinite(parsedAmount) &&
+        parsedAmount > 0
+          ? { requestedAmount: parsedAmount }
+          : {}),
+        ...(statedMonthlyIncome.trim() &&
+        Number.isFinite(parsedIncome) &&
+        parsedIncome > 0
+          ? { statedMonthlyIncome: parsedIncome }
+          : {}),
+      };
+      const sandbox = await createDemoSandbox(scenario);
       // Audit fields expect an opaque UUID. The server generates it with the
       // isolated tenant rather than trusting a browser-chosen display name.
       setStoredActorId(sandbox.actorId ?? '');
@@ -104,6 +125,66 @@ export function ConnectScreen({
           policy checks, reviewer actions, and audit history. Your workspace
           expires automatically.
         </p>
+
+        <button
+          type="button"
+          onClick={() => setCustomizing((value) => !value)}
+          aria-expanded={customizing}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--accent)',
+            marginBottom: customizing ? 12 : 18,
+          }}
+        >
+          {customizing ? '▾ Hide scenario' : '▸ Customize the scenario'}
+        </button>
+
+        {customizing && (
+          <div style={{ marginBottom: 18 }}>
+            <FieldLabel htmlFor="scenario-amount">
+              Requested loan amount ($)
+            </FieldLabel>
+            <input
+              id="scenario-amount"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              value={requestedAmount}
+              onChange={(e) => setRequestedAmount(e.target.value)}
+              placeholder="e.g. 425000"
+              style={inputStyle}
+            />
+            <FieldLabel htmlFor="scenario-income">
+              Stated monthly income ($)
+            </FieldLabel>
+            <input
+              id="scenario-income"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              value={statedMonthlyIncome}
+              onChange={(e) => setStatedMonthlyIncome(e.target.value)}
+              placeholder="e.g. 8500"
+              style={{ ...inputStyle, marginBottom: 4 }}
+            />
+            <p
+              style={{
+                fontSize: 11,
+                color: 'var(--ink-muted)',
+                lineHeight: 1.5,
+                margin: 0,
+              }}
+            >
+              Hypothetical numbers for this synthetic case only — never real
+              borrower data. Leave blank for the default guided scenario.
+            </p>
+          </div>
+        )}
         {sandboxError && (
           <div
             role="alert"

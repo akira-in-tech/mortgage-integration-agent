@@ -19,6 +19,7 @@ import { ApiClientRole } from '../database/enums/api-client.enum';
 import { NodeEnvironment } from '../config/env.validation';
 import { readCookie } from './http-cookie';
 import { purgeTenantData } from '../database/purge-tenant-data';
+import { CreateGuestSandboxSessionDto } from './dto/create-guest-sandbox-session.dto';
 
 export const GUEST_SANDBOX_COOKIE = 'meridian_guest_sandbox';
 export const GUEST_SANDBOX_CSRF_COOKIE = 'meridian_guest_sandbox_csrf';
@@ -36,6 +37,11 @@ export interface GuestSandboxSummary {
  * Creates the public portfolio's disposable workspace. All values are
  * synthetic and the tenant id is generated server-side; a browser can resume
  * only its own opaque session and never nominate another visitor's tenant.
+ * A caller may optionally supply `requestedAmount`/`statedMonthlyIncome`
+ * (M7-071) — bounded, validated hypothetical-scenario numbers, never a
+ * route to real borrower data — so the same real evaluation responds to a
+ * visitor's own input instead of always producing the identical seeded
+ * outcome.
  *
  * `purgeExpiredSessions()` (M7-055) closes a real, previously-undisclosed
  * gap: the session row's own TTL was enforced, but the tenant/case/consent
@@ -68,7 +74,10 @@ export class GuestSandboxService {
       environment === NodeEnvironment.Production;
   }
 
-  async create(response: Response): Promise<GuestSandboxSummary> {
+  async create(
+    response: Response,
+    scenario?: CreateGuestSandboxSessionDto,
+  ): Promise<GuestSandboxSummary> {
     await this.purgeExpiredSessions();
     const actorId = randomUUID();
     const now = new Date();
@@ -93,7 +102,7 @@ export class GuestSandboxService {
           `SELECT set_config('app.current_tenant_id', $1, true)`,
           [tenant.id],
         );
-        const seededCase = await this.seedCase(manager, tenant.id);
+        const seededCase = await this.seedCase(manager, tenant.id, scenario);
         const sessionRepository = manager.getRepository(GuestSandboxSession);
         await sessionRepository.save(
           sessionRepository.create({
@@ -191,6 +200,7 @@ export class GuestSandboxService {
   private async seedCase(
     manager: EntityManager,
     tenantId: string,
+    scenario?: CreateGuestSandboxSessionDto,
   ): Promise<LoanCase> {
     const caseRepository = manager.getRepository(LoanCase);
     const loanCase = await caseRepository.save(
@@ -198,11 +208,16 @@ export class GuestSandboxService {
         tenantId,
         idempotencyKey: `portfolio-sandbox-${randomUUID()}`,
         borrowerId: `synthetic-borrower-${randomUUID().slice(0, 8)}`,
-        requestedAmount: 425000,
+        requestedAmount: scenario?.requestedAmount ?? 425000,
         loanType: LoanType.CONVENTIONAL,
-        // This deliberate mismatch makes the seeded policy pack route the
-        // case to a visible income-review condition after workflow start.
-        statedMonthlyIncome: 1,
+        // The default (no scenario supplied) is a deliberate mismatch that
+        // routes the seeded policy pack to a visible income-review
+        // condition after workflow start -- the guided walkthrough's own
+        // documented behavior. A visitor-supplied statedMonthlyIncome is
+        // real input to the same comparison: it may or may not open a
+        // condition, depending on how it compares to the simulator's own
+        // deterministically seeded "verified" income for this borrowerId.
+        statedMonthlyIncome: scenario?.statedMonthlyIncome ?? 1,
         jurisdictionCode: 'US-CA',
         status: CaseStatus.DRAFT,
       }),

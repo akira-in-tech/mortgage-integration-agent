@@ -42,6 +42,7 @@ function requestWithCookies(
 describe('GuestSandboxService', () => {
   let sessions: GuestSandboxSession[];
   let seededConsent: Partial<ConsentRecord> | null;
+  let seededCase: Partial<LoanCase> | null;
   let sessionRepository: {
     create: jest.Mock;
     save: jest.Mock;
@@ -55,6 +56,7 @@ describe('GuestSandboxService', () => {
   beforeEach(() => {
     sessions = [];
     seededConsent = null;
+    seededCase = null;
     sessionRepository = {
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => {
@@ -102,10 +104,13 @@ describe('GuestSandboxService', () => {
       if (entity === LoanCase) {
         return {
           create: jest.fn((value) => value),
-          save: jest.fn(async (value) => ({
-            ...value,
-            id: `30000000-0000-4000-8000-${String(++caseSequence).padStart(12, '0')}`,
-          })),
+          save: jest.fn(async (value) => {
+            seededCase = value;
+            return {
+              ...value,
+              id: `30000000-0000-4000-8000-${String(++caseSequence).padStart(12, '0')}`,
+            };
+          }),
         };
       }
       if (entity === ConsentRecord) {
@@ -178,6 +183,30 @@ describe('GuestSandboxService', () => {
       tenantId: created.tenantId,
       actorId: created.actorId,
       role: 'REVIEWER',
+    });
+  });
+
+  it('defaults to the original deliberate-mismatch scenario when no scenario is supplied', async () => {
+    await service.create(response as Response);
+
+    expect(seededCase).toMatchObject({
+      requestedAmount: 425000,
+      statedMonthlyIncome: 1,
+    });
+  });
+
+  // M7-071: a visitor's own requestedAmount/statedMonthlyIncome now reach
+  // the seeded case for real, instead of the walkthrough always producing
+  // the identical hardcoded scenario.
+  it('uses a caller-supplied scenario for the seeded case instead of the hardcoded defaults', async () => {
+    await service.create(response as Response, {
+      requestedAmount: 612000,
+      statedMonthlyIncome: 9500,
+    });
+
+    expect(seededCase).toMatchObject({
+      requestedAmount: 612000,
+      statedMonthlyIncome: 9500,
     });
   });
 

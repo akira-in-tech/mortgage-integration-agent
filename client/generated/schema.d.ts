@@ -987,6 +987,10 @@ export interface components {
         OidcLogoutResultDto: {
             logoutUrl?: Record<string, never>;
         };
+        CreateGuestSandboxSessionDto: {
+            requestedAmount?: number;
+            statedMonthlyIncome?: number;
+        };
         AuditEvent: Record<string, never>;
         DataDispositionTaskQueueItemDto: {
             /** Format: uuid */
@@ -1804,7 +1808,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGuestSandboxSessionDto"];
+            };
+        };
         responses: {
             201: {
                 headers: {

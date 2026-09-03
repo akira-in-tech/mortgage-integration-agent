@@ -13021,3 +13021,50 @@ Implemented. Presentation-only.
 ### Correction
 
 The invented compass/meridian-line mark above was replaced immediately after: the console already has a real, shipping brand mark — `BrandMark` in `console/src/components/icons.tsx`, the house-outline icon in the accent-colored rounded square `NavRail.tsx` renders top-left of every console screen (visible in the M7-066/M7-069 screenshots themselves). The user pointed this out directly. Both SVGs now embed that exact path data (`M4 20V9l8-6 8 6v11` / `M9 20v-7h6v7`, white stroke, `stroke-width 2.2`) inside the same accent-colored rounded square, rather than a mark unconnected to the product's real visual identity. Re-rendered and re-reviewed both variants before committing the fix.
+
+## M7-071: caller-supplied scenario numbers for the guest sandbox
+
+### Status
+
+Implemented and verified, including a real, direct-to-Postgres local check of the new endpoint before committing.
+
+### Problem
+
+The user asked why the public demo doesn't let a visitor submit their own data for evaluation. The honest answer, checked against the real code rather than assumed: the public sandbox deliberately never accepts arbitrary user input, because nothing could then guarantee that input is synthetic rather than a real person's real data — and the simulator adapters generate their own deterministically-seeded evidence from `borrowerId` regardless, so free-form input wouldn't even reach the evaluation. The user then asked for a narrower, genuinely safe version: let a visitor type in the *scenario's own numbers* (requested loan amount, stated monthly income) — not documents, not identity, not anything that could be real PII.
+
+### Implementation
+
+- `src/auth/dto/create-guest-sandbox-session.dto.ts` (new): `requestedAmount`/`statedMonthlyIncome`, both optional, `@IsPositive()` plus a generous sandbox-only upper bound (`10,000,000` / `1,000,000`) — validated the same way `cases/dto/create-case.dto.ts` validates the real, authenticated case-creation path.
+- `GuestSandboxController.create()` now accepts this as its request body; `GuestSandboxService.create()`/`seedCase()` use the caller's values when present and fall back to the original hardcoded scenario (the documented deliberate income mismatch) when the body is empty — the default, un-customized walkthrough is byte-for-byte unchanged.
+- `console/src/demo-sandbox.ts`'s `createDemoSandbox()` now sends this body (`{}` by default). `ConnectScreen.tsx` adds a collapsed-by-default "Customize the scenario" section with two number inputs; a blank field is omitted from the request entirely rather than sent as `0` or an empty string, so a half-filled form still gets the server's own default for whatever it left blank.
+- Regenerated `openapi/openapi.json` and `client/generated/schema.d.ts` for the new request body schema.
+
+### Verification
+
+```text
+- guest-sandbox.service.spec.ts: added tests for the default-preserved and
+  caller-supplied-scenario cases; 6/6 passed
+- console/src/components/ConnectScreen.test.tsx (new, no prior coverage of
+  this component existed): default POST body is `{}`; a customized,
+  partially-filled form sends only the field that was actually filled in;
+  2/2 passed
+- npm --prefix console test: 14 files, 66 tests, all passed
+- npx tsc --noEmit / npm run lint / npm run build (both root and console):
+  clean
+- Real local verification against the actual running API (localhost:3000,
+  real Postgres, real Temporal) before committing, not assumed from the
+  unit tests alone:
+  - POST with no body at all: real 201 (a bodyless caller -- e.g. a
+    monitoring script -- keeps working exactly as before)
+  - POST with a custom scenario: real 201, and a direct psql read of the
+    resulting loan_cases row confirmed requestedAmount=612000.00,
+    statedMonthlyIncome=9500.00 -- the caller's own numbers, not the
+    hardcoded defaults
+  - POST with requestedAmount=-100: real 400
+  - POST with statedMonthlyIncome=99999999 (over the bound): real 400,
+    "statedMonthlyIncome must not be greater than 1000000"
+```
+
+### Boundary
+
+Still no document, identity, or free-text upload path — this stays two plain, bounded numbers describing a hypothetical scenario, never anything that could be mistaken for real borrower data. The README's own boundary language ("generated data only... does not access a real borrower") is unchanged and still accurate.

@@ -10,12 +10,21 @@ export interface DemoSandboxSession {
   caseId?: string;
 }
 
+export interface DemoSandboxScenario {
+  requestedAmount?: number;
+  statedMonthlyIncome?: number;
+}
+
 let currentSession: DemoSandboxSession | null = null;
 
-export async function createDemoSandbox(): Promise<DemoSandboxSession> {
+export async function createDemoSandbox(
+  scenario: DemoSandboxScenario = {},
+): Promise<DemoSandboxSession> {
   const response = await fetch(`${API_URL}/v1/demo-sandbox/session`, {
     method: 'POST',
     credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scenario),
   });
   if (!response.ok) throw new Error('Unable to create a live sandbox.');
   return store(validate(await response.json()));

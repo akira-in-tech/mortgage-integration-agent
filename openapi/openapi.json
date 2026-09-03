@@ -624,6 +624,16 @@
       "post": {
         "operationId": "createGuestSandboxSession",
         "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGuestSandboxSessionDto"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": ""
@@ -2741,6 +2751,23 @@
         "properties": {
           "logoutUrl": {
             "type": "object"
+          }
+        }
+      },
+      "CreateGuestSandboxSessionDto": {
+        "type": "object",
+        "properties": {
+          "requestedAmount": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 10000000
+          },
+          "statedMonthlyIncome": {
+            "type": "number",
+            "minimum": 0,
+            "exclusiveMinimum": true,
+            "maximum": 1000000
           }
         }
       },
