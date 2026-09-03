@@ -12921,3 +12921,48 @@ Real, against the live deployed staging edge (2026-09-03):
 ### Next safe step
 
 Not attempted here: adding this test to a scheduled or on-demand CI job (it deliberately stays out of the default `test:e2e` gate, matching the local live-OIDC test's own opt-in convention, since it needs a real AWS Secrets Manager read and touches real staging state on every run). The remaining smaller, lower-priority items named in the M7-055 entry (M7-032's adapter-spec duplication, M7-044's dispatch-service-level rate-limit test, M7-036's console Cancel-branch UI coverage, a real Temporal `.cancel()` test) are unrelated to this slice and still open.
+
+## M7-068: close the four remaining lower-priority M7-030–054 audit findings
+
+### Status
+
+Implemented and verified. Closes every item the M7-055 and M7-067 entries had named and deliberately deferred as smaller and lower-severity.
+
+### What changed
+
+1. **M7-032's adapter-spec duplication removed**: each of the six provider adapters' own `.spec.ts` files (`credit-report`, `identity-verification`, `asset-verification`, `document-verification`, `plaid-income`, `plaid-income-sandbox`) re-tested identity/capability/mode/operation-shape and `healthCheck()` almost verbatim to `provider-adapters.contract.spec.ts`'s shared `describeProviderAdapterContract()` suite. Removed exactly those two tests from each file — never the `submit()` mock-call-argument checks, `normalize()`'s reference-identity assertion, or raw service-rejection propagation, since the shared contract (built against each adapter's real, non-mocked service) cannot express any of those. Net: 10 fewer redundant tests, zero coverage lost — confirmed by running the full set before and after.
+
+2. **M7-044's dispatch-service-level rate-limit test added**: `WebhookEndpointService.reserveOutboundAttempt()` already had a direct real-Postgres proof; nothing exercised how `WebhookDispatchService.attemptDelivery()` — the actual caller — reacts to a real `{ reserved: false }` result. New `webhook-dispatch.service.spec.ts` test sets an endpoint's limit to one, queues two events for it, and confirms in one `dispatchPendingEvents()` call: exactly one real HTTP request lands, the deferred delivery stays `PENDING` with zero attempts recorded (not a failed attempt) and a real future `nextAttemptAt`, and the endpoint's own `rateWindowAttempts` reflects the real contended reservation.
+
+3. **M7-036's console Cancel-branch UI coverage added**: `AdminQueues.test.tsx` had a full test for the Recover branch (terminal workflow) but none for Cancel (a `RUNNING` workflow) — a real, literal test-coverage gap, not an implemented-but-untested nuance. New test drives the same UI through a `RUNNING` fixture, confirms the `Cancel` / `Request cancellation` labels, the real `POST .../cancel` call with `{reason}`, the post-cancellation message, and that a workflow the cancellation just moved off `RUNNING` no longer offers a redundant Cancel action.
+
+4. **A real Temporal `.cancel()` test**, named as the one item this session's own M7-055 entry explicitly deferred: `case-conditions.workflow.spec.ts` now starts a real workflow against a real local Temporal server, waits for the real activity boundary (`evaluateConditions`) that precedes the durable condition wait, calls `handle.cancel()` through the real client, and asserts on what the real server actually returned — a `WorkflowFailedError` whose `cause` is a real `CancelledFailure` — not an assumption about what cancellation "should" produce. Directly confirms `markWorkflowCancelled` (the activity `CancellationScope.nonCancellable(...)` shields) was actually called with the correct `{tenantId, caseId}` before the workflow's history closed, and that the normal-completion activities (`resolveCondition`, `markReadyForUnderwriting`) were not.
+
+### A real, previously-undisclosed local-environment gap found and fixed along the way
+
+Every test in `case-conditions.workflow.spec.ts` — all 11 pre-existing ones, not only the new one — was silently broken on this machine's active shell Node version (v22.23.2), failing deep inside `@temporalio/worker`'s webpack-based workflow bundler (`RawModule is not a constructor`, `Cannot read properties of undefined (reading 'createContext')`) with no connection to this slice's own changes — confirmed by reproducing the identical crash on an untouched pre-existing test. `package.json`'s `engines.node` requires `>=24.0.0` (and CI's own workflow already pins Node 24), but nothing had enforced or even surfaced that mismatch locally until this slice happened to need this specific real-Temporal suite. `nvm use 24.19.0` plus a clean `npm ci` resolved it completely; every test in the file (and everything else touched in this slice) was then re-verified for real under Node 24. Not a code defect, but reported plainly since it silently blocked a whole category of real-infrastructure tests on this machine and could do the same to any other local checkout of this branch.
+
+### Verification
+
+```text
+Real, against local PostgreSQL, a real local Temporal server (docker-compose),
+and Node v24.19.0 (matching CI) (2026-09-03):
+- credit-report/identity-verification/asset-verification/
+  document-verification/plaid-income adapter specs +
+  provider-adapters.contract.spec.ts: 6 suites, 43 tests, all passed
+- plaid-income-sandbox.adapter.spec.ts: correctly skipped (no real
+  Plaid sandbox credentials configured)
+- webhook-dispatch.service.spec.ts: 7 tests, all passed, including
+  the new rate-limit deferral test
+- case-conditions.workflow.spec.ts: 12 tests, all passed, including
+  the new real Temporal .cancel() test
+- console/src/components/AdminQueues.test.tsx: 6 tests, all passed,
+  including the new Cancel-branch test
+- npx tsc --noEmit: 0 errors
+- npm run lint / npm run build: clean
+- npm --prefix console run lint / test / build: clean (64 tests)
+```
+
+### Next safe step
+
+Not attempted here, out of scope for this slice: raising this machine's default shell Node version so a future session doesn't rediscover the same `engines` mismatch from scratch. Every item named across the M7-030–054 audit and this session's own follow-up work is now closed.

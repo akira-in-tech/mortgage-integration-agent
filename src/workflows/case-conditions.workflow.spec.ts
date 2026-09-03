@@ -1,7 +1,8 @@
 import 'reflect-metadata';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
-import { ApplicationFailure } from '@temporalio/common';
+import { WorkflowFailedError } from '@temporalio/client';
+import { ApplicationFailure, CancelledFailure } from '@temporalio/common';
 import { v4 as uuidv4 } from 'uuid';
 import { caseConditionsWorkflow } from './case-conditions.workflow';
 import {
@@ -199,6 +200,65 @@ describeOrSkip('caseConditionsWorkflow', () => {
       tenantId: 'tenant-1',
       caseId: 'case-1',
     });
+  });
+
+  it('runs the real Temporal cancellation path: a client .cancel() call reaches the workflow while it is durably waiting, and markWorkflowCancelled fires before the run ends', async () => {
+    const activities = makeMockActivities({
+      evaluateConditions: jest.fn().mockResolvedValue({
+        outcome: 'CONDITION_OPENED',
+        conditionId: 'condition-1',
+      }),
+    });
+    const taskQueue = `test-${uuidv4()}`;
+
+    const failure = await runWorker(activities, taskQueue, async () => {
+      const handle = await env.client.workflow.start(caseConditionsWorkflow, {
+        taskQueue,
+        workflowId: `test-${uuidv4()}`,
+        args: [
+          { tenantId: 'tenant-1', caseId: 'case-1', borrowerId: 'borrower-1' },
+        ],
+      });
+
+      // Wait for the real activity boundary the workflow reaches right
+      // before its durable condition wait, the same synchronization point
+      // case-conditions.activities.spec.ts's own markWorkflowCancelled
+      // tests use — cancelling any earlier would race evaluateConditions
+      // instead of proving cancellation reaches a genuinely durably-
+      // waiting workflow.
+      await waitForMockCalls(activities.evaluateConditions as jest.Mock, 1);
+
+      await handle.cancel();
+
+      return handle.result().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    });
+
+    // A real Temporal server, not a mock, produced this exact shape: the
+    // workflow's own try/catch (case-conditions.workflow.ts) re-throws
+    // after cancellation, so the client sees a real WorkflowFailedError
+    // whose cause is a real CancelledFailure — not this test's own
+    // assumption about what cancellation "should" look like.
+    expect(failure).toBeInstanceOf(WorkflowFailedError);
+    expect((failure as WorkflowFailedError).cause).toBeInstanceOf(
+      CancelledFailure,
+    );
+
+    // The actual point of this test: CancellationScope.nonCancellable(...)
+    // genuinely ran markWorkflowCancelled to completion before the
+    // workflow's history closed, proving the cleanup this codebase relies
+    // on to keep the durable operational record isn't itself lost to the
+    // same cancellation it's reacting to.
+    expect(activities.markWorkflowCancelled).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      caseId: 'case-1',
+    });
+    // resolveCondition/markReadyForUnderwriting belong to the normal
+    // completion path this cancellation deliberately never reached.
+    expect(activities.resolveCondition).not.toHaveBeenCalled();
+    expect(activities.markReadyForUnderwriting).not.toHaveBeenCalled();
   });
 
   it('reuses exactly one durable open condition during recovery instead of collecting and evaluating again', async () => {

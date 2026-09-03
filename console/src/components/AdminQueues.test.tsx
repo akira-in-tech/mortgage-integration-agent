@@ -111,6 +111,68 @@ describe('AdminQueues', () => {
     );
   });
 
+  it('requests cancellation for a running workflow with a reviewer reason', async () => {
+    const runningWorkflow = { ...workflow, status: 'RUNNING' as const };
+    let workflowOpen = true;
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('provider-operation-intents')) return jsonResponse([]);
+        if (url.includes('data-disposition-tasks')) return jsonResponse([]);
+        if (init?.method === 'POST') {
+          workflowOpen = false;
+          return jsonResponse({
+            ...runningWorkflow,
+            status: 'CANCELLED',
+          });
+        }
+        return jsonResponse(workflowOpen ? [runningWorkflow] : []);
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<AdminQueues />);
+
+    const section = (
+      await screen.findByRole('heading', { name: 'Workflow operations' })
+    ).closest('section')!;
+    await user.click(within(section).getByRole('button', { name: 'Cancel' }));
+    const action = screen.getByRole('button', { name: 'Request cancellation' });
+    expect(action).toBeDisabled();
+    await user.type(
+      screen.getByLabelText(/What did you find/),
+      'Reviewer requested cancellation pending a policy re-check.',
+    );
+    await user.click(action);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          'Cancellation requested. Provider outcomes remain subject to reconciliation.',
+        ),
+      ).toBeInTheDocument(),
+    );
+    const post = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === 'POST',
+    );
+    expect(String(post?.[0])).toContain(
+      `/workflow-runs/${runningWorkflow.runId}/cancel`,
+    );
+    expect(post?.[1]?.body).toBe(
+      JSON.stringify({
+        reason: 'Reviewer requested cancellation pending a policy re-check.',
+      }),
+    );
+    // The queue re-fetches after a successful action — a running workflow
+    // that a cancellation just moved off RUNNING no longer offers a redundant
+    // Cancel action.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Cancel' }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it('resolves a provider-operation intent with a real note, and removes it from that queue only', async () => {
     let intentStillOpen = true;
     const fetchMock = vi.fn(

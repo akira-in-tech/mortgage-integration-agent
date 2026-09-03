@@ -1,7 +1,6 @@
 import { CreditReportAdapter } from './credit-report.adapter';
 import { CreditService } from './credit.service';
 import { CreditBureauData } from './credit.types';
-import { ProviderCapability } from '../../provider-platform/types';
 
 const GOOD_CREDIT: CreditBureauData = {
   creditScore: 720,
@@ -11,21 +10,13 @@ const GOOD_CREDIT: CreditBureauData = {
   derogatoryMarks: 0,
 };
 
+// Identity/capability/mode/operation-shape and healthCheck() are already
+// proven generically by provider-adapters.contract.spec.ts
+// (describeProviderAdapterContract) for every adapter, including this one —
+// only assertions that contract can't express (exact mock call arguments,
+// normalize()'s reference-identity pass-through, raw service-rejection
+// propagation) live here.
 describe('CreditReportAdapter', () => {
-  it('declares CREDIT/SIMULATOR identity and a reusable-lookup, non-fallback operation profile', () => {
-    const adapter = new CreditReportAdapter({} as CreditService);
-
-    expect(adapter.providerId).toBe('credit-bureau-simulator');
-    expect(adapter.capability).toBe(ProviderCapability.CREDIT);
-    expect(adapter.mode).toBe('SIMULATOR');
-    expect(adapter.operation).toEqual({
-      effectClass: 'REUSABLE_LOOKUP',
-      supportsStatusLookup: false,
-      supportsCancellation: false,
-      fallbackPolicy: 'PROHIBITED',
-    });
-  });
-
   it('submit() delegates to CreditService.getCreditData and wraps the result as a COMPLETE receipt', async () => {
     const getCreditData = jest.fn().mockResolvedValue(GOOD_CREDIT);
     const adapter = new CreditReportAdapter({ getCreditData } as any);
@@ -54,14 +45,5 @@ describe('CreditReportAdapter', () => {
     const adapter = new CreditReportAdapter({} as CreditService);
 
     expect(adapter.normalize(GOOD_CREDIT)).toBe(GOOD_CREDIT);
-  });
-
-  it('healthCheck() always reports healthy (no real external dependency to be unhealthy)', async () => {
-    const adapter = new CreditReportAdapter({} as CreditService);
-
-    const health = await adapter.healthCheck();
-
-    expect(health.healthy).toBe(true);
-    expect(typeof health.checkedAt).toBe('string');
   });
 });

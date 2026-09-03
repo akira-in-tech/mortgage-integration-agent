@@ -1,7 +1,6 @@
 import { PlaidIncomeAdapter } from './plaid-income.adapter';
 import { PlaidService } from './plaid.service';
 import { PlaidIncomeData } from './plaid.types';
-import { ProviderCapability } from '../../provider-platform/types';
 
 const GOOD_INCOME: PlaidIncomeData = {
   monthlyIncome: 9000,
@@ -10,21 +9,13 @@ const GOOD_INCOME: PlaidIncomeData = {
   incomeStability: 88,
 };
 
+// Identity/capability/mode/operation-shape and healthCheck() are already
+// proven generically by provider-adapters.contract.spec.ts
+// (describeProviderAdapterContract) for every adapter, including this one —
+// only assertions that contract can't express (exact mock call arguments,
+// normalize()'s reference-identity pass-through, raw service-rejection
+// propagation) live here.
 describe('PlaidIncomeAdapter', () => {
-  it('declares INCOME/SIMULATOR identity and a reusable-lookup, non-fallback operation profile', () => {
-    const adapter = new PlaidIncomeAdapter({} as PlaidService);
-
-    expect(adapter.providerId).toBe('plaid-simulator');
-    expect(adapter.capability).toBe(ProviderCapability.INCOME);
-    expect(adapter.mode).toBe('SIMULATOR');
-    expect(adapter.operation).toEqual({
-      effectClass: 'REUSABLE_LOOKUP',
-      supportsStatusLookup: false,
-      supportsCancellation: false,
-      fallbackPolicy: 'PROHIBITED',
-    });
-  });
-
   it('submit() delegates to PlaidService.getIncomeData and wraps the result as a COMPLETE receipt', async () => {
     const getIncomeData = jest.fn().mockResolvedValue(GOOD_INCOME);
     const adapter = new PlaidIncomeAdapter({ getIncomeData } as any);
@@ -53,14 +44,5 @@ describe('PlaidIncomeAdapter', () => {
     const adapter = new PlaidIncomeAdapter({} as PlaidService);
 
     expect(adapter.normalize(GOOD_INCOME)).toBe(GOOD_INCOME);
-  });
-
-  it('healthCheck() always reports healthy (no real external dependency to be unhealthy)', async () => {
-    const adapter = new PlaidIncomeAdapter({} as PlaidService);
-
-    const health = await adapter.healthCheck();
-
-    expect(health.healthy).toBe(true);
-    expect(typeof health.checkedAt).toBe('string');
   });
 });
