@@ -12879,3 +12879,45 @@ npm --prefix console run build
 
 - The screenshot is a live synthetic state, not a mocked or manually edited UI, and contains no real borrower identity, account, or provider data.
 - README language remains narrower than a production lending claim. The persistent AWS environment is presented as staging demonstration evidence, not lender authorization.
+
+## M7-067: real Cognito hosted-UI login recorded against the deployed staging edge
+
+### Status
+
+Implemented and verified against the real, live staging environment. Closes the one remaining named gap from M7-050/M7-052: "a human browser click-through of the Cognito hosted-UI login has never been recorded against this deployed edge."
+
+### Background
+
+The local `console/e2e/oidc-live.spec.ts` Playwright test has, since M5-024, proven the full browser identity path against docker-compose's local Keycloak. It has never proven the real deployed edge — a genuinely different system: real CloudFront, a real AWS Cognito user pool, a real PKCE authorization-code exchange through the real BFF (`/v1/auth/session/*`). Nothing about the local test exercising Keycloak correctly implies the real Cognito integration is wired correctly end to end.
+
+### What changed
+
+`console/e2e/oidc-live-staging.spec.ts` (new) — opt-in (`RUN_LIVE_STAGING_OIDC=true`, skipped otherwise, matching the local test's own convention), driving a real Chromium browser against the real deployed console (`https://d136v61al3mroo.cloudfront.net`). It signs in with the pre-provisioned `aws_cognito_user.synthetic_reviewer` credential (`terraform/staging/edge.tf`) — a real account that has existed in the real user pool since M7-050/M7-052, never previously exercised through a browser. The password is never hardcoded or committed: it lives only in AWS Secrets Manager (`mortgage-agent-staging/synthetic-reviewer-password`, provisioned specifically "so a human operator can retrieve it under their AWS identity" per that resource's own comment) and is passed in only via `STAGING_REVIEWER_PASSWORD` at run time.
+
+Named honestly, not overstated: this is a real Chromium browser actually clicking through the real hosted UI, driven by Playwright rather than literally a human's own hand on the mouse. It is a stronger, more repeatable form of evidence than a one-time manual click (this exact assertion set can be re-run after every future edge change), but the charter's "human browser click-through" phrasing deserves this precision rather than a claim of literal manual testing.
+
+Discovered along the way: Cognito's classic hosted UI renders both a desktop and a mobile variant of the login form in the DOM simultaneously (CSS hides one), both sharing the same `id` — a bare `#signInFormUsername` locator hit Playwright's strict-mode collision on two elements. Fixed by scoping to `:visible`.
+
+`docs/OPERATIONS.md`: new "Live Cognito login verification" section with the exact run command. `docs/PROJECT_CHARTER.md`: the M7-050/M7-052 "Still open" sentence naming this gap now names it closed, with the same disclosure about it being an automated browser rather than manual testing.
+
+### Verification
+
+```text
+Real, against the live deployed staging edge (2026-09-03):
+- console/e2e/oidc-live-staging.spec.ts, run twice for reliability:
+  both runs green (4.3s, 4.4s)
+- Confirmed via the test's own assertions: real redirect to
+  *.auth.us-east-1.amazoncognito.com, real login accepted, real
+  meridian_session (httpOnly) and meridian_csrf cookies set, real
+  x-tenant-id and x-csrf-token GraphQL headers present, no bearer
+  token or OIDC token material ever reaches localStorage, real
+  "Cases" heading reached post-login, real Disconnect returns to the
+  logged-out Connect screen
+- npm --prefix console run lint: clean
+- npm --prefix console test (vitest): 13 files, 63 tests, all passed
+- npm --prefix console run build: clean
+```
+
+### Next safe step
+
+Not attempted here: adding this test to a scheduled or on-demand CI job (it deliberately stays out of the default `test:e2e` gate, matching the local live-OIDC test's own opt-in convention, since it needs a real AWS Secrets Manager read and touches real staging state on every run). The remaining smaller, lower-priority items named in the M7-055 entry (M7-032's adapter-spec duplication, M7-044's dispatch-service-level rate-limit test, M7-036's console Cancel-branch UI coverage, a real Temporal `.cancel()` test) are unrelated to this slice and still open.
