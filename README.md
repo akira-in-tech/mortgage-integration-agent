@@ -28,25 +28,25 @@ Meridian turns a lending-case workflow into an accountable handoff: it gathers e
 
 The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every screenshot below is a live, unedited capture of that real sandbox, not a mockup.
 
-<table>
-<tr>
-<td width="33%" valign="top">
-<img src="docs/assets/meridian-shot-1-start.png" alt="A fresh synthetic case, guide at step 2: run the simulated evaluation.">
+<div align="center">
+
+<img src="docs/assets/meridian-shot-1-start.png" alt="A fresh synthetic case, guide at step 2: run the simulated evaluation." width="820"><br>
 <b>1 · Create &amp; evaluate</b><br>
 <sub>Select <b>Try live sandbox</b> to create a tenant and a conventional-mortgage case, then run the real Temporal workflow against it.</sub>
-</td>
-<td width="33%" valign="top">
-<img src="docs/assets/meridian-shot-2-condition.png" alt="An open, policy-bound income-verification condition awaiting reviewer action.">
+
+<br><br>
+
+<img src="docs/assets/meridian-shot-2-condition.png" alt="An open, policy-bound income-verification condition awaiting reviewer action." width="820"><br>
 <b>2 · Review a condition</b><br>
 <sub>The workflow opens a deliberately triggered income-verification condition. Satisfy or waive it as the sandbox reviewer.</sub>
-</td>
-<td width="33%" valign="top">
-<img src="docs/assets/meridian-shot-3-audit.png" alt="The completed case's audit trail, showing the recorded reviewer action.">
+
+<br><br>
+
+<img src="docs/assets/meridian-shot-3-audit.png" alt="The completed case's audit trail, showing the recorded reviewer action." width="820"><br>
 <b>3 · Inspect the audit trail</b><br>
 <sub>Every workflow step, policy binding, evidence item, and reviewer action is recorded in order — nothing is inferred after the fact.</sub>
-</td>
-</tr>
-</table>
+
+</div>
 
 Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires automatically, and its tenant-scoped synthetic records are removed after expiry.
 
