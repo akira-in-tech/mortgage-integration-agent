@@ -30,6 +30,17 @@ The public sandbox is an isolated, disposable workspace — no sign-up or API ke
 
 <div align="center">
 
+<img src="docs/assets/meridian-shot-4-customize.png" alt="The connect screen with the scenario expanded, a custom requested loan amount and stated monthly income entered." width="820"><br>
+<b>0 · Customize your scenario (optional)</b><br>
+<sub>Expand <b>Customize the scenario</b> and enter your own requested loan amount and stated monthly income — two bounded numbers, never real borrower data.</sub>
+
+<br><br>
+
+<img src="docs/assets/meridian-shot-5-custom-case.png" alt="The resulting case's overview tab, showing the caller's own requested amount and stated income, not the hardcoded defaults." width="820"><br>
+<sub>The seeded case reflects exactly what you entered — <code>$550,000</code> requested, <code>$11,000</code> stated income — not a fixed demo value.</sub>
+
+<br><br>
+
 <img src="docs/assets/meridian-shot-1-start.png" alt="A fresh synthetic case, guide at step 2: run the simulated evaluation." width="820"><br>
 <b>1 · Create &amp; evaluate</b><br>
 <sub>Select <b>Try live sandbox</b> to create a tenant and a conventional-mortgage case, then run the real Temporal workflow against it.</sub>

@@ -13068,3 +13068,27 @@ The user asked why the public demo doesn't let a visitor submit their own data f
 ### Boundary
 
 Still no document, identity, or free-text upload path — this stays two plain, bounded numbers describing a hypothetical scenario, never anything that could be mistaken for real borrower data. The README's own boundary language ("generated data only... does not access a real borrower") is unchanged and still accurate.
+
+## M7-072: real deploy, live verification, and README screenshots for M7-071
+
+### Status
+
+Deployed to staging and verified live; README updated with real evidence.
+
+### Implementation
+
+- Triggered a real `deploy-staging.yml` run for `main` (M7-071 had only been merged, not yet deployed — the previous successful staging deploy predated it). Confirmed success, then confirmed live: `GET /health/ready` real `200`, and a real `POST /v1/demo-sandbox/session` with `{"requestedAmount": 550000, "statedMonthlyIncome": 11000}` against the real CloudFront edge returned a real `201`-equivalent session.
+- Captured two new screenshots against that real live deployment (Playwright, same method as every other screenshot in this README): the connect screen with the scenario expanded and filled in, and the resulting case's Overview tab showing those exact caller-supplied numbers (`$550,000` / `$11,000`) rather than the hardcoded defaults — real proof the feature does what M7-071 claims, not a mocked or hand-edited image.
+- Inserted both as a new "0 · Customize your scenario" step at the front of the README's walkthrough strip.
+
+### Verification
+
+```text
+- deploy-staging.yml run 33777301345: success
+- Live, after deploy:
+  GET  https://d136v61al3mroo.cloudfront.net/health/ready        -> 200
+  POST https://d136v61al3mroo.cloudfront.net/v1/demo-sandbox/session
+    {"requestedAmount": 550000, "statedMonthlyIncome": 11000}    -> real session, caseId returned
+- Both new screenshots reviewed by hand before use
+- git diff --check: passed
+```
