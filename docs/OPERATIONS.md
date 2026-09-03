@@ -131,6 +131,20 @@ RDS automated backups are enabled (`backup_retention_period = 1`, capped by this
 
 DELETE/ANONYMIZE removes primary evidence and provider-result content but leaves the task `COMPLETED` until managed copies expire. Work the REVIEWER queue at `GET /v1/data-disposition-tasks/backup-expiry`. After `backupExpiryDueAt`, confirm the authoritative backup/object provider no longer retains the affected copy, then call `POST /v1/data-disposition-tasks/{taskId}/verify-backup-expiry` with a non-sensitive evidence identifier. The API enforces the minimum time and legal-hold state; it does not pretend that elapsed wall time proves an external backup was deleted. A DISPATCHED or ambiguous provider operation blocks disposition until its outcome is reconciled, preventing a late callback/result from restoring removed data.
 
+### Live Cognito login verification
+
+`console/e2e/oidc-live-staging.spec.ts` walks a real Chromium browser through the real deployed staging edge: the CloudFront console, a real redirect to the real Cognito hosted UI, a real login with the pre-provisioned `aws_cognito_user.synthetic_reviewer` credential (`terraform/staging/edge.tf`), and back through the BFF session callback. It is opt-in and skipped by default. To run it:
+
+```bash
+export RUN_LIVE_STAGING_OIDC=true
+export STAGING_REVIEWER_PASSWORD="$(aws secretsmanager get-secret-value \
+  --secret-id mortgage-agent-staging/synthetic-reviewer-password \
+  --region us-east-1 --query SecretString --output text)"
+npm --prefix console run test:e2e -- e2e/oidc-live-staging.spec.ts
+```
+
+Never paste the retrieved password into a ticket, log, or the development journal — the whole point of keeping it in Secrets Manager instead of a Terraform output is that it is retrieved fresh, under the operator's own AWS identity, each time it is needed.
+
 ## Production replacement boundary
 
 For staging/production, keep `OTEL_ENABLED=true`, set a distinct low-cardinality `OTEL_SERVICE_NAME` per process, and point `OTEL_EXPORTER_OTLP_ENDPOINT` to the authorized Collector. The local Tempo filesystem, anonymous Grafana, loopback ports, and Compose volumes are development components, not a deployable production observability tier. Production needs authenticated ingress, encrypted transport, durable object storage, retention/deletion policy, backup, multi-AZ design, capacity tests, alert routing, on-call ownership, and access audit before launch approval.
