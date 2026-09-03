@@ -7,6 +7,11 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.app.repository_url
 }
 
+output "ollama_ecr_repository_url" {
+  description = "Private ECR repository containing the immutable Qwen/Ollama inference image."
+  value       = aws_ecr_repository.ollama.repository_url
+}
+
 output "ecs_cluster_name" {
   value = aws_ecs_cluster.this.name
 }

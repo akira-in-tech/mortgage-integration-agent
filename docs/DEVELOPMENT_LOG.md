@@ -12663,3 +12663,219 @@ role:
 ### Next safe step
 
 Re-run `deploy-staging.yml` with this fix, then repeat the exact live `curl -i -X POST /v1/demo-sandbox/session` check that found this bug to confirm a real `200` this time — not assumed from CI green alone, the same discipline that surfaced the bug in the first place.
+
+## M7-061: Private, immutable Qwen inference plane for the governed worker
+
+### Status
+
+Implemented in source and awaiting protected CI plus a real AWS staging rollout. This entry intentionally makes no live-inference claim until the deployed ECS task serves a schema-constrained planner request.
+
+### Problem
+
+The repository had a governed `OllamaAgentPlanner` and an explicit Qwen configuration, but the persistent AWS demo ran `DECISION_PROVIDER=rules` in both tasks. A visitor could exercise the workflow but not the open-weight planning path it was designed to support.
+
+### Implementation
+
+- Added `Dockerfile.ollama`, pinning the Ollama base-image digest and baking `qwen3.5:9b` into a separate immutable image. API and worker images do not inherit the multi-GB model artifact.
+- Added a second immutable, scan-on-push ECR repository with a short retention policy suited to large model artifacts.
+- Added an ECS Fargate inference service, private Cloud Map DNS, a dedicated security group, bounded context/concurrency, persistent model residency, readiness-gated warm-up, CloudWatch logs, and deployment circuit-breaker rollback.
+- Exposed port 11434 only from the application security group. No CloudFront, API Gateway, ALB, or browser route reaches the model service.
+- Enabled `DECISION_PROVIDER=ollama` only in the durable worker, retaining deterministic API compatibility endpoints. The worker can use Qwen only through the existing two-edge LangGraph planner, whose schema validation, token reservation, immutable provenance, allowlisted deterministic tools, and mandatory human-review routes are unchanged.
+- Extended the OIDC deployment workflow to create/import/build/push the separate image, pull its exact ECR digest, generate its SBOM, and attest build provenance plus SBOM before Terraform references it.
+
+### Decisions and boundaries
+
+- **Dedicated CPU Fargate service, not API sidecar:** model memory and warm-up cannot destabilize browser traffic or ordinary API deployments. This is intentionally a small persistent demo inference plane, not a claim of GPU-scale throughput.
+- **Baked model instead of startup pull:** recovery must not silently receive a newer tag or wait on an unbounded registry download. The build's immutable ECR digest becomes the deployed artifact identity.
+- **Worker-only model access:** user-facing compatibility evaluation must not evade Temporal's authoritative budget, audit, and review controls.
+- **Thinking remains disabled:** this model gets only server-owned booleans/enums and may return one of two JSON routes. It cannot receive borrower values, interpret policy, approve communications, select arbitrary tools, or execute effects.
+
+### Verification before rollout
+
+```text
+terraform fmt -check -diff terraform/staging: passed
+npm run lint:check: passed
+npm run build: passed
+git diff --check: passed
+```
+
+### Remaining live verification
+
+- Protected repository CI must pass the full lint/build/migration/Temporal/E2E/security suite.
+- The manual GitHub OIDC deployment must build and attest the Qwen image, register a healthy inference task, and update the worker task definition to `DECISION_PROVIDER=ollama`.
+- A synthetic guest-sandbox workflow must produce a durable model invocation with no prompt/response body persisted, while an unavailable/invalid response still routes to manual review.
+
+## M7-062: Citation-bound policy research RAG for source and applicability changes
+
+### Status
+
+Implemented and unit-verified. The migration-chain verification is environment-gated because this checkout has no `DATABASE_URL`; it must run in CI or against a disposable migrated PostgreSQL database before any deployment claim.
+
+### Problem
+
+The policy subsystem could detect a new synthetic source revision, stale source freshness, absent reviewed coverage, and overlapping released policy versions. It safely routed the latter three cases to review, but gave a reviewer no durable research queue, source-passage retrieval, citation record, or bounded Qwen research synthesis. Calling an LLM from every evaluation would also make policy confirmation slow, costly, and non-deterministic.
+
+### Implementation
+
+- Added `policy_research_runs` and `policy_research_citations` with a reversible migration. Research requests retain only jurisdiction/product/lifecycle context and bounded resolver reasons; they never store case identifiers, borrower evidence, or provider findings.
+- Added four explicit triggers: `NEW_SOURCE_REVISION`, `SOURCE_FRESHNESS_EXPIRED`, `COVERAGE_GAP`, and `APPLICABILITY_CONFLICT`. Requests are fingerprint-deduplicated, so a retrying evaluation does not create another model call for the same observed policy state.
+- Wired the source monitor to queue work only after an immutable candidate revision is saved. Wired the resolver to enqueue only after it has already determined a known fail-closed reason; an unavailable queue is logged and cannot alter `REVIEW_REQUIRED`.
+- Added the worker-side `SKIP LOCKED` queue consumer. It flattens immutable structured source content into bounded, path-addressable passages, ranks them deterministically against a policy-only research query, persists source checksum/path/excerpt digest citations, then writes a candidate brief. A bounded lease reclaims work after a worker crash; a reclaimed run deletes its partial citations and rebuilds them from immutable source content, while a unique run/rank constraint prevents duplicate reviewer evidence.
+- Added an `extractive` local default and an `ollama` provider. The latter sends only the policy query and retrieved passages to the private Qwen endpoint, disables thinking, requires a strict JSON shape, caps output/citations, and records no raw model prompt or response. Invalid/unavailable model output marks the advisory research item failed; it never changes coverage, releases policy, or changes an evaluation result.
+- Added a platform-admin, read-only evidence endpoint: `GET /v1/platform-admin/policy-research-runs`. It exposes research status and persisted citations, not a publication control.
+- Updated the synthetic bulletin to contain explicit synthetic sections so the complete source-monitor -> retrieval -> citation mechanism can be demonstrated without representing a real regulator feed.
+
+### Verification
+
+```text
+npm run lint:check
+  passed
+npm run build
+  passed
+npm test -- --runInBand --no-cache policy-research.service.spec.ts
+  3 passed
+npm test -- --runInBand --no-cache schema-migrations.spec.ts
+  skipped: DATABASE_URL is not configured in this checkout
+```
+
+The focused tests prove all four requested condition classifications, idempotent queueing, immutable revision passage retrieval/citation persistence, and that Qwen is invoked only after retrieval with source checksums present and no borrower text in the model payload.
+
+### CI failure and resolution
+
+The first protected CI run for this slice (`33649622711`) applied the complete migration chain successfully, then exposed a real E2E bootstrap defect: the optional `httpClient = fetch` constructor parameter was emitted as a Nest dependency on the global `Function` constructor. Direct unit construction masked that defect, while the full `AppModule` correctly failed to resolve it. The seam now uses the explicit optional `POLICY_RESEARCH_HTTP_CLIENT` token, so ordinary runtime construction uses the global fetch default and tests can still inject a mock. A dedicated Nest testing-module regression test proves the service boots without registering that test-only token. The fix is committed separately and must pass a new protected CI run before the slice is considered fully verified.
+
+The follow-up CI run (`33650195491`) passed the runtime suite far enough to generate the OpenAPI document and typed client, then correctly rejected the working tree because this new read endpoint added generated contract output. Regenerated `openapi/openapi.json` and `client/generated/schema.d.ts` from the current source against a fully migrated, disposable PostgreSQL database in the project's isolated Docker network; their diff is committed separately. The historical local development database was not reset because its synchronize-built schema has no migration history and must not be treated as disposable.
+
+### Remaining release evidence
+
+- Run the complete migration-chain test against a disposable PostgreSQL database, then run the full CI suite.
+- Live-verify the worker's private Qwen research path after the pending staging inference deployment has completed successfully. The existing synthetic connector remains the only source; no real legal source, legal conclusion, or reviewed state-policy coverage is represented by this feature.
+
+## M7-063: Product-facing live-demo entry point
+
+### Status
+
+Implemented and verified against the persistent synthetic AWS staging environment.
+
+### Problem
+
+The repository had a real public guest sandbox and a guided in-console walkthrough, but its README opened as an internal implementation reference. A portfolio visitor had to infer the product outcome, locate the sandbox entry point, and distinguish the safe simulated workflow from a real lending claim.
+
+### Implementation
+
+- Reframed the README around Meridian's user outcome: an explainable underwriting-readiness handoff built from durable workflows, policy controls, governed AI assistance, and human review.
+- Added the verified public CloudFront sandbox as the first call to action, with a four-step walkthrough that matches the existing isolated guest-sandbox flow.
+- Made the safety boundary visible before technical setup: every sandbox is generated, cookie-isolated, CSRF-protected, time-bounded, and cleaned up after expiry; it cannot access real borrower data, providers, funds movement, or lending authority.
+- Added a capability table that distinguishes demonstrated product mechanics from future real-provider and real-policy release requirements.
+- Retained the full local setup, architecture, API, testing, and operations material as developer reference after the product entry point.
+
+### Verification
+
+```text
+GET  https://d136v61al3mroo.cloudfront.net/health/ready
+  200
+
+POST https://d136v61al3mroo.cloudfront.net/v1/demo-sandbox/session
+  201
+```
+
+The request verification recorded status codes only; no cookie, tenant, case, or response content was retained. `terraform output -raw console_url` resolves to the same public URL. This documentation-only slice also requires `git diff --check` and local Markdown-link/anchor validation before commit.
+
+### Known limits
+
+- The persistent URL is an AWS-managed `cloudfront.net` hostname because the project intentionally has no purchased custom domain.
+- The staging rollout currently demonstrates the synthetic case workflow. Platform-admin policy research and real provider promotion remain privileged operational surfaces, not public sandbox actions.
+- A successful sandbox walkthrough is not evidence of real lender, provider, legal, or production authorization.
+
+## M7-064: Production dependency-audit remediation
+
+### Status
+
+Implemented locally; protected CI must confirm the regenerated lockfile and full suite.
+
+### Problem
+
+The CI run for the product-demo documentation discovered newly published advisories in transitive production dependency versions. `fast-uri@3.1.5` was affected by high-severity host-normalization and SSRF advisories, while `qs@6.15.3` had moderate-severity parsing/denial-of-service advisories. The previous protected run had passed before the advisory database changed.
+
+### Implementation
+
+- Added exact root npm overrides for `fast-uri@3.1.6` and `qs@6.16.0`.
+- The overrides stay inside the parent packages' compatible version ranges: `ajv@8.18.0` requests `fast-uri` `^3.0.1`; the Express and Superagent dependency paths accept the patched `qs` major version.
+- Regenerated the lockfile rather than applying a broad dependency upgrade, so this remediation changes only the vulnerable transitive versions.
+
+### Verification plan
+
+```text
+npm audit --omit=dev --audit-level=high
+npm --prefix console audit --omit=dev --audit-level=high
+npm run lint:check
+npm run build
+```
+
+The next protected CI run also exercises migration, backend and console tests, generated-contract drift, container build, SAST, secret scanning, and observability validation.
+
+## M7-065: Deterministic worker-restart workflow test
+
+### Status
+
+Implemented locally; protected CI is required because the regression occurred only under its contended real Temporal environment.
+
+### Problem
+
+After the dependency-audit remediation, the full CI suite surfaced an unrelated flaky Temporal test: `loses no acknowledged work across a worker restart while durably waiting` exceeded its 20-second file timeout. The test used a fixed 500 ms sleep before shutting down the first worker. On a slow runner that sleep does not prove the workflow has completed evidence collection and reached its final pre-wait activity, so the test can race its own worker restart.
+
+### Implementation
+
+- Replaced that sleep with the existing bounded `waitForMockCalls()` helper, waiting until `evaluateConditions` is invoked once.
+- `evaluateConditions` is the last activity before the workflow's durable condition wait in this test path. Observing that real activity boundary is the relevant synchronization point; it preserves the assertion that the second worker resumes acknowledged history and consumes a signal queued while no worker is live.
+- The helper retains its explicit 10-second diagnostic deadline, making a real scheduler failure actionable instead of silently increasing every workflow-test timeout.
+
+### Verification plan
+
+```text
+npm run lint:check
+npm run build
+npm test -- --ci --runInBand --forceExit
+```
+
+The full protected CI run must also complete the live database, Temporal, Keycloak/OIDC, console, generated-contract, container, security, and configuration gates.
+
+## M7-066: Product README and live guided-workflow evidence
+
+### Status
+
+Implemented with a freshly captured public synthetic-workflow image. Protected CI and a branch merge are required before this presentation slice is published on `main`.
+
+### Problem
+
+The README had a sound technical opening, but then became a long internal implementation reference. A portfolio visitor could not see the product state, understand the guided workflow quickly, or distinguish the bounded Agent and simulated environment from a real lending claim.
+
+### Implementation
+
+- Captured `docs/assets/meridian-guided-review.png` from a new isolated public guest sandbox after the real staging workflow collected simulated evidence and opened the intentionally triggered income-verification condition.
+- Rebuilt the README around a product outcome, a live demo call to action, the screenshot, a three-minute walkthrough, operations-team outcomes, product principles, a concise architecture, delivery confidence, and a compact developer quickstart.
+- Retained explicit boundaries beside the product narrative: generated data only, no real provider call, lending decision, funds movement, legal conclusion, certification, or automated-underwriting equivalence.
+- Linked implementation depth to the existing charter, engineering log, operations runbook, generated OpenAPI contract, and TypeScript client instead of making the landing page an exhaustive implementation manual.
+
+### Verification plan
+
+```text
+Live guest sandbox:
+  created an isolated synthetic case
+  ran the Temporal evaluation
+  observed evidence collection and an open reviewer condition
+  captured a 1440x900 PNG containing synthetic values only
+
+git diff --check
+README link and image-path validation
+npm run lint:check
+npm run build
+npm --prefix console run lint
+npm --prefix console run test
+npm --prefix console run build
+```
+
+### Boundaries
+
+- The screenshot is a live synthetic state, not a mocked or manually edited UI, and contains no real borrower identity, account, or provider data.
+- README language remains narrower than a production lending claim. The persistent AWS environment is presented as staging demonstration evidence, not lender authorization.

@@ -62,6 +62,32 @@ resource "aws_security_group_rule" "app_internal" {
   self              = true
 }
 
+# Qwen's Ollama endpoint is a private, worker-only dependency. It has no
+# public listener and accepts traffic solely from the application task group.
+resource "aws_security_group" "inference" {
+  name_prefix = "${local.name}-inference-"
+  vpc_id      = aws_vpc.this.id
+
+  ingress {
+    description     = "Ollama inference, from API/worker tasks only"
+    from_port       = 11434
+    to_port         = 11434
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_security_group" "rds" {
   name_prefix = "${local.name}-rds-"
   vpc_id      = aws_vpc.this.id

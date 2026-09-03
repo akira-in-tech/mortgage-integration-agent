@@ -22,6 +22,10 @@ import { PolicySourceMonitorService } from './policy-source-monitor.service';
 import { PolicyCatalogController } from './policy-catalog.controller';
 import { PlatformAdmin } from '../database/entities/platform-admin.entity';
 import { PlatformAdminGuard } from '../auth/platform-admin.guard';
+import { PolicyResearchRun } from '../database/entities/policy-research-run.entity';
+import { PolicyResearchCitation } from '../database/entities/policy-research-citation.entity';
+import { PolicyResearchService } from './policy-research.service';
+import { PolicyResearchController } from './policy-research.controller';
 
 @Module({
   imports: [
@@ -39,9 +43,11 @@ import { PlatformAdminGuard } from '../auth/platform-admin.guard';
       EvaluationInputManifest,
       PolicyTransitionApproval,
       PlatformAdmin,
+      PolicyResearchRun,
+      PolicyResearchCitation,
     ]),
   ],
-  controllers: [PolicyCatalogController],
+  controllers: [PolicyCatalogController, PolicyResearchController],
   providers: [
     PolicyApplicabilityResolverService,
     PolicyEvaluationService,
@@ -50,6 +56,7 @@ import { PlatformAdminGuard } from '../auth/platform-admin.guard';
     EvaluationManifestService,
     PolicyTransitionApprovalService,
     PolicySourceMonitorService,
+    PolicyResearchService,
     PlatformAdminGuard,
   ],
   exports: [
@@ -60,6 +67,7 @@ import { PlatformAdminGuard } from '../auth/platform-admin.guard';
     EvaluationManifestService,
     PolicyTransitionApprovalService,
     PolicySourceMonitorService,
+    PolicyResearchService,
   ],
 })
 export class PolicyModule {}

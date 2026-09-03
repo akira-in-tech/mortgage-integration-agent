@@ -9,9 +9,11 @@
     "node": ">=24.0.0"
   },
   "overrides": {
+    "fast-uri": "3.1.6",
     "openapi-typescript": {
       "typescript": "$typescript"
-    }
+    },
+    "qs": "6.16.0"
   },
   "scripts": {
     "build": "nest build",

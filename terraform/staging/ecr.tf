@@ -22,3 +22,30 @@ resource "aws_ecr_lifecycle_policy" "app" {
     }]
   })
 }
+
+# The model image is distinct from the application image: Qwen's multi-GB
+# artifact must not inflate API/worker rollout, pull, or rollback time.
+resource "aws_ecr_repository" "ollama" {
+  name                 = "mortgage-agent-ollama"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "ollama" {
+  repository = aws_ecr_repository.ollama.name
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep the most recent 5 Qwen images; each contains a multi-GB model artifact."
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 5
+      }
+      action = { type = "expire" }
+    }]
+  })
+}

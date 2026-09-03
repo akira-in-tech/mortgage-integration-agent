@@ -36,6 +36,12 @@ export enum DecisionProvider {
   Ollama = 'ollama',
 }
 
+/** Which citation-bound research synthesizer the worker may use. */
+export enum PolicyResearchProvider {
+  Extractive = 'extractive',
+  Ollama = 'ollama',
+}
+
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
 export class EnvironmentVariables {
@@ -138,6 +144,42 @@ export class EnvironmentVariables {
   @Min(0)
   @Max(10_000)
   AGENT_PLANNER_MIN_CONFIDENCE_BPS: number = 8000;
+
+  // ── Policy research RAG (src/policy/policy-research.service.ts) ────────
+  // This queue receives only policy metadata and source passages. Its output
+  // is advisory and cannot activate policy or influence a lending decision.
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEnum(PolicyResearchProvider)
+  POLICY_RESEARCH_PROVIDER: PolicyResearchProvider =
+    PolicyResearchProvider.Extractive;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1_000)
+  POLICY_RESEARCH_INTERVAL_MS: number = 300_000;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1_000)
+  @Max(300_000)
+  POLICY_RESEARCH_TIMEOUT_MS: number = 90_000;
+
+  // The lease exceeds the permitted model response window. A worker crash can
+  // then be recovered without a second worker preempting active research.
+  @IsOptional()
+  @IsInt()
+  @Min(120_000)
+  @Max(3_600_000)
+  POLICY_RESEARCH_LEASE_MS: number = 600_000;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(6)
+  POLICY_RESEARCH_MAX_CITATIONS: number = 6;
 
   // ── Temporal (src/workflows, src/worker.ts) ─────────────────────────────
   @IsOptional()

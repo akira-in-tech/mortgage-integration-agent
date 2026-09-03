@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Jurisdiction } from '../database/entities/jurisdiction.entity';
@@ -14,6 +14,7 @@ import {
   PolicyResolutionResult,
   ResolvedPolicyVersionRef,
 } from './policy-resolution.types';
+import { PolicyResearchService } from './policy-research.service';
 
 /**
  * Section 10.3's fail-closed applicability resolver. It walks the complete
@@ -36,6 +37,8 @@ export class PolicyApplicabilityResolverService {
     private readonly policySourceRepository: Repository<PolicySource>,
     @InjectRepository(PolicySourceRevision)
     private readonly sourceRevisionRepository: Repository<PolicySourceRevision>,
+    @Optional()
+    private readonly policyResearchService?: PolicyResearchService,
   ) {}
 
   async resolve(
@@ -48,6 +51,10 @@ export class PolicyApplicabilityResolverService {
       unresolvedReasons,
     );
     if (!ancestry) {
+      await this.policyResearchService?.requestForUnresolvedResolution(
+        context,
+        unresolvedReasons,
+      );
       return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
     }
 
@@ -58,6 +65,10 @@ export class PolicyApplicabilityResolverService {
       unresolvedReasons,
     );
     if (unresolvedReasons.length > 0) {
+      await this.policyResearchService?.requestForUnresolvedResolution(
+        context,
+        unresolvedReasons,
+      );
       return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
     }
 
@@ -149,6 +160,10 @@ export class PolicyApplicabilityResolverService {
     }
 
     if (unresolvedReasons.length > 0) {
+      await this.policyResearchService?.requestForUnresolvedResolution(
+        context,
+        unresolvedReasons,
+      );
       return { status: 'REVIEW_REQUIRED', versions: [], unresolvedReasons };
     }
     // Source deadlines are authoritative even when no rule applies. The

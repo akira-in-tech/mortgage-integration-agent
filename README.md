@@ -1,18 +1,42 @@
-# mortgage-integration-agent
+# Meridian
 
-A vendor-neutral lending-operations platform for durable case workflows, policy-governed Agent actions, provider integrations, and human review. The repository runs with deterministic synthetic data by default and can optionally use a local open-weight model through Ollama.
+**The governed operations workspace for lending teams that need every case action to be explainable.**
 
-Built with NestJS, REST/OpenAPI, GraphQL/Apollo, Temporal, LangGraph.js, PostgreSQL/TypeORM, React, and OIDC. No paid AI API key is required.
+Meridian turns a lending-case workflow into an accountable handoff: it gathers evidence through controlled adapters, binds the case to a policy context, lets a bounded AI planner assist with routing, and pauses for a reviewer whenever human judgment is required.
 
-> The current integrations and decisions are simulations for development and demonstration. They are not official lender, GSE, or automated underwriting system findings.
+[Open the live synthetic demo](https://d136v61al3mroo.cloudfront.net) · [Explore the architecture](#architecture) · [Run locally](#run-locally)
 
-## Current delivery status
+> The live demo uses generated data only. It does not access a real borrower or provider, make a credit decision, move money, or represent a lender, regulator, GSE, or automated-underwriting finding.
 
-The durable synthetic workflow, policy engine, bounded Agent runtime, provider gateway, tenant security controls, signed webhooks, generated client, and React operations console are implemented on the active development branch. The repository is not yet represented as production-approved: real reviewed policy coverage, provider-specific authorization/certification, real-data approval, and the remaining release gates still apply.
+![A Meridian synthetic case after evidence collection, with a policy-bound income-verification condition ready for reviewer action.](docs/assets/meridian-guided-review.png)
 
-**Workflow cancellation and recovery (M7-036).** REVIEWER-only operations tooling shows each tenant's live running or terminally interrupted Temporal executions. A cancellation request stops orchestration only—it does not claim that an in-flight provider call was cancelled. Terminal non-success runs can be recovered as a separately auditable execution; recovery reuses exactly one already-open durable condition, restarts collection only when no condition exists, and fails closed to manual review if multiple active conditions make the intended state ambiguous. This protects against duplicated conditions while retaining provider reconciliation as the authority for uncertain external outcomes.
+## See the product in three minutes
 
-The older `evaluateLoan` GraphQL query remains available as a compatibility demo. It is not the authoritative case workflow and its `APPROVED`/`CONDITIONAL`/`DENIED` vocabulary must not be interpreted as a formal credit decision.
+The public sandbox is an isolated, disposable workspace—no sign-up or API key required.
+
+1. Select **Try live sandbox** to create a tenant and a conventional-mortgage case containing only generated data.
+2. Select **Run simulated evaluation**. A real Temporal workflow gathers simulated evidence and evaluates the current policy binding.
+3. Review the deliberately triggered income-verification condition, then satisfy or waive it as the sandbox reviewer.
+4. Inspect the timeline and audit history to see the workflow, policy binding, evidence, and reviewer action in order.
+
+Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires automatically, and its tenant-scoped synthetic records are removed after expiry.
+
+## What Meridian gives an operations team
+
+| Outcome | Meridian behavior |
+| --- | --- |
+| **Know what is blocking a case** | Durable workflows collect evidence, open explicit conditions, and wait without losing state when a worker restarts. |
+| **Keep policy current and attributable** | Immutable policy bindings, source freshness checks, applicability guards, and impact assessments prevent silent reuse of stale or ambiguous policy. |
+| **Use AI without delegating authority** | The optional private Qwen planner has a bounded schema and route set. Deterministic tools, budgets, validation, and human review remain authoritative. |
+| **Explain every handoff** | Tenant isolation, consent/purpose checks, provider-operation lineage, reviewer actions, and chronological audit events preserve the evidence behind a case state. |
+| **Introduce integrations deliberately** | Provider adapters, authorization gates, signed webhooks, REST/OpenAPI, GraphQL, and a generated TypeScript client create controlled ports for future approved integrations. |
+
+## Product principles
+
+- **Human authority is explicit.** Protected communications, exceptions, and reviewer conditions do not become automatic merely because an Agent proposed an action.
+- **Policy is a control plane.** The workflow records which policy context it used and routes uncertainty to review instead of guessing.
+- **The model is untrusted assistance.** It cannot write policy, bypass authorization, issue a formal lending decision, or invoke structurally excluded actions.
+- **A synthetic demo is still privacy conscious.** The public environment creates isolated guest tenants, uses generated facts, and automatically purges expired workspaces.
 
 ## Architecture
 
@@ -26,8 +50,8 @@ The older `evaluateLoan` GraphQL query remains available as a compatibility demo
                            │
              ┌─────────────┼──────────────┐
              ▼             ▼              ▼
-       Case domain    Policy-as-Code   Provider gateway
-       + outbox       + snapshots      + signed webhooks
+       Case domain    Policy control     Provider gateway
+       + audit/outbox  + bindings         + authorization gates
              │             │              │
              └─────────────┼──────────────┘
                            ▼
@@ -35,97 +59,61 @@ The older `evaluateLoan` GraphQL query remains available as a compatibility demo
                            │
                            ▼
                Bounded LangGraph.js Agent
-          optional local planner + deterministic tools
+          optional private Qwen planner + rules
                            │
               ┌────────────┴─────────────┐
               ▼                          ▼
-     PostgreSQL + RLS           Simulator / authorized
-     audit and lineage          sandbox adapters
+     PostgreSQL + row-level security   Simulators / approved
+     audit, lineage, policy records    provider adapter ports
 ```
 
-## Tech Stack
+| Layer | Technology |
+| --- | --- |
+| Operations console | React, Apollo Client, Vite, Vitest, Playwright |
+| Control plane | NestJS, REST/OpenAPI, GraphQL/Apollo Server |
+| Durable orchestration | Temporal |
+| Agent runtime | LangGraph.js behind an `AgentRuntimePort` |
+| Planner | Deterministic rules by default; optional schema-constrained Ollama + Qwen |
+| Data and isolation | PostgreSQL 16, TypeORM, row-level security |
+| Identity | OIDC/OAuth 2.0 or scoped API clients |
+| Delivery | GitHub Actions, GitHub OIDC, Terraform, AWS ECS/RDS/CloudFront |
 
-| Layer          | Technology                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------ |
-| Console        | React, Apollo Client, Vite, Vitest                                                                     |
-| API            | REST/OpenAPI and GraphQL/Apollo Server                                                                 |
-| Framework      | NestJS 11                                                                                              |
-| Language       | TypeScript 6 (strict mode)                                                                             |
-| Workflow       | Temporal                                                                                               |
-| Agent runtime  | LangGraph.js behind `AgentRuntimePort`                                                                 |
-| Agent planning | Deterministic default or schema-constrained local Ollama + Qwen; policy and effects stay deterministic |
-| ORM            | TypeORM 0.3                                                                                            |
-| Database       | PostgreSQL 16 with row-level security                                                                  |
-| Identity       | OIDC/OAuth 2.0 or scoped API clients                                                                   |
-| Validation     | class-validator, class-transformer                                                                     |
-| Testing        | Jest, Supertest, Temporal integration tests, Vitest                                                    |
+## Delivery confidence
 
-## Compatibility demo
+- **Continuous integration** runs on pushes and pull requests: linting, builds, migrations, unit/integration/Temporal tests, browser tests, generated-contract drift checks, dependency auditing, secret scanning, SAST, container builds, and observability configuration validation.
+- **Protected staging delivery** is intentionally manual because it changes persistent AWS resources. It uses GitHub OIDC rather than stored cloud credentials, publishes immutable application and Qwen images, records SBOM/provenance attestations, applies Terraform, publishes the console, and verifies the API and public HTTPS edge.
+- **Operational evidence** is documented in the [development log](docs/DEVELOPMENT_LOG.md) and [operator runbook](docs/OPERATIONS.md). The environment remains a persistent synthetic staging demo, not a production lending deployment.
 
-**No API key, no database, no setup:**
+## Run locally
+
+### Fastest path
 
 ```bash
 npm install
 npm run demo
 ```
 
-```text
-  Mortgage Integration Agent  demo mode
-  Rule-based underwriter · no API key required · no database
+This runs the zero-cost deterministic command-line demo. No model server, API key, or database is required.
 
-  ────────────────────────────────────────────────────────────────
-  Sarah Chen  (CONVENTIONAL · $420,000)
-  ────────────────────────────────────────────────────────────────
-  Decision    ✓ APPROVED
-  Confidence  ██████████████████████░░ 94%
-  Strong application: score 745 with excellent payment history, DTI 31.0%,
-  verified income $150,000/yr, all documents valid.
-
-  Integration data  (fetched in parallel)
-    Plaid    $150,000/yr · FULL TIME · stability 94/100
-    Credit   score 745 · DTI 31.0% · excellent history · 0 derog
-    Docs     all valid
-
-  ────────────────────────────────────────────────────────────────
-  Marcus Rivera  (FHA · $285,000)
-  ────────────────────────────────────────────────────────────────
-  Decision    ◐ CONDITIONAL
-  Confidence  ██████████████░░░░░░░░░░ 60%
-  ...
-```
-
-**Full platform via Docker Compose (recommended):**
+### Full local workspace
 
 ```bash
-# Deterministic rules — no model or API key required
-docker-compose up
+# Deterministic workflow and simulated providers
+docker compose up
 
-# Local open-weight model — Ollama must be running on the host
-DECISION_PROVIDER=ollama docker-compose up
+# Optional local open-weight planner; Ollama must be available locally
+DECISION_PROVIDER=ollama docker compose up
 ```
 
-The stack starts PostgreSQL, Temporal, Keycloak, the API, and the worker. Open **<http://localhost:3000/graphql>** for the development GraphQL explorer. Run the React console separately from `console/` with `npm install && npm run dev`.
-
-To add the free local OpenTelemetry pipeline (Collector, Tempo, Prometheus, and Grafana) and enable export from both application processes:
+The full stack starts PostgreSQL, Temporal, Keycloak, the API, and the worker. Run the React console separately:
 
 ```bash
-OTEL_ENABLED=true docker compose --profile observability up -d
-```
-
-Open the provisioned reliability dashboard at <http://127.0.0.1:3001/d/lending-operations-reliability/lending-operations-reliability>. The profile binds its ports to loopback and is for development only; operational verification, SLO definitions, and incident procedures are in [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
-
-## Setup (local, without Docker)
-
-**Prerequisites:** Node.js 24+, PostgreSQL 15+. Ollama is optional.
-
-```bash
+cd console
 npm install
-createdb mortgage_agent
-# Copy .env.example to .env and set DATABASE_URL
-npm run start:dev
+npm run dev
 ```
 
-To use the local AI provider:
+To use the configured local model outside Docker:
 
 ```bash
 ollama pull qwen3.5:9b
@@ -134,330 +122,28 @@ DECISION_PROVIDER=ollama npm run start:dev
 DECISION_PROVIDER=ollama npm run start:worker:dev
 ```
 
-`qwen3.5:9b` is the configured local target. The authoritative worker sends it only server-owned booleans and enums and permits only `EVALUATE_POLICY` or `REQUEST_HUMAN_REVIEW`; it never sends borrower values or delegates policy, credit, communication approval, or side effects to the model. On a lower-memory machine, set a smaller locally available tag with `OLLAMA_MODEL`. The exact configured tag must already exist in Ollama; startup does not download models.
+The planner receives only server-owned enums and booleans for its bounded routing task. It never receives borrower values, sets policy, approves communications, or causes side effects. Thinking is disabled because this task uses a budgeted structured response, not an unbounded reasoning trace.
 
-### Environment variables
+## Boundaries that matter
 
-| Variable                           | Required      | Description                                                                                                        |
-| ---------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`                     | Yes           | PostgreSQL connection string (`postgres://` or `postgresql://`)                                                    |
-| `NODE_ENV`                         | No            | `development` (default) / `test` / `staging` / `production`                                                        |
-| `PORT`                             | No            | TCP port, `1`-`65535`; defaults to `3000`                                                                          |
-| `DECISION_PROVIDER`                | No            | `rules` (default) or `ollama`                                                                                      |
-| `OLLAMA_BASE_URL`                  | With `ollama` | Local Ollama endpoint; defaults to `http://127.0.0.1:11434`                                                        |
-| `OLLAMA_MODEL`                     | With `ollama` | Local model tag; defaults to `qwen3.5:9b`                                                                          |
-| `OLLAMA_TIMEOUT_MS`                | No            | Positive request timeout in milliseconds; defaults to `60000`                                                      |
-| `AGENT_PLANNER_TOKEN_BUDGET`       | No            | Conservative token units reserved before each planner call; defaults to `1024`                                     |
-| `AGENT_PLANNER_MAX_OUTPUT_TOKENS`  | No            | Maximum generated planner tokens; defaults to `128` and cannot exceed the reservation                              |
-| `AGENT_PLANNER_MIN_CONFIDENCE_BPS` | No            | Minimum confidence for automatic policy routing in basis points; defaults to `8000` (80%)                          |
-| `CORS_ALLOWED_ORIGINS`             | No            | Comma-separated `http(s)://` origins; unset allows any `http://localhost:<port>` in development and none elsewhere |
-| `RATE_LIMIT_TTL_MS`                | No            | Rate-limit window in milliseconds; defaults to `60000`                                                             |
-| `RATE_LIMIT_MAX`                   | No            | Max requests per client IP per window (all routes except `/health/*`); defaults to `100`                           |
-| `TEMPORAL_ADDRESS`                 | No            | Temporal frontend host:port; defaults to `localhost:7233`                                                          |
-| `TEMPORAL_NAMESPACE`               | No            | Temporal namespace; defaults to `default`                                                                          |
-| `OTEL_ENABLED`                     | No            | Explicit `true` enables OTLP trace/metric export; defaults to `false`                                              |
-| `OTEL_SERVICE_NAME`                | No            | Low-cardinality API or worker service name; defaults to `mortgage-integration-agent`                               |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`      | No            | OTLP/HTTP Collector base URL; defaults to `http://127.0.0.1:4318`                                                  |
-| `OTEL_METRIC_EXPORT_INTERVAL_MS`   | No            | Metric export interval, 1,000-300,000 ms; defaults to 15,000                                                       |
-| `OTEL_TRACE_SAMPLE_RATIO`          | No            | Parent-aware root sampling ratio from 0 through 1; defaults to 1                                                   |
-| `OUTBOX_SIGNING_SECRET`            | No            | HMAC secret for signed outbox events (see below); the default is for local development only                        |
+Meridian is an integration-ready architecture and synthetic product demo. It deliberately does **not** claim:
 
-All variables above are validated at startup (`src/config/env.validation.ts`); a missing or malformed value fails immediately with every problem listed at once, instead of surfacing later as a database or server error. `NODE_ENV=staging|production` disables TypeORM schema auto-synchronization, and production also disables GraphQL playground/introspection — see [Database migrations](#database-migrations).
+- reviewed jurisdictional policy coverage or legal advice;
+- authorization to use real borrower data or real provider credentials;
+- a formal credit decision, approval, denial, rate lock, or clear-to-close;
+- funds movement, settlement, funding, servicing payments, or capital delivery; or
+- provider certification or automated-underwriting equivalence.
 
-When `DECISION_PROVIDER=ollama`, both the compatibility API path and the authoritative Temporal worker use the configured local endpoint. The worker's planner output is constrained by Ollama's JSON schema, validated again with a strict application schema, charged to the durable token ledger before the call, persisted without prompt/response bodies, and routed to human review on unavailability, malformed output, or model uncertainty. `think` is disabled for this bounded two-edge routing task so hidden reasoning cannot consume unaccounted budget.
+Those capabilities require separately governed providers, legal and operational approval, real-data controls, and release evidence.
 
-### Database migrations
+## Documentation
 
-Local development (`NODE_ENV=development`, the default) still auto-synchronizes the schema from entities — `createdb mortgage_agent && npm run start:dev` above is unchanged. Any environment running with `NODE_ENV=production` has auto-sync disabled and must have its schema created by migrations instead:
+- [Project charter](docs/PROJECT_CHARTER.md) — normative product and engineering contract
+- [Development log](docs/DEVELOPMENT_LOG.md) — append-only implementation and verification record
+- [Operations runbook](docs/OPERATIONS.md) — synthetic-environment telemetry, SLOs, drills, and incident procedures
+- [OpenAPI contract](openapi/openapi.json) — generated REST contract
+- [TypeScript client](client/) — generated client and integration examples
 
-```bash
-npm run migration:run       # apply pending migrations
-npm run migration:revert    # roll back the most recently applied migration
-npm run migration:generate -- src/database/migrations/<Name>   # after changing an entity, against an up-to-date target database
-```
+## License
 
-Migrations live in `src/database/migrations/`; the CLI reads connection settings from `DATABASE_URL` via `src/database/data-source.ts`, a standalone `DataSource` kept separate from `AppModule` because the CLI runs outside Nest's dependency-injection container.
-
-**Deployment runtime role (M5-003, hardened by M7-001).** The `AppRuntimeRole` migration provisions `mortgage_app`: a restricted PostgreSQL role with plain `SELECT/INSERT/UPDATE/DELETE` grants and no DDL, `SUPERUSER`, or `BYPASSRLS`. Staging and production require a distinct `APP_DATABASE_URL`, use it for API/worker queries, and force `synchronize: false`; startup fails rather than falling back to the migration role. This makes row-level-security policies effective against application traffic while keeping local development's zero-setup `DATABASE_URL`/auto-sync path unchanged.
-
-### Health checks
-
-- `GET /health/live` — process is up; no dependency checks.
-- `GET /health/ready` — process is up and the database is reachable; returns `503` otherwise.
-
-Both are exempt from rate limiting so frequent infra polling can't report a healthy instance as unavailable.
-
-### Temporal worker
-
-Durable, long-running case work (starting with the M2 conditions workflow — collecting evidence, opening a condition, and durably waiting on a reviewer's `resolveCondition` signal, surviving process restarts in between) runs on [Temporal](https://temporal.io) rather than in-process. This splits the app into two processes that share the same database and codebase but have distinct responsibilities:
-
-- **API process** (`npm run start:dev` / `node dist/main`) — GraphQL/REST entry points; starts workflows and delivers signals via `TemporalClientService`, but never executes workflow or activity code itself.
-- **Worker process** (`npm run start:worker:dev` / `node dist/worker`) — polls the `case-conditions` task queue and executes workflow and activity code. Stateless and horizontally scalable; if it crashes or restarts, Temporal replays in-flight workflows from their persisted history rather than losing progress.
-
-`docker-compose up` starts a local Temporal server (`temporalio/auto-setup`, backed by the same Postgres instance under separate `temporal`/`temporal_visibility` databases) plus both the `app` and `worker` services. Outside Docker, run a Temporal dev server (`temporal server start-dev`, or `docker compose up temporal`) and then `npm run start:worker:dev` alongside `npm run start:dev`.
-
-### Authentication and tenant isolation (Section 20 M5)
-
-The M7 Agent-budget operations surface at `/v1/agent-budget-reservations` uses the same `TenantAuthGuard`; both listing `UNKNOWN` reservations and reconciling one additionally require the `REVIEWER` role. Responses contain only the authenticated tenant's rows, and each disposition records the authenticated actor, evidence note, request correlation id, and an append-only audit event.
-
-Per-workflow step, duration, token, provider-call, and minor-unit cost limits now live in PostgreSQL with atomic versioned reservations (M7-002/M7-003/M7-006). Every live LangGraph tool boundary reserves before execution and settles after a known result; stale, expired, exhausted, and replayed unresolved side effects fail closed. This current baseline supersedes the historical M5 discussion below that a ledger would have been ceremony around the then-zero-cost graph; the durable boundary now exists before any cost-bearing tool is enabled.
-
-Nonzero provider-call or cost reservations additionally require a tenant UTC-calendar-month ceiling. Configure it out of band with `npm run set-tenant-agent-aggregate-budget -- <tenantId> <monthlyProviderCalls> <monthlyCostMinorUnits> <USD>`; pass `disabled disabled disabled` to revoke cost-bearing authority. PostgreSQL reserves workflow and tenant capacity in one transaction, pins each reservation to its original month, and keeps ambiguous external outcomes charged until REVIEWER reconciliation. An unconfigured tenant fails closed; the current zero-cost simulator tools continue unchanged.
-
-Every route under `/v1/loan-cases`, `/v1/webhook-endpoints`, `/v1/webhook-deliveries`, and `/v1/loan-cases/:caseId/communication-messages` is guarded by `TenantAuthGuard` (`src/auth/`, M5-024) — a composite: a request authenticates with a machine `Authorization: Bearer {clientId}.{secret}` credential (`ApiKeyGuard`), an OIDC-linked human identity plus `X-Tenant-Id` (`OidcGuard`), or an isolated guest-sandbox cookie (`GuestSandboxGuard`). NestJS's own guard composition is AND-only, so `TenantAuthGuard` implements this explicit OR flow. Each path resolves to the same server-derived `AuthContext` (`tenantId`/`actorId`/`role`/`correlationId`); downstream policy, RBAC, audit, and resource checks never trust a tenant supplied in the request body. There is no self-service machine-credential minting endpoint: `npm run create-api-client -- <tenantId> <name> [PARTNER|REVIEWER]` mints a machine credential, while `npm run manage-api-client -- <rotate|revoke> <apiClientId>` performs an out-of-band lifecycle action. Rotation atomically invalidates the prior token; an integration requiring overlap must use a second client, switch it, then revoke the first. `npm run manage-user -- create-user <subject> <email>` then `grant-membership <userId> <tenantId> <PARTNER|REVIEWER>` provisions a human one. When the explicit `SELF_SERVICE_SIGNUP_ENABLED` flag is set, a newly verified OIDC identity may also create one isolated empty tenant with a `PARTNER` membership; it cannot join an existing tenant or receive `REVIEWER` authority through registration. After OIDC authentication, `GET /v1/auth/me/tenants` uses a separate pre-tenant guard to list only that verified `sub`'s existing memberships, accepts no user/tenant argument, and every selected tenant is still re-authorized by `OidcGuard`. **Real OIDC, not a hand-rolled scheme**: `OidcService` uses OpenID Connect Discovery and `jose` remote-JWKS verification against the configured issuer; the console uses Authorization Code + enforced S256 PKCE and a same-origin BFF session. This codebase is an OIDC relying party, never an authorization server.
-
-**Scoped RBAC (M5-017, extended M5-024) — `ApiClientRole`: `PARTNER` (default) and `REVIEWER`, both grounded directly in charter language rather than invented, shared by both credential models.** `REVIEWER` is Section 6.3's own explicitly named authority ("Human reviewers approve protected communications, interpret out-of-policy cases, and record overrides") — the one role the charter itself distinguishes anywhere in this API surface; `PARTNER` covers everything else a routine integration needs (case creation, evidence submission, consent grant/revoke on a borrower's own behalf, webhook registration). `ApiClient.role` and `TenantMembership.role` both use this exact enum — a `PARTNER`/`REVIEWER` distinction means the same real thing regardless of which credential model authenticated the request, so a second, parallel role vocabulary for OIDC users would be unbacked duplication. `POST /v1/loan-cases/{caseId}/reviews` and `POST .../communication-messages/{messageId}/approve` are REVIEWER-gated (`@RequireRole(ApiClientRole.REVIEWER)`, enforced by `RoleGuard` after `TenantAuthGuard`) — a PARTNER-role credential of either kind gets a clean `403` naming the missing role. Deliberately just two roles, not a speculative third "admin" tier with no charter grounding to justify it. `client/quickstart.ts`/`client/scenario-catalog.ts` now each mint and use two distinct role credentials, demonstrating the boundary live. See `docs/DEVELOPMENT_LOG.md`'s M5-017 entry for a real guard-ordering finding that slice worked through (a role-gated route's 403 now fires before a tenant-ownership check would — verified this still can't distinguish "exists in another tenant" from "doesn't exist at all" for a fixed caller role, so no existence leak).
-
-**`audit_events` (M5-019) — Section 14.1's "Append-only actor, action, resource, and security history," real and wired into five security-relevant call sites, not just a table.** `AuditEventService.record()` (`src/audit/`) writes `tenantId`, `actorId`, `action`, `resourceType`/`resourceId`, a `correlationId` (a fresh id `TenantAuthGuard`'s own underlying guard mints per authenticated request, whichever credential type it was — the only real per-request trace unit this codebase has), and `reason`/`metadata` — always its own short transaction, and a write failure is logged and swallowed rather than ever blocking the action it describes. Wired into: `RoleGuard` (an `RBAC_REJECTED` event before every 403), `submitReview`, `submitConsentAction`, `createWebhookEndpoint`, and `CommunicationApprovalService.approve()` — a representative cross-section of this whole M5 series' own security-relevant work, not a blanket instrumentation pass. Append-only is a real database-level guarantee, not just an application convention: a trigger rejects `UPDATE`/`DELETE` on this table outright, unconditionally — even under `app.bypass_rls`, the one flag every other RLS policy in this codebase treats as a routine escape hatch — verified directly with `psql` as the Postgres superuser before writing a single test. The GraphQL `case.auditEvents` field (M5-031, below) is now this table's first real read surface — filtered by `resourceId: caseId`, so it returns exactly the events recorded against that case, not every event that happens to reference it indirectly. No retention/purge mechanism exists for the append-only trigger to carve an exception for.
-
-**Tenant-owned Agent run budget configuration (M5-021) — Section 20 M5's "tenant-owned... budget configuration," the one concrete domain among that scope line's five with a real, currently-hardcoded-global value to override.** `Tenant.agentRunStepBudgetOverride`/`agentRunDurationBudgetMsOverride` (nullable — null means "use the platform default") let an operator tighten a specific tenant's Agent-run budget below the platform default (`case-conditions.activities.ts`'s own `DEFAULT_AGENT_RUN_STEP_BUDGET`/`DEFAULT_AGENT_RUN_DURATION_BUDGET_MS`) without a code change. `npm run set-tenant-agent-budget -- <tenantId> <stepBudget|clear> <durationBudgetMs|clear>` sets it (script, not a REST endpoint — the same honest gap `create-api-client.ts` already has, since changing a tenant's own operational limits is an administrative action this codebase's two-role RBAC doesn't have a tier for yet). The other four named configuration domains were checked directly, not assumed: `communication_templates`/`webhook_endpoints` are already genuinely tenant-owned; the policy catalog and provider registry have no real per-tenant value to differentiate yet (a shared jurisdiction-scoped policy library by design; only `SIMULATOR` provider mode exists anywhere).
-
-**Negative authorization suite (M5-020) — `test/negative-authorization.e2e-spec.ts`, Section 20 M5's own "threat-model tests and negative authorization suite" scope line.** Proves against a real running app that a request body cannot smuggle a `tenantId`/`role`/`apiClientId` override — the global `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true })` rejects it outright with a `400` naming the field, not a silent ignore — and that a query-string `tenantId` is never consulted by anything. The same file's own top-of-file comment is a real, honest index of every Section 16.4 threat scenario's current coverage status (COVERED with the specific file, PARTIAL, NOT APPLICABLE with why, or KNOWN GAP), consolidating what was previously scattered across roughly fifteen spec files built over this whole M5 series into one place — recorded as comments, not fake always-passing test stubs, so a stale reference stays a visible documentation risk rather than fabricated coverage.
-
-**Permanent structural capability denylist (M5-026) — Section 16.4's own named mitigation for "provider certification misread as authority to move funds or perform another structurally excluded action": "Enforce a permanent capability denylist across registries, manifests, routers, and Agent tools."** `assertNotStructurallyExcluded()` (`src/common/structural-exclusions.ts`) checks Section 7.5's nine named excluded command classes (`FUNDS_MOVEMENT`, `RATE_LOCK`, `LEGAL_DISCLOSURE`, `FORMAL_DECISION`, `CLEAR_TO_CLOSE`, `SETTLEMENT`, `FUNDING`, `SERVICING_PAYMENT`, `CAPITAL_DELIVERY`), via a new optional `structurallyExcludedCommandClass` field on the same `AgentTool`/`ProviderAdapter` interfaces every real tool/adapter already implements (not a separate config file a developer could forget to update). Every real tool/adapter today declares none, so registration is completely unaffected. Section 7.5 names four independent checkpoints — "the provider capability registry, Agent tool registry, promotion-manifest validator, and production router" — and a real M4 audit found only two had a direct check; **all four are real now (M7-029)**: `buildToolRegistry()` (Agent tools), `ProviderRegistryService.register()` (provider adapters), `dispatchProviderRequest()` right after resolving the adapter (the production router — genuine defense-in-depth, re-checking the same adapter independently of whatever path got it into the registry), and `ProviderPromotionService.propose()` (the promotion-manifest validator — checks a new, optional `declaredCommandClass` column on `ProviderPromotionManifest` itself, the same human-attested field pattern `AgentTool`/`ProviderAdapter` already use, rather than deriving it from a live registry lookup that would break the CLI script's "govern ahead of deployment" use case). Proven with 27 parameterized tests (one per excluded class × subject kind, all three kinds) rejecting a synthetic tool/adapter/manifest that does declare one, plus real dispatch- and propose-time rejection tests. M7-035 later added a real model planner and durable token reservations without changing this denylist: the planner selects only between deterministic policy evaluation and human review and cannot name or invoke a tool.
-
-**Reusable provider contract and canonical finding gate (M7-032).** Every implemented simulator plus the authorized Plaid sandbox adapter now runs through one shared contract suite for stable identity, operation semantics, health, submit/normalize behavior, canonical output, and deterministic transient/terminal failures where supported. Every synchronous receipt carries an `observedAt` timestamp, and the real dispatch boundary validates strict Zod schemas before persisting a successful finding: malformed, partial, stale, future-dated, out-of-range, extra-field, and cross-field-contradictory results fail closed as `FAILED_FINAL` while retaining the rejected receipt for investigation. This certifies the current synchronous adapter tuple only; callback ordering, asynchronous polling/cancellation, provider authentication expiry, rate limits, redaction, and effect-class fallback remain production-certification gates rather than being represented as covered by simulator tests.
-
-**Real REST surface for communication-message approval and delivery (M5-022) — `CommunicationMessagesController`, closing the "no real caller" gap M5-018's own dev log entry named directly.** `CommunicationApprovalService.approve()` and `CommunicationDeliveryService.deliver()` — Section 6.4's human-approval gate and `send_information_request`'s (Section 9.4) own real sending mechanism — were both fully built and tested but unreachable from outside the process before this slice. `POST .../approve` is `REVIEWER`-gated (`RoleGuard`, matching `submitReview`'s M5-017 precedent); `POST .../send` deliberately is not — `deliver()`'s own state-based readiness check (`ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED`, else `409`) is already the real gate, and gating the role too would add ceremony, not a real boundary. Live-verified end to end against a real API + worker: `409` before approval, `403` for a `PARTNER`-role approver (with a real `RBAC_REJECTED` audit event), `404` for another tenant's own `REVIEWER` credential (RLS, no existence leak), a real `201` approval, `400` on re-approval, a real `200` delivery with a real `deliveryReference`, `409` on re-send, and exactly one real `communication.delivered` outbox event. Also fixed a latent bug found while wiring the first caller: both services used `findOneByOrFail`, which would have surfaced an unknown/cross-tenant message id as an unhandled `500` rather than a clean `404` (no global exception filter exists in this codebase) — replaced with the `findOneBy` + explicit `NotFoundException` pattern `CasesService.getCase()` already established.
-
-**PostgreSQL row-level security (M5-002/M5-004/M5-006 through M5-010, M5-014, M5-018) — `webhook_endpoints`/`webhook_deliveries`, `loan_cases`, `evidence_facts`, `outbox_events`, `condition_transitions`, `loan_conditions`, `agent_runs`, `tool_attempts`, `evaluation_input_manifests`, `policy_change_impact_assessments`, `communication_messages`, `communication_templates`, `communication_approvals`, `case_policy_snapshots`, `case_policy_bindings`, `provider_authorization_grants`, and `provider_operation_intents` — every tenant-scoped table in this codebase's current schema — and it requires a non-superuser database role to actually do anything.** `src/database/tenant-context.ts`'s `runInTenantContext`/`runWithRlsBypass` set a per-transaction Postgres session variable (`app.current_tenant_id`, or an explicit `app.bypass_rls` opt-out for the handful of queries that are genuinely cross-tenant by design — `WebhookDispatchService`'s due-delivery and unpublished-event scans, `PolicyChangeImpactService`'s catalog-wide impact scan) that a `FORCE ROW LEVEL SECURITY` policy on each table reads; a connection that calls neither sees zero rows, not an error and not a leak. **The connecting role matters more than the policy SQL**: PostgreSQL superusers unconditionally bypass row-level security, full stop, regardless of `FORCE ROW LEVEL SECURITY` — and the `mortgage` role this project's own `docker-compose.yml`/`.env.example` `DATABASE_URL` convention connects as (via `POSTGRES_USER` on the stock `postgres` image) _is_ a superuser. M5-003 (below) closes that gap for production. `condition_transitions` and `tool_attempts` have no `tenantId` column of their own — their policies resolve tenant ownership through a join (to `loan_conditions` and `agent_runs`, respectively). `case-timeline.service.ts` (`GET .../timeline`) was the one real gap M5-006 found and closed: it read `agent_runs`/`loan_conditions`/`tool_attempts` with bare, unwrapped queries even after M5-004 protected the rest of the core. M5-007 protected `evaluation_input_manifests`; M5-008 protected `policy_change_impact_assessments`; M5-009 protected `communication_messages`/`communication_templates` and fixed `send_information_request`'s tool wrapper to thread its own already-available `tenantId` through instead of discarding it. M5-010 protected `case_policy_snapshots`/`case_policy_bindings` (`PolicyEvaluationService`'s own tables) — the trickiest of this whole series: `evaluate()`'s concurrency-recovery path (a real unique-constraint race, Section 20's exit evidence H) reads back a winning row inside a `catch` block, so wrapping the whole method in one shared transaction would abort it the moment the constraint violation fired and break that recovery read — the identical class of bug M5-002/M5-003 found for `DROP ROLE`'s own error handling. Fixed by keeping each step in its own separate transaction, verified by actually running the concurrency tests (not just reasoning about it) before considering the slice done. All of M5-007 through M5-010 were verified against the real refactored service code under the restricted role — M5-010 could use a genuine live HTTP-driven run (`evaluate_policy` is a registered Agent tool), while M5-008/M5-009's tools aren't wired into the live graph yet, so those needed a standalone script instead — since the isolated RLS-policy spec alone can't prove a service is actually wired to its policy correctly. M5-014 closed `provider_authorization_grants`/`provider_operation_intents` — unlike most of this series, a genuinely _live_ gap, not a dormant one: `dispatchProviderRequest` exercises both tables on every real income/credit/document/asset/identity fetch. `ProviderAuthorizationService`/`ProviderOperationIntentService` converted from `@InjectRepository` to `@InjectDataSource()` plus a per-method-call `runInTenantContext` (mirroring `ConsentService`'s own shape — multiple short transactions, not one long transaction spanning the external provider call). `revoke()` and the four `mark*()` methods — previously the only methods in this whole series with **zero** tenant scoping in their SQL, not even an unenforced one — now require a `tenantId` parameter. M5-018 closed the last remaining gap, `communication_approvals` — like `condition_transitions`/`tool_attempts`, it has no `tenantId` column of its own, so its policy is a join through `communication_messages` (`EXISTS (SELECT 1 FROM communication_messages WHERE id = ... AND "tenantId" = ...)`); `CommunicationApprovalService.approve()` gained a real `tenantId` parameter for the first time — it had no real caller anywhere in this codebase before this slice (M5-009's and M5-014's own migrations both named and deferred this exact gap), so this was a first design, not a retrofit. Every tenant-scoped table in the current schema now has row-level security. See `docs/DEVELOPMENT_LOG.md`'s M5-004, M5-006 through M5-010, M5-014, and M5-018 entries for exactly why each slice was scoped as it was and what real live-workflow proofs demonstrated along the way, including a real production-code concurrency bug (`Promise.all` racing two queries on one connection) M5-004's own proof test caught.
-
-**Purpose-bound consent and permissible purpose (M5-005, hardened by M7-033) — Section 6.3's top-priority authority-order item: "Consent, authorization, and security controls may stop processing."** Every new case receives an explicit `UNDERWRITING_EVIDENCE` consent scoped to the five canonical provider data classes. Dispatch resolves the latest active record and rejects a purpose or data-class mismatch before issuing a provider grant; grant revalidation checks the same machine-enforced scope again. Credit-report requests additionally require a borrower-, case-, purpose-, data-class-, capability-, mode-, and expiry-bound `permissible_purpose_decision`. Simulator credit uses a clearly marked short-lived synthetic decision; it is cryptographically unrelated to credentials and is rejected for sandbox/production modes, which must supply a separately authorized decision id. Revocation remains non-retryable and opens the data-disposition review introduced in M5-015.
-
-**Encrypted evidence/provider lineage and backup-expiry verification (M5-015/M5-025, hardened by M7-034).** Consent revocation opens a tenant-protected `DataDispositionTask` in the same transaction and snapshots both `evidence_facts` and derived `provider_operation_intents`. Evidence values, provider receipts, and normalized findings are AES-256-GCM envelopes in PostgreSQL; application reads decrypt at the boundary, staging/production reject legacy plaintext, and an ordered key ring plus `npm run rotate-sensitive-data-encryption` supports backfill and rotation without logging content. DELETE/ANONYMIZE scrubs both current stores, cancels PREPARED provider work under a row lock, and refuses to race DISPATCHED/OUTCOME_UNKNOWN/RECONCILING work until its outcome is reconciled. Primary disposition finishes as `COMPLETED`; a separate REVIEWER route verifies it only after the configured backup window and a non-sensitive authoritative evidence reference. Future document/object/cache/index/prompt/evaluation stores do not yet exist and must join the same lineage graph before launch.
-
-**Real data-disposition resolution and `legal_holds` (M5-025).** `DataDispositionService.resolve()` implements DELETE, ANONYMIZE, and RETAIN. RETAIN requires an active scoped legal hold; DELETE/ANONYMIZE re-check and fail closed under a hold. Service-layer audit writes make REST and CLI mutations equally attributable. Reviewer REST routes now cover the open queue, resolution, the backup-expiry queue, and final backup evidence verification; direct scripts remain available for controlled local administration.
-
-### Case REST API
-
-A narrower slice of the target `/v1/loan-cases` contract (see the project charter, Section 15.1) — enough to create a case and drive it through the M2 conditions workflow from outside the process. Every route below requires the bearer credential described above; `tenantId` in the table below is always the one that credential resolves to, never a request field.
-
-| Method & path                                                             | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST /v1/loan-cases`                                                     | Create a case (`{ borrowerId, requestedAmount, loanType, statedMonthlyIncome, jurisdictionCode }`). Requires an `Idempotency-Key` header; a repeated key returns the original case instead of creating a duplicate. `jurisdictionCode` must reference a row in the jurisdiction catalog (404 otherwise).                                                                                                                                               |
-| `GET /v1/loan-cases/{caseId}`                                             | Fetch a case.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `GET /v1/loan-cases/{caseId}/timeline`                                    | The case's full chronological history — every domain event from `outbox_events` plus every persisted Agent run and its tool-by-tool outcomes, merged and sorted by timestamp (see Agent run timeline below).                                                                                                                                                                                                                                           |
-| `POST /v1/loan-cases/{caseId}/workflow-runs`                              | Start the case-conditions workflow. `202 Accepted`; safe to retry — a case with a workflow already running returns that same run rather than starting a second one.                                                                                                                                                                                                                                                                                    |
-| `GET /v1/loan-cases/{caseId}/workflow-runs/{runId}`                       | Current Temporal status of that run.                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `POST /v1/loan-cases/{caseId}/reviews`                                    | A reviewer action, discriminated by `reviewType`: `{ reviewType: "CONDITION_RESOLUTION", actorId, resolution: "SATISFIED" \| "WAIVED", reason? }` resolves the case's open condition (the `resolveCondition` signal); `{ reviewType: "RESUME_EVALUATION", actorId, reason? }` resumes an evaluation the Agent run interrupted for policy-applicability ambiguity (the `resumeInterruptedEvaluation` signal — see Agent runtime below). `202 Accepted`. |
-| `POST /v1/loan-cases/{caseId}/consents`                                   | Grant or revoke consent (M5-005): `{ action: "GRANT" \| "REVOKE", reason? }`. Synchronous (not a Temporal signal) — returns the resulting `ConsentRecord` directly, `201 Created`. See "Consent enforcement" below.                                                                                                                                                                                                                                    |
-| `GET /v1/loan-cases/{caseId}/consents`                                    | List a case's own full consent history, newest first (M5-031).                                                                                                                                                                                                                                                                                                                                                                                         |
-| `GET /v1/loan-cases/{caseId}/communication-messages`                      | List a case's communication messages, newest first (M5-022).                                                                                                                                                                                                                                                                                                                                                                                           |
-| `POST /v1/loan-cases/{caseId}/communication-messages/{messageId}/approve` | Approve a `PROTECTED` message for delivery (M5-022, Section 6.4): `{ actorId, reason? }`. `REVIEWER`-role only (`RoleGuard`); `201 Created` with the resulting `CommunicationApproval`, `400` if the message isn't `PROTECTED` or is already approved.                                                                                                                                                                                                 |
-| `POST /v1/loan-cases/{caseId}/communication-messages/{messageId}/send`    | Deliver a ready-to-send message (M5-022) — `ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED` only, any role. `200 OK` with the delivery result, `409 Conflict` if not yet ready.                                                                                                                                                                                                                                                                           |
-| `POST /v1/loan-cases/{caseId}/escalate`                                   | Pause a case for human review (M5-023, `escalate_to_reviewer`): `{ actorId, reason }`. Any authenticated role; `200 OK`, `409 Conflict` if the case changed since it was last read or is already `WAITING_FOR_REVIEW`/a terminal status.                                                                                                                                                                                                               |
-| `POST /v1/loan-cases/{caseId}/policy-change-impact`                       | Advisory per-case policy-change assessment (M5-023, `check_policy_change_impact`): `{ policyVersionId }`. Any authenticated role; `200 OK` with `{assessed, ...}` — `assessed:false` for a case with no live binding is a normal, non-error outcome.                                                                                                                                                                                                   |
-
-There is no `/v1/loan-cases` endpoint for creating a tenant itself; seed one directly via the `tenants` table for local use, same as before.
-
-### OpenAPI contract, generated client, and quickstart (Section 15.3, M4-003)
-
-This REST surface is `@nestjs/swagger`-decorated with explicit, stable `operationId`s (Section 15.3: "stable operation identifiers for SDK generation") — `npm run generate:openapi` boots the real app and writes the resulting document to the checked-in `openapi/openapi.json` (Section 15.3: "checked and published OpenAPI artifact"); `npm run generate:client` runs [`openapi-typescript`](https://openapi-ts.dev) against that file to produce a genuinely generated `client/generated/schema.d.ts`, which `client/index.ts` (a thin [`openapi-fetch`](https://openapi-ts.dev/openapi-fetch/) wrapper) uses to make every call fully typed. In development, the API server also serves an interactive Swagger UI at `/api-docs` — gated to `NODE_ENV=development` for the same reason the GraphQL Playground already is (charter 16.1: interactive documentation leaks the full surface to anyone who can reach it).
-
-With PostgreSQL, the API, Temporal, and the worker running as described in [Full platform via Docker Compose](#compatibility-demo), run the generated-client walkthrough with:
-
-```bash
-DATABASE_URL=postgres://... API_BASE_URL=http://localhost:3000 npm run quickstart
-```
-
-`client/quickstart.ts` creates a synthetic tenant and separate `PARTNER`/`REVIEWER` API clients in the configured local database, then drives a real case through creation, workflow start, condition handling, reviewer resolution, completion, and timeline retrieval. It exits non-zero unless the workflow reaches `COMPLETED` within 30 seconds. Use a disposable development database because the synthetic walkthrough intentionally leaves its records available for inspection.
-
-`client/webhook-inspector.ts` (`npm run webhook-inspector`, M5-013) is Section 8.8/15.5's developer-sandbox "webhook inspection" tool: it seeds its own tenant and credential the same way, starts a real local HTTP listener, registers that listener as a genuine `POST /v1/webhook-endpoints` target (relying on the SSRF guard's loopback sandbox exception, above), and independently re-verifies every inbound delivery's real HMAC signature as it arrives — run it against a real API server that is not `NODE_ENV=production`, then drive traffic through a second client to watch signed deliveries show up live. `client/scenario-catalog.ts` (`npm run scenario-catalog`, M5-016) is Section 8.8/15.5's "scenario catalog"/"deterministic scenarios" — the last of the three named Developer Sandbox deliverables (fixtures/quickstart, webhook inspection, scenario catalog). Six named scenarios, each driven through the real REST API and asserting an _expected_ outcome rather than just narrating one — straight-through approval, a policy-opened condition resolved by a real reviewer decision, a transient provider failure that exhausts Temporal's retry policy, a terminal provider failure that short-circuits it, consent revoked before dispatch (provider-authorization revalidation failing closed, Section 11.5), and a policy-applicability ambiguity that interrupts the case for review and is later resumed after an out-of-band jurisdiction-coverage fix. Run `npm run scenario-catalog` for all six or `-- <name>` for one. `GET /v1/audit-events/export` now gives a REVIEWER a bounded tenant-scoped JSON evidence download; a document binary/object-storage surface still does not exist, because it must first satisfy the lineage and deletion requirements described above.
-
-### Policy-driven conditions
-
-The case-conditions workflow's decision to open a condition is no longer a hardcoded rule — it's driven by a bounded Agent run (`src/agent-runtime/langgraph/`, see below) that in turn calls the policy engine (`src/policy/`): `evaluate_policy` calls `PolicyEvaluationService` (Section 10.4's binding-validation guard), which resolves which released policy version(s) apply to the case's jurisdiction/product/lifecycle event, persists an immutable `CasePolicySnapshot`, and binds the case to it (`CasePolicyBinding`) so a later evaluation with an unchanged policy state reuses that snapshot instead of creating a duplicate. Each resolved rule is then evaluated against the case's real evidence. The database ships seeded with the charter's own canonical example (`docs/PROJECT_CHARTER.md` Section 10.7): a `US-CA` / `CONVENTIONAL_MORTGAGE` / `UNDERWRITING_REVIEW` rule that opens a `VERIFY_INCOME_DISCREPANCY` condition when a case's `statedMonthlyIncome` differs from Plaid's verified income by more than 10%. A case whose jurisdiction has no reviewed policy coverage, or whose applicable policy is ambiguous (overlapping released versions), interrupts for review (`WAITING_FOR_REVIEW`, see the reviews table above) rather than guessing.
-
-`PolicyEvaluationService`'s reuse decision is a real fast path (Section 10.4): a global `PolicyCatalogGeneration` counter bumps on every real policy activation/withdrawal (`PolicyActivationService`), and a case's binding skips calling the resolver entirely when its `observedCatalogGeneration`/`contextKey` still match — no I/O beyond a snapshot read. Section 10.4 also says activation "emits invalidation events" — a real M3 audit found the generation bump was the only thing that happened; nothing recorded it. `activate()`/`withdraw()` now write a real `AuditEventService` record (`POLICY_VERSION_ACTIVATED`/`POLICY_VERSION_WITHDRAWN`, M7-028) under a new `PLATFORM_AUDIT_TENANT_ID` sentinel, since the policy catalog is shared across every tenant rather than owned by one — `OutboxEvent` couldn't carry this instead, since it requires a `caseId` and a catalog activation isn't scoped to any one case. Activating or withdrawing a policy version also runs `PolicyChangeImpactService` (Section 10.6): it finds every open case the change could affect, dry-runs the resolver against each, and persists an advisory `PolicyChangeImpactAssessment` (`NO_IMPACT` / `REQUIRES_REEVALUATION` / `AMBIGUOUS`) — it never touches the case's own binding, only records what a re-evaluation would find. `check_policy_change_impact` (an Agent tool) wraps a case-scoped counterpart, `assessImpactForCase()`, letting one case ask the same question on demand. `PolicyActivationService.activate()` now requires a real, independently-approved `PolicyTransitionApproval` first (Section 16.1: "separate policy-author and policy-approver roles") — `PolicyTransitionApprovalService.propose()`/`approve()` reject self-approval (the same actor id cannot do both) with no formal RBAC system behind it, since none exists anywhere in this codebase yet. None of these services have a REST/GraphQL surface yet; all are exercised by real-database tests (`src/policy/policy-activation.service.spec.ts`). `CasePolicyBinding` is guarded by a real partial unique index (`IDX_case_policy_bindings_one_active`, one active row per case) — two concurrent `evaluate()` calls for the same case now provably converge on exactly one binding instead of racing to both insert one; see `policy-evaluation.service.spec.ts`'s `concurrency` tests, which are instrumented to genuinely force the race rather than hope timing cooperates.
-
-**Policy currency and grandfathering (M7-010):** resolution walks the complete `Jurisdiction.parentCode` chain and evaluates rules declared at every covered ancestor, so a state case can no longer omit a federal rule. Every COVERED ancestry node must have a registered source, and every registered source must have a latest revision still inside its own `freshnessObjectiveHours`; missing, stale, cyclic, partial, or unsupported state routes to review. `application_received_on_or_after_effective_date` selects the immutable policy window at `LoanCase.createdAt`, preserving a pre-change case instead of silently applying the latest rule. The binding deadline is the earliest source-freshness, scheduled effective-window, or one-hour maximum boundary, and a resolver-version mismatch forces a full refresh even when the catalog generation is unchanged. The evaluation path enforces the approved internal catalog and never scrapes a legal source synchronously — external monitoring stays asynchronous (Section 10.4), and now exists for real (M7-027, Section 29 item 4): `PolicySourceMonitorService`/`PolicySourceConnector` (`src/policy/`) proactively poll `CONNECTOR`-mode sources instead of only checking freshness reactively, recording a candidate `PolicySourceRevision` on a real change or logging schema drift and writing nothing on an unexpected shape — never touching a jurisdiction's own reviewed `coverageStatus`. The one connector in the codebase reads a small, fixed, obviously-synthetic demo bulletin, not a real external feed — real reviewed jurisdiction content for an actual US state needs real legal review this repository cannot fabricate (Sections 10.6, 10.8).
-
-### Evaluation input manifest (Section 10.5)
-
-`EvaluationInputManifest` (`src/database/entities/evaluation-input-manifest.entity.ts`) is a real, immutable, database-backed record of exactly what one evaluation read — assembled by `EvaluationManifestService` (`src/policy/evaluation-manifest.service.ts`) for every completed DSL evaluation in `resolveOutcomeNode`, not only ones that open a condition (M3-022): a case whose evidence matches expectations, or whose product has no applicable policy at all, gets a real manifest too, referenced by `LoanCondition.evaluationManifestId` only when a condition actually results. `caseVersion`, `policyBindingId`, `observedPolicyDependencyDigest`, `evaluatorVersion`, and `evidenceRefs` (with a real per-fact content hash) are all sourced from real data. A model-routed run also binds `modelAndPromptManifestId` to its content-free `AgentModelInvocation`; deterministic runs keep it null. `authorizationDecisionId`, `consentVersionRefs`, and `calculationRefs` stay null/empty until those evaluation-level references exist. The one deliberate exception is a `REVIEW_REQUIRED` (policy-ambiguity) evaluation, which never gets a manifest since no binding exists yet to reference. This is a durable audit record, not a new enforcement gate: `create_condition`'s own `expectedCaseVersion` compare-and-swap is still what actually protects the write.
-
-### Agent run timeline (Section 7.1, M3 scope)
-
-Every `LendingOperationsAgentRuntime.run()` call now persists an `AgentRun` row (route, proposed action, review state) plus one `ToolAttempt` row per tool the run actually called (`agent-run.entity.ts`, `tool-attempt.entity.ts`) — closing a gap where the Agent's own run history existed only in memory and was discarded after every evaluation. `CaseTimelineService` (`src/cases/case-timeline.service.ts`) merges this with `outbox_events` into one chronological account, exposed via `GET /v1/loan-cases/{caseId}/timeline` (REST) and the GraphQL `case.timeline` field (below) alike. A `condition.opened` entry is enriched with the condition's own real description (the policy DSL evaluator's reason string, e.g. `difference_percent(...) = 11.88% > 10%`) rather than restating the raw event payload — every summary is built from data already persisted for another reason, never a freshly generated narrative.
-
-### GraphQL operations-query surface (Section 15.2, M6-001)
-
-`CasesResolver` (`src/cases/cases.resolver.ts`) is this codebase's first real resolver for the M2+ target case aggregate — `query { case(caseId: ID!) { ...LoanCase fields... evidenceFacts { ... } conditions { ... } timeline { ... } } }` — closing the query-layer half of the tech-stack table's own "GraphQL + Apollo Server — flexible case, evidence, and timeline querying for the console" assignment, which had been essentially unbuilt until this slice (`LoanResolver`, the only prior resolver, is the older pre-Agent-runtime `evaluateLoan` one-shot path and is untouched). `LoanCase`/`EvidenceFact`/`LoanCondition`/`TimelineEntry` carry `@ObjectType()`/`@Field()` directly alongside their pre-existing `@Entity()`/`@Column()`/`@ApiProperty()` decorators — `LoanCase` already did this dual-decoration for REST+TypeORM, so GraphQL reuses the same fields rather than a parallel DTO that could drift. `evidenceFacts`/`conditions`/`timeline` are `@ResolveField()`s, not eagerly joined onto the top-level query, so a client asking only for `{ id status }` triggers none of those extra reads — genuine lazy field resolution, not a REST response reshaped into GraphQL's wire format. Gated by the identical `TenantAuthGuard` (M5-024) REST already uses — a machine `api_client` or a human OIDC session, either one, with the identical tenant-scoping guarantee (`AuthTenantId()` always resolves the tenant from the caller's own credential, never a client-suppliable argument). **A real, non-obvious bug found and fixed while building this**: every existing auth guard/decorator read the request via `context.switchToHttp().getRequest()`, which does not populate correctly for a GraphQL resolver's `ExecutionContext` — the identical distinction `GqlThrottlerGuard` (`src/common/`) already had to solve for rate limiting. `src/auth/get-request-from-context.ts` centralizes that fix for every guard/decorator now, rather than each one reimplementing `GqlThrottlerGuard`'s own ad hoc check. `EvidenceFact.value`/`TimelineEntry.detail` (both real JSONB payloads) use the `graphql-type-json` scalar. Live-verified: a real running server, queried with a real Keycloak-issued OIDC bearer token plus `X-Tenant-Id`, returned a real case's real fields and a real timeline (the real `loan_case.created` domain event); the identical query with no `Authorization` header, and again against a tenant the caller has no real membership in, both failed with the same generic `UNAUTHENTICATED` error REST's own `TenantAuthGuard` already produces. `evidenceFacts`/`conditions` are this codebase's first query surface of any kind for either table — no REST route lists either. No mutations, case-list/search query, or React console exist yet (M6's own larger scope) — see `docs/DEVELOPMENT_LOG.md`'s M6-001 entry.
-
-`case` gained four more `@ResolveField()`s in M5-031: `policyBinding` (the case's currently active, non-invalidated `CasePolicyBinding`, nullable) with its own nested `policyBinding.policySnapshot` (the immutable resolved-policy snapshot it points to, via a separate `CasePolicyBindingResolver` class since the parent type differs from `LoanCase`), `providerOperations` (the case's `ProviderOperationIntent` history, Section 11.5), and `auditEvents` (the case's own append-only `AuditEvent` history, Section 14.1/M5-019 — this table's first real read surface of any kind). All four follow the same lazy-resolution and tenant-scoping discipline as `evidenceFacts`/`conditions`/`timeline`. `CasePolicySnapshot` is this session's first entity given `@ObjectType()` with no pre-existing REST route to dual-decorate against. Live-verified end to end: a real consent `REVOKE` action's own real `CONSENT_REVOKE` audit event was independently confirmed visible through the new `auditEvents` field. See `docs/DEVELOPMENT_LOG.md`'s M5-031 entry.
-
-`query { cases(status: DRAFT, borrowerId: "...", first: 20, after: "...") { edges { node { ... } cursor } pageInfo { hasNextPage endCursor } } }` (M6-002) is this codebase's first case list/search query of any kind — until now `case(caseId)` was the only way to reach a `LoanCase` through GraphQL, and no REST route lists cases either. Real cursor (keyset) pagination over `(createdAt, id)` DESC, not `OFFSET`/`LIMIT` (Section 15.3: "cursor pagination and explicit filtering") — stable under concurrent inserts and doesn't degrade on deep pages. `status`/`borrowerId` are independent, optional, exact-match filters; `first` defaults to 20 and is clamped to [1, 100] regardless of what a caller requests. A malformed `after` cursor fails with a clean `BAD_REQUEST` GraphQL error, not a crash. Live-verified: created 5 real cases via REST, paged through all of them 2-at-a-time via 3 real GraphQL round trips with zero gaps or duplicates and correct newest-first order. See `docs/DEVELOPMENT_LOG.md`'s M6-002 entry.
-
-GraphQL also has real mutations now (M6-003), not just queries: `submitReview(caseId, input): Boolean!`, `submitConsentAction(caseId, input): ConsentRecord!`, and `escalateCase(caseId, input): LoanCase!` — each a thin wrapper mirroring its `CasesController` REST counterpart exactly: same `CasesService` call, same audit-event fields, same `RoleGuard`/`REVIEWER` gate where REST has one (`submitReview`). `submitReview` returns `Boolean`, not the case — the underlying action is a Temporal signal the workflow applies asynchronously, so returning `LoanCase` would misleadingly imply the review is already reflected in it; `escalateCase` is a real synchronous state change, so it returns the freshly re-read case. `ReviewDto`/`ConsentActionDto`/`EscalateDto` are dual-decorated `@InputType()`s reusing the exact REST DTOs and their `class-validator` rules — the global `ValidationPipe` runs on GraphQL mutation arguments the same way it runs on REST bodies, live-verified with an invalid `reviewType` and an empty `actorId` both failing with a clean `BAD_REQUEST` GraphQL error. See `docs/DEVELOPMENT_LOG.md`'s M6-003 entry.
-
-M6-004 closes the rest: `startWorkflowRun(caseId): StartWorkflowRunResult!` and `checkPolicyChangeImpact(caseId, input): PolicyChangeImpactResult!` on `CasesResolver` (the latter a flattened GraphQL type for `CheckPolicyChangeImpactResult`'s own TypeScript discriminated union — every non-`assessed` field nullable on one concrete type, since GraphQL has no direct algebraic-type equivalent), plus a new `CommunicationMessagesResolver` (`src/communications/`, not nested under `case` — neither underlying service call ever uses `caseId`) with `approveCommunicationMessage(messageId, input): CommunicationApproval!` (`RoleGuard`/`REVIEWER`-gated, matching REST's own Section 6.4 requirement) and `sendCommunicationMessage(messageId): CommunicationDeliveryResult!` (throws the identical `ConflictException` for a `NOT_READY` message, records the identical `COMMUNICATION_SENT` audit event on success). Every REST write route this codebase has is now also reachable through GraphQL. Live-verified: a real `PROTECTED` message rejected for a `PARTNER` token, approved by a `REVIEWER` token with `approvedRenderedContentHash` bound to its real rendered-content hash, then delivered — and a second `send` on the now-`SENT` message threw a real `ConflictException` (409/"Conflict" preserved in the GraphQL error's own `extensions.originalError`, since Apollo's default `extensions.code` mapping doesn't cover 409 specifically — expected framework behavior). See `docs/DEVELOPMENT_LOG.md`'s M6-004 entry.
-
-`case.communicationMessages` (M6-005) closes the one GraphQL read field M6-004 named as deferred — a lazy `@ResolveField()` backed by the same `CommunicationMessageService.listForCase()` the REST route already uses.
-
-`caseStatusCounts { status count }` (M6-008) is the first real aggregate GraphQL query — a `GROUP BY` over the tenant's own cases, built specifically to back the Ops Dashboard honestly rather than approximating a total by paging through cases client-side. A status with no real cases is simply absent, never a fabricated zero row.
-
-### Operations console (`console/`, M6-007)
-
-A real React operations console lives in `console/` — Vite + React 18 + TypeScript + Apollo Client 3, built against the GraphQL surface above, not a mockup. Scoped to one real screen, the Triage Queue (case list with cursor pagination and status filtering, plus a six-tab case detail pane: overview, evidence, conditions, timeline, communications, audit), a deliberate scope decision over building a wider shell around the other three mocked-up concepts. It can drive real mutations end to end — resolving an open condition and escalating a case — verified with a real running API, worker, Temporal, and Postgres stack, including a headless-browser click-through confirming the UI reflects the resulting real state change (see `docs/DEVELOPMENT_LOG.md`'s M6-007 entry for the two real bugs that verification pass found: `worker.module.ts` missing `AuthModule` for a standalone boot, M6-006; and an eventual-consistency race between `submitReview`'s async signal-delivery confirmation and the case's own status catching up, fixed with a settle-and-refetch delay).
-
-To run it: start the API on port 3000, then `cd console && npm install && npm run dev` (port 5173). Vite proxies `/graphql` and `/v1` to the API so browser sessions remain same-origin. The primary **Try live sandbox** action creates a new synthetic tenant, a seeded case, a server-generated reviewer actor, and a one-hour opaque HttpOnly session. It is not a shared demo account: the visitor cannot nominate a tenant, the session is CSRF-protected, and expiry removes access. The workflow still uses only simulator adapters and synthetic policy data. Bearer-token and OIDC sign-in remain available for owned accounts; only the explicit machine-credential path uses browser storage.
-
-A second real view, **Ops Dashboard** (M6-009), followed once `caseStatusCounts` (M6-008) gave it real backing data: three KPI stat tiles (total cases, needs attention, ready for underwriting) and a horizontal bar chart of cases by status, colors pulled from the same `StatusPill` semantic mapping every other screen already uses — never a separate chart palette. A status absent from the real API response renders as a real, client-computed `0`, distinct from the backend's own discipline of never returning a fabricated zero row itself. M6-009 also closed the console's automated-test gap: 26 Vitest + Testing Library tests across format helpers, `StatusPill`, the real mutation-driving `useCaseMutations` hook (including a ~2.3s test against real, not faked, timers proving the eventual-consistency settle window genuinely holds), the "Mark satisfied" click path, and the new dashboard.
-
-Every remaining M6-007 Known Gap but OIDC login has since closed. **`recentActivity(limit: Int)` (M6-010)** is a real tenant-wide, cross-case `AuditEvent` feed — the same cheap indexed query pattern as `caseStatusCounts`, built to back a real activity stream honestly rather than approximating one client-side. `console/` gained a real **ESLint config (M6-011)** (the script existed since M6-007 but pointed at nothing) and **real GraphQL codegen (M6-012)**, replacing the hand-written `graphql/types.ts` with generated `TypedDocumentNode`s from the real `src/schema.gql` — every component's own import path stayed unchanged via a thin re-export shim. The last two originally-designed concepts are now real views: **Case Dossier (M6-013)**, a single continuous, printable case document (`window.print()`, real `@media print` styling) reached from a case's own detail pane rather than the nav rail, since it's inherently per-case; and **Live Stream (M6-014)**, a polling (8s) tenant-wide activity feed against `recentActivity`, newest-first, with genuinely-new rows visually distinguished from already-seen ones — "live" honestly meaning real polling, never a fabricated WebSocket push this codebase has no transport for. All four originally-designed console concepts (Triage Queue, Ops Dashboard, Case Dossier, Live Stream) are now real, backend-connected, and tested.
-
-**Agent Budget Operations (M7-011)** adds the first recovery queue to that console: current UTC-month provider-call and monetary limits with used/reserved/remaining capacity, plus the tenant's oldest `UNKNOWN` reservations and REVIEWER-only commit/release actions requiring a 10-2000 character evidence note. The view uses the same OIDC BFF cookie, tenant, and CSRF headers as Apollo (or the existing machine bearer path), refreshes independently so a PARTNER can still see aggregate authority while the protected queue reports reviewer access, and never displays a disabled budget as remaining spend. `GET /v1/agent-budget-reservations/aggregate-usage` is checked into OpenAPI and the generated client alongside the existing reconciliation routes.
-
-**OIDC login (M6-015, hardened by M6-021)** is a real Authorization Code + PKCE flow against this repo's Keycloak realm. The API now owns PKCE state, code exchange, refresh, and RP logout behind a same-origin backend-for-frontend: provider tokens are AES-256-GCM ciphertext in durable PostgreSQL sessions, the browser receives only an opaque `HttpOnly` handle plus a double-submit CSRF value, and tenant-scoped requests carry `X-Tenant-Id`/`X-CSRF-Token` without exposing an OIDC bearer token to JavaScript. Direct OIDC bearer tokens remain supported for non-browser API clients. Staging and production startup require an explicit encryption key and HTTPS issuer/callback/console URLs.
-
-**Admin Queues (M7-017)** adds two more real reviewer surfaces: provider calls stuck at `OUTCOME_UNKNOWN`/`RECONCILING` (record what the provider's own records actually show), and data-disposition tasks a consent revocation left waiting on a delete/anonymize/retain decision. Before this slice both only existed as direct CLI scripts against the database; now they're real REST routes (`GET/POST /v1/provider-operation-intents/...`, `GET/POST /v1/data-disposition-tasks/...`, both REVIEWER-only) with a console screen on top, using the same shared auth-header helper Agent Budget Operations already established (pulled out into `console/src/api-client.ts` so there's one copy of that logic, not two).
-
-**Policy-impact check and catalog browse (M7-018/M7-040).** `checkPolicyChangeImpact` remains a non-mutating per-case advisory question. Platform Admin now also has a read-only, searchable policy-version catalog backed by `GET /v1/platform-admin/policy-versions`: rule id, release status, effective time, jurisdiction, and immutable source provenance are visible without turning the console into a policy-authoring or legal-review workflow.
-
-**Provider Promotion console (M7-020)** closes the last of the four, and needed its own credential type to do it honestly. `ProviderPromotionManifest`/`ProviderCertificationRecord`/`ProviderApprovalRecord`/`ProviderActivation` are not tenant-scoped — a provider adapter is registered once, globally, shared by every tenant (M4-007's own design) — so gating this chain behind the normal tenant `REVIEWER` role, the way M7-017/M7-018 did for their own surfaces, would have let any tenant's own reviewer certify and activate providers for every other tenant on the platform. Instead: a new `PlatformAdmin` credential (`platform_admins`, no tenant column, `npm run create-platform-admin` mints one — no REST endpoint does, same reasoning `create-api-client.ts` established) checked by its own `PlatformAdminGuard`, never combined with or satisfiable by a tenant's `ApiClient`/OIDC session. `v1/platform-admin/provider-promotions/*` (propose/certify/approve/activate/list/deactivate) is reachable only with that credential. The console screen lives entirely outside the tenant shell — its own sign-in from a link on the connect screen, its own full-page console — rather than a nav-rail tab a tenant session could stumble into.
-
-**Downloadable evaluation reports (M7-023)** reuses that same platform-admin credential for the same reason: an evaluation run isn't any one tenant's data either. `npm run evaluate` (M3-019) already ran the real corpus against a real database and wrote a JSON report to local disk; now every run is also saved as a real `evaluation_report_records` row, listable and downloadable (`v1/platform-admin/evaluation-reports`, with a real `Content-Disposition` header) from the same Platform Admin console screen. Verifying this slice surfaced two real, pre-existing bugs, both fixed: `evaluation-report.ts`'s own standalone `DataSource` never registered the three Agent-budget entities `lending-operations-agent-runtime.ts` actually needs, so every real evaluation case — and the cleanup step afterward — failed outright; and this session's own long-lived local database was missing a migration-seeded row it should have had, a local data gap rather than a code defect.
-
-**Evaluation dashboard (M7-037)** turns the existing immutable report-detail endpoint into a real Platform Admin inspection view: it presents the saved pass rate, condition recall/precision, category breakdown, and the exact failed synthetic fixtures with their expected/actual outcome and recorded detail. The dashboard never recalculates metrics from the browser and never converts a passing corpus into a real-data or production-approval claim; it is evidence navigation for the persisted run.
-
-Known gaps, honestly scoped rather than silently cut: client-side-only search on the Triage Queue, and no overlap window for `ApiClient` or `PlatformAdmin` bearer-token rotation. OIDC sessions now support an ordered encryption key ring so a new key encrypts future sessions while retained keys decrypt existing ones. The real Keycloak/API/PostgreSQL browser journey now runs by default in hosted CI (M7-022), alongside the fast fixture-based Playwright/axe gate.
-
-Provider-promotion's own audit-event gap named above is now closed (M7-028): a real, line-by-line M3/M4/M5 audit found `ProviderPromotionController` still never wrote one, alongside two more provenance gaps in the same category — `LegalHoldService.place()`/`release()` had zero audit calls at all (no REST controller exists for legal holds, only the operator script), and `resolve-data-disposition-task.ts` bypassed `DataDispositionController`'s own audit write entirely by calling the service directly. All three now record real `audit_events` rows from inside the service methods themselves — not a controller, so every caller (console, CLI script) gets the same provenance — using a new `PLATFORM_AUDIT_TENANT_ID` sentinel (the nil UUID, not a real tenant) for the two mutation surfaces that are genuinely shared across every tenant rather than owned by one.
-
-### Staging deployment (`terraform/`, `.github/workflows/deploy-staging.yml`)
-
-M7-024 (Phase 1): real AWS infrastructure — API, Worker, and a self-hosted Temporal server on ECS Fargate behind a public Application Load Balancer, RDS PostgreSQL, GitHub Actions OIDC federation to an IAM role with no long-lived AWS credential stored anywhere. `terraform/bootstrap/` (its own README) is applied by a human directly, once, with their own AWS credentials — never through an agent; `terraform/staging/` is applied only from `deploy-staging.yml` (`workflow_dispatch`, manual, never on every push, since it touches real billed resources). No domain meant HTTP only, not TLS, at first — Phase 1 alone never claimed browser-trusted HTTPS. See `docs/DEVELOPMENT_LOG.md`'s M7-024 entry for the full architecture, the real finding that changed its scope (`worker.ts` cannot run at all without a reachable Temporal server — no lazy-connect fallback the way the API has), its cost estimate (~$55–75/month, disclosed before anything was applied), and the 18 real bugs found getting the first real `deploy-staging.yml` run to succeed end to end. **Live and verified**: a real `terraform apply`, a real migration task exiting 0 against real RDS, real ECS services at steady state, and a real `200` from the deployed ALB's `/health/ready`. Every image the workflow deploys now also gets a real SBOM and SLSA build-provenance attestation (M7-026), both Sigstore-backed and independently re-verified with `gh attestation verify` right in the workflow — see the M7-026 dev log entry for the two real bugs found getting that verification to actually pass, not just report success.
-
-**HTTPS without a custom domain (M7-050/M7-052)**: the user declined to buy a real domain, so instead of Keycloak-behind-a-domain, staging now fronts the same ALB with CloudFront's own default `*.cloudfront.net` certificate (`terraform/staging/edge.tf`) — browser-trusted TLS with zero custom domain — plus a real `aws_cognito_user_pool` for OIDC, replacing the originally-planned Keycloak. The ALB is locked to 403-by-default except for a header-matched CloudFront-origin rule and a narrow `/health/*` allowance, so the ALB's own plain-HTTP listener is never a reachable bypass. Live-verified, not just applied: a real GitHub Actions run's own `curl` loop got real `200`s from both the ALB and `https://d136v61al3mroo.cloudfront.net/health/ready`. Two disclosed, still-open gaps: no human has recorded an actual browser click-through of the Cognito hosted-UI login against this deployed edge (only machine-level checks so far), and `PROVIDER_DATA_ENCRYPTION_KEYS`-style operator rotation documentation for the newer `OIDC_SESSION_ENCRYPTION_KEYS` ring doesn't exist yet in `docs/OPERATIONS.md`.
-
-### Staging operational drills (`load-testing/`, `.github/workflows/staging-drill.yml`)
-
-M7-025: three independent, manually-triggered drills against the live staging environment, all run for real on 2026-08-29 — `load` (k6 against the two unauthenticated `/health/*` endpoints: 55k real requests, p95 9.2ms, well under the 500ms target), `backup-restore` (a real RDS snapshot restored into a temporary instance, a real query confirming 45 real migration records survived, torn down and independently re-verified clean), and `failure-recovery` (killed the one running API task; a real 40s outage before ECS's replacement passed health checks — `desired_count=1`, a real gap, not a simulation). See `docs/DEVELOPMENT_LOG.md`'s M7-025 entry for the full results and honest scope limits — this measures the API+ALB+RDS-connection layer under modest load, not full business-workflow SLOs, and the backup/restore drill proves the snapshot mechanism works, not a full application-level disaster-recovery procedure.
-
-### Transactional outbox
-
-Every domain state change that matters externally (`loan_case.created`, `workflow_run.started`/`waiting_for_review`/`completed`/`failed`, `evidence.updated`, `condition.opened`/`satisfied`/`waived`) is written to the `outbox_events` table in the same database transaction as the change itself, HMAC-signed with `OUTBOX_SIGNING_SECRET`. This is the transactional-outbox pattern: a committed domain change and its event can never diverge, because they're the same transaction. `WebhookDispatchService` (M4-004, below) is the real dispatcher that reads from it — `publishedAt` now genuinely gets set once an event has been handed off to that subsystem.
-
-### Webhook delivery (Section 14.1, M4-004)
-
-`WebhookEndpoint`/`WebhookDelivery` (`src/database/entities/`) back Section 15.1's subscription and signed-delivery contract. `POST /v1/webhook-endpoints` registers a destination and exact `OutboxEventType` subscriptions, returning the HMAC secret exactly once; `GET` lists safe endpoint metadata, `PATCH /{endpointId}` changes future destinations/subscriptions and its durable 1–600 attempts/minute ceiling (default 60) after the same SSRF check, and `DELETE /{endpointId}` revokes by disabling rather than cascading away attributable delivery history. No later endpoint response re-exposes its secret. `GET /v1/webhook-deliveries/{deliveryId}` reads one durable attempt history. `WebhookDispatchService` (`src/webhooks/webhook-dispatch.service.ts`) fans unpublished outbox events to active subscribers and signs each delivery with stable `X-Webhook-Id`, timestamp, and HMAC signature; failed attempts retry with bounded exponential backoff. The receiver limit is atomically reserved in PostgreSQL per endpoint and UTC-minute window, so concurrent workers share one ceiling; an exhausted window defers the durable delivery until its next minute instead of issuing HTTP traffic or busy-looping. **SSRF guard (M5-011/M6-019, Section 16.4):** registration, endpoint edits, and every dispatch attempt reject private/reserved targets and refuse redirects. **Loopback sandbox exception (M5-013):** loopback is allowed only in development/test for the local webhook inspector, never staging/production. Real receiver load/SLO evidence remains an authorized external-release gate.
-
-### Retry classification and fault injection
-
-No real provider integration exists yet, so `case-conditions.activities.ts`'s evidence-fetch activities classify failures from the Plaid/credit/document simulators using a deterministic, opt-in trigger — a `SYNTHETIC-TRANSIENT-FAILURE-` or `SYNTHETIC-TERMINAL-FAILURE-` `borrowerId` prefix (see `src/integrations/synthetic-provider-failures.ts`), the same idea as a payment processor's test-mode card numbers. Transient failures are retried up to the workflow's configured policy (3 attempts, exponential backoff); terminal failures fail immediately, wasting no retries. Either way, an activity failure that survives retries routes the case to `MANUAL_REVIEW` and writes a `workflow_run.failed` outbox event, rather than crashing the workflow outright.
-
-### Provider platform (Section 11, M4-001/M4-002/M4-005/M4-006/M4-007)
-
-`src/provider-platform/` is Section 11's capability-contract layer. `ProviderRegistryService` resolves adapters; `ProviderAuthorizationService` issues and revalidates purpose/data-class/field-scoped short-lived grants; and `ProviderOperationIntentService` persists one replay-safe intent before dispatch. A stable `logicalOperationKey`, canonical request fingerprint, preserved provider idempotency key, compare-and-swap transitions, strict canonical finding gate, encrypted receipt/result persistence, purpose-bound consent, and transaction-specific credit permissible-purpose decision protect the full synchronous path. Five simulator adapters and the governed Plaid income sandbox adapter share the reusable contract suite. Asset and identity remain registered but are not required by the main workflow; `PRODUCTION_BYOC` has no production credentials. Async polling/callback/cancellation/fallback semantics remain tuple-specific certification work. The legacy one-shot `evaluateLoan` path still bypasses this registry and remains a compatibility demo only.
-
-### Agent runtime (Section 9)
-
-The current M7 runtime supersedes the older step/deadline-only description below: registered tools declare conservative token, provider-call, and cost maxima; PostgreSQL atomically enforces those dimensions plus step and absolute deadline; returned ledger receipts are the only source of graph budget state. Current deterministic tools truthfully declare zero non-step usage, while the structure is ready to fail closed when a future adapter declares nonzero capacity.
-
-`src/agent-runtime/` holds the contract for the charter's stateful, tool-using Agent (Section 9) — distinct from the older `src/agent/` one-shot `evaluateLoan` decisioning path, a naming collision the charter's Section 9 rewrite introduced but that this codebase hasn't renamed away yet. `AgentRuntimePort` (`agent-runtime.types.ts`) is the interface `src/agent-runtime/langgraph/` implements (see below). `AgentTool` (`agent-tool.types.ts`) is the registered-tool contract from Section 9.4's table — `buildToolRegistry`/`invokeTool` never let an unregistered tool name or a tool's own exception escape as a throw, only as a typed `FAILURE` result. Seven of Section 9.4's sixteen tools are real: `check_case_completeness`, `evaluate_policy` (a thin wrapper over `PolicyEvaluationService`), `create_condition` (the actual implementation `case-conditions.activities.ts` calls to open a condition, which is also what closed a long-standing gap: `LoanCondition.policySnapshotId` is now genuinely populated), `draft_information_request` (drafts and classifies a communication via `src/communications/`, see below), `escalate_to_reviewer` (a CAS-protected transition to `WAITING_FOR_REVIEW` plus a signed `case.escalated` event — the Agent's own explicit "this needs a human" choice, distinct from the runtime's automatic ambiguity/failure routing), `check_policy_change_impact` (a thin wrapper over `PolicyChangeImpactService.assessImpactForCase()` — a new per-case entry point alongside the existing catalog-wide scan `PolicyActivationService` already triggers), and `send_information_request` (delivers a ready-to-send communication via `CommunicationDeliveryService`, see below). The rest of the table (document inspection, calculations, `publish_case_update`) needs a real provider adapter, calculation engine, or webhook subsystem that doesn't exist yet, and isn't stubbed. **`draft_information_request` is wired into the live LangGraph graph (M5-012)**: `resolveOutcomeNode` calls it right after `create_condition` genuinely opens a condition, drafting a real remediation message from the DSL evaluator's own evidence-backed reason string — always classified `PROTECTED` (no communication template is seeded anywhere in this codebase) and left `AWAITING_APPROVAL`, never sent. `escalate_to_reviewer`, `check_policy_change_impact`, and `send_information_request` remain unwired from the live LangGraph _graph_ — see `docs/DEVELOPMENT_LOG.md`'s M5-012 entry for why each was originally set aside — but M5-023 gave the first two a real caller anyway, deliberately outside the graph rather than forced into it: `POST /v1/loan-cases/{caseId}/escalate` (a human reviewer's own judgment call — this codebase's own honest self-count, `mandatory-review-triggers.ts`, already detects only 4 of Section 9.6's 12 named triggers, and inventing a 5th automatic detector with no real backing signal would be fabricated coverage) and `POST /v1/loan-cases/{caseId}/policy-change-impact` (an operator's own per-case advisory query, distinct from `PolicyActivationService`'s existing automatic catalog-wide scan — reading `PolicyChangeImpactService` showed both share one private `assessOneCase()` helper, so the per-case graph's own control flow never actually needed this tool separately from what `evaluate_policy`'s own binding validation already does). Both go through the real registered tool (`invokeTool`/`buildToolRegistry`), not a bypass. **`send_information_request` got its own first automatic caller in M3-024**, once the actual root cause was closed: every communication message in this codebase used to be always `PROTECTED` because no `ROUTINE`-eligible template had ever existed anywhere. `npm run seed-communication-template` creates a real, immutable, already-`APPROVED` template (`allowedVariables` derived from its own `{{variableName}}` placeholders, never separately supplied); `case-conditions.activities.ts`'s `finalizeReadyForUnderwriting` — the one real place a case reaches `READY_FOR_UNDERWRITING`, on either of its two real paths — checks for an approved template at a well-known key first (`READY_FOR_UNDERWRITING_NOTICE`) and, only if one exists, drafts and really sends a `ROUTINE` readiness notice through the real tool registry. Opt-in per tenant: a tenant that never runs the seed script gets zero behavior change, not a permanent empty unsent draft. Live-verified: a seeded tenant's case reached `READY_FOR_UNDERWRITING` with a real `ROUTINE`/`SENT` message (real substituted content, real `deliveryReference`); an unseeded tenant's identical scenario produced no such message. M5-022's own REST callers for `approve`/`send` remain the real path for the condition-remediation draft (still always `PROTECTED`, since Section 6.4 forbids the Agent from self-approving substantive case-specific content).
-
-`src/communications/` implements Section 6.4's protected/routine communication classification: `classifyCommunication()` (pure, no model) requires a version-pinned `APPROVED` `CommunicationTemplate`, matching channel/locale/recipient relationship, fully-declared variables, and no negative-implication keyword in any supplied variable value for a `ROUTINE` result — anything else is `PROTECTED`, with every failing reason recorded. `CommunicationApprovalService` binds a human's approval to the message's exact `renderedContentHash` (Section 6.4: "approve the exact rendered content") and is deliberately not an Agent tool, since Section 6.4 says the Agent cannot supply an approval result itself. `CommunicationDeliveryService` + `CommunicationDeliverySimulator` (M3-018) give messages a real delivery path — same simulator status as `PlaidService`/`CreditService`/`DocumentService`, not a real email/SMS channel: a message reaches `SENT` only via `ROUTINE`+`DRAFTED` or `PROTECTED`+`APPROVED`, anything else is rejected as not ready, structurally enforced by `send_information_request` (an Agent tool) rather than just documented. **Both services gained their first real caller in M5-022**: `CommunicationMessagesController` (see the Case REST API table above) — before this, `approve()`/`deliver()` were fully built and tested but unreachable from outside the process, a gap M5-018's own dev log entry named directly.
-
-`src/agent-runtime/langgraph/lending-operations-agent-runtime.ts` is `AgentRuntimePort`'s first implementation: a real, compiled LangGraph.js v1 `StateGraph` that follows Section 9.5's bounded loop (verify consent → check completeness → optionally obtain a two-edge local-model route → guarded policy evaluation → propose/execute a condition transition → draft a protected remediation request when needed), enforcing `allowedTools` by only registering the tools a run names. Trusted duration, step, token, provider-call, and monetary limits are enforced through PostgreSQL-authoritative ledgers and reservations; the optional planner reserves its conservative token units before inference, while current deterministic tools declare zero token/provider/cost consumption. Successful planner calls persist only model/prompt versions, hashes, bounded route, confidence, and accounted units—never prompts, responses, borrower data, or private reasoning—and replays reuse that immutable record. `case-conditions.activities.ts`'s `evaluateConditions` calls this runtime instead of the policy engine and condition tool directly. Condition and case-readiness writes are compare-and-swap protected against `LoanCase.version`; policy ambiguity, invalid model output, uncertainty, and model failure route durably to review rather than being treated as a decision.
-
-Every mandatory-review trigger this runtime can detect (`mandatory-review-triggers.ts`) is classified through one shared table before it routes — `POLICY_AMBIGUITY` interrupts (resumable, per Section 9.5's own "ambiguity... interrupt for review"); `CONSENT_INVALID`, `BUDGET_OR_DEADLINE_EXHAUSTED`, and `TOOL_EXECUTION_FAILURE` route to manual review (terminal, per that same text's "budget or runtime failure"). The classification, not just the free-text reason, is persisted (`AgentRun.reviewCategory`) and surfaced in the case timeline, so a reviewer or auditor can filter by which Section 9.6 concern triggered a run without parsing prose.
-
-## Example Mutation
-
-```graphql
-mutation {
-  evaluateLoan(
-    input: {
-      borrowerId: "B001"
-      requestedAmount: 450000
-      loanType: CONVENTIONAL
-    }
-  ) {
-    applicationId
-    decision
-    confidence
-    reasoning
-    incomeVerified
-    creditScore
-    documentsValid
-    conditions
-    createdAt
-  }
-}
-```
-
-The following examples show the response contract. Exact reasoning varies by provider and generated borrower scenario.
-
-### CONDITIONAL — High credit score, DTI exceeds guideline
-
-```json
-{
-  "data": {
-    "evaluateLoan": {
-      "applicationId": "670756c8-0432-4a71-b665-b463f283cd60",
-      "decision": "CONDITIONAL",
-      "confidence": 0.78,
-      "reasoning": "Borrower presents a strong credit score of 759 and an excellent loan-to-income ratio of 1.94x, well within the 4.5x threshold. However, the DTI of 46.0% exceeds the conventional standard limit of 43% (though remains below the 50% denial threshold), placing this application in conditional territory. Additionally, the FAIR payment history and 2 derogatory marks on the credit report introduce elevated risk that must be addressed, particularly given the self-employed income status which warrants additional income documentation scrutiny.",
-      "incomeVerified": true,
-      "creditScore": 759,
-      "documentsValid": true,
-      "conditions": [
-        "DTI of 46.0% exceeds conventional guideline of 43%; borrower must provide a letter of explanation and evidence of compensating factors",
-        "Two derogatory marks on credit report require written explanation letters detailing the nature, date, and resolution status of each item",
-        "Self-employed status requires 2 years of signed federal tax returns and a year-to-date profit and loss statement prepared by a licensed CPA"
-      ],
-      "createdAt": "2026-06-28T12:12:08.123Z"
-    }
-  }
-}
-```
-
-### DENIED — Credit score below JUMBO minimum
-
-```json
-{
-  "data": {
-    "evaluateLoan": {
-      "applicationId": "e8106610-f0f0-4b1f-8fdc-0e562ca8fc6c",
-      "decision": "DENIED",
-      "confidence": 0.97,
-      "reasoning": "This application is denied primarily because the borrower's credit score of 598 falls significantly below the JUMBO loan minimum requirement of 720. JUMBO loan guidelines are strictly enforced and require both a credit score ≥ 720 and DTI ≤ 0.38; this borrower meets neither threshold. While the DTI of 21.0%, loan-to-income ratio of 2.44x, and document validity are all strong positives, the credit score deficiency for a JUMBO product is a disqualifying condition that cannot be conditionally remediated without a fundamental improvement in the borrower's credit profile.",
-      "incomeVerified": true,
-      "creditScore": 598,
-      "documentsValid": true,
-      "conditions": [],
-      "createdAt": "2026-06-28T12:13:09.007Z"
-    }
-  }
-}
-```
-
-## Tests
-
-End-to-end tests use the configured decision provider and require a live database. They default to the deterministic rules provider, so no model or API key is required:
-
-```bash
-# Set DATABASE_URL in .env, then:
-npm run test:e2e
-```
-
-Tests are automatically skipped with a warning if either env var is missing.
-
-The Temporal workflow and activities suites (`src/workflows/*.spec.ts`) follow the same convention: they run against a real Temporal server and database when `TEMPORAL_ADDRESS`/`DATABASE_URL` are set, and skip otherwise.
-
-### Evaluation corpus (Section 18.2)
-
-```bash
-# Set DATABASE_URL in .env, then:
-npm run evaluate
-```
-
-Drives every fixture in `evaluation/cases/*.json` through the real `case-conditions.activities.ts` functions (the same code the M2 Temporal workflow calls, no Temporal server required) against a real database, then writes a reproducible JSON report to `evaluation/reports/` (gitignored — a report is a snapshot of one run, not durable source content) with per-category pass counts, condition precision/recall, and pinned git commit + released policy version ids. Exits non-zero if any case fails, so it's usable as a CI gate. 12 real cases across `normal`/`boundary`/`missing-data`/`policy-coverage`/`provider-failure` categories — deliberately not Section 18.2's full 150-case target, since this codebase has exactly one seeded synthetic policy rule to test meaningful variation against; `contradiction`/`adversarial` categories are omitted rather than faked, since no contradiction detector or model-facing surface exists yet to genuinely check against. See `docs/DEVELOPMENT_LOG.md`'s M3-019 entry for the full reasoning, including a real gap the corpus itself surfaced: `evaluateConditions` doesn't currently distinguish "evidence was missing" from "evidence was fine" in its return value — both collapse to the same no-condition outcome.
-
-## Design Notes
-
-The three integration calls (Plaid, credit bureau, document parser) run in parallel via `Promise.all` before decisioning. This keeps latency low since the integrations are independent of each other.
-
-All raw integration responses are stored as JSONB alongside each result. This makes it straightforward to audit what data the selected provider saw for any given application.
-
-The default `rules` provider is deterministic and runs fully locally. The optional `ollama` provider uses an open-weight local model and never sends borrower data to a paid cloud-model API.
+This repository is intended as a portfolio and engineering demonstration. Review the repository license and all third-party model/provider terms before any use beyond the included synthetic environment.

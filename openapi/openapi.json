@@ -1690,6 +1690,47 @@
         ]
       }
     },
+    "/v1/platform-admin/policy-research-runs": {
+      "get": {
+        "operationId": "listPolicyResearchRuns",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyResearchRunDto"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Browse advisory, citation-bound policy research evidence.",
+        "tags": [
+          "platform-admin"
+        ]
+      }
+    },
     "/v1/loan-cases/{caseId}/communication-messages": {
       "get": {
         "operationId": "listCommunicationMessages",
@@ -3450,6 +3491,104 @@
           "sourceName",
           "jurisdictionCode",
           "sourcePublishedAt"
+        ]
+      },
+      "PolicyResearchCitationDto": {
+        "type": "object",
+        "properties": {
+          "sourceChecksum": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "excerptDigest": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "number"
+          },
+          "relevanceScore": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceChecksum",
+          "location",
+          "excerpt",
+          "excerptDigest",
+          "rank",
+          "relevanceScore"
+        ]
+      },
+      "PolicyResearchRunDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "jurisdictionCode": {
+            "type": "string"
+          },
+          "productCode": {
+            "type": "object"
+          },
+          "lifecycleEvent": {
+            "type": "object"
+          },
+          "unresolvedReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "researchQuery": {
+            "type": "string"
+          },
+          "candidateSummary": {
+            "type": "object"
+          },
+          "changeSignals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "synthesisProvider": {
+            "type": "object"
+          },
+          "failureDetail": {
+            "type": "object"
+          },
+          "requestedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyResearchCitationDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "status",
+          "jurisdictionCode",
+          "unresolvedReasons",
+          "researchQuery",
+          "requestedAt",
+          "citations"
         ]
       },
       "CommunicationMessage": {

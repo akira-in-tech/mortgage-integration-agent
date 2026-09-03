@@ -94,6 +94,10 @@ data "aws_iam_policy_document" "deploy_permissions" {
       "ecr:SetRepositoryPolicy", "ecr:GetRepositoryPolicy", "ecr:TagResource",
       "ecr:ListTagsForResource",
       "ecr:PutLifecyclePolicy", "ecr:GetLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
+      # A repository's scan-on-push setting is an explicit deployment-time
+      # control, separate from image upload. Keep it scoped to the same
+      # mortgage-agent ECR namespace as every other repository operation.
+      "ecr:PutImageScanningConfiguration",
       "ecr:BatchDeleteImage", "ecr:ListImages", "ecr:DescribeImages",
       "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer",
       "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload",

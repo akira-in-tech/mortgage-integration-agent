@@ -80,12 +80,17 @@ export class DemoPolicySourceConnector implements PolicySourceConnector {
  */
 export async function fetchDemoBulletin(): Promise<PolicySourceConnectorUpdate> {
   return {
-    checksum: 'sha256:demo-connector-bulletin-v1',
-    publishedAt: new Date('2026-01-01T00:00:00.000Z'),
+    checksum: 'sha256:demo-connector-bulletin-v2-policy-research',
+    publishedAt: new Date('2026-09-02T00:00:00.000Z'),
     content: {
-      bulletinId: 'DEMO-2026-01',
+      bulletinId: 'DEMO-2026-09',
       summary:
-        'Synthetic demonstration bulletin - proves the connector/monitor mechanism works, not real regulatory content.',
+        'Synthetic demonstration bulletin - proves source monitoring and citation-bound policy research, not real regulatory content.',
+      sections: [
+        'This source is synthetic. Its retrieved passages are advisory demonstration material and require human review before any policy draft is considered.',
+        'A changed source revision must be preserved with its checksum, retrieved as bounded passages, and cited in the reviewer-facing research brief.',
+        'No generated summary may change jurisdiction coverage, activate a policy version, or determine a lending outcome.',
+      ],
     },
   };
 }

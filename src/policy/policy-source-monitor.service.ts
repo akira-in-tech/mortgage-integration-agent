@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PolicySource } from '../database/entities/policy-source.entity';
@@ -8,6 +8,7 @@ import {
   PolicySourceConnector,
   detectSchemaDrift,
 } from './policy-source-connector';
+import { PolicyResearchService } from './policy-research.service';
 
 export type PolicySourceCheckOutcome =
   'no_change' | 'new_revision' | 'schema_drift' | 'error';
@@ -45,6 +46,8 @@ export class PolicySourceMonitorService {
     private readonly sourceRepository: Repository<PolicySource>,
     @InjectRepository(PolicySourceRevision)
     private readonly revisionRepository: Repository<PolicySourceRevision>,
+    @Optional()
+    private readonly policyResearchService?: PolicyResearchService,
   ) {}
 
   async checkSource(
@@ -99,12 +102,16 @@ export class PolicySourceMonitorService {
       return { sourceId: connector.sourceId, outcome: 'schema_drift', detail };
     }
 
-    await this.revisionRepository.save({
+    const revision = await this.revisionRepository.save({
       policySourceId: source.id,
       checksum: checkResult.update.checksum,
       publishedAt: checkResult.update.publishedAt,
       content: checkResult.update.content,
     });
+    // Discovery starts only after an immutable revision is safely recorded.
+    // A model outage cannot erase source evidence or stop the monitor from
+    // reporting a genuine change.
+    await this.policyResearchService?.requestForNewRevision(source, revision);
     this.logger.log(
       `New candidate revision recorded for policy source "${source.name}" (checksum ${checkResult.update.checksum}) - pending human review; this alone does not change the jurisdiction's coverage status.`,
     );
