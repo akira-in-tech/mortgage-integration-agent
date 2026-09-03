@@ -27,12 +27,12 @@ describeOrSkip(
       );
     }, 30_000);
 
-    it('declares the Section 11.3 registered-adapter metadata for AUTHORIZED_SANDBOX mode', () => {
-      expect(adapter.providerId).toBe('plaid-sandbox');
-      expect(adapter.capability).toBe('INCOME');
-      expect(adapter.mode).toBe('AUTHORIZED_SANDBOX');
-    });
-
+    // Identity/capability/mode is already proven generically (against a
+    // mocked PlaidSandboxService, unconditionally, not gated on real
+    // credentials) by provider-adapters.contract.spec.ts's own
+    // 'plaid-income-authorized-sandbox' case — those properties don't
+    // depend on which service instance is injected. What only this file can
+    // prove is a real network round trip against sandbox.plaid.com itself.
     it('healthCheck() reaches the real sandbox.plaid.com host', async () => {
       const health = await adapter.healthCheck();
       expect(health.healthy).toBe(true);

@@ -1,7 +1,6 @@
 import { IdentityVerificationAdapter } from './identity-verification.adapter';
 import { IdentityService } from './identity.service';
 import { IdentityVerificationResult } from './identity.types';
-import { ProviderCapability } from '../../provider-platform/types';
 
 const VERIFIED: IdentityVerificationResult = {
   nameMatch: true,
@@ -12,21 +11,13 @@ const VERIFIED: IdentityVerificationResult = {
   identityVerified: true,
 };
 
+// Identity/capability/mode/operation-shape and healthCheck() are already
+// proven generically by provider-adapters.contract.spec.ts
+// (describeProviderAdapterContract) for every adapter, including this one —
+// only assertions that contract can't express (exact mock call arguments,
+// normalize()'s reference-identity pass-through, raw service-rejection
+// propagation) live here.
 describe('IdentityVerificationAdapter', () => {
-  it('declares IDENTITY/SIMULATOR identity and a reusable-lookup, non-fallback operation profile', () => {
-    const adapter = new IdentityVerificationAdapter({} as IdentityService);
-
-    expect(adapter.providerId).toBe('identity-verification-simulator');
-    expect(adapter.capability).toBe(ProviderCapability.IDENTITY);
-    expect(adapter.mode).toBe('SIMULATOR');
-    expect(adapter.operation).toEqual({
-      effectClass: 'REUSABLE_LOOKUP',
-      supportsStatusLookup: false,
-      supportsCancellation: false,
-      fallbackPolicy: 'PROHIBITED',
-    });
-  });
-
   it('submit() delegates to IdentityService.verifyIdentity and wraps the result as a COMPLETE receipt', async () => {
     const verifyIdentity = jest.fn().mockResolvedValue(VERIFIED);
     const adapter = new IdentityVerificationAdapter({ verifyIdentity } as any);
@@ -55,14 +46,5 @@ describe('IdentityVerificationAdapter', () => {
     const adapter = new IdentityVerificationAdapter({} as IdentityService);
 
     expect(adapter.normalize(VERIFIED)).toBe(VERIFIED);
-  });
-
-  it('healthCheck() always reports healthy (no real external dependency to be unhealthy)', async () => {
-    const adapter = new IdentityVerificationAdapter({} as IdentityService);
-
-    const health = await adapter.healthCheck();
-
-    expect(health.healthy).toBe(true);
-    expect(typeof health.checkedAt).toBe('string');
   });
 });

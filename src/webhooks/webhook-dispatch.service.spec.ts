@@ -438,4 +438,61 @@ describeOrSkip('WebhookDispatchService', () => {
       await redirectTarget.close();
     }
   });
+
+  it("defers a delivery past its endpoint's outbound rate limit instead of attempting HTTP delivery or spending a retry", async () => {
+    const tenantId = newTenantId();
+    const receiver = await startTestReceiver();
+    try {
+      // WebhookEndpointService.reserveOutboundAttempt() itself already has
+      // a direct real-Postgres proof (webhook-endpoint.service.spec.ts).
+      // What that proof cannot show is how the dispatch loop that actually
+      // calls it (attemptDelivery(), webhook-dispatch.service.ts) reacts to
+      // a real `{ reserved: false }` result -- this does.
+      const endpoint = await endpointService.create(tenantId, {
+        targetUrl: receiver.url,
+        eventTypes: ['loan_case.created'],
+      });
+      await endpointService.update(tenantId, endpoint.id, {
+        outboundRateLimitPerMinute: 1,
+      });
+
+      await makeOutboxEvent(tenantId, 'loan_case.created', {
+        caseId: 'case-rate-1',
+      });
+      await makeOutboxEvent(tenantId, 'loan_case.created', {
+        caseId: 'case-rate-2',
+      });
+
+      // Both events are already PENDING before this one call: the first
+      // delivery this loop attempts consumes the endpoint's only
+      // per-minute slot, so the second must observe a real, contended
+      // rejection from the same reservation this test doesn't mock.
+      await dispatchService.dispatchPendingEvents();
+
+      expect(receiver.requests).toHaveLength(1);
+
+      const deliveries = await dataSource
+        .getRepository(WebhookDelivery)
+        .find({ where: { webhookEndpointId: endpoint.id } });
+      expect(deliveries).toHaveLength(2);
+
+      const succeeded = deliveries.find((d) => d.status === 'SUCCEEDED');
+      const deferred = deliveries.find((d) => d.status === 'PENDING');
+      expect(succeeded?.attempts).toHaveLength(1);
+
+      // Deferral must never look like a failed attempt: no HTTP call was
+      // made for it, so it carries none of the retry/backoff/final-failure
+      // history a real failed attempt would.
+      expect(deferred?.attempts).toHaveLength(0);
+      expect(deferred?.nextAttemptAt).not.toBeNull();
+      expect(deferred!.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
+
+      const refreshedEndpoint = await dataSource
+        .getRepository(WebhookEndpoint)
+        .findOneByOrFail({ id: endpoint.id });
+      expect(refreshedEndpoint.rateWindowAttempts).toBe(1);
+    } finally {
+      await receiver.close();
+    }
+  });
 });
