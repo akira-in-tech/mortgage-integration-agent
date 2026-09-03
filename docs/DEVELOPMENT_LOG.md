@@ -12966,3 +12966,33 @@ and Node v24.19.0 (matching CI) (2026-09-03):
 ### Next safe step
 
 Not attempted here, out of scope for this slice: raising this machine's default shell Node version so a future session doesn't rediscover the same `engines` mismatch from scratch. Every item named across the M7-030–054 audit and this session's own follow-up work is now closed.
+
+## M7-069: README visual pass — badges and a three-image live walkthrough strip
+
+### Status
+
+Implemented and verified. Presentation-only; no product behavior changed.
+
+### Problem
+
+The user asked for the README to look more like a real product page rather than a plain technical document — it had one screenshot and no badges, which reads as a doc, not a landing page.
+
+### Implementation
+
+- Added a centered hero block: the tagline, a real CI-status badge (`actions/workflows/ci.yml/badge.svg`, verified to resolve with a live `200`), and honest static badges naming the real pinned versions in this repo (Node 24, TypeScript 6, NestJS 11, React 18, PostgreSQL 16 + RLS, Temporal) plus a `license: proprietary` badge matching `package.json`'s real `"UNLICENSED"` value — no badge claims anything not already true in the repo.
+- Replaced the single screenshot with a three-image walkthrough strip, one per step of the console's own "Guided synthetic case" progress stepper: create-and-evaluate, an open reviewer condition, and the completed audit trail. All three are fresh, live, unedited captures from a real guest-sandbox run against the deployed staging edge (same method as M7-066's own screenshot: Playwright driving a real Chromium browser against `https://d136v61al3mroo.cloudfront.net`, not a mock or a manually edited image).
+- The prior screenshot (`docs/assets/meridian-guided-review.png`) is no longer referenced from the README but was deliberately left in place rather than deleted — the M7-066 entry above describes capturing it as real evidence, and removing the file would make that historical claim unverifiable.
+
+### Verification
+
+```text
+- Re-ran the exact live guest-sandbox flow via Playwright against the real
+  deployed staging edge to capture all three images; each screenshot
+  reviewed by hand before use
+- Confirmed all three referenced image files exist at the paths the README
+  uses
+- curl of the CI badge URL: real 200
+- git diff --check: passed
+- No source, test, or config file changed -- README.md and three new PNGs
+  only
+```

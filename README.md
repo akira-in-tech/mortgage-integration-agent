@@ -1,23 +1,49 @@
+<div align="center">
+
 # Meridian
 
 **The governed operations workspace for lending teams that need every case action to be explainable.**
 
+[![CI](https://github.com/akira-in-tech/mortgage-integration-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/akira-in-tech/mortgage-integration-agent/actions/workflows/ci.yml)
+![Node](https://img.shields.io/badge/Node-24-339933?logo=nodedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?logo=nestjs&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
+![Temporal](https://img.shields.io/badge/Temporal-durable_workflows-000000?logo=temporal&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16_%2B_RLS-4169E1?logo=postgresql&logoColor=white)
+![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+
 Meridian turns a lending-case workflow into an accountable handoff: it gathers evidence through controlled adapters, binds the case to a policy context, lets a bounded AI planner assist with routing, and pauses for a reviewer whenever human judgment is required.
 
-[Open the live synthetic demo](https://d136v61al3mroo.cloudfront.net) · [Explore the architecture](#architecture) · [Run locally](#run-locally)
+**[▶ Open the live synthetic demo](https://d136v61al3mroo.cloudfront.net)** &nbsp;·&nbsp; [Architecture](#architecture) &nbsp;·&nbsp; [Run locally](#run-locally)
 
 > The live demo uses generated data only. It does not access a real borrower or provider, make a credit decision, move money, or represent a lender, regulator, GSE, or automated-underwriting finding.
 
-![A Meridian synthetic case after evidence collection, with a policy-bound income-verification condition ready for reviewer action.](docs/assets/meridian-guided-review.png)
+</div>
 
 ## See the product in three minutes
 
-The public sandbox is an isolated, disposable workspace—no sign-up or API key required.
+The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every screenshot below is a live, unedited capture of that real sandbox, not a mockup.
 
-1. Select **Try live sandbox** to create a tenant and a conventional-mortgage case containing only generated data.
-2. Select **Run simulated evaluation**. A real Temporal workflow gathers simulated evidence and evaluates the current policy binding.
-3. Review the deliberately triggered income-verification condition, then satisfy or waive it as the sandbox reviewer.
-4. Inspect the timeline and audit history to see the workflow, policy binding, evidence, and reviewer action in order.
+<table>
+<tr>
+<td width="33%" valign="top">
+<img src="docs/assets/meridian-shot-1-start.png" alt="A fresh synthetic case, guide at step 2: run the simulated evaluation.">
+<b>1 · Create &amp; evaluate</b><br>
+<sub>Select <b>Try live sandbox</b> to create a tenant and a conventional-mortgage case, then run the real Temporal workflow against it.</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/meridian-shot-2-condition.png" alt="An open, policy-bound income-verification condition awaiting reviewer action.">
+<b>2 · Review a condition</b><br>
+<sub>The workflow opens a deliberately triggered income-verification condition. Satisfy or waive it as the sandbox reviewer.</sub>
+</td>
+<td width="33%" valign="top">
+<img src="docs/assets/meridian-shot-3-audit.png" alt="The completed case's audit trail, showing the recorded reviewer action.">
+<b>3 · Inspect the audit trail</b><br>
+<sub>Every workflow step, policy binding, evidence item, and reviewer action is recorded in order — nothing is inferred after the fact.</sub>
+</td>
+</tr>
+</table>
 
 Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires automatically, and its tenant-scoped synthetic records are removed after expiry.
 
