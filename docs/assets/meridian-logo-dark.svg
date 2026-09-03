@@ -1,11 +1,9 @@
 <svg width="420" height="72" viewBox="0 0 420 72" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Meridian">
   <title>Meridian</title>
-  <g transform="translate(4,4)">
-    <circle cx="32" cy="32" r="27" fill="#26234a" />
-    <circle cx="32" cy="32" r="27" fill="none" stroke="#8177ff" stroke-width="3" />
-    <path d="M32 10 A22 22 0 0 1 32 54" fill="none" stroke="#8177ff" stroke-width="2.5" stroke-linecap="round" opacity="0.6" />
-    <line x1="32" y1="9" x2="32" y2="55" stroke="#a79dff" stroke-width="3" stroke-linecap="round" />
-    <circle cx="32" cy="21" r="4.5" fill="#a79dff" />
-  </g>
+  <rect x="4" y="4" width="64" height="64" rx="18" fill="#5148e5" />
+  <svg x="19" y="19" width="34" height="34" viewBox="0 0 24 24" fill="none">
+    <path d="M4 20V9l8-6 8 6v11" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" />
+    <path d="M9 20v-7h6v7" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" />
+  </svg>
   <text x="86" y="47" font-family="'Manrope','Segoe UI',Helvetica,Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-0.3" fill="#f2f2f6">Meridian</text>
 </svg>

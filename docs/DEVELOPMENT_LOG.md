@@ -13017,3 +13017,7 @@ Implemented. Presentation-only.
 - git diff --check: passed
 - No source, test, or config file changed
 ```
+
+### Correction
+
+The invented compass/meridian-line mark above was replaced immediately after: the console already has a real, shipping brand mark — `BrandMark` in `console/src/components/icons.tsx`, the house-outline icon in the accent-colored rounded square `NavRail.tsx` renders top-left of every console screen (visible in the M7-066/M7-069 screenshots themselves). The user pointed this out directly. Both SVGs now embed that exact path data (`M4 20V9l8-6 8 6v11` / `M9 20v-7h6v7`, white stroke, `stroke-width 2.2`) inside the same accent-colored rounded square, rather than a mark unconnected to the product's real visual identity. Re-rendered and re-reviewed both variants before committing the fix.
