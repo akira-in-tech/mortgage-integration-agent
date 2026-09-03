@@ -1,6 +1,9 @@
 <div align="center">
 
-# Meridian
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/meridian-logo-dark.svg">
+  <img src="docs/assets/meridian-logo.svg" alt="Meridian" height="56">
+</picture>
 
 **The governed operations workspace for lending teams that need every case action to be explainable.**
 

@@ -12996,3 +12996,24 @@ The user asked for the README to look more like a real product page rather than 
 - No source, test, or config file changed -- README.md and three new PNGs
   only
 ```
+
+## M7-070: README product logo
+
+### Status
+
+Implemented. Presentation-only.
+
+### Implementation
+
+- Added `docs/assets/meridian-logo.svg` (light) and `meridian-logo-dark.svg` (dark), a compass/meridian-line mark plus wordmark, using this repo's own real design tokens (`console/src/styles/tokens.css`: `--accent #5148e5`, `--accent-wash #efeeff` for light; `--blue-500 #8177ff` / `--blue-300 #a79dff` for dark) rather than inventing an unrelated palette — the mark reuses colors the actual console UI already uses.
+- Wired into the README hero via `<picture>`/`prefers-color-scheme` so the wordmark stays legible in both GitHub light and dark theme (the light-only mark's near-black text would have been unreadable on a dark background otherwise — checked directly, not assumed).
+- Rendered both variants with a real headless Chromium page (Playwright, already a project dependency) before committing, to confirm actual appearance rather than trusting hand-written SVG coordinates.
+
+### Verification
+
+```text
+- Rendered both SVGs (and the combined hero) via Playwright screenshots,
+  reviewed by hand
+- git diff --check: passed
+- No source, test, or config file changed
+```
