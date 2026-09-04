@@ -13245,3 +13245,49 @@ Converted every rule on `aws_security_group.app` to a standalone `aws_security_g
 ### Next safe step
 
 Not attempted here: auditing the rest of this Terraform configuration for any other resource that mixes inline-managed and standalone-managed sub-resources of the same kind (the same anti-pattern class, not necessarily security groups) -- this incident only searched `security-groups.tf` specifically because that's where the symptom pointed.
+
+## M7-076: two live-console reports after M7-075 — one didn't reproduce, one had a real, honestly-scoped root cause
+
+### Status
+
+Investigated both against the real deployed staging system, not guessed at. One is fixed with real evidence; the other could not be reproduced and is documented as such rather than assumed fixed.
+
+### Background
+
+Right after M7-075's fix was verified live, the user reported two things seen while actually using the console: a case created via "+ New case" (M7-074) not showing up in the case list's "All" filter, and a case that looked fully complete (all 4 guided-walkthrough steps checked, including "Review the audit trail") showing "No audit events recorded for this case yet." on its own Audit tab.
+
+### Investigation 1: "+ New case" not showing up in the list
+
+Read `CaseQueryService.listCases()` (keyset-paginated on `(createdAt, id)` DESC, no filter that would exclude a fresh row) and `GuestSandboxService` end to end -- nothing in either pointed at a bug. Reproduced directly against the live API with `curl`: created a sandbox session, created a second case via `POST /v1/demo-sandbox/cases`, and queried `cases(status: null, first: 20)` immediately after -- both cases came back, newest first, correctly. Reproduced again with a real headless browser (Playwright) against the live site: one additional case, then three additional cases created back to back with only an 800ms wait between each -- every run showed the correct count and every borrower ID, no console errors.
+
+Backend and frontend both check out under direct reproduction. This one is not currently reproducible and is left undiagnosed rather than declared fixed on no evidence -- most likely explanation, given the timing, is a transient artifact of the M7-075 incident's own ECS rollout (briefly running old and new task revisions behind the same ALB) rather than a standing defect in the current deployed code. If it recurs, the next useful evidence is the browser's own network tab or console at the moment it happens.
+
+### Investigation 2: "No audit events recorded" on a case that looked complete
+
+This one had a real, findable cause. `SandboxGuide`'s step 4 ("Review the audit trail") fires whenever a case reaches `READY_FOR_UNDERWRITING`/`CLOSED`/`MANUAL_REVIEW`, unconditionally pointing the visitor at the Audit tab. But reaching that status doesn't always mean a reviewer did anything: the seeded income-discrepancy rule (`SeedIncomeDiscrepancyPolicy`) only opens a condition when `application.monthly_income` differs from the simulator's own `evidence.verified_monthly_income` by more than 10% (`lending-operations-agent-runtime.ts`) -- and that verified figure is a deterministic-but-effectively-random function of the case's own freshly-generated `borrowerId` (`PlaidService.deterministicSeed()`, `monthlyIncome: 4000 + floor(seed * 21000)`, i.e. uniformly somewhere in $4,000-$25,000/month). The always-seeded default scenario (`statedMonthlyIncome: 1`) guarantees that 10% line is crossed; a visitor's own custom scenario (M7-071/M7-074's whole point) might land within 10% of a random draw and never open a condition at all. When that happens, the case reaches a handoff status with zero reviewer actions and therefore zero audit events -- an honestly empty, correctly-behaving Audit tab, not data loss or a query bug. The guide's own messaging was the actual defect: it told every visitor there was a reviewer record worth opening, even the ones for whom that was never true.
+
+### Fix
+
+`getSandboxGuideState()` (`console/src/components/sandbox-guide-state.ts`) now takes a third `hasAuditEvents` argument. Reaching a handoff status with real audit events still points at "Open audit trail" exactly as before; reaching one with none instead says plainly that the workflow completed without a reviewer condition (explaining why, in plain language) and points at "View synthetic evidence" rather than a real but empty tab framed as the interesting last step. `SandboxGuide` passes the prop through; `CaseDetail` supplies the real value it already has on hand (`(loanCase.auditEvents ?? []).length > 0` -- the same `auditEvents` the Audit tab itself renders, not a new query). No fabricated audit row was added anywhere: an empty trail stays empty and is now described honestly instead of hidden behind a misleading prompt.
+
+### Verification
+
+```text
+- Investigation 1 (list): real curl reproduction against
+  https://d136v61al3mroo.cloudfront.net -- create second case, immediate
+  cases() query, both cases present and correctly ordered; real Playwright
+  runs (1 additional case, then 3 in a row) against the live site, zero
+  reproductions, zero console errors
+- Investigation 2 (audit): root cause traced through real code paths
+  (sandbox-guide-state.ts, lending-operations-agent-runtime.ts,
+  SeedIncomeDiscrepancyPolicy migration, plaid.service.ts) -- not guessed
+- console unit tests: 71/71 passed (2 new SandboxGuide cases covering the
+  honest-empty-audit branch and confirming the real-audit-trail branch is
+  unchanged)
+- tsc --noEmit: clean
+```
+
+### Next safe step
+
+Investigation 1 stays open pending a real recurrence with browser-side evidence (network tab, console) captured at the moment it happens -- not re-guessed from the code, since two independent real reproductions here found nothing wrong with either layer.
+

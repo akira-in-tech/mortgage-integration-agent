@@ -296,6 +296,7 @@ export function CaseDetail({
           <SandboxGuide
             status={loanCase.status}
             openConditionCount={openConditionCount}
+            hasAuditEvents={(loanCase.auditEvents ?? []).length > 0}
             starting={startWorkflowState.loading}
             onStartEvaluation={startSandboxEvaluation}
             onOpenTab={setActiveTab}

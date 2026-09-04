@@ -7,6 +7,7 @@ import {
 interface SandboxGuideProps {
   status: CaseStatus;
   openConditionCount: number;
+  hasAuditEvents: boolean;
   starting: boolean;
   onStartEvaluation: () => void;
   onOpenTab: (tab: SandboxGuideTab) => void;
@@ -22,11 +23,16 @@ const STEPS = [
 export function SandboxGuide({
   status,
   openConditionCount,
+  hasAuditEvents,
   starting,
   onStartEvaluation,
   onOpenTab,
 }: SandboxGuideProps) {
-  const state = getSandboxGuideState(status, openConditionCount);
+  const state = getSandboxGuideState(
+    status,
+    openConditionCount,
+    hasAuditEvents,
+  );
   const action = () => {
     if (state.action === 'start') onStartEvaluation();
     else onOpenTab(state.action);

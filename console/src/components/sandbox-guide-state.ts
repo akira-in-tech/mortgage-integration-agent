@@ -15,10 +15,23 @@ export interface SandboxGuideState {
  * The guide never guesses that an asynchronous workflow has completed: every
  * transition comes from the case query that CaseDetail refreshes while a
  * sandbox is open.
+ *
+ * `hasAuditEvents` matters because reaching a handoff status doesn't always
+ * mean a reviewer did anything. The seeded income-discrepancy rule only
+ * opens a condition when the case's stated monthly income differs from the
+ * simulator's own verified figure by more than 10% -- guaranteed for the
+ * default walkthrough (which deliberately states $1/month), but a custom
+ * scenario's own numbers (Section 15's "+ New case") may or may not cross
+ * that line. When they don't, the workflow reaches READY_FOR_UNDERWRITING
+ * or MANUAL_REVIEW without a single reviewer action, so the case's audit
+ * trail is genuinely empty -- pointing the guide at "Open audit trail" in
+ * that case would send a visitor to a real but misleadingly-framed dead
+ * end, not a bug in what the audit trail shows.
  */
 export function getSandboxGuideState(
   status: CaseStatus,
   openConditionCount: number,
+  hasAuditEvents: boolean,
 ): SandboxGuideState {
   if (openConditionCount > 0 || status === 'CONDITIONS_OPEN') {
     return {
@@ -36,13 +49,23 @@ export function getSandboxGuideState(
     status === 'CLOSED' ||
     status === 'MANUAL_REVIEW'
   ) {
+    if (hasAuditEvents) {
+      return {
+        currentStep: 4,
+        title: 'The simulated workflow has reached a handoff state',
+        detail:
+          'Inspect the policy binding, evidence, and human actions captured for this case.',
+        actionLabel: 'Open audit trail',
+        action: 'audit',
+      };
+    }
     return {
       currentStep: 4,
-      title: 'The simulated workflow has reached a handoff state',
+      title: 'The simulated workflow completed without a reviewer condition',
       detail:
-        'Inspect the policy binding, evidence, and human actions captured for this case.',
-      actionLabel: 'Open audit trail',
-      action: 'audit',
+        "This scenario's stated income was close enough to the simulator's own verified figure that no condition ever opened, so there's genuinely no reviewer action in the audit trail yet. Try a bigger mismatch between requested amount and stated income in a new case to see one.",
+      actionLabel: 'View synthetic evidence',
+      action: 'evidence',
     };
   }
 
