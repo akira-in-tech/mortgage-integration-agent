@@ -13480,3 +13480,26 @@ Fail-closed route: MANUAL_REVIEW / BUDGET_OR_DEADLINE_EXHAUSTED
 ```
 
 This failed run is retained as operational evidence; it was not rewritten as a successful demo. A fresh case must complete condition creation, reviewer resolution, and audit inspection after the fixed immutable image is deployed.
+
+## M7-082: repeatable AWS policy-research completion drill
+
+### Status
+
+Implemented. `Staging drill` now includes a `policy-research` choice that proves the deployed background path completes instead of treating a queued row or absence of an exception as success.
+
+### Implementation
+
+- The drill runs a one-off Fargate verifier inside the existing application network boundary and inherits the migration task's Secrets Manager `DATABASE_URL`; staging RDS remains private.
+- It inserts one uniquely fingerprinted, explicitly labelled synthetic `NEW_SOURCE_REVISION` work item against the existing `US-DEMO` source revision.
+- The verifier does not call `PolicyResearchService.processPendingRuns()` itself. It polls the row while the separately deployed worker must claim it, retrieve passages, invoke configured Qwen synthesis, persist citations, and mark it complete.
+- Success requires `status=COMPLETED`, a non-null completion timestamp, and at least one persisted citation. `FAILED`, a citationless completion, or an eight-minute timeout exits non-zero.
+- The one-off task's bounded, non-secret status lines are read back from its CloudWatch stream into the GitHub Actions log, leaving durable run evidence without printing the database URL or model prompt content.
+
+### Verification before publication
+
+```text
+ruby YAML.load_file(.github/workflows/staging-drill.yml): yaml ok
+git diff --check: passed
+```
+
+The live AWS drill remains required after this workflow change reaches `main`; implementation alone is not completion evidence.

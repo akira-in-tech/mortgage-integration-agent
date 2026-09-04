@@ -20,6 +20,7 @@ on:
           - load
           - backup-restore
           - failure-recovery
+          - policy-research
 
 permissions:
   contents: read
@@ -316,3 +317,129 @@ jobs:
             echo "A real outage began at t+${outage_start}s and never recovered within the poll window" >&2
             exit 1
           fi
+
+  policy-research:
+    if: github.event.inputs.drill == 'policy-research'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        working-directory: terraform/staging
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      # This creates one explicitly labelled synthetic governance work item,
+      # then waits for the separately running worker to claim and complete it.
+      # The verifier never calls the research implementation itself, so a
+      # green result proves the real staging queue, worker, Qwen synthesis,
+      # citations, and persistence path rather than an in-process shortcut.
+      - name: Queue and verify a real staging policy research run
+        working-directory: terraform/staging
+        run: |
+          read -r -d '' verify_script <<'EOF' || true
+          const crypto = require('crypto');
+          const { Client } = require('pg');
+          const client = new Client({ connectionString: process.env.DATABASE_URL });
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          (async () => {
+            await client.connect();
+            const source = await client.query(`
+              SELECT source.id AS "sourceId", revision.id AS "revisionId"
+              FROM policy_sources source
+              JOIN LATERAL (
+                SELECT id FROM policy_source_revisions
+                WHERE "policySourceId" = source.id
+                ORDER BY "recordedAt" DESC LIMIT 1
+              ) revision ON true
+              WHERE source."jurisdictionCode" = 'US-DEMO'
+              LIMIT 1`);
+            if (source.rowCount !== 1) throw new Error('US-DEMO source revision is missing');
+            const nonce = crypto.randomUUID();
+            const fingerprint = crypto.createHash('sha256').update(nonce).digest('hex');
+            const inserted = await client.query(`
+              INSERT INTO policy_research_runs
+                (trigger, status, "policySourceId", "policySourceRevisionId",
+                 "jurisdictionCode", "requestFingerprint", "unresolvedReasons", "researchQuery")
+              VALUES ('NEW_SOURCE_REVISION', 'QUEUED', $1, $2, 'US-DEMO', $3,
+                      $4::jsonb, $5)
+              RETURNING id`, [
+                source.rows[0].sourceId,
+                source.rows[0].revisionId,
+                fingerprint,
+                JSON.stringify(['staging-drill: verify durable policy research completion']),
+                'Verify the current synthetic US-DEMO source revision and produce a citation-bound advisory brief.',
+              ]);
+            const runId = inserted.rows[0].id;
+            console.log('POLICY_RESEARCH_RUN_ID=' + runId);
+            for (let attempt = 0; attempt < 48; attempt += 1) {
+              const result = await client.query(`
+                SELECT run.status, run.attempts, run."completedAt",
+                       count(citation.id)::int AS "citationCount"
+                FROM policy_research_runs run
+                LEFT JOIN policy_research_citations citation
+                  ON citation."policyResearchRunId" = run.id
+                WHERE run.id = $1
+                GROUP BY run.id`, [runId]);
+              const row = result.rows[0];
+              console.log(`POLICY_RESEARCH_STATUS=${row.status} ATTEMPTS=${row.attempts} CITATIONS=${row.citationCount}`);
+              if (row.status === 'COMPLETED') {
+                if (!row.completedAt || row.citationCount < 1) {
+                  throw new Error('completed run lacks completedAt or persisted citations');
+                }
+                console.log('POLICY_RESEARCH_VERIFIED=COMPLETED');
+                return;
+              }
+              if (row.status === 'FAILED') throw new Error('policy research run failed');
+              await sleep(10000);
+            }
+            throw new Error('policy research run did not complete within eight minutes');
+          })()
+            .then(() => process.exit(0))
+            .catch((error) => { console.error(error); process.exit(1); })
+            .finally(() => client.end());
+          EOF
+
+          jq -n --arg script "$verify_script" \
+            '{containerOverrides: [{name: "migrate", command: ["node", "-e", $script]}]}' \
+            > /tmp/policy-research-overrides.json
+
+          subnets=$(terraform output -json public_subnet_ids | jq -r 'join(",")')
+          app_sg=$(terraform output -raw app_security_group_id)
+          task_definition=$(terraform output -raw migrate_task_definition_arn)
+          task_arn=$(aws ecs run-task \
+            --cluster mortgage-agent-staging \
+            --task-definition "$task_definition" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$subnets],securityGroups=[$app_sg],assignPublicIp=ENABLED}" \
+            --overrides file:///tmp/policy-research-overrides.json \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Policy research verification task: $task_arn"
+          aws ecs wait tasks-stopped --cluster mortgage-agent-staging --tasks "$task_arn" --region "${{ vars.AWS_REGION }}"
+
+          task_id=${task_arn##*/}
+          log_stream="migrate/migrate/$task_id"
+          aws logs get-log-events \
+            --log-group-name /ecs/mortgage-agent-staging-migrate \
+            --log-stream-name "$log_stream" \
+            --region "${{ vars.AWS_REGION }}" \
+            --query 'events[].message' --output text
+
+          exit_code=$(aws ecs describe-tasks --cluster mortgage-agent-staging --tasks "$task_arn" \
+            --region "${{ vars.AWS_REGION }}" --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$exit_code" = "0"
