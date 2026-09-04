@@ -13537,3 +13537,21 @@ Workflow: https://github.com/akira-in-tech/mortgage-integration-agent/actions/ru
 ```
 
 This proves the deployed worker claimed and completed the synthetic research run with at least one persisted citation. The optional CloudWatch read remained unavailable to the deploy role and printed a bounded diagnostic; the job stayed green because the already-completed Fargate task's exit code is the authoritative verification contract.
+
+## M7-083: clear tenant-shaped console cache at session boundaries
+
+### Finding
+
+A live acceptance pass created a new guest sandbox immediately after closing an older one. For roughly the first network round trip, the singleton Apollo cache rendered the older sandbox's synthetic case-list row. The new tenant could not load that case detail and a refresh replaced the row with the correct tenant result, so the backend authorization boundary held; nevertheless, showing stale tenant-shaped UI at all is an unacceptable session-transition defect.
+
+### Implementation
+
+- Added one explicit GraphQL session-cache boundary around Apollo's process-wide store.
+- Disconnect clears cached tenant results when credentials are discarded.
+- Guest connection awaits the same clear before rendering the newly authenticated tenant.
+- `ConnectScreen` now awaits its sandbox-connected callback, preventing its loading state from finishing before the session boundary completes.
+- Added a focused cache regression that writes a prior-tenant case result, clears the session cache, and proves the result is no longer readable.
+
+### Verification
+
+`git diff --check` passed. The local Vitest command entered the repository's recurring macOS file-provider stall before reporting a result; it is not recorded as passing. The full console test/lint/build matrix remains required in GitHub CI after publication.

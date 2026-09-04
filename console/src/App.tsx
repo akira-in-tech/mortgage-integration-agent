@@ -31,6 +31,7 @@ import {
   hasDemoSandbox,
   loadDemoSandbox,
 } from './demo-sandbox';
+import { clearGraphqlSessionCache } from './apollo-client';
 
 export function App() {
   const [checkingOidcCallback, setCheckingOidcCallback] = useState(true);
@@ -76,6 +77,10 @@ export function App() {
     setConnected(false);
     setSelectingTenant(false);
     setSelectedCaseId(null);
+    // A browser can adopt another tenant without reloading the JavaScript
+    // process. Clear tenant-shaped results at the same moment credentials are
+    // discarded so the next session never renders the previous one from cache.
+    void clearGraphqlSessionCache();
     if (upstreamOidcSession) {
       void beginOidcLogout();
     } else {
@@ -126,7 +131,8 @@ export function App() {
     return (
       <ConnectScreen
         onConnected={() => setConnected(true)}
-        onSandboxConnected={(caseId) => {
+        onSandboxConnected={async (caseId) => {
+          await clearGraphqlSessionCache();
           setSelectedCaseId(caseId ?? null);
           setView('queue');
           setConnected(true);

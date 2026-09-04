@@ -11,7 +11,7 @@ export function ConnectScreen({
   onPlatformAdmin,
 }: {
   onConnected: () => void;
-  onSandboxConnected: (caseId?: string) => void;
+  onSandboxConnected: (caseId?: string) => void | Promise<void>;
   onPlatformAdmin: () => void;
 }) {
   const [mode, setMode] = useState<Mode>('bearer');
@@ -50,7 +50,7 @@ export function ConnectScreen({
       // Audit fields expect an opaque UUID. The server generates it with the
       // isolated tenant rather than trusting a browser-chosen display name.
       setStoredActorId(sandbox.actorId ?? '');
-      onSandboxConnected(sandbox.caseId);
+      await onSandboxConnected(sandbox.caseId);
     } catch (error) {
       setSandboxError(
         error instanceof Error

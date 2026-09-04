@@ -61,3 +61,15 @@ export const apolloClient = new ApolloClient({
     },
   }),
 });
+
+/**
+ * Removes tenant-scoped GraphQL results before the browser adopts a new
+ * authentication context. Apollo's cache is process-wide, while Meridian's
+ * tenant authority can change without a page navigation (for example, when a
+ * visitor closes one guest sandbox and creates another). Keeping this boundary
+ * explicit prevents the previous tenant's synthetic rows from flashing while
+ * the first query for the new tenant is still in flight.
+ */
+export async function clearGraphqlSessionCache(): Promise<void> {
+  await apolloClient.clearStore();
+}
