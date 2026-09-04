@@ -26,7 +26,7 @@ Meridian turns a lending-case workflow into an accountable handoff: it gathers e
 
 ## See the product in three minutes
 
-The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every screenshot below is a live, unedited capture of that real sandbox, not a mockup. Optionally, customize the requested loan amount and stated monthly income before creating your case — two bounded, hypothetical numbers, never real borrower data — and the same real evaluation responds to them.
+The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every screenshot below is a live, unedited capture of that real sandbox, not a mockup. Optionally, customize the requested loan amount and stated monthly income before creating your case — two bounded, hypothetical numbers, never real borrower data — and the same real evaluation responds to them. Select **+ New case** at any point to try another scenario in the same sandbox, without losing the one you already have.
 
 <div align="center">
 

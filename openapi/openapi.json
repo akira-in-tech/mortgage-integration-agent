@@ -671,6 +671,31 @@
         ]
       }
     },
+    "/v1/demo-sandbox/cases": {
+      "post": {
+        "operationId": "createGuestSandboxCase",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGuestSandboxSessionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "",
+        "tags": [
+          "portfolio-demo"
+        ]
+      }
+    },
     "/v1/audit-events": {
       "get": {
         "operationId": "listAuditEvents",

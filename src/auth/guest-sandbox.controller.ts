@@ -54,4 +54,23 @@ export class GuestSandboxController {
   ): Promise<void> {
     await this.sandboxService.logout(request, response);
   }
+
+  @Post('cases')
+  // Lighter than session creation (no new tenant, no new database row
+  // beyond the case/consent pair every real create-case call makes
+  // anyway) but still a real, public, unauthenticated write -- a
+  // generous but real ceiling.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ operationId: 'createGuestSandboxCase' })
+  createCase(
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+    @Body() scenario: CreateGuestSandboxSessionDto,
+  ): Promise<{ caseId: string }> {
+    return this.sandboxService.createAdditionalCase(
+      request,
+      response,
+      scenario,
+    );
+  }
 }

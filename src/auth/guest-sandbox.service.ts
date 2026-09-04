@@ -174,6 +174,31 @@ export class GuestSandboxService {
   }
 
   /**
+   * Adds one more synthetic case to the caller's own existing sandbox
+   * tenant (M7-074) — the guided walkthrough otherwise only ever seeds
+   * exactly one case per visit, so trying a second scenario meant
+   * abandoning the current session and starting over. Requires the same
+   * cookie + CSRF pair every other sandbox mutation does; never creates a
+   * new tenant or session, only a new case (and its paired consent
+   * record) inside the tenant the caller already authenticated as.
+   */
+  async createAdditionalCase(
+    request: Request,
+    response: Response,
+    scenario: CreateGuestSandboxSessionDto,
+  ): Promise<{ caseId: string }> {
+    const { tenantId } = await this.authenticate(request, response, true);
+    const loanCase = await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `SELECT set_config('app.current_tenant_id', $1, true)`,
+        [tenantId],
+      );
+      return this.seedCase(manager, tenantId, scenario);
+    });
+    return { caseId: loanCase.id };
+  }
+
+  /**
    * Every expired session's real tenant/case/evidence/condition/consent
    * footprint — everything the guided tour could have created — is
    * genuinely deleted here, not just the session row that used to be the

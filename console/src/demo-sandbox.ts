@@ -30,6 +30,34 @@ export async function createDemoSandbox(
   return store(validate(await response.json()));
 }
 
+/**
+ * Adds another synthetic case to the caller's own existing sandbox tenant
+ * (M7-074) -- unlike `createDemoSandbox()`, this never mints a new tenant
+ * or session, so trying a second scenario no longer means abandoning the
+ * current one. Requires the same CSRF pairing every other sandbox
+ * mutation does.
+ */
+export async function createDemoSandboxCase(
+  scenario: DemoSandboxScenario = {},
+): Promise<string> {
+  const csrfToken = currentSession?.csrfToken;
+  const response = await fetch(`${API_URL}/v1/demo-sandbox/cases`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+    },
+    body: JSON.stringify(scenario),
+  });
+  if (!response.ok) throw new Error('Unable to create a new case.');
+  const body = (await response.json()) as { caseId?: unknown };
+  if (typeof body.caseId !== 'string') {
+    throw new Error('The new-case response was malformed.');
+  }
+  return body.caseId;
+}
+
 export async function loadDemoSandbox(): Promise<DemoSandboxSession> {
   const response = await fetch(`${API_URL}/v1/demo-sandbox/session`, {
     credentials: 'include',

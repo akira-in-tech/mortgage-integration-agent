@@ -13159,3 +13159,46 @@ Deploying M7-073's `checkConnectivity()` change surfaced a second, real bug in t
   entire time the broken revision (26) accumulated 3 failedTasks --
   the live site was never actually down
 ```
+
+## M7-074: try more than one scenario in the same guest sandbox
+
+### Status
+
+Implemented and verified against a real local Postgres before committing.
+
+### Problem
+
+The user pointed out the guest sandbox could only ever be tried once: `GuestSandboxService.create()` seeds exactly one case per visit, and the console had no way to add another. Trying a second scenario meant abandoning the whole sandbox (losing the tenant, the first case, and its audit history) and starting over from the connect screen.
+
+### Implementation
+
+- `POST /v1/demo-sandbox/cases` (new): `GuestSandboxController.createCase()` / `GuestSandboxService.createAdditionalCase()`. Authenticates with the caller's existing sandbox cookie + CSRF pair (the same `authenticate()` path every other sandbox mutation uses) and adds one more case to that *same* tenant -- never mints a new tenant or session. Reuses `CreateGuestSandboxSessionDto` (M7-071) as its body unchanged: the same two bounded, optional, hypothetical numbers, never real borrower data. Reuses `seedCase()` unchanged too, so a case created this way is identical in shape to the one the original walkthrough seeds.
+- This didn't need a new authorization concept: `POST /v1/loan-cases` (the real, generic case-creation endpoint) already accepts a guest-sandbox cookie via `TenantAuthGuard`'s three-way `ApiKeyGuard` / `OidcGuard` / `GuestSandboxGuard` fallback -- confirmed by reading it, not assumed. The new endpoint exists to keep the public demo's own request shape narrow and purpose-built (two numbers, not the full `CreateCaseDto` surface with an arbitrary `borrowerId`/`loanType`/`jurisdictionCode`), matching this project's existing "don't widen a public endpoint's surface further than its one real job" convention.
+- Console: `CaseList.tsx` gets a "+ New case" affordance, shown only via `hasDemoSandbox()` (every case a guest tenant can ever see is already synthetic by construction -- RLS scopes the whole tenant to the sandbox), with an inline form (same two fields as the connect screen's own scenario customization), a real error state that keeps the form open and filled in on failure, and a `refetch()` + `onSelectCase()` on success. `App.tsx`'s `isSandbox` flag, which used to compare against the one case id the original session recorded, now just checks `hasDemoSandbox()` -- correct now that a sandbox tenant can hold more than one case, and unchanged in effect for the single-case case.
+- Regenerated `openapi/openapi.json` and the TS client for the new endpoint.
+
+### Verification
+
+```text
+- guest-sandbox.service.spec.ts: 2 new tests (adds a second case to the
+  same tenant using the caller's scenario; rejects without a matching
+  CSRF token) -- 8/8 passed
+- console/src/components/CaseList.test.tsx (new): no affordance outside a
+  sandbox; creates a second case, refetches, and selects it; a real
+  failure keeps the form open with its values intact -- 3/3 passed
+- npm --prefix console test: 15 files, 69 tests, all passed
+- npx tsc --noEmit / npm run lint / npm run build (both root and console):
+  clean
+- Real, against a live local API (real Postgres, real Temporal), not
+  just mocks: created a session, then a second case with a custom
+  scenario -- confirmed via direct psql read that both loan_cases rows
+  share the exact same tenantId and exactly one tenants row exists;
+  confirmed a request without a matching CSRF token gets a real 401
+- Along the way: found and cleaned up a real, unrelated environment
+  problem on this machine -- a file-sync process (this repo lives under
+  ~/Documents) had duplicated dozens of node_modules/@types and dist/
+  directories on disk (" 2" suffixed copies), which broke this slice's
+  own `tsc -b` run in the console. Not caused by this change; fixed with
+  a clean `rm -rf node_modules dist` + reinstall for both root and
+  console, confirmed clean afterward.
+```

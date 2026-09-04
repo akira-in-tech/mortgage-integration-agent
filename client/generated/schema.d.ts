@@ -291,6 +291,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/demo-sandbox/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createGuestSandboxCase"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/audit-events": {
         parameters: {
             query?: never;
@@ -1832,6 +1848,27 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createGuestSandboxCase: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGuestSandboxSessionDto"];
+            };
+        };
+        responses: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

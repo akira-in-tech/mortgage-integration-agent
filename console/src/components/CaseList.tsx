@@ -5,6 +5,7 @@ import type { CaseEdge, CaseStatus } from '../graphql/types';
 import { StatusPill } from './StatusPill';
 import { SearchIcon } from './icons';
 import { formatCurrency, formatRelativeTime } from '../format';
+import { createDemoSandboxCase, hasDemoSandbox } from '../demo-sandbox';
 
 const FILTER_CHIPS: { label: string; status: CaseStatus | null }[] = [
   { label: 'All', status: null },
@@ -24,11 +25,54 @@ interface CaseListProps {
 export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
   const [statusFilter, setStatusFilter] = useState<CaseStatus | null>(null);
   const [search, setSearch] = useState('');
+  const [addingCase, setAddingCase] = useState(false);
+  const [newAmount, setNewAmount] = useState('');
+  const [newIncome, setNewIncome] = useState('');
+  const [creatingCase, setCreatingCase] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  const { data, loading, error, fetchMore } = useQuery(CASES_QUERY, {
+  const { data, loading, error, fetchMore, refetch } = useQuery(CASES_QUERY, {
     variables: { status: statusFilter, first: PAGE_SIZE },
     notifyOnNetworkStatusChange: true,
   });
+
+  // M7-074: the guided walkthrough used to seed exactly one case per visit
+  // -- trying a second scenario meant abandoning the whole sandbox and
+  // starting over. Every case a guest-sandbox tenant can ever see is
+  // already synthetic by construction (RLS scopes this query to that one
+  // tenant), so there's nothing to gate beyond "is this a sandbox at all."
+  async function submitNewCase() {
+    setCreatingCase(true);
+    setCreateError(null);
+    try {
+      const parsedAmount = Number(newAmount);
+      const parsedIncome = Number(newIncome);
+      const scenario = {
+        ...(newAmount.trim() &&
+        Number.isFinite(parsedAmount) &&
+        parsedAmount > 0
+          ? { requestedAmount: parsedAmount }
+          : {}),
+        ...(newIncome.trim() &&
+        Number.isFinite(parsedIncome) &&
+        parsedIncome > 0
+          ? { statedMonthlyIncome: parsedIncome }
+          : {}),
+      };
+      const caseId = await createDemoSandboxCase(scenario);
+      await refetch();
+      onSelectCase(caseId);
+      setAddingCase(false);
+      setNewAmount('');
+      setNewIncome('');
+    } catch (err) {
+      setCreateError(
+        err instanceof Error ? err.message : 'Unable to create a new case.',
+      );
+    } finally {
+      setCreatingCase(false);
+    }
+  }
 
   const filteredEdges = useMemo(() => {
     const edges = data?.cases.edges ?? [];
@@ -94,13 +138,121 @@ export function CaseList({ selectedCaseId, onSelectCase }: CaseListProps) {
           >
             Cases
           </h1>
-          <div
-            className="mono"
-            style={{ fontSize: 12, color: 'var(--ink-muted)' }}
-          >
-            {data ? `${filteredEdges.length} shown` : '…'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              className="mono"
+              style={{ fontSize: 12, color: 'var(--ink-muted)' }}
+            >
+              {data ? `${filteredEdges.length} shown` : '…'}
+            </div>
+            {hasDemoSandbox() && (
+              <button
+                type="button"
+                className="btn"
+                style={{ fontSize: 12, padding: '5px 10px' }}
+                onClick={() => {
+                  setAddingCase((value) => !value);
+                  setCreateError(null);
+                }}
+              >
+                {addingCase ? 'Cancel' : '+ New case'}
+              </button>
+            )}
           </div>
         </div>
+        {addingCase && (
+          <div className="card" style={{ padding: 14, marginBottom: 11 }}>
+            <div
+              style={{
+                fontSize: 11.5,
+                color: 'var(--ink-muted)',
+                marginBottom: 10,
+                lineHeight: 1.5,
+              }}
+            >
+              Try another hypothetical scenario in this same sandbox — never
+              real borrower data. Leave either field blank for the default
+              guided scenario.
+            </div>
+            <label
+              htmlFor="new-case-amount"
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                display: 'block',
+                marginBottom: 4,
+              }}
+            >
+              Requested loan amount ($)
+            </label>
+            <input
+              id="new-case-amount"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              value={newAmount}
+              onChange={(e) => setNewAmount(e.target.value)}
+              placeholder="e.g. 425000"
+              style={{
+                width: '100%',
+                fontSize: 13,
+                fontFamily: 'var(--font-sans)',
+                padding: '7px 10px',
+                borderRadius: 7,
+                border: '1px solid var(--border)',
+                marginBottom: 10,
+                boxSizing: 'border-box',
+              }}
+            />
+            <label
+              htmlFor="new-case-income"
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                display: 'block',
+                marginBottom: 4,
+              }}
+            >
+              Stated monthly income ($)
+            </label>
+            <input
+              id="new-case-income"
+              type="number"
+              min={1}
+              inputMode="numeric"
+              value={newIncome}
+              onChange={(e) => setNewIncome(e.target.value)}
+              placeholder="e.g. 8500"
+              style={{
+                width: '100%',
+                fontSize: 13,
+                fontFamily: 'var(--font-sans)',
+                padding: '7px 10px',
+                borderRadius: 7,
+                border: '1px solid var(--border)',
+                marginBottom: 10,
+                boxSizing: 'border-box',
+              }}
+            />
+            {createError && (
+              <div
+                role="alert"
+                style={{ fontSize: 12, color: '#b42318', marginBottom: 10 }}
+              >
+                {createError}
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={creatingCase}
+              onClick={() => void submitNewCase()}
+              style={{ width: '100%', justifyContent: 'center', fontSize: 13 }}
+            >
+              {creatingCase ? 'Creating…' : 'Create case'}
+            </button>
+          </div>
+        )}
         <div
           style={{
             display: 'flex',

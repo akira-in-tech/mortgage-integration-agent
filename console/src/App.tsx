@@ -28,7 +28,6 @@ import {
   clearDemoSandbox,
   closeDemoSandbox,
   getDemoSandboxActorId,
-  getDemoSandboxCaseId,
   hasDemoSandbox,
   loadDemoSandbox,
 } from './demo-sandbox';
@@ -254,10 +253,12 @@ export function App() {
               {selectedCaseId ? (
                 <CaseDetail
                   caseId={selectedCaseId}
-                  isSandbox={
-                    hasDemoSandbox() &&
-                    selectedCaseId === getDemoSandboxCaseId()
-                  }
+                  // M7-074: a guest-sandbox tenant can now hold more than
+                  // one case (see CaseList's "+ New case"); every case it
+                  // can ever see is already synthetic by construction
+                  // (RLS scopes this whole tenant to the sandbox), not
+                  // only the one case the walkthrough originally seeded.
+                  isSandbox={hasDemoSandbox()}
                   onOpenDossier={() => setDossierCaseId(selectedCaseId)}
                 />
               ) : (

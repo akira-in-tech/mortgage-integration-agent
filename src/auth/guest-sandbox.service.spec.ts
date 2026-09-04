@@ -210,6 +210,64 @@ describe('GuestSandboxService', () => {
     });
   });
 
+  // M7-074: the guided walkthrough used to seed exactly one case per visit
+  // -- trying a second scenario meant abandoning the session and starting
+  // over. createAdditionalCase() adds another case to the *same* tenant
+  // instead of minting a new one.
+  describe('createAdditionalCase()', () => {
+    async function createSandboxAndGetCookies(): Promise<{
+      tenantId: string;
+      cookies: Record<string, string>;
+    }> {
+      const created = await service.create(response as Response);
+      const cookieCalls = (response.cookie as jest.Mock).mock.calls;
+      const cookies = {
+        [GUEST_SANDBOX_COOKIE]: cookieCalls.find(
+          ([name]) => name === GUEST_SANDBOX_COOKIE,
+        )[1] as string,
+        [GUEST_SANDBOX_CSRF_COOKIE]: cookieCalls.find(
+          ([name]) => name === GUEST_SANDBOX_CSRF_COOKIE,
+        )[1] as string,
+      };
+      return { tenantId: created.tenantId as string, cookies };
+    }
+
+    it("adds a second case to the caller's existing tenant, using the caller's own scenario, instead of creating a new tenant", async () => {
+      const { tenantId, cookies } = await createSandboxAndGetCookies();
+      const caseCountBefore = sessions.length; // unrelated counter, just to
+      // confirm this path never touches session rows (no new tenant/session
+      // is ever created by this call).
+
+      const result = await service.createAdditionalCase(
+        requestWithCookies(cookies, cookies[GUEST_SANDBOX_CSRF_COOKIE]),
+        response as Response,
+        { requestedAmount: 300000, statedMonthlyIncome: 7000 },
+      );
+
+      expect(result.caseId).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+      expect(sessions.length).toBe(caseCountBefore);
+      // The second case's own seed reached the same tenant the caller
+      // already authenticated as -- not a freshly minted one.
+      expect(seededCase).toMatchObject({
+        tenantId,
+        requestedAmount: 300000,
+        statedMonthlyIncome: 7000,
+      });
+    });
+
+    it('rejects without a matching CSRF token, the same as every other sandbox mutation', async () => {
+      const { cookies } = await createSandboxAndGetCookies();
+
+      await expect(
+        service.createAdditionalCase(
+          requestWithCookies(cookies),
+          response as Response,
+          {},
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+  });
+
   it('requires a matching double-submit CSRF value before a guest mutation or logout', async () => {
     await service.create(response as Response);
     const cookieCalls = (response.cookie as jest.Mock).mock.calls;
