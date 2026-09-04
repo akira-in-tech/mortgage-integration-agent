@@ -13481,6 +13481,24 @@ Fail-closed route: MANUAL_REVIEW / BUDGET_OR_DEADLINE_EXHAUSTED
 
 This failed run is retained as operational evidence; it was not rewritten as a successful demo. A fresh case must complete condition creation, reviewer resolution, and audit inspection after the fixed immutable image is deployed.
 
+### Live evidence after the fix
+
+```text
+Deploy staging #57: main@983b1ad succeeded in 20m02s
+Guest tenant: 146b3d0e-a908-4615-b947-c41bdd7fb6fb
+Case: 72e60a6b-8c74-4d7d-81ed-217434bb2b92
+Scenario: requested amount $750,000; stated monthly income $100,000
+Evidence persisted: IDENTITY, INCOME, ASSET, DOCUMENT, CREDIT
+Planner: staging Qwen invocation completed inside the aligned deadline envelope
+Condition: VERIFY_INCOME_DISCREPANCY
+Rule result: difference_percent(application.monthly_income=100000, evidence.verified_monthly_income=20884) = 79.12% > 10%
+Reviewer action: Mark satisfied
+Final case state: Ready
+Audit: REVIEW_CONDITION_RESOLUTION recorded with the guest tenant/session actor
+```
+
+The fresh run exercised the public UI end to end: case creation, five-capability evidence collection, Agent planning, deterministic policy evaluation, condition creation, reviewer resolution, and audit inspection. No borrower data, lending decision, funds movement, or external provider call was used.
+
 ## M7-082: repeatable AWS policy-research completion drill
 
 ### Status
@@ -13507,3 +13525,15 @@ The live AWS drill remains required after this workflow change reaches `main`; i
 ### First live-drill finding
 
 The first run reached the end of the Fargate verifier after 6m45s, then the GitHub step failed on optional `logs:GetLogEvents`: the least-privilege deploy role correctly lacks that permission. The workflow originally attempted the log read before inspecting the completed task's exit code, so it incorrectly converted unavailable diagnostics into a failed research result. The follow-up keeps IAM narrow, checks the task exit code first, emits an explicit completion marker, and treats CloudWatch log output as optional.
+
+### Live AWS verification
+
+```text
+Staging drill #8: succeeded in 3m39s
+Commit: 95d8397
+Task: arn:aws:ecs:us-east-1:559987919619:task/mortgage-agent-staging/29cf8e0af0014391819a161387dc37b1
+Contract marker: POLICY_RESEARCH_VERIFIED=COMPLETED (task contract passed)
+Workflow: https://github.com/akira-in-tech/mortgage-integration-agent/actions/runs/33923268238
+```
+
+This proves the deployed worker claimed and completed the synthetic research run with at least one persisted citation. The optional CloudWatch read remained unavailable to the deploy role and printed a bounded diagnostic; the job stayed green because the already-completed Fargate task's exit code is the authoritative verification contract.
