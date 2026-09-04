@@ -66,10 +66,12 @@ Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires autom
 | Outcome | Meridian behavior |
 | --- | --- |
 | **Know what is blocking a case** | Durable workflows collect evidence, open explicit conditions, and wait without losing state when a worker restarts. |
-| **Keep policy current and attributable** | Immutable policy bindings, source freshness checks, applicability guards, and impact assessments prevent silent reuse of stale or ambiguous policy. |
+| **Keep policy current and attributable** | Immutable policy bindings, source freshness checks, applicability guards, and impact assessments prevent silent reuse of stale or ambiguous policy. When a source goes stale or applicability is ambiguous, an advisory research queue drafts a citation-bound candidate brief for a human policy owner — it never activates policy on its own. |
 | **Use AI without delegating authority** | The optional private Qwen planner has a bounded schema and route set. Deterministic tools, budgets, validation, and human review remain authoritative. |
 | **Explain every handoff** | Tenant isolation, consent/purpose checks, provider-operation lineage, reviewer actions, and chronological audit events preserve the evidence behind a case state. |
-| **Introduce integrations deliberately** | Provider adapters, authorization gates, signed webhooks, REST/OpenAPI, GraphQL, and a generated TypeScript client create controlled ports for future approved integrations. |
+| **Introduce integrations deliberately** | Provider adapters, authorization gates, signed webhooks, REST/OpenAPI, GraphQL, and a generated TypeScript client create controlled ports for future approved integrations. Every provider reaches live traffic only through an auditable propose -> certify -> approve -> activate chain — nothing is dispatchable until it clears all three gates. |
+| **Cut a provider off immediately** | An operator's kill switch takes effect on the very next dispatch attempt, not just as a governance record — verified by a real test that activates a provider, dispatches through it, deactivates it, and confirms the following dispatch is rejected. |
+| **Keep data retention decisions human** | Revoking consent automatically opens a real retention-review task; a reviewer chooses to delete, anonymize, or place a legal hold on the affected evidence — nothing is silently kept or discarded. |
 
 ## Product principles
 
@@ -121,6 +123,7 @@ Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires autom
 ## Delivery confidence
 
 - **Continuous integration** runs on pushes and pull requests: linting, builds, migrations, unit/integration/Temporal tests, browser tests, generated-contract drift checks, dependency auditing, secret scanning, SAST, container builds, and observability configuration validation.
+- **A real evaluation corpus** (`npm run evaluate`) runs synthetic fixtures across normal, boundary, missing-data, policy-coverage, and provider-failure categories and records pass rate, condition recall/precision, and every failure's detail per run — inspectable and downloadable from the platform-admin console, not a one-off script output.
 - **Protected staging delivery** is intentionally manual because it changes persistent AWS resources. It uses GitHub OIDC rather than stored cloud credentials, publishes immutable application and Qwen images, records SBOM/provenance attestations, applies Terraform, publishes the console, and verifies the API and public HTTPS edge.
 - **Operational evidence** is documented in the [development log](docs/DEVELOPMENT_LOG.md) and [operator runbook](docs/OPERATIONS.md). The environment remains a persistent synthetic staging demo, not a production lending deployment.
 
