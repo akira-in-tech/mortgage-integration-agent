@@ -61,6 +61,30 @@ The public sandbox is an isolated, disposable workspace — no sign-up or API ke
 
 Each sandbox uses an opaque `HttpOnly`, CSRF-protected session. It expires automatically, and its tenant-scoped synthetic records are removed after expiry.
 
+## The governance surface, for operators
+
+The public sandbox shows the case workflow. The screenshots below are the platform-admin and reviewer side — not part of the guest demo, reached only with an operator credential — and are real, unedited captures of the same running environment.
+
+<div align="center">
+
+<img src="docs/assets/meridian-shot-6-provider-active.png" alt="A provider active after clearing the propose, certify, and approve gates." width="820"><br>
+<b>Provider promotion chain</b><br>
+<sub>A provider reaches <code>ACTIVE</code> only after a separate proposer, certifier, and approver each act — self-approval is rejected by the server, not just the form.</sub>
+
+<br><br>
+
+<img src="docs/assets/meridian-shot-7-killswitch.png" alt="The same provider immediately after an operator pressed Emergency-stop, now DEACTIVATED." width="820"><br>
+<b>An operator's kill switch</b><br>
+<sub>Pressing <b>Emergency-stop</b> takes effect on the very next dispatch attempt, not just as a governance record.</sub>
+
+<br><br>
+
+<img src="docs/assets/meridian-shot-8-data-disposition.png" alt="A real data-disposition task showing evidence and provider results awaiting a reviewer's retention decision." width="820"><br>
+<b>Consent revocation opens a real decision, not a deletion</b><br>
+<sub>Revoking consent doesn't erase anything automatically — it opens a retention-review task naming exactly what's affected, for a reviewer to delete, anonymize, or place under legal hold.</sub>
+
+</div>
+
 ## What Meridian gives an operations team
 
 | Outcome | Meridian behavior |
