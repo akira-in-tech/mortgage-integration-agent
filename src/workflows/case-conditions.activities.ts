@@ -3,6 +3,8 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { PlaidIncomeData } from '../integrations/plaid/plaid.types';
 import { CreditBureauData } from '../integrations/credit/credit.types';
 import { DocumentVerificationResult } from '../integrations/document/document.types';
+import { AssetVerificationData } from '../integrations/asset/asset.types';
+import { IdentityVerificationResult } from '../integrations/identity/identity.types';
 import {
   SyntheticProviderTimeoutError,
   SyntheticProviderRejectionError,
@@ -607,6 +609,69 @@ export function createCaseConditionsActivities(
         }),
       );
       return documents;
+    },
+
+    async fetchAssetEvidence({
+      tenantId,
+      caseId,
+      borrowerId,
+    }: CaseRef & { borrowerId: string }): Promise<AssetVerificationData> {
+      const assets = await callProviderWithRetryClassification(
+        () =>
+          dispatchProviderRequest<AssetVerificationData>(providerDispatchDeps, {
+            tenantId,
+            caseId,
+            borrowerSubjectId: borrowerId,
+            capability: ProviderCapability.ASSET,
+            request: { borrowerId },
+            purposeCode: 'UNDERWRITING_EVIDENCE',
+            permittedDataClasses: ['ASSET'],
+          }),
+        'asset-verification-simulator',
+      );
+      await runInTenantContext(dataSource, tenantId, (manager) =>
+        recordEvidence(manager, {
+          tenantId,
+          caseId,
+          factType: EvidenceType.ASSET,
+          sourceIdentifier: 'asset-verification-simulator',
+          value: assets as unknown as Record<string, unknown>,
+        }),
+      );
+      return assets;
+    },
+
+    async fetchIdentityEvidence({
+      tenantId,
+      caseId,
+      borrowerId,
+    }: CaseRef & { borrowerId: string }): Promise<IdentityVerificationResult> {
+      const identity = await callProviderWithRetryClassification(
+        () =>
+          dispatchProviderRequest<IdentityVerificationResult>(
+            providerDispatchDeps,
+            {
+              tenantId,
+              caseId,
+              borrowerSubjectId: borrowerId,
+              capability: ProviderCapability.IDENTITY,
+              request: { borrowerId },
+              purposeCode: 'UNDERWRITING_EVIDENCE',
+              permittedDataClasses: ['IDENTITY'],
+            },
+          ),
+        'identity-verification-simulator',
+      );
+      await runInTenantContext(dataSource, tenantId, (manager) =>
+        recordEvidence(manager, {
+          tenantId,
+          caseId,
+          factType: EvidenceType.IDENTITY,
+          sourceIdentifier: 'identity-verification-simulator',
+          value: identity as unknown as Record<string, unknown>,
+        }),
+      );
+      return identity;
     },
 
     /**

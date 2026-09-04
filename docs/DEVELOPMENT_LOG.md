@@ -13376,3 +13376,42 @@ The bug had 100% real-test coverage and still shipped, because the test harness'
 ### Next safe step
 
 Not attempted here: auditing the rest of the codebase's raw `.query()` call sites for the same class of mismatch between a mock and the real driver's return shape (this session specifically checked the other two `RETURNING`-bearing call sites and found them already correct, but didn't exhaustively re-verify every raw-query test double against the real driver).
+
+## M7-079: asset and identity evidence join the durable case workflow
+
+### Status
+
+Implemented. The main Temporal case workflow now collects all five launch evidence capabilities through the same governed provider-dispatch boundary: income, credit, document, asset, and identity.
+
+### Implementation
+
+- `case-conditions.workflow.ts` adds `fetchAssetEvidence` and `fetchIdentityEvidence` to the existing parallel evidence-collection fan-out. Temporal therefore owns their retry, terminal-failure routing, and replay behavior just as it already did for the first three capabilities.
+- `case-conditions.activities.ts` implements both activities through `dispatchProviderRequest()`, with capability-specific authorization scopes and purpose codes, before persisting normalized `ASSET`/`IDENTITY` evidence and the corresponding signed `evidence.updated` outbox event.
+- No domain or provider-registry special case was added. The existing adapters and registry remain the sole capability implementation boundary.
+- Workflow tests assert that both activities are invoked; database-backed activity tests cover returned values, evidence persistence, source attribution, and outbox payloads for both capabilities.
+- The charter's current-workflow table now describes the implemented five-capability path instead of the obsolete three-capability limitation.
+
+### Verification
+
+```text
+npm run lint:check: passed
+npm run build: passed
+npx jest src/workflows/case-conditions.workflow.spec.ts src/workflows/case-conditions.activities.spec.ts --runInBand:
+  38 tests discovered; skipped locally because this checkout had neither DATABASE_URL nor TEMPORAL_ADDRESS.
+  The repository CI gate remains responsible for running both suites against its real PostgreSQL and Temporal services before this commit is eligible to deploy.
+```
+
+### Security and behavior
+
+- Both new dispatches use the same consent, grant, kill-switch, promotion, intent, idempotency, and tenant-isolation enforcement as the existing evidence calls.
+- Failure is fail-closed: one exhausted evidence activity routes the case to manual review rather than evaluating an incomplete five-source collection as complete.
+- The public workflow still uses synthetic adapters only. This change does not authorize Plaid, real consumer data, or any production provider.
+
+### Known gaps
+
+- The current deterministic policy pack evaluates the income-discrepancy rule only; collecting asset and identity evidence makes them inspectable and available to future reviewed policies but does not invent policy conclusions for those facts.
+- A tuple-specific authorized-provider certification remains separate from enabling a provider in this workflow.
+
+### Next safe step
+
+Run the full PostgreSQL/Temporal CI suites, then deploy the immutable commit and verify a guest case contains all five evidence types before evaluation.

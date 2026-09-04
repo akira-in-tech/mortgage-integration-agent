@@ -4,6 +4,8 @@ import { createCaseConditionsActivities } from './case-conditions.activities';
 import { PlaidService } from '../integrations/plaid/plaid.service';
 import { CreditService } from '../integrations/credit/credit.service';
 import { DocumentService } from '../integrations/document/document.service';
+import { AssetService } from '../integrations/asset/asset.service';
+import { IdentityService } from '../integrations/identity/identity.service';
 import { Tenant } from '../database/entities/tenant.entity';
 import { LoanCase } from '../database/entities/loan-case.entity';
 import {
@@ -79,6 +81,8 @@ import { ConfigService } from '@nestjs/config';
 import { PlaidIncomeAdapter } from '../integrations/plaid/plaid-income.adapter';
 import { CreditReportAdapter } from '../integrations/credit/credit-report.adapter';
 import { DocumentVerificationAdapter } from '../integrations/document/document-verification.adapter';
+import { AssetVerificationAdapter } from '../integrations/asset/asset-verification.adapter';
+import { IdentityVerificationAdapter } from '../integrations/identity/identity-verification.adapter';
 
 // Requires a reachable Postgres (same convention as test/loan.e2e-spec.ts):
 // skip instead of failing when no DATABASE_URL is configured. Writes
@@ -108,6 +112,8 @@ function registryFor(overrides: {
   plaidService?: PlaidService;
   creditService?: CreditService;
   documentService?: DocumentService;
+  assetService?: AssetService;
+  identityService?: IdentityService;
 }): ProviderRegistryService {
   const registry = new ProviderRegistryService();
   registry.register(
@@ -123,6 +129,16 @@ function registryFor(overrides: {
   registry.register(
     new DocumentVerificationAdapter(
       overrides.documentService ?? ({ verifyDocuments: jest.fn() } as any),
+    ),
+  );
+  registry.register(
+    new AssetVerificationAdapter(
+      overrides.assetService ?? ({ getAssetData: jest.fn() } as any),
+    ),
+  );
+  registry.register(
+    new IdentityVerificationAdapter(
+      overrides.identityService ?? ({ verifyIdentity: jest.fn() } as any),
     ),
   );
   return registry;
@@ -465,6 +481,87 @@ describeOrSkip('createCaseConditionsActivities', () => {
       sourceIdentifier: 'plaid-simulator',
     });
   });
+
+  it.each([
+    {
+      activity: 'fetchAssetEvidence' as const,
+      serviceKey: 'assetService' as const,
+      serviceMethod: 'getAssetData',
+      capability: EvidenceType.ASSET,
+      sourceIdentifier: 'asset-verification-simulator',
+      value: {
+        liquidAssets: 75000,
+        investmentAssets: 30000,
+        accountCount: 3,
+        reserveMonths: 12,
+      },
+    },
+    {
+      activity: 'fetchIdentityEvidence' as const,
+      serviceKey: 'identityService' as const,
+      serviceMethod: 'verifyIdentity',
+      capability: EvidenceType.IDENTITY,
+      sourceIdentifier: 'identity-verification-simulator',
+      value: {
+        nameMatch: true,
+        dateOfBirthMatch: true,
+        ssnValid: true,
+        addressMatch: true,
+        fraudAlertPresent: false,
+        identityVerified: true,
+      },
+    },
+  ])(
+    '$activity persists its provider-platform result as $capability evidence with an outbox event',
+    async ({
+      activity,
+      serviceKey,
+      serviceMethod,
+      capability,
+      sourceIdentifier,
+      value,
+    }) => {
+      const caseId = await makeCase({ statedMonthlyIncome: 9000 });
+      const service = { [serviceMethod]: jest.fn().mockResolvedValue(value) };
+      const scoped = createCaseConditionsActivities({
+        dataSource,
+        providerRegistry: registryFor({ [serviceKey]: service } as any),
+        policyEvaluationService,
+        evaluationManifestService,
+        providerAuthorizationService,
+        providerOperationIntentService,
+        providerKillSwitchService,
+        providerPromotionService,
+        consentService,
+        messageService,
+        communicationDeliveryService,
+        outboxSigningSecret: OUTBOX_SIGNING_SECRET,
+      });
+
+      const result = await scoped[activity]({
+        tenantId,
+        caseId,
+        borrowerId: 'activities-spec-borrower',
+      });
+
+      expect(result).toEqual(value);
+      const facts = await dataSource.getRepository(EvidenceFact).find({
+        where: { caseId, factType: capability },
+      });
+      expect(facts).toHaveLength(1);
+      expect(facts[0]).toMatchObject({
+        sourceIdentifier,
+        value,
+      });
+      const events = await outboxEventsFor(caseId);
+      expect(events).toHaveLength(1);
+      expect(events[0].payload).toMatchObject({
+        caseId,
+        evidenceType: capability,
+        sourceIdentifier,
+      });
+    },
+  );
 
   it('evaluateConditions with no income discrepancy marks the case ready and writes workflow_run.completed', async () => {
     // statedMonthlyIncome === verified income -> 0% difference, well under

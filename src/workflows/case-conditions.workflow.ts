@@ -113,7 +113,7 @@ async function runCaseConditionsWorkflow(
   await activities.markCollectingEvidence({ tenantId, caseId });
 
   try {
-    // All three are fetched and recorded for audit purposes and so the
+    // All five are fetched and recorded for audit purposes and so the
     // Agent run's check_case_completeness tool (src/agent-runtime/tools/)
     // finds them — evaluateConditions reads evidence back from the
     // database itself rather than taking it as an activity parameter.
@@ -121,6 +121,8 @@ async function runCaseConditionsWorkflow(
       activities.fetchIncomeEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchCreditEvidence({ tenantId, caseId, borrowerId }),
       activities.fetchDocumentEvidence({ tenantId, caseId, borrowerId }),
+      activities.fetchAssetEvidence({ tenantId, caseId, borrowerId }),
+      activities.fetchIdentityEvidence({ tenantId, caseId, borrowerId }),
     ]);
   } catch (error) {
     // An activity exhausted its retries (transient classification) or

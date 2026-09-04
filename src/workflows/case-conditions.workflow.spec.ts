@@ -53,6 +53,20 @@ function makeMockActivities(
       allDocumentsValid: true,
       failedDocuments: [],
     }),
+    fetchAssetEvidence: jest.fn().mockResolvedValue({
+      liquidAssets: 75000,
+      investmentAssets: 30000,
+      accountCount: 3,
+      reserveMonths: 12,
+    }),
+    fetchIdentityEvidence: jest.fn().mockResolvedValue({
+      nameMatch: true,
+      dateOfBirthMatch: true,
+      ssnValid: true,
+      addressMatch: true,
+      fraudAlertPresent: false,
+      identityVerified: true,
+    }),
     evaluateConditions: jest.fn().mockResolvedValue({ outcome: 'READY' }),
     resolveCondition: jest.fn().mockResolvedValue(undefined),
     markReadyForUnderwriting: jest.fn().mockResolvedValue(undefined),
@@ -147,6 +161,8 @@ describeOrSkip('caseConditionsWorkflow', () => {
     expect(activities.fetchIncomeEvidence).toHaveBeenCalledTimes(1);
     expect(activities.fetchCreditEvidence).toHaveBeenCalledTimes(1);
     expect(activities.fetchDocumentEvidence).toHaveBeenCalledTimes(1);
+    expect(activities.fetchAssetEvidence).toHaveBeenCalledTimes(1);
+    expect(activities.fetchIdentityEvidence).toHaveBeenCalledTimes(1);
     // Straight-through: evaluateConditions itself sets the case ready, so
     // the workflow must not also call resolveCondition/markReadyForUnderwriting.
     expect(activities.resolveCondition).not.toHaveBeenCalled();
