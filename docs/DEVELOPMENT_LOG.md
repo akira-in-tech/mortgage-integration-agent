@@ -13415,3 +13415,43 @@ npx jest src/workflows/case-conditions.workflow.spec.ts src/workflows/case-condi
 ### Next safe step
 
 Run the full PostgreSQL/Temporal CI suites, then deploy the immutable commit and verify a guest case contains all five evidence types before evaluation.
+
+## M7-080: current Plaid Bank Income sandbox certification evidence
+
+### Status
+
+Verified for the explicit tuple `plaid-sandbox / INCOME / adapter 1.0.0 / AUTHORIZED_SANDBOX / canonical PlaidIncomeData schema`. This renews the original M4-007 evidence against the current checkout; it does not promote Plaid production credentials or route public guest cases to Plaid.
+
+### Certification evidence
+
+- The real-network adapter suite reached `sandbox.plaid.com` with the repository's existing git-ignored sandbox credentials: health and the full Bank Income synthetic-persona request both passed (`2/2`). No real borrower identifier or data was submitted.
+- The reusable adapter-contract and provider-promotion suites passed (`32/32` non-infrastructure-gated tests), covering the canonical capability/mode contract and the fail-closed promotion rules.
+- A from-empty PostgreSQL 16 database applied all 55 migrations, then recorded a new immutable manifest for the exact tuple and endpoint allowlist `https://sandbox.plaid.com`.
+- Separate logical governance actors recorded `PASSED` certification and `APPROVED` platform-risk approval; activation then succeeded and a fresh status read returned `ACTIVE`. These actor labels represent separated test roles inside synthetic certification evidence; every external GitHub, AWS, and Plaid action in this work session remained under Akira's verified local account and credentials.
+
+### Verification
+
+```text
+PLAID_SANDBOX_CLIENT_ID/PLAID_SANDBOX_SECRET present in git-ignored .env (values never printed)
+npx jest src/integrations/plaid/plaid-income-sandbox.adapter.spec.ts --runInBand --no-cache:
+  1 suite, 2 tests passed against the real Plaid sandbox
+npx jest provider-adapters.contract provider-promotion.service dispatch-provider-request --runInBand --no-cache:
+  2 suites and 32 tests passed; the database-gated dispatch suite was separately represented by the fresh-database promotion exercise
+Fresh PostgreSQL 16 database:
+  55/55 migrations applied
+  propose -> certify PASSED -> independent approve APPROVED -> activate -> status ACTIVE
+Asset/identity workflow verification on the same fresh database plus real Temporal:
+  2 suites, 38 tests passed
+GitHub CI for 94fac92:
+  completed successfully as Akira-triggered main run #188
+```
+
+### Boundaries
+
+- Certification is `AUTHORIZED_SANDBOX`, not Plaid production and not authorization for real consumer data.
+- The public guest workflow intentionally remains on deterministic simulators. A tenant-specific change to external dispatch would require an approved data-flow, current scoped authorization and consent, staging secret configuration, and another deployment gate.
+- Plaid's mapped `bankAccountAge` remains an observed-history lower bound, and Bank Income cannot reliably distinguish part-time employment; the adapter preserves those M4-007 limitations rather than inventing unsupported facts.
+
+### Next safe step
+
+Keep this tuple simulator-isolated until a specific tenant/data-flow authorization exists. When one does, certify that exact environment and artifact digest again before enabling any non-synthetic case routing.
