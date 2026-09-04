@@ -26,28 +26,51 @@ resource "aws_security_group" "alb" {
   }
 }
 
+## M7-075: every one of this security group's rules lives in a standalone
+## aws_security_group_rule resource, deliberately -- none are declared
+## inline on the aws_security_group block below. A real, live, twice-
+## repeated incident (2026-09-03) traced back to exactly the anti-pattern
+## this avoids: this resource used to declare its port-3000 ingress and
+## its egress inline while app_internal (below) was a *separate* rule
+## resource on the same security group. Terraform's AWS provider treats a
+## security group's own inline ingress/egress blocks as the complete,
+## authoritative rule set for that direction -- so *any* unrelated
+## in-place update to this resource (a tag, a description, anything)
+## silently revoked app_internal, since it wasn't part of that inline
+## list. That reached production twice: the first time was worked around
+## by re-applying (restoring the rule, not the cause); the second time it
+## took the live API down for real (ECS killed every task once
+## /health/ready's own real Temporal check -- see
+## src/health/health.controller.ts -- correctly started reporting the
+## resulting unreachable Temporal). Never mix inline and standalone rules
+## on one security group; every rule here is standalone so no future
+## unrelated change to this resource can ever silently drop another one.
 resource "aws_security_group" "app" {
   name_prefix = "${local.name}-app-"
   vpc_id      = aws_vpc.this.id
 
-  ingress {
-    description     = "API port, from the ALB only"
-    from_port       = 3000
-    to_port         = 3000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   lifecycle {
     create_before_destroy = true
   }
+}
+
+resource "aws_security_group_rule" "app_ingress_from_alb" {
+  type                     = "ingress"
+  description              = "API port, from the ALB only"
+  from_port                = 3000
+  to_port                  = 3000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.app.id
+  source_security_group_id = aws_security_group.alb.id
+}
+
+resource "aws_security_group_rule" "app_egress" {
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.app.id
 }
 
 # Self-referencing rule so api/worker can each reach temporal's 7233

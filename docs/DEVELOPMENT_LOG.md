@@ -13202,3 +13202,46 @@ The user pointed out the guest sandbox could only ever be tried once: `GuestSand
   a clean `rm -rf node_modules dist` + reinstall for both root and
   console, confirmed clean afterward.
 ```
+
+## M7-075: a real production outage, root-caused for real — mixing inline and standalone security-group rules
+
+### Status
+
+Root-caused and fixed. This one was a genuine live outage, not a close call: the deployed API had zero running tasks and the public edge returned a real 503 for several minutes.
+
+### Background
+
+Deploying M7-074 reproduced the exact same "app-internal security-group rule silently missing" symptom M7-073 had already fixed once (real `Failed to connect before the deadline` errors, traced that time to a real, unexplained drift between Terraform's config and the live security group). Re-running `deploy-staging.yml` restored the rule again -- but this time, because M7-073's own `/health/ready` fix now actually detects the resulting Temporal outage, ECS correctly marked every new task unhealthy and killed it, and with `deploymentCircuitBreaker` disabled the service kept retrying and killing tasks until `minimumHealthyPercent: 100` had nothing left to keep: `runningCount` reached 0 for real, and `https://d136v61al3mroo.cloudfront.net/health/ready` returned a real `503` to a real, unauthenticated `curl`.
+
+### Root cause, this time actually explained
+
+`terraform/staging/security-groups.tf`'s `aws_security_group.app` resource declared its port-3000 ingress and its egress rule *inline*, in the same resource block, while `aws_security_group_rule.app_internal` (the exact rule that keeps disappearing) was a *separate*, standalone resource pointed at that same security group via `security_group_id = aws_security_group.app.id`. This is a real, documented Terraform AWS-provider anti-pattern: a security group's own inline `ingress`/`egress` blocks are treated as the *complete, authoritative* rule set for that direction -- Terraform reconciles the live security group to match only what's declared inline, silently revoking anything else on it, including a rule an entirely separate resource is managing. Confirmed directly in this deploy's own `terraform apply` log: `# aws_security_group.app will be updated in-place` -- an in-place update to `app` for a reason unrelated to `app_internal` at all was what wiped it, exactly as the anti-pattern predicts. M7-073's own fix restored the rule but treated the drift as unexplained; it was this.
+
+### Fix
+
+Converted every rule on `aws_security_group.app` to a standalone `aws_security_group_rule` resource (`app_ingress_from_alb`, `app_egress`, alongside the pre-existing `app_internal`) and removed every inline block from the `aws_security_group.app` resource itself. No security group on this security-group graph mixes inline and standalone rules anymore, so no future unrelated change to `app` can ever silently drop another rule on it again. `alb`, `rds`, and `inference` were checked too: none of them has a separate rule resource pointed at it, so none of them was actually exposed to this failure mode -- left as-is rather than churned for a problem they don't have.
+
+### Incident response, in order
+
+1. Restored service immediately: `aws ec2 authorize-security-group-ingress` re-added the missing rule directly (with the user's explicit, real-time authorization for this one action, given a real outage in progress) -- not a code fix, a stop-the-bleeding step.
+2. Forced a fresh deployment (`aws ecs update-service --force-new-deployment`); confirmed recovery for real: `GET /health/ready` returned `200`, and a real `POST /v1/demo-sandbox/session` + `startWorkflowRun` against the live edge succeeded with a real `workflowId`/`runId`.
+3. Root-caused the actual Terraform anti-pattern (not just re-applied and hoped) and fixed the configuration as described above.
+4. `terraform plan` (read-only, no state mutation) reviewed in full before committing: exactly 2 resources to add (the two newly-separated rules) and 0 to change; the 4 "destroy" entries were all pre-existing deposed objects from earlier interrupted applies during this same incident (state debris, not live resources) -- confirmed safe before proceeding.
+
+### Verification
+
+```text
+- Real, live, during the incident:
+  - Confirmed the real outage first: aws ecs describe-services showed
+    runningCount: 0; curl against the live edge returned a real 503
+  - Confirmed recovery: curl returned a real 200; a real
+    POST /v1/demo-sandbox/session + startWorkflowRun succeeded end to end
+- terraform fmt -check -diff: clean
+- terraform validate: passed
+- terraform plan (read-only): 2 to add, 0 to change, 4 to destroy (all 4
+  pre-existing deposed-object debris, reviewed line by line, none live)
+```
+
+### Next safe step
+
+Not attempted here: auditing the rest of this Terraform configuration for any other resource that mixes inline-managed and standalone-managed sub-resources of the same kind (the same anti-pattern class, not necessarily security groups) -- this incident only searched `security-groups.tf` specifically because that's where the symptom pointed.
