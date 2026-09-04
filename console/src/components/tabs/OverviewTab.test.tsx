@@ -168,9 +168,9 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     await user.click(
       screen.getByRole('button', { name: 'Check impact of a policy version' }),
     );
-    expect(screen.getByRole('combobox', { name: 'Policy version' })).toHaveValue(
-      'new-version-1',
-    );
+    expect(
+      screen.getByRole('combobox', { name: 'Policy version' }),
+    ).toHaveValue('new-version-1');
     expect(screen.getByText(/income-verification · 2026.1/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Check' }));
 
@@ -242,9 +242,9 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     await user.click(
       screen.getByRole('button', { name: 'Check impact of a policy version' }),
     );
-    expect(screen.getByRole('combobox', { name: 'Policy version' })).toHaveValue(
-      'unknown-version',
-    );
+    expect(
+      screen.getByRole('combobox', { name: 'Policy version' }),
+    ).toHaveValue('unknown-version');
     await user.click(screen.getByRole('button', { name: 'Check' }));
 
     expect(

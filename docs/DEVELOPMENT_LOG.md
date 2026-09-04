@@ -13609,3 +13609,7 @@ git diff --check: passed
 ```
 
 The live suite cannot pass before these console changes are deployed. The required release proof is therefore: CI green, immutable staging deploy green, and the acceptance step green against that newly published edge—not a run against the previous deployment.
+
+### First CI finding
+
+CI #194 passed build/test, container, dependency, observability, secret, and SAST jobs. The console job failed only on two Prettier layout findings in the new selector assertions; no semantic test, type-check, build, or generated-artifact drift failure occurred. The assertion layout was corrected and is subject to the next full CI run.
