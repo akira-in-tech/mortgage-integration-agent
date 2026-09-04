@@ -47,14 +47,21 @@ function createHarness(options?: {
       savedRuns.push(run);
       return run;
     }),
+    // Mirrors what TypeORM's real Postgres driver returns for a raw UPDATE
+    // (RETURNING included): `[rows, rowCount]`, not just `rows` -- see
+    // node_modules/typeorm/driver/postgres/PostgresQueryRunner.js's own
+    // `query()`, which wraps UPDATE/DELETE results in that tuple. A version
+    // of this mock that returned `[next]` directly (matching the shape the
+    // real driver gives a plain SELECT, not an UPDATE) let a real bug in
+    // claimNextRun() pass every test while failing in production.
     query: jest.fn(async () => {
       const next = savedRuns.find(
         (run) => run.status === PolicyResearchStatus.QUEUED,
       );
-      if (!next) return [];
+      if (!next) return [[], 0];
       next.status = PolicyResearchStatus.PROCESSING;
       next.attempts += 1;
-      return [next];
+      return [[next], 1];
     }),
     update: jest.fn(async (_where, values) => {
       updates.push(values);

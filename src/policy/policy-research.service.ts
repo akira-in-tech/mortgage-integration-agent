@@ -237,7 +237,24 @@ export class PolicyResearchService {
   private async claimNextRun(): Promise<PolicyResearchRun | null> {
     // `SKIP LOCKED` means a second worker moves to another queued item rather
     // than double-sending the same source excerpts to the model.
-    const rows = await this.runRepository.query(
+    //
+    // TypeORM's raw Repository.query() does not return the RETURNING rows
+    // directly for an UPDATE (or DELETE): PostgresQueryRunner.query() wraps
+    // an UPDATE/DELETE result as the tuple `[rows, rowCount]`, unlike a
+    // plain SELECT, which returns `rows` on its own (see
+    // node_modules/typeorm/driver/postgres/PostgresQueryRunner.js's own
+    // `query()` -- it switches on `raw.command` and only SELECT-shaped
+    // queries skip the tuple wrapping). This query is a real UPDATE (the
+    // RETURNING clause doesn't change that), so the un-destructured result
+    // used to be treated as if it *were* the rows array: `result[0]` grabbed
+    // the whole inner rows array instead of the first row, `create()` then
+    // built an array-shaped "entity" with every real column undefined, and
+    // every real claim silently failed downstream reading
+    // `run.researchQuery` -- a real, reproducible bug (2026-09-04): this
+    // path runs every time the seeded policy source's freshness objective
+    // has lapsed, which -- given how old this synthetic launch pack's own
+    // seeded date is -- is effectively always.
+    const [rows] = await this.runRepository.query(
       `WITH candidate AS (
          SELECT id FROM policy_research_runs
          WHERE status = $1

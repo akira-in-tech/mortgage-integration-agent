@@ -13335,3 +13335,44 @@ Real, against the live staging environment (2026-09-03):
 ### Next safe step
 
 Recreating `aws_cognito_user_pool.console` with a required `email` schema attribute, as a deliberate, separately-approved change -- it deletes every existing Cognito user (including `synthetic-reviewer`) and rotates the app client's id/secret, which needs an ECS redeploy to pick up the new `OIDC_CLIENT_ID`/`OIDC_AUDIENCE`. Until then, self-service signup stays disabled and `synthetic-reviewer` is the one working human login.
+
+## M7-078: policy research runs silently failed on every real claim — a raw-query result shape bug
+
+### Status
+
+Root-caused and fixed for real, with a corrected regression test proving it (the old test's own mock had been hiding this exact defect).
+
+### Background
+
+While demonstrating the product's full feature surface against a real local stack (`npm run quickstart`, manual case escalation, consent revocation, etc.), the worker log showed `PolicyResearchService` failing every single time it tried to process a queued research run: `Cannot read properties of undefined (reading 'toLowerCase')`, immediately followed by an `UPDATE ... WHERE ("id" = $4 ...)` with `$4 = null` -- a failure-handling update that could never match any row. This trigger path (`SOURCE_FRESHNESS_EXPIRED`) fires on effectively every real policy evaluation in this environment, because the seeded synthetic launch policy pack's freshness objective (30 days) lapsed relative to the current date long ago -- so this was not a rare edge case, it was the common case, silently failing in the background on every real evaluation without ever affecting the main workflow (the research queue is advisory and fire-and-forget by design, which is exactly why nothing else noticed).
+
+### Root cause
+
+`PolicyResearchService.claimNextRun()` (`src/policy/policy-research.service.ts`) runs a raw `WITH candidate AS (...) UPDATE policy_research_runs ... RETURNING run.*` through `this.runRepository.query(sql, params)`, then reads `rows[0]` as if `rows` were the array of returned rows. It isn't. TypeORM's own Postgres driver (`node_modules/typeorm/driver/postgres/PostgresQueryRunner.js`, `query()`) wraps the raw pg result differently depending on the SQL's command type: a plain `SELECT` (or `INSERT`) returns `raw.rows` directly, but an `UPDATE` or `DELETE` -- the `RETURNING` clause doesn't change which branch it takes -- returns the tuple `[raw.rows, raw.rowCount]` instead. `claimNextRun()`'s `rows[0]` was therefore grabbing the *entire inner rows array* (a one-element array), not the first row; passing that array into `runRepository.create()` produced an array-shaped "entity" with every real column (`id`, `researchQuery`, everything) reading as `undefined`. This codebase already knows and correctly handles this exact TypeORM behavior in two other places doing the identical `UPDATE ... RETURNING` pattern -- `webhook-endpoint.service.ts` and `agent-budget-ledger.service.ts` both destructure `const [rows] = await manager.query(...)` -- `claimNextRun()` was the one place that didn't.
+
+The bug had 100% real-test coverage and still shipped, because the test harness's own `runRepository.query` mock (`policy-research.service.spec.ts`) returned `[next]` (a bare row wrapped in an array) rather than replicating TypeORM's real `[[next], 1]` tuple shape for an UPDATE -- a mock that was unfaithful to the real driver's behavior in exactly the way that hid this exact defect.
+
+### Fix
+
+`claimNextRun()` now destructures `const [rows] = await this.runRepository.query(...)` before reading `rows[0]`, matching the pattern already used correctly elsewhere in this codebase. The test harness's `query` mock now returns `[[next], 1]` (or `[[], 0]` when nothing is claimable), faithfully mirroring the real driver -- the existing "retrieves immutable revision passages and persists citations before its advisory brief" test already asserted the run reaches `COMPLETED`, so fixing the mock to match reality is what makes that assertion mean something.
+
+### Verification
+
+```text
+- src/policy/policy-research.service.spec.ts: 4/4 passed (was already
+  "passing" before the fix, but only because its own mock didn't
+  reproduce the real bug -- passing now for the right reason, against a
+  mock that matches TypeORM's real UPDATE/DELETE return shape)
+- src/policy: 24/24 non-skipped tests passed (58 skipped are
+  infra-gated integration specs, unrelated to this change)
+- tsc --noEmit: clean
+- Root cause confirmed by reading TypeORM's own installed source
+  (node_modules/typeorm/driver/postgres/PostgresQueryRunner.js) rather
+  than guessed at -- the exact `switch (raw.command)` branch that
+  wraps UPDATE/DELETE results in a tuple is quoted in the fix's own
+  code comment for the next reader
+```
+
+### Next safe step
+
+Not attempted here: auditing the rest of the codebase's raw `.query()` call sites for the same class of mismatch between a mock and the real driver's return shape (this session specifically checked the other two `RETURNING`-bearing call sites and found them already correct, but didn't exhaustively re-verify every raw-query test double against the real driver).
