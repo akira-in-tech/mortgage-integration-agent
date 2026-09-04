@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:staging": "playwright test --config playwright.staging.config.ts",
     "codegen": "graphql-codegen --config codegen.ts"
   },
   "dependencies": {

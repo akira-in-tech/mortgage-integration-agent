@@ -325,3 +325,21 @@ jobs:
           done
           echo "CloudFront edge never returned a real 200 from /health/ready" >&2
           exit 1
+
+      - name: Install the staging acceptance browser
+        run: npm --prefix console exec playwright install --with-deps chromium
+
+      - name: Run the real guest-sandbox acceptance gate
+        working-directory: terraform/staging
+        env:
+          RUN_STAGING_ACCEPTANCE: "true"
+        run: |
+          STAGING_CONSOLE_URL=$(terraform output -raw console_url) \
+            npm --prefix ../../console run test:e2e:staging
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: staging-acceptance-playwright-report
+          path: console/playwright-report
+          retention-days: 14

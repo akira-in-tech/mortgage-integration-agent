@@ -13589,3 +13589,23 @@ The case overview exposed the real policy-impact mutation but required a reviewe
 ### Verification
 
 `git diff --check` passed and generated query/type/document artifacts contain the new `versions` selection. The repository's local codegen process stalled in the macOS file-provider layer, so the generated files were updated mechanically from the same one-field document change; CI's codegen drift check remains the authoritative reproducibility gate.
+
+## M7-086: repeatable deployed guest-sandbox acceptance gate
+
+### Implementation
+
+- Added a dedicated Playwright configuration with no local web server; it can only test the supplied deployed CloudFront URL.
+- Added an opt-in serial suite that proves session-cache isolation, case creation, real Temporal/Qwen evaluation, all five evidence types, policy-impact selection, protected communication approval/delivery, reviewer condition resolution, Ready handoff, audit/dossier inspection, operational views, multi-case creation, and manual escalation guidance.
+- Every test closes its disposable guest session when possible; no borrower data, real provider dispatch, or regulated action enters the acceptance path.
+- Added `test:e2e:staging` as the stable local/CI command.
+- Made the suite a post-deployment gate after both API and CloudFront readiness checks. A failing run retains its Playwright HTML report for 14 days.
+
+### Verification before publication
+
+```text
+ruby YAML.load_file(.github/workflows/deploy-staging.yml): yaml ok
+JSON.parse(console/package.json): package json ok
+git diff --check: passed
+```
+
+The live suite cannot pass before these console changes are deployed. The required release proof is therefore: CI green, immutable staging deploy green, and the acceptance step green against that newly published edge—not a run against the previous deployment.
