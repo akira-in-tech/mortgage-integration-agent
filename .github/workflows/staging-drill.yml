@@ -434,12 +434,21 @@ jobs:
 
           task_id=${task_arn##*/}
           log_stream="migrate/migrate/$task_id"
+          exit_code=$(aws ecs describe-tasks --cluster mortgage-agent-staging --tasks "$task_arn" \
+            --region "${{ vars.AWS_REGION }}" --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$exit_code" != "0" ]; then
+            echo "Policy research verifier failed with exit code $exit_code." >&2
+            exit 1
+          fi
+          echo "POLICY_RESEARCH_VERIFIED=COMPLETED (task contract passed)"
+
+          # The deploy role deliberately does not need CloudWatch read access.
+          # Print bounded task details when that optional diagnostic permission
+          # exists; lack of it must not turn a successful verifier exit into a
+          # false research failure or pressure us to widen IAM privileges.
           aws logs get-log-events \
             --log-group-name /ecs/mortgage-agent-staging-migrate \
             --log-stream-name "$log_stream" \
             --region "${{ vars.AWS_REGION }}" \
-            --query 'events[].message' --output text
-
-          exit_code=$(aws ecs describe-tasks --cluster mortgage-agent-staging --tasks "$task_arn" \
-            --region "${{ vars.AWS_REGION }}" --query 'tasks[0].containers[0].exitCode' --output text)
-          test "$exit_code" = "0"
+            --query 'events[].message' --output text \
+            || echo "CloudWatch log read unavailable to the least-privilege deploy role; ECS exit-code contract remains authoritative."

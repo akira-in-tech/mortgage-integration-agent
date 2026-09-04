@@ -13493,7 +13493,7 @@ Implemented. `Staging drill` now includes a `policy-research` choice that proves
 - It inserts one uniquely fingerprinted, explicitly labelled synthetic `NEW_SOURCE_REVISION` work item against the existing `US-DEMO` source revision.
 - The verifier does not call `PolicyResearchService.processPendingRuns()` itself. It polls the row while the separately deployed worker must claim it, retrieve passages, invoke configured Qwen synthesis, persist citations, and mark it complete.
 - Success requires `status=COMPLETED`, a non-null completion timestamp, and at least one persisted citation. `FAILED`, a citationless completion, or an eight-minute timeout exits non-zero.
-- The one-off task's bounded, non-secret status lines are read back from its CloudWatch stream into the GitHub Actions log, leaving durable run evidence without printing the database URL or model prompt content.
+- The one-off task's exit code is the authoritative contract. Bounded, non-secret CloudWatch status lines are printed only when the deploy role already has read access; diagnostics never justify widening that role.
 
 ### Verification before publication
 
@@ -13503,3 +13503,7 @@ git diff --check: passed
 ```
 
 The live AWS drill remains required after this workflow change reaches `main`; implementation alone is not completion evidence.
+
+### First live-drill finding
+
+The first run reached the end of the Fargate verifier after 6m45s, then the GitHub step failed on optional `logs:GetLogEvents`: the least-privilege deploy role correctly lacks that permission. The workflow originally attempted the log read before inspecting the completed task's exit code, so it incorrectly converted unavailable diagnostics into a failed research result. The follow-up keeps IAM narrow, checks the task exit code first, emits an explicit completion marker, and treats CloudWatch log output as optional.
