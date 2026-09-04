@@ -233,12 +233,46 @@ resource "aws_cognito_user_pool" "console" {
   deletion_protection = "INACTIVE"
   mfa_configuration   = "OFF"
   username_configuration { case_sensitive = false }
-  # The persistent staging demo permits a person to create an account from
-  # Cognito's hosted UI. Application-side provisioning still creates an
-  # isolated tenant and least-privilege membership; registration never grants
-  # access to the shared synthetic-reviewer workspace.
-  admin_create_user_config { allow_admin_create_user_only = false }
+  # Self-service signup is temporarily disabled -- see the M7-077 comment
+  # below. It was originally meant to permit a person to create an account
+  # from Cognito's hosted UI, with application-side provisioning creating an
+  # isolated tenant and least-privilege membership; registration was never
+  # meant to grant access to the shared synthetic-reviewer workspace. Until
+  # the pool is recreated with a required email attribute, self-registered
+  # accounts can never confirm, so this stays `true` (admin/Terraform-created
+  # users only, e.g. `aws_cognito_user.synthetic_reviewer` below) to stop
+  # anyone else from hitting that same dead end.
+  admin_create_user_config { allow_admin_create_user_only = true }
   auto_verified_attributes = ["email"]
+
+  # M7-077 (known gap, real, live-reported 2026-09-03): self-service signup
+  # (SELF_SERVICE_SIGNUP_ENABLED=true in this environment) does not actually
+  # work. The hosted UI's own signup form only ever asks for a username and
+  # password, because this pool has no schema attribute telling it to
+  # collect an email. `auto_verified_attributes = ["email"]` above then has
+  # nothing to verify, so every self-registered account is created with no
+  # email at all and stays permanently UNCONFIRMED -- Cognito has no address
+  # to send a confirmation code to. Sign-in then fails with the hosted UI's
+  # own generic error page. Even a confirmed account with no email would
+  # fail the *next* step too: `SelfServiceProvisioningService.resolveUser()`
+  # only provisions a tenant when the identity token carries a real `email`
+  # claim.
+  #
+  # The real fix is a `schema { name = "email" required = true ... }` block
+  # here -- confirmed NOT deployable in-place: a live `terraform apply`
+  # attempt on this exact pool failed with a real AWS error
+  # ("adding Cognito User Pool custom attributes: InvalidParameterException:
+  # Required custom attributes are not supported currently"), left the pool
+  # completely untouched (verified via describe-user-pool), and reverted
+  # here. AWS only allows a *required* standard attribute to be declared at
+  # user-pool *creation* time, not added afterward -- so fixing this for
+  # real means recreating aws_cognito_user_pool.console (and, since the
+  # domain, app client, and the synthetic_reviewer user all reference its
+  # id, everything downstream of it too), which needs a deliberate decision
+  # about the resulting downtime and secret rotation, not a routine apply.
+  # Until that's done, use the pre-provisioned `synthetic-reviewer` account
+  # (this file, below) to sign in -- self-service signup should not be
+  # attempted from the hosted UI.
 
   password_policy {
     minimum_length                   = 16

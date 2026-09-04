@@ -13291,3 +13291,47 @@ This one had a real, findable cause. `SandboxGuide`'s step 4 ("Review the audit 
 
 Investigation 1 stays open pending a real recurrence with browser-side evidence (network tab, console) captured at the moment it happens -- not re-guessed from the code, since two independent real reproductions here found nothing wrong with either layer.
 
+## M7-077: self-service Cognito signup never actually worked; disabled it rather than leave a live dead end
+
+### Status
+
+Root-caused for real against the live user pool. The complete fix (a required `email` schema attribute) needs a Cognito user-pool recreation, which is a deliberate, separate decision; self-service signup is disabled in the meantime so the hosted UI stops offering a path that was never reachable.
+
+### Background
+
+The user tried "Sign in with SSO" on the live console, signed up with a username and password, and hit Cognito's own generic hosted-UI error page ("An error was encountered with the requested page") on the very next sign-in attempt.
+
+### Root cause, confirmed against the real user pool
+
+`aws cognito-idp admin-get-user` on the real account showed the actual state directly: `UserStatus: UNCONFIRMED`, with a `UserAttributes` list containing only `sub` -- no email at all. `aws_cognito_user_pool.console` (`terraform/staging/edge.tf`) has never declared `email` (or any attribute) as a required schema attribute, so Cognito's classic hosted UI signup form only ever asks for a username and password -- there has never been an email field on it. `auto_verified_attributes = ["email"]` on the same pool then has nothing to auto-verify, so a self-registered account can never be confirmed (no address exists to send a confirmation code to), and Cognito correctly refuses to authenticate an unconfirmed user -- surfaced by the hosted UI as its own generic error page rather than a clear message. A second, independent failure sits right behind the first even if it were confirmed: `SelfServiceProvisioningService.resolveUser()` (`src/auth/self-service-provisioning.service.ts`) only provisions a tenant when the identity token carries a real `email` claim; with no email on the account, it would return `null` and the login would never reach a usable console session anyway.
+
+This is a real, previously-undiscovered gap, not a regression: M7-067's own live-staging OIDC test (`console/e2e/oidc-live-staging.spec.ts`) only ever exercised the pre-provisioned `aws_cognito_user.synthetic_reviewer` account -- self-service signup, though `SELF_SERVICE_SIGNUP_ENABLED=true` in this environment and documented in this same Terraform file's own comment as an intended capability, had never actually been exercised end to end by a real person or a real test until now.
+
+### What was tried, and why it doesn't fix this in place
+
+The direct fix -- adding `schema { name = "email" required = true mutable = true }` to `aws_cognito_user_pool.console` -- was written, `terraform fmt`/`validate` clean, and `terraform plan` showed a plausible-looking in-place update (0 to destroy). Applying it against the real pool failed with a real AWS error: `adding Cognito User Pool custom attributes: InvalidParameterException: Required custom attributes are not supported currently.` Confirmed via `describe-user-pool` that the pool was left completely untouched (`LastModifiedDate` unchanged) -- a clean failure, no partial state. AWS only allows a _required_ standard attribute to be declared at user-pool _creation_ time; it cannot be added to an existing pool afterward. Fixing this for real means recreating `aws_cognito_user_pool.console` -- which, because the domain, app client (client id/secret), and `synthetic_reviewer` user all reference its id, cascades into recreating all of them too (a new OIDC client id/secret ECS would need to pick up, and the pre-provisioned demo account being deleted and recreated). That is a deliberate infrastructure decision with real downtime and secret-rotation consequences, not something to fold into a routine apply -- left for an explicit future decision, documented in this Terraform file's own comment.
+
+### Fix applied now
+
+`admin_create_user_config.allow_admin_create_user_only` flipped `false -> true` on the same pool -- a plain in-place update (confirmed via `terraform plan`: 1 to change, 0 to destroy, only that one field), no schema change, no effect on the app client or the `synthetic_reviewer` user. This removes the "Sign up" link from Cognito's hosted UI entirely, so the hosted UI no longer offers a registration path that could never complete -- while the pre-provisioned `synthetic-reviewer` credential (Secrets Manager: `mortgage-agent-staging/synthetic-reviewer-password`) remains the one real way to sign in until the pool is recreated.
+
+### Verification
+
+```text
+Real, against the live staging environment (2026-09-03):
+- aws cognito-idp admin-get-user (before any fix): confirmed the real
+  UNCONFIRMED status and the missing email attribute directly
+- terraform apply of the schema-required fix: real AWS rejection
+  (InvalidParameterException), pool confirmed untouched afterward
+- terraform apply of admin_create_user_config = true: succeeded;
+  describe-user-pool confirmed AllowAdminCreateUserOnly: true and a
+  fresh LastModifiedDate
+- terraform plan afterward: "No changes. Your infrastructure matches
+  the configuration."
+- curl against the real hosted-UI login page (real client_id, real
+  redirect_uri): no "sign up" text present anywhere in the response
+```
+
+### Next safe step
+
+Recreating `aws_cognito_user_pool.console` with a required `email` schema attribute, as a deliberate, separately-approved change -- it deletes every existing Cognito user (including `synthetic-reviewer`) and rotates the app client's id/secret, which needs an ECS redeploy to pick up the new `OIDC_CLIENT_ID`/`OIDC_AUDIENCE`. Until then, self-service signup stays disabled and `synthetic-reviewer` is the one working human login.
