@@ -13455,3 +13455,28 @@ GitHub CI for 94fac92:
 ### Next safe step
 
 Keep this tuple simulator-isolated until a specific tenant/data-flow authorization exists. When one does, certify that exact environment and artifact digest again before enabling any non-synthetic case routing.
+
+## M7-081: five-capability staging budget alignment
+
+### Status
+
+Implemented after a real guest sandbox run exposed a staging-only cold-inference deadline mismatch. The first run collected and persisted all five evidence types, then correctly failed closed to manual review before condition creation because the Agent's 20-second inner deadline expired while the staging Qwen planner was still running.
+
+### Implementation
+
+- The default trusted Agent duration budget is now 75 seconds, leaving enough room for a cold local open-weight planner invocation while preserving a finite fail-closed deadline.
+- `evaluateConditions` now uses a dedicated 90-second Temporal activity envelope. Other database and provider activities retain the existing 30-second bound; the wider timeout is not applied indiscriminately.
+- Staging's Ollama request timeout is reduced from 120 seconds to 60 seconds. The nesting is now explicit and ordered: 60-second model timeout < 75-second Agent run budget < 90-second Temporal activity timeout.
+- Comments document ownership of each deadline as a general reliability invariant rather than as an implementation instruction.
+
+### Live evidence before the fix
+
+```text
+Deploy staging #56: main@0e5cd8f succeeded in 21m01s
+Guest tenant: a5929e6c-81b8-41f5-a05f-d37681d9d62a
+Case: 7fece187-0b9e-4e3b-9b95-3dedac35d7a3
+Evidence persisted: INCOME, CREDIT, DOCUMENT, IDENTITY, ASSET
+Fail-closed route: MANUAL_REVIEW / BUDGET_OR_DEADLINE_EXHAUSTED
+```
+
+This failed run is retained as operational evidence; it was not rewritten as a successful demo. A fresh case must complete condition creation, reviewer resolution, and audit inspection after the fixed immutable image is deployed.

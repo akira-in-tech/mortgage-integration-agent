@@ -29,6 +29,18 @@ const activities = proxyActivities<CaseConditionsActivities>({
   },
 });
 
+// Local open-weight inference can require a cold model load in staging. Keep
+// its deterministic policy activity on a wider Temporal envelope while the
+// remaining database/provider activities retain their tighter 30s bound.
+const agentActivities = proxyActivities<CaseConditionsActivities>({
+  startToCloseTimeout: '90s',
+  retry: {
+    initialInterval: '1s',
+    backoffCoefficient: 2,
+    maximumAttempts: 3,
+  },
+});
+
 /**
  * M2 durable conditions vertical slice (Section 20, M2 / Section 7.1): a
  * synthetic case enters a condition workflow, waits, receives a resolution,
@@ -142,7 +154,9 @@ async function runCaseConditionsWorkflow(
     return { finalStatus: CaseStatus.MANUAL_REVIEW };
   }
 
-  let evaluation: Awaited<ReturnType<typeof activities.evaluateConditions>>;
+  let evaluation: Awaited<
+    ReturnType<typeof agentActivities.evaluateConditions>
+  >;
   for (;;) {
     try {
       // Can exhaust its retries when the case keeps changing out from
@@ -151,7 +165,7 @@ async function runCaseConditionsWorkflow(
       // StaleCaseVersionError) — Temporal's own retry policy already gives
       // this several tries against the case's latest state before this
       // catch is ever reached.
-      evaluation = await activities.evaluateConditions({
+      evaluation = await agentActivities.evaluateConditions({
         tenantId,
         caseId,
         workflowRunId: workflowInfo().runId,

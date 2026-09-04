@@ -113,7 +113,7 @@ interface EvaluateConditionsResult {
   reviewReason?: string;
 }
 
-// Comfortably inside case-conditions.workflow.ts's 30s activity
+// Comfortably inside case-conditions.workflow.ts's 90s Agent activity
 // startToCloseTimeout, so the Agent run's own trusted deadline can never
 // legitimately outlive Temporal's activity timeout — the two budgets
 // don't compete, the inner one is strictly the tighter constraint.
@@ -121,7 +121,7 @@ interface EvaluateConditionsResult {
 // agentRunDurationBudgetMsOverride (M5-021) take precedence when set;
 // see resolveAgentRunBudget() below.
 const DEFAULT_AGENT_RUN_STEP_BUDGET = 10;
-const DEFAULT_AGENT_RUN_DURATION_BUDGET_MS = 20_000;
+const DEFAULT_AGENT_RUN_DURATION_BUDGET_MS = 75_000;
 
 /** M5-021: Section 20 M5's "tenant-owned... budget configuration" — see `Tenant`'s own class comment for the full scope reasoning. A tenant with no override (the common case) behaves identically to every tenant before this migration. */
 function resolveAgentRunBudget(tenant: Tenant): {

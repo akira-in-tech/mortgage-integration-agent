@@ -400,7 +400,9 @@ resource "aws_ecs_task_definition" "worker" {
       { name = "DECISION_PROVIDER", value = "ollama" },
       { name = "OLLAMA_BASE_URL", value = "http://${local.ollama_dns}:11434" },
       { name = "OLLAMA_MODEL", value = "qwen3.5:9b" },
-      { name = "OLLAMA_TIMEOUT_MS", value = "120000" },
+      # Keep model timeout below the workflow's 75s trusted run budget and
+      # 90s Temporal activity envelope so every layer has one clear owner.
+      { name = "OLLAMA_TIMEOUT_MS", value = "60000" },
       # Policy research is a separate, citation-bound background task. It
       # receives no borrower data and cannot activate policy; only this worker
       # can use Qwen to synthesize its advisory, reviewer-facing candidate.
