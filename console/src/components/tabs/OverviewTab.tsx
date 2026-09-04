@@ -24,6 +24,9 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
         new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     )
     .slice(0, 3);
+  const boundPolicyVersions = parseBoundPolicyVersions(
+    loanCase.policyBinding?.policySnapshot?.versions,
+  );
 
   return (
     <div
@@ -148,7 +151,11 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
           {/* key={loanCase.id}: forces a fresh form when the reviewer
               switches cases, so a result from a different case can never
               stay on screen looking like it belongs to this one. */}
-          <PolicyImpactCheck key={loanCase.id} caseId={loanCase.id} />
+          <PolicyImpactCheck
+            key={loanCase.id}
+            caseId={loanCase.id}
+            policyVersions={boundPolicyVersions}
+          />
         </div>
       )}
 
@@ -223,14 +230,49 @@ export function OverviewTab({ loanCase }: { loanCase: LoanCase }) {
   );
 }
 
-// Lets a reviewer check whether a specific policy version (usually one
-// that was just published) would change how this case resolves, without
-// actually re-running or changing anything on the case. There's no
-// screen anywhere yet to browse existing policy versions and pick one —
-// the reviewer has to already have the id from whoever published it.
-function PolicyImpactCheck({ caseId }: { caseId: string }) {
+interface BoundPolicyVersionOption {
+  policyVersionId: string;
+  ruleId: string;
+  version: string;
+}
+
+/** Converts the snapshot's JSON representation into safe display options. */
+function parseBoundPolicyVersions(value: unknown): BoundPolicyVersionOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const candidate = entry as Record<string, unknown>;
+    if (
+      typeof candidate.policyVersionId !== 'string' ||
+      typeof candidate.ruleId !== 'string' ||
+      typeof candidate.version !== 'string'
+    ) {
+      return [];
+    }
+    return [
+      {
+        policyVersionId: candidate.policyVersionId,
+        ruleId: candidate.ruleId,
+        version: candidate.version,
+      },
+    ];
+  });
+}
+
+// Candidate ids come only from this case's immutable policy snapshot. This
+// gives tenant reviewers a usable selector without exposing the platform-wide
+// policy catalog, which remains a separately authorized admin surface.
+function PolicyImpactCheck({
+  caseId,
+  policyVersions,
+}: {
+  caseId: string;
+  policyVersions: BoundPolicyVersionOption[];
+}) {
   const [open, setOpen] = useState(false);
-  const [policyVersionId, setPolicyVersionId] = useState('');
+  const [policyVersionId, setPolicyVersionId] = useState(
+    policyVersions[0]?.policyVersionId ?? '',
+  );
   const [checkImpact, { data, loading, error }] = useMutation(
     CHECK_POLICY_CHANGE_IMPACT_MUTATION,
   );
@@ -268,17 +310,18 @@ function PolicyImpactCheck({ caseId }: { caseId: string }) {
     >
       <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginBottom: 8 }}>
         Check whether a policy version would require re-evaluating this case.
-        There's no list to pick from yet — paste the id you were given.
+        Choose one of the immutable versions captured in this case's policy
+        binding.
       </div>
       <form
         onSubmit={submit}
         style={{ display: 'flex', gap: 8, alignItems: 'center' }}
       >
-        <input
+        <select
           className="mono"
+          aria-label="Policy version"
           value={policyVersionId}
           onChange={(event) => setPolicyVersionId(event.target.value)}
-          placeholder="policy version id"
           style={{
             flex: 1,
             fontSize: 12,
@@ -286,7 +329,19 @@ function PolicyImpactCheck({ caseId }: { caseId: string }) {
             borderRadius: 7,
             border: '1px solid var(--border)',
           }}
-        />
+        >
+          {policyVersions.length === 0 && (
+            <option value="">No bound policy versions</option>
+          )}
+          {policyVersions.map((candidate) => (
+            <option
+              key={candidate.policyVersionId}
+              value={candidate.policyVersionId}
+            >
+              {candidate.ruleId} · {candidate.version}
+            </option>
+          ))}
+        </select>
         <button
           type="submit"
           className="btn btn-primary"

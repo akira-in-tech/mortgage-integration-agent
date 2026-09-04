@@ -94,6 +94,7 @@ export const CASE_QUERY = graphql(`
           resolverVersion
           contextHash
           resolvedAt
+          versions
         }
       }
       providerOperations {

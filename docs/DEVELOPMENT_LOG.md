@@ -13571,3 +13571,21 @@ Escalating an unevaluated guest case correctly moved it to `WAITING_FOR_REVIEW`,
 ### Verification
 
 `git diff --check` passed. Full console test/lint/build verification remains assigned to CI because the local repository is still affected by the separately reported file-provider stall.
+
+## M7-085: tenant-safe policy-impact version selector
+
+### Finding
+
+The case overview exposed the real policy-impact mutation but required a reviewer to paste an opaque policy-version UUID. The public demo provided no discoverable source for that id, leaving a visible control that a portfolio visitor could not actually use.
+
+### Implementation
+
+- Added the existing immutable `CasePolicySnapshot.versions` JSON field to the case GraphQL selection.
+- Parsed only entries with string `policyVersionId`, `ruleId`, and `version` fields into UI options; malformed snapshot content produces no actionable value.
+- Replaced arbitrary UUID entry with a labelled selector of versions already captured in this tenant's case binding.
+- Kept the platform-wide catalog behind `PlatformAdminGuard`; the fix does not broaden guest or tenant authority.
+- Updated generated GraphQL artifacts and component tests for assessed and not-assessed responses.
+
+### Verification
+
+`git diff --check` passed and generated query/type/document artifacts contain the new `versions` selection. The repository's local codegen process stalled in the macOS file-provider layer, so the generated files were updated mechanically from the same one-field document change; CI's codegen drift check remains the authoritative reproducibility gate.

@@ -125,6 +125,13 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
           resolverVersion: '1',
           contextHash: 'hash-1',
           resolvedAt: '2026-01-01T00:00:00Z',
+          versions: [
+            {
+              policyVersionId: 'new-version-1',
+              ruleId: 'income-verification',
+              version: '2026.1',
+            },
+          ],
         },
       },
     };
@@ -161,10 +168,10 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     await user.click(
       screen.getByRole('button', { name: 'Check impact of a policy version' }),
     );
-    await user.type(
-      screen.getByPlaceholderText('policy version id'),
+    expect(screen.getByRole('combobox', { name: 'Policy version' })).toHaveValue(
       'new-version-1',
     );
+    expect(screen.getByText(/income-verification · 2026.1/)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Check' }));
 
     expect(
@@ -186,7 +193,20 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
         boundAt: '2026-01-01T00:00:00Z',
         revalidateAfter: '2026-02-01T00:00:00Z',
         invalidatedAt: null,
-        policySnapshot: null,
+        policySnapshot: {
+          id: 'snapshot-2',
+          resolutionStatus: 'RESOLVED',
+          resolverVersion: '1',
+          contextHash: 'hash-2',
+          resolvedAt: '2026-01-01T00:00:00Z',
+          versions: [
+            {
+              policyVersionId: 'unknown-version',
+              ruleId: 'unknown-rule',
+              version: 'candidate',
+            },
+          ],
+        },
       },
     };
     const mocks: MockedResponse[] = [
@@ -222,8 +242,7 @@ describe('OverviewTab — the real "Mark satisfied" mutation-driving flow', () =
     await user.click(
       screen.getByRole('button', { name: 'Check impact of a policy version' }),
     );
-    await user.type(
-      screen.getByPlaceholderText('policy version id'),
+    expect(screen.getByRole('combobox', { name: 'Policy version' })).toHaveValue(
       'unknown-version',
     );
     await user.click(screen.getByRole('button', { name: 'Check' }));
