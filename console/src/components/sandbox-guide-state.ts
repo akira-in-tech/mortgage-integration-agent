@@ -1,6 +1,6 @@
 import type { CaseStatus } from '../graphql/types';
 
-export type SandboxGuideTab = 'evidence' | 'conditions' | 'audit';
+export type SandboxGuideTab = 'evidence' | 'conditions' | 'timeline' | 'audit';
 
 export interface SandboxGuideState {
   currentStep: number;
@@ -77,6 +77,17 @@ export function getSandboxGuideState(
         'This starts the real Temporal workflow wired to this sandbox. It uses only synthetic data and deterministic provider adapters.',
       actionLabel: 'Run simulated evaluation',
       action: 'start',
+    };
+  }
+
+  if (status === 'WAITING_FOR_REVIEW') {
+    return {
+      currentStep: 3,
+      title: 'Escalated for reviewer attention',
+      detail:
+        'A reviewer explicitly escalated this case. No evaluation is running; inspect the timeline for the recorded escalation before deciding what should happen next.',
+      actionLabel: 'View escalation timeline',
+      action: 'timeline',
     };
   }
 

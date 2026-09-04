@@ -13555,3 +13555,19 @@ A live acceptance pass created a new guest sandbox immediately after closing an 
 ### Verification
 
 `git diff --check` passed. The local Vitest command entered the repository's recurring macOS file-provider stall before reporting a result; it is not recorded as passing. The full console test/lint/build matrix remains required in GitHub CI after publication.
+
+## M7-084: distinguish manual escalation from workflow execution
+
+### Finding
+
+Escalating an unevaluated guest case correctly moved it to `WAITING_FOR_REVIEW`, but the sandbox guide's catch-all branch labelled every non-draft, non-terminal status as "The evaluation is in progress." No workflow had been started in this path, so the product was making a false operational claim.
+
+### Implementation
+
+- Added an explicit `WAITING_FOR_REVIEW` guide state titled "Escalated for reviewer attention."
+- The copy now says no evaluation is running and directs the reviewer to the durable timeline record.
+- Extended the guide's permitted navigation actions with `timeline` and added a component-level regression covering both the wording and navigation target.
+
+### Verification
+
+`git diff --check` passed. Full console test/lint/build verification remains assigned to CI because the local repository is still affected by the separately reported file-provider stall.

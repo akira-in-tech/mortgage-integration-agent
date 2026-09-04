@@ -53,6 +53,29 @@ describe('SandboxGuide', () => {
     expect(onStartEvaluation).toHaveBeenCalledOnce();
   });
 
+  it('describes a manually escalated case without claiming an evaluation is running', () => {
+    const onOpenTab = vi.fn();
+    render(
+      <SandboxGuide
+        status="WAITING_FOR_REVIEW"
+        openConditionCount={0}
+        hasAuditEvents={true}
+        starting={false}
+        onStartEvaluation={vi.fn()}
+        onOpenTab={onOpenTab}
+      />,
+    );
+
+    expect(screen.getByText(/escalated for reviewer attention/i)).toBeVisible();
+    expect(
+      screen.queryByText(/evaluation is in progress/i),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: /view escalation timeline/i }),
+    );
+    expect(onOpenTab).toHaveBeenCalledWith('timeline');
+  });
+
   // A real, live-reported bug (2026-09-03): a custom-scenario case (Section
   // 15's "+ New case") can reach READY_FOR_UNDERWRITING without the seeded
   // income-discrepancy rule ever opening a condition, if the visitor's own
