@@ -13619,3 +13619,25 @@ CI #194 passed build/test, container, dependency, observability, secret, and SAS
 Deploy staging #58 published commit `ceaf468` and reached the new acceptance gate. The tenant-cache boundary test passed. The complete guest journey then successfully exercised Temporal/Qwen evaluation, five evidence types, policy-impact selection, protected communication, reviewer condition resolution, Ready handoff, audit/dossier, dashboard, live stream, and the budget view. It stopped on a Playwright strict-mode error because the text `Outcome-unknown reservations` legitimately appears in three budget-view elements; this was a test locator ambiguity, not an application failure.
 
 The acceptance assertion now targets the uniquely named semantic heading. The adjacent admin-queue assertion uses the same explicit heading contract so that repeated descriptive copy cannot produce the same false negative. A fresh staging deployment remains required to prove the rest of the live journey, including admin queues, second-case creation, and manual escalation guidance.
+
+### Final CI and live AWS verification
+
+```text
+CI #196: succeeded in 3m11s
+Commit: 3f5594f
+Jobs: console, build-and-test, production dependency audit, container build,
+      observability config, secret scanning, and SAST all passed
+Workflow: https://github.com/akira-in-tech/mortgage-integration-agent/actions/runs/33943472922
+
+Deploy staging #59: succeeded in 21m26s
+Commit: 3f5594f
+Production migration: exit code 0
+API readiness: passed
+CloudFront edge readiness: passed
+Guest staging acceptance: 2 passed in 41.2s
+Workflow: https://github.com/akira-in-tech/mortgage-integration-agent/actions/runs/33943671112
+```
+
+The first acceptance test proved that replacing one live guest sandbox with another never renders the prior tenant's cached borrower row. The second completed the full external workflow through the deployed CloudFront edge: case creation, Temporal/Qwen evaluation, five evidence capabilities, policy-impact selection, protected communication approval and delivery, condition satisfaction, Ready handoff, audit/dossier inspection, operational views, a second synthetic case, and the corrected manual-escalation guidance.
+
+The release gate therefore verifies the composed deployed product, not only individual services or a health endpoint. Terraform emitted one non-blocking backend warning: the legacy `dynamodb_table` state-lock parameter is deprecated in favor of S3 native `use_lockfile`; migrating that backend setting is infrastructure maintenance, not a demonstrated runtime or guest-demo defect.
