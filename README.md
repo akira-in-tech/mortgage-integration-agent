@@ -26,7 +26,17 @@ Meridian turns a lending-case workflow into an accountable handoff: it gathers e
 
 ## See the product in three minutes
 
-The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every screenshot below is a live, unedited capture of that real sandbox, not a mockup. Optionally, customize the requested loan amount and stated monthly income before creating your case — two bounded, hypothetical numbers, never real borrower data — and the same real evaluation responds to them. Select **+ New case** at any point to try another scenario in the same sandbox, without losing the one you already have.
+The public sandbox is an isolated, disposable workspace — no sign-up or API key required. Every capture below — the recording and every screenshot — is a live, unedited run against that real sandbox, not a mockup or storyboard.
+
+<div align="center">
+
+<img src="docs/assets/meridian-walkthrough.gif" alt="A real, unedited recording of the guided sandbox: creating a case, running the workflow, resolving a policy-triggered reviewer condition, and inspecting the resulting audit trail." width="820">
+
+<sub>Real time, one continuous session against the live demo — create a case → run the workflow → resolve the condition it opens → the resulting audit entry.</sub>
+
+</div>
+
+Optionally, customize the requested loan amount and stated monthly income before creating your case — two bounded, hypothetical numbers, never real borrower data — and the same real evaluation responds to them. Select **+ New case** at any point to try another scenario in the same sandbox, without losing the one you already have.
 
 <div align="center">
 
