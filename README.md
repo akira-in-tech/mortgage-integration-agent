@@ -158,6 +158,7 @@ The public sandbox shows the case workflow. The screenshots below are the platfo
 
 - **Continuous integration** runs on pushes and pull requests: linting, builds, migrations, unit/integration/Temporal tests, browser tests, generated-contract drift checks, dependency auditing, secret scanning, SAST, container builds, and observability configuration validation.
 - **A real evaluation corpus** (`npm run evaluate`) runs synthetic fixtures across normal, boundary, missing-data, policy-coverage, and provider-failure categories and records pass rate, condition recall/precision, and every failure's detail per run — inspectable and downloadable from the platform-admin console, not a one-off script output.
+- **Performance is measured, not assumed.** `npm run perf:local` drives real, authenticated GraphQL and REST traffic (list/dashboard/detail queries, real case creation) against a disposable local guest-sandbox tenant, on top of the health-endpoint load test that already runs against real staging. See [performance test results](docs/PERFORMANCE_TEST_RESULTS.md) for the methodology, the honest limitations of each test, and the actual numbers from the latest run.
 - **Protected staging delivery** is intentionally manual because it changes persistent AWS resources. It uses GitHub OIDC rather than stored cloud credentials, publishes immutable application and Qwen images, records SBOM/provenance attestations, applies Terraform, publishes the console, and verifies the API and public HTTPS edge.
 - **Operational evidence** is documented in the [development log](docs/DEVELOPMENT_LOG.md) and [operator runbook](docs/OPERATIONS.md). The environment remains a persistent synthetic staging demo, not a production lending deployment.
 
@@ -218,6 +219,7 @@ Those capabilities require separately governed providers, legal and operational 
 - [Project charter](docs/PROJECT_CHARTER.md) — normative product and engineering contract
 - [Development log](docs/DEVELOPMENT_LOG.md) — append-only implementation and verification record
 - [Operations runbook](docs/OPERATIONS.md) — synthetic-environment telemetry, SLOs, drills, and incident procedures
+- [Performance test results](docs/PERFORMANCE_TEST_RESULTS.md) — real, measured latency and throughput for health, GraphQL, and write paths, staging and local
 - [OpenAPI contract](openapi/openapi.json) — generated REST contract
 - [TypeScript client](client/) — generated client and integration examples
 
