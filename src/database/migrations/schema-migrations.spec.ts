@@ -233,6 +233,30 @@ describeOrSkip('Schema migrations (cumulative)', () => {
     ]);
   });
 
+  it('reverts the synthetic source refresh without removing seeded revisions', async () => {
+    const refreshedIds = [
+      '9d6b1f2a-4e3c-4a7b-9f0e-1a2b3c4d5e6f',
+      '2b7c8e9f-5a1d-4c6b-8e2f-3d4c5b6a7f8e',
+    ];
+    const refreshedRows: Array<{ id: string }> = await scratchDataSource.query(
+      `SELECT id FROM policy_source_revisions WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [refreshedIds],
+    );
+    expect(refreshedRows.map((row) => row.id)).toEqual(
+      [...refreshedIds].sort(),
+    );
+
+    await scratchDataSource.undoLastMigration();
+
+    expect(
+      await scratchDataSource.query(
+        `SELECT id FROM policy_source_revisions WHERE id = ANY($1::uuid[])`,
+        [refreshedIds],
+      ),
+    ).toEqual([]);
+    expect(await tableNames()).toContain('policy_source_revisions');
+  });
+
   it('reverts citation-bound policy research without removing source evidence', async () => {
     expect(await tableNames()).toEqual(
       expect.arrayContaining([
