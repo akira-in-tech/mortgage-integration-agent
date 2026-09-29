@@ -33,9 +33,7 @@ const CA_PUBLISHED_AT = '2025-01-01T00:00:00Z';
  * shelf life as the problem it fixes: re-run needed again after another
  * ~720 hours of this dev database going unused.
  */
-export class RefreshSyntheticPolicySourceRevisions1787180200000
-  implements MigrationInterface
-{
+export class RefreshSyntheticPolicySourceRevisions1787180200000 implements MigrationInterface {
   name = 'RefreshSyntheticPolicySourceRevisions1787180200000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
